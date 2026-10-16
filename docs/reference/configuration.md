@@ -181,6 +181,12 @@ advisory lock, like the scheduler, so leave it enabled everywhere.
 | `SQL_STATEMENT_FIRST_PAGE_LIMIT` | `200` | Result rows returned on the statement response itself, sparing a client the second call to `GET /queries/{id}/rows` — which is otherwise unavoidable, since the column names arrive with the rows. `0` disables it deployment-wide; a request may ask for its own number or opt out. Bounded because a statement response is not a bulk transport: a larger result pages from the first page as usual. See [Getting the rows with the answer](../concepts/sql-sessions.md#getting-the-rows-with-the-answer). |
 | `SQL_STATEMENT_MAX_WAIT_TIMEOUT_S` | `60` | Ceiling on what a client may request via `wait_timeout_s`, on the statement call and on `GET /queries/{id}`. Bounds how long a caller can make the API hold a request open. |
 
+### Workspace metadata
+
+| Variable | Default | Description |
+|---|---|---|
+| `METADATA_COLUMNS_MAX_TABLES` | `1000` | The most tables one [workspace metadata](rest-api.md#workspace-metadata) request describes with `columns=true`. Describing a table costs the agent a metadata load, so a larger request is refused and asked to narrow by catalog or schema. |
+
 ### Result cache
 
 Tunes the [result cache](../concepts/result-cache.md), which answers a repeated read from an earlier run's result while

@@ -275,6 +275,9 @@ class Settings(BaseSettings):
     # for table versions, reading the entry. Past it the query simply runs, as it
     # would without the cache.
     result_cache_lookup_timeout_s: float = 1.0
+    # GET /workspaces/{workspace}/metadata?columns=true describes tables on an agent;
+    # a request covering more tables than this is refused and asked to narrow.
+    metadata_columns_max_tables: int = 1000
     # Results up to this size are copied into Postgres, so a hit needs no running
     # agent; larger ones stay in the agent's result file.
     result_cache_inline_max_bytes: int = 1024 * 1024

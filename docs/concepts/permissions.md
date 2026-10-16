@@ -133,7 +133,9 @@ start from the object, not from the principal.
 
 In a scoped catalog, **browse the catalog tree (or the REST catalog endpoints) to find out what exists, and use
 `DESCRIBE <catalog>.<schema>.<table>` for a table's columns.** Both are filtered by your grants: you see the schemas
-and tables you were granted and nothing else, and a `DESCRIBE` needs only the `metadata` tier on its table.
+and tables you were granted and nothing else, and a `DESCRIBE` needs only the `metadata` tier on its table. A tool can
+get all of it at once from the [workspace metadata report](../reference/rest-api.md#workspace-metadata), which applies
+the same filtering.
 
 The exception is describing a `PIVOT`. A pivot names its output columns after values it reads from the table, so
 `DESCRIBE PIVOT …` returns data, not just shape, and it needs `reader` on the pivoted table like any other read.

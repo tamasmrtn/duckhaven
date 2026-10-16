@@ -12,8 +12,6 @@ general-purpose search framework.
 
 from __future__ import annotations
 
-import asyncio
-import logging
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
@@ -24,16 +22,14 @@ from api.deps import get_current_user, get_db, get_polaris_client
 from api.models.query import SavedQuery
 from api.models.user import User
 from api.schemas.search import SearchResultOut, SearchResultsOut
+from api.services import catalog_tree
 from api.services import grants as grant_service
-from api.services.catalog_backends import CatalogBackendError, backend_for
 from api.services.polaris import PolarisClient
 from api.services.workspace import (
     assert_workspace_member,
     get_workspace,
     resolve_workspace_catalogs,
 )
-
-logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/workspaces")
 
@@ -94,44 +90,17 @@ async def search_workspace(
     if not wanted & {"schema", "table"}:
         catalogs = []
 
-    # The listing calls hold no shared state, so they run concurrently; the
-    # grant checks below share one AsyncSession and stay sequential.
-    # return_exceptions=True isolates a stale or unreachable catalog from the
-    # rest of the search.
-    backends = [backend_for(cat, polaris=polaris) for cat in catalogs]
-    schemas_per_catalog = await asyncio.gather(
-        *(backend.list_schemas(cat) for cat, backend in zip(catalogs, backends)),
-        return_exceptions=True,
-    )
-
-    live = []
-    backend_by_slug = {cat.slug: backend for cat, backend in zip(catalogs, backends)}
-    for cat, schemas in zip(catalogs, schemas_per_catalog):
-        if isinstance(schemas, CatalogBackendError):
-            logger.warning("Search skipped catalog=%s: %s", cat.slug, schemas)
-            continue
-        if isinstance(schemas, BaseException):
-            raise schemas
-        live.append((cat, schemas))
-
-    # Listing every schema's tables is the expensive half; skip it when only
-    # schemas were asked for.
-    schema_lookup = (
-        [(cat, s) for cat, schemas in live for s in schemas] if "table" in wanted else []
-    )
-    tables_per_schema = await asyncio.gather(
-        *(backend_by_slug[cat.slug].list_tables(cat, s.name) for cat, s in schema_lookup),
-        return_exceptions=True,
-    )
-    tables_by_schema = {}
-    for (cat, s), tables in zip(schema_lookup, tables_per_schema):
-        if isinstance(tables, CatalogBackendError):
-            logger.warning("Search skipped schema=%s.%s: %s", cat.slug, s.name, tables)
-            tables_by_schema[(cat.slug, s.name)] = []
-            continue
-        if isinstance(tables, BaseException):
-            raise tables
-        tables_by_schema[(cat.slug, s.name)] = tables
+    # The listing calls run concurrently, and a stale or unreachable catalog is left
+    # out rather than failing the search. Listing every schema's tables is the
+    # expensive half; skip it when only schemas were asked for. The grant checks
+    # below share one AsyncSession and stay sequential.
+    listed = await catalog_tree.list_catalogs(catalogs, polaris, with_tables="table" in wanted)
+    live = [(entry.catalog, entry.schemas) for entry in listed]
+    tables_by_schema = {
+        (entry.catalog.slug, schema_name): tables
+        for entry in listed
+        for schema_name, tables in entry.tables.items()
+    }
 
     for cat, schemas in live:
         scoped = await grant_service.is_scoped(db, workspace.id, cat)

@@ -32,6 +32,7 @@ from api.routers import (
     internal,
     lineage,
     maintenance,
+    metadata,
     oidc,
     queries,
     schedules,
@@ -327,6 +328,7 @@ api_app.include_router(workspaces.router, tags=["workspaces"])
 api_app.include_router(search.router, tags=["search"])
 api_app.include_router(catalogs.router, tags=["catalog"])
 api_app.include_router(schemas.router, tags=["catalog"])
+api_app.include_router(metadata.router, tags=["catalog"])
 api_app.include_router(grants.router, tags=["grants"])
 api_app.include_router(lineage.router, tags=["lineage"])
 api_app.include_router(semantic.router, tags=["semantic"])

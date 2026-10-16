@@ -376,7 +376,9 @@ stays decimal and 64-bit integers stay integers, with no JSON rounding and no st
 ```python
 import httpx, pyarrow as pa
 
-resp = httpx.get(f"{base}/api/queries/{query_id}/result", headers={"Authorization": f"Bearer {token}"})
+resp = httpx.get(
+    f"{base}/api/queries/{query_id}/result", headers={"Authorization": f"Bearer {token}"}
+)
 table = pa.ipc.open_stream(resp.content).read_all()
 ```
 

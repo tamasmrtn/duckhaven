@@ -2632,3 +2632,13 @@ async def test_sql_metadata_for_an_unknown_agent_is_404(
         f"/workspaces/{workspace.slug}/sql-metadata", params={"agent_id": str(uuid.uuid4())}
     )
     assert resp.status_code == 404
+
+
+async def test_parameters_that_do_not_fit_are_a_422(authed_client, workspace, connected_agent):
+    agent, _ws = connected_agent
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/queries",
+        json={"sql": "SELECT ?, ?", "parameters": [1], "agent_id": str(agent.id)},
+    )
+    assert resp.status_code == 422
+    assert resp.json()["error"] == "invalid_parameters"

@@ -548,3 +548,22 @@ async def test_binding_an_unrelated_catalog_keeps_the_entry(
     second = await _run(authed_client, workspace, agent)
     assert second["cache_status"] == "hit"
     assert second["result_source_query_id"] == first["id"]
+
+
+async def test_a_repeated_parameterized_query_is_a_hit(
+    authed_client, workspace, connected, sessions, fake_polaris, agent_results
+):
+    """Values are rendered into the SQL before the cache keys it, so the same
+    values hit and different ones miss."""
+    agent, ws = connected
+    _set_version(fake_polaris, 1)
+    sql = "SELECT label, count(*) AS n FROM events WHERE label <> ? GROUP BY label ORDER BY label"
+    first = await _run(authed_client, workspace, agent, sql, parameters=["z"])
+    assert first["cache_status"] == "miss"
+    assert first["sql"].endswith("WHERE label <> ('z') GROUP BY label ORDER BY label")
+    await _finish(sessions, fake_polaris, first["id"])
+
+    again = await _run(authed_client, workspace, agent, sql, parameters=["z"])
+    assert again["cache_status"] == "hit"
+    other = await _run(authed_client, workspace, agent, sql, parameters=["y"])
+    assert other["cache_status"] == "miss"

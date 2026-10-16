@@ -29,7 +29,7 @@ from api.schemas.query import (
     SqlMetadataOut,
 )
 from api.services import query as query_service
-from api.services import query_history, result_stream
+from api.services import query_history, result_stream, sql_params
 from api.services import sql_metadata as sql_metadata_service
 from api.services.agent_access import assert_agent_tier, assert_can_assign_agent
 from api.services.agent_dispatch import is_agent_connected, send_to_agent
@@ -87,6 +87,9 @@ async def create_query(
     if workspace is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace not found")
     await assert_workspace_member(db, workspace.id, user.id)
+    # Values for placeholders become literals here, before any check reads the SQL:
+    # from this line on the statement is exactly the one that runs.
+    body.sql = sql_params.render_for_request(body.sql, body.parameters)
 
     # `SET duckhaven_concurrency = '<profile>'` is a DuckHaven control command,
     # not DuckDB SQL (sql_guard rejects SET): intercept it before the guard,

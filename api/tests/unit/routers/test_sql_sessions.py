@@ -1591,3 +1591,17 @@ async def test_a_session_and_its_statements_record_the_runtime(
     await authed_client.post(f"/sql/sessions/{session.id}/statements", json={"sql": "SELECT 1"})
     statement = (await db_session.execute(sa.select(Query))).scalars().one()
     assert statement.runtime_id == "1.5"
+
+
+async def test_a_bound_file_path_meets_the_same_policy_as_a_literal(
+    authed_client, db_session, workspace, agent, user, enabled
+):
+    """A value for `read_parquet(?)` is rendered before the statement policy runs,
+    so a path outside the staging prefix is refused rather than bound past it."""
+    session = await _open_session_row(db_session, workspace, agent, user)
+    resp = await authed_client.post(
+        f"/sql/sessions/{session.id}/statements",
+        json={"sql": "SELECT * FROM read_parquet(?)", "parameters": ["/etc/passwd"]},
+    )
+    assert resp.status_code == 422
+    assert resp.json()["error"] == "statement_not_allowed"

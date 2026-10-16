@@ -7,6 +7,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from api.config import settings
+from api.schemas.query import PARAMETERS_DESCRIPTION, ParameterValue
 
 
 class SqlSessionCreate(BaseModel):
@@ -113,6 +114,9 @@ class SqlStatementCreate(BaseModel):
     # False runs this statement even when a cached result would do. The session's
     # own `use_cache` must also allow the cache for it to be used.
     use_cache: bool = True
+    parameters: list[ParameterValue] | dict[str, ParameterValue] | None = Field(
+        default=None, description=PARAMETERS_DESCRIPTION
+    )
 
     @model_validator(mode="after")
     def _validate_wait(self) -> SqlStatementCreate:

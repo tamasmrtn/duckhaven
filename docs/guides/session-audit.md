@@ -71,12 +71,14 @@ question you actually have. In particular, "expired" covers two different storie
 ## Finding a session from the history
 
 The [query history](../concepts/query-execution.md) still lists every statement individually — sessions do not hide
-anything from it. Two additions connect the two views:
+anything from it. Three additions connect the two views:
 
 - The **origin filter** at the top of History narrows to **Interactive**, **Scheduled**, or **Connection** runs. Picking
   **Connection** leaves only statements that ran inside a session.
 - Once session statements are in view, a **Connection** column appears. Clicking a statement's session id jumps to that
   session, so you can go from "this one query looks wrong" to the whole build it came from in one click.
+- A **Client** column names the tool behind each statement. A statement takes its session's client, so it reads the same
+  as the session's Client on the Connections screen.
 
 ## What this does not tell you yet
 

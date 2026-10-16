@@ -622,6 +622,9 @@ async def run_statement(
             timeout_s=body.timeout_s,
             active_catalog=context[0] if context else None,
             active_schema=context[1] if context else None,
+            client_name=session.client_name,
+            client_version=session.client_version,
+            tags=body.tags,
         )
         session.last_active_at = datetime.now(tz=UTC)
         try:
@@ -653,6 +656,9 @@ async def run_statement(
         # there. Null when unknown: only fully qualified names passed the check.
         active_catalog=context[0] if context else None,
         active_schema=context[1] if context else None,
+        client_name=session.client_name,
+        client_version=session.client_version,
+        tags=body.tags,
     )
     cache.stamp(query)
     db.add(query)

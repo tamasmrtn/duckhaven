@@ -310,6 +310,20 @@ field: values for placeholders in `sql`, as a list or an object. See
 **422 `invalid_parameters`** answer when they do not fit. The field is optional and additive. A server older than
 this feature ignores it, and the statement then fails because its placeholders have no values.
 
+## Client and tags
+
+A query sent by a tool records **which tool**: `client_name` and `client_version` on `QueryOut`, read from the first
+product token of the request's `User-Agent` (`dbt-duckhaven/1.2.0 (linux)` gives `dbt-duckhaven` and `1.2.0`), cut to 64
+and 32 characters. A SQL session statement takes its session's client. Both fields are `null` for a browser's
+`User-Agent` (every web-app run would otherwise read `Mozilla`), for runs DuckHaven starts itself such as schedules,
+and for runs recorded before the fields existed. Lead your `User-Agent` with your own tool's name to be recognised.
+
+`POST /api/workspaces/{workspace}/queries` and `POST /api/sql/sessions/{session_id}/statements` also take **`tags`**:
+an object of free-form labels recorded on the run and returned as `tags` (`null` when none were sent). At most 20 tags;
+keys are letters, digits and `_ . : -` up to 64 characters, values up to 256 characters. Anything else is a **422**.
+Tags are stored as sent and not checked further, so treat them as the caller's claim. A server older than this feature
+ignores the field.
+
 ## Result column types
 
 `GET /api/queries/{query_id}` and `GET /api/queries/{query_id}/rows` both return a **`column_schema`** field
@@ -362,7 +376,9 @@ stays decimal and 64-bit integers stay integers, with no JSON rounding and no st
 ```python
 import httpx, pyarrow as pa
 
-resp = httpx.get(f"{base}/api/queries/{query_id}/result", headers={"Authorization": f"Bearer {token}"})
+resp = httpx.get(
+    f"{base}/api/queries/{query_id}/result", headers={"Authorization": f"Bearer {token}"}
+)
 table = pa.ipc.open_stream(resp.content).read_all()
 ```
 

@@ -423,9 +423,14 @@ connector, not the tool. This is deliberately server-captured rather than client
 cannot forget to set it, and cannot leave a stale value behind after a failure. It is the same idea as PostgreSQL's
 `application_name`.
 
-Richer, client-supplied context — a dbt model name, a dlt load id — is **not** yet part of the contract. When it lands
-it will be an optional set of labels supplied once at session open, and it will live on the session row rather than
-being smuggled through the SQL text.
+Every statement the session runs carries that client too, so History can name the tool on each statement, not only on
+the session.
+
+Richer, client-supplied context — a dbt model name, a dlt load id — travels as **tags**: free-form `key=value` labels a
+client may send with each statement (`"tags": {"dbt.model": "orders"}`), recorded on that statement's run and shown in
+History beneath its SQL. They are per statement rather than per session, because one session runs many models. Unlike
+the client, tags are declared by the client and only as accurate as it makes them. The DuckHaven clients do not send
+any yet. See [Client and tags](../reference/rest-api.md#client-and-tags) for the limits.
 
 ### Who can see what
 

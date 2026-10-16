@@ -11,6 +11,22 @@ from pydantic import (
     model_validator,
 )
 
+TAG_KEY = r"^[A-Za-z0-9_.:-]{1,64}$"
+MAX_TAGS = 20
+TAGS_DESCRIPTION = (
+    "Free-form labels for the run, recorded on it and shown in History: at most 20, "
+    "keys of letters, digits and `_ . : -` (up to 64), values up to 256 characters."
+)
+Tags = dict[
+    Annotated[str, StringConstraints(pattern=TAG_KEY)],
+    Annotated[str, StringConstraints(max_length=256)],
+]
+
+
+def check_tag_count(tags: dict[str, str] | None) -> None:
+    if tags is not None and len(tags) > MAX_TAGS:
+        raise ValueError(f"at most {MAX_TAGS} tags")
+
 
 class TypedParameter(BaseModel):
     """A parameter value with the DuckDB type to read it as, for values JSON cannot
@@ -63,10 +79,13 @@ class QueryCreate(BaseModel):
     # the wait keeps running and is polled as usual. Capped by
     # sql_statement_max_wait_timeout_s, the same budget SQL statements have.
     wait_timeout_s: float | None = Field(default=None, ge=0)
+    tags: Tags | None = Field(default=None, description=TAGS_DESCRIPTION)
 
     @model_validator(mode="after")
     def _validate_wait(self) -> QueryCreate:
         from api.config import settings
+
+        check_tag_count(self.tags)
 
         if (
             self.wait_timeout_s is not None
@@ -134,6 +153,12 @@ class QueryOut(BaseModel):
     # a statement back to the workload it belonged to. Null for interactive and
     # scheduled runs.
     session_id: uuid.UUID | None = None
+    # The tool that sent the run, from its User-Agent (a session statement takes
+    # its session's). Null for the web app and for runs the platform starts.
+    client_name: str | None = None
+    client_version: str | None = None
+    # Labels the caller attached to the run.
+    tags: dict[str, str] | None = None
     # The runtime (DuckDB line, e.g. "1.5") of the agent that ran it, recorded at
     # dispatch. Null before dispatch and for runs older than the field.
     runtime_id: str | None = None

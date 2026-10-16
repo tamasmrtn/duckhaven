@@ -746,6 +746,8 @@ def _statement(session: SqlSession, sql: str, *, status: str = "done") -> Query:
         (None, (None, None)),
         ("   ", (None, None)),
         ("/1.0", (None, None)),
+        # Every browser: the web app, not a client to name.
+        ("Mozilla/5.0 (X11; Linux x86_64) Firefox/140.0", (None, None)),
     ],
 )
 def test_parse_user_agent(header, expected):
@@ -1605,3 +1607,23 @@ async def test_a_bound_file_path_meets_the_same_policy_as_a_literal(
     )
     assert resp.status_code == 422
     assert resp.json()["error"] == "statement_not_allowed"
+
+
+async def test_a_statement_takes_its_sessions_client_and_its_own_tags(
+    authed_client, db_session, workspace, agent, user, enabled, monkeypatch
+):
+    session = await _open_session_row(db_session, workspace, agent, user)
+    session.client_name, session.client_version = "dbt-duckhaven", "1.2.0"
+    await db_session.commit()
+
+    async def fake_exec(db, sess, query, timeout_s, catalogs):
+        return True
+
+    monkeypatch.setattr(session_service, "dispatch_exec_statement", fake_exec)
+    resp = await authed_client.post(
+        f"/sql/sessions/{session.id}/statements",
+        json={"sql": "SELECT 1", "tags": {"dbt.model": "orders"}},
+    )
+    body = resp.json()
+    assert (body["client_name"], body["client_version"]) == ("dbt-duckhaven", "1.2.0")
+    assert body["tags"] == {"dbt.model": "orders"}

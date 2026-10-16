@@ -207,7 +207,11 @@ async def _turn_context(
         async with httpx.AsyncClient(
             transport=transport,
             base_url="http://assistant.internal",
-            headers={"Authorization": f"Bearer {token}"},
+            # Named so History shows these runs as the assistant's, not as httpx's.
+            headers={
+                "Authorization": f"Bearer {token}",
+                "User-Agent": f"duckhaven-assistant/{settings.app_version}",
+            },
             timeout=_QUERY_TIMEOUT_S + 30.0,
         ) as client:
             gateway = Gateway(

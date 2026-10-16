@@ -59,7 +59,7 @@ EXECUTION_PROVIDER = "execution"
 # would establish nothing anyway; skipping them keeps the parse off the path that
 # runs every time somebody clicks a table in the catalog explorer. They are
 # already excluded from query history for the same reason.
-_INTERNAL_ORIGINS = frozenset({"sample", "metadata"})
+_INTERNAL_ORIGINS = frozenset({"sample", "metadata", "describe"})
 
 
 @dataclass(frozen=True)

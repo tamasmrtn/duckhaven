@@ -799,6 +799,84 @@ async def pick_agent_for(
     return min(ranked, key=lambda ranked_agent: ranked_agent[0])[1]
 
 
+class ComputeStarting(Exception):
+    """No agent could take an internal run in time; compute is starting for it."""
+
+
+async def run_internal_query(
+    db: AsyncSession,
+    *,
+    workspace: Workspace,
+    user_id: uuid.UUID,
+    sql: str,
+    origin: str,
+    active_catalog: str | None = None,
+    agent: Agent | None = None,
+    wait_s: float,
+) -> Query:
+    """Run platform SQL on the caller's behalf and wait up to ``wait_s`` for it.
+
+    Like :func:`run_sync_query`, but when no agent is given or connected and
+    elastic compute is on, it starts compute the way a pool run does: the run is
+    parked with no agent and the provisioned agent picks it up when it registers
+    (``compute.service.bind_queued_work`` binds ``origin`` alongside pool runs).
+    If the wait runs out while the run is still parked it is cancelled and
+    :class:`ComputeStarting` is raised; the compute keeps starting, so a retry
+    lands on it. Grant and dispatch errors propagate as from ``dispatch_query``.
+    """
+    from api.config import settings
+    from api.services.compute import service as compute_service
+
+    if agent is None:
+        agent = await pick_agent_for(db, workspace, principal_id=user_id)
+    if agent is not None:
+        return await run_sync_query(
+            db,
+            workspace=workspace,
+            agent=agent,
+            user_id=user_id,
+            sql=sql,
+            origin=origin,
+            active_catalog=active_catalog,
+            timeout_s=wait_s,
+        )
+    if not settings.elastic_compute_enabled:
+        raise AgentUnavailable("No compatible agent is connected")
+
+    query = Query(
+        workspace_id=workspace.id,
+        agent_id=None,
+        user_id=user_id,
+        sql=sql,
+        status="queued",
+        origin=origin,
+        active_catalog=active_catalog,
+    )
+    db.add(query)
+    await db.flush()
+    await compute_service.ensure_agent(db, await compute_service.resolve_pool_key(db, workspace))
+    await db.commit()
+
+    deadline = asyncio.get_event_loop().time() + wait_s
+    while asyncio.get_event_loop().time() < deadline:
+        await asyncio.sleep(0.2)
+        await db.refresh(query)
+        if query.status in {"done", "failed", "cancelled"}:
+            return query
+    # Abandon the run only if no agent took it meanwhile: a bound run is the
+    # caller's to collect, and cancelling it here would race its dispatch.
+    abandoned = await db.execute(
+        sa.update(Query)
+        .where(Query.id == query.id, Query.agent_id.is_(None))
+        .values(status="cancelled", finished_at=datetime.now(tz=UTC))
+    )
+    await db.commit()
+    if abandoned.rowcount:
+        raise ComputeStarting("Compute is starting; retry shortly")
+    await db.refresh(query)
+    return query
+
+
 async def run_sync_query(
     db: AsyncSession,
     *,

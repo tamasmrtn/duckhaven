@@ -37,7 +37,7 @@ transition that is neither a field write nor naturally idempotent:
 
 `/cancel` · `/restart` · `/terminate` · `/disconnect` · `/publish` · `/deprecate` ·
 `/validate` · `/dismiss` · `/revoke-sessions` · `/refresh-stats` · `/recount` · `/scan` ·
-`/compile` · `/login` · `/logout` · `/bootstrap`
+`/compile` · `/describe` · `/login` · `/logout` · `/bootstrap`
 
 It is **not** permitted when a method or a field write already expresses the operation.
 Attaching a catalog to a workspace is a membership write, so it is

@@ -115,6 +115,48 @@ class ColumnSchemaOut(BaseModel):
     type: str
 
 
+class DescribeCreate(BaseModel):
+    sql: str
+    parameters: list[ParameterValue] | dict[str, ParameterValue] | None = Field(
+        default=None,
+        description=(
+            PARAMETERS_DESCRIPTION + " Placeholders without a value are described as "
+            "NULL, which DuckDB types as INTEGER where nothing else decides it."
+        ),
+    )
+    # The catalog unqualified names resolve in; the workspace default when omitted.
+    catalog: str | None = None
+    # A specific agent, or omitted to use any connected one the caller may use (or,
+    # with elastic compute, to start one).
+    agent_id: uuid.UUID | None = None
+    # How long to wait for an agent to answer, starting compute if needed. Server
+    # default sql_session_wait_timeout_s; capped by sql_session_max_wait_timeout_s.
+    wait_timeout_s: float | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def _validate_wait(self) -> DescribeCreate:
+        from api.config import settings
+
+        if (
+            self.wait_timeout_s is not None
+            and self.wait_timeout_s > settings.sql_session_max_wait_timeout_s
+        ):
+            raise ValueError(
+                f"wait_timeout_s must be at most {settings.sql_session_max_wait_timeout_s}"
+            )
+        return self
+
+
+class DescribeOut(BaseModel):
+    # Coarse kind of statement ("select", "insert", …), as History classifies it.
+    statement_type: str | None
+    # The result's columns and DuckDB types, without running the query. Null for a
+    # statement that returns no result grid (DML, DDL).
+    columns: list[ColumnSchemaOut] | None
+    # The placeholders the statement uses, in order: "1", "2", … or the names.
+    parameter_names: list[str]
+
+
 class RowsPageOut(BaseModel):
     rows: list[dict[str, Any]]
     columns: list[str]

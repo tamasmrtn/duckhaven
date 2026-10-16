@@ -3,6 +3,8 @@ import uuid
 from datetime import UTC, datetime
 from typing import Annotated, Literal
 
+import duckdb
+import sqlglot
 from fastapi import APIRouter, Depends, HTTPException, Path, Request, Response, status
 from fastapi import Query as QueryParam
 from fastapi.responses import StreamingResponse
@@ -20,6 +22,9 @@ from api.models.user import User
 from api.models.worksheet import Worksheet
 from api.schemas.page import Page
 from api.schemas.query import (
+    ColumnSchemaOut,
+    DescribeCreate,
+    DescribeOut,
     QueryCreate,
     QueryOut,
     RowsPageOut,
@@ -47,7 +52,7 @@ from api.services.runtimes import (
     assert_dispatchable,
     assert_restartable,
 )
-from api.services.sql_classify import STATEMENT_TYPES
+from api.services.sql_classify import STATEMENT_TYPES, classify_statement
 from api.services.sql_guard import SQLNotAllowed, assert_allowed, is_read_only
 from api.services.sql_sessions import service as sql_session_service
 from api.services.sql_sessions.client_info import parse_user_agent
@@ -538,6 +543,139 @@ async def _set_concurrency(
     await db.commit()
     await db.refresh(query)
     return query
+
+
+# Statements DuckDB types as queries that describe or list rather than compute a
+# result; `DESCRIBE` over them does not parse.
+_NOT_DESCRIBABLE = frozenset({"DESCRIBE", "DESC", "SHOW", "SUMMARIZE", "PRAGMA"})
+
+
+@router.post(
+    "/workspaces/{workspace}/queries/describe",
+    response_model=DescribeOut,
+    responses={
+        422: {"description": "Not one describable statement, or it does not bind."},
+        504: {"description": "The agent did not answer within the wait."},
+    },
+)
+async def describe_query(
+    ws: Annotated[str, Path(alias="workspace")],
+    body: DescribeCreate,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> DescribeOut:
+    """A query's result columns and their DuckDB types, without running it.
+
+    The statement is bound by an agent (`DESCRIBE`), never executed, so it reads
+    no rows, and the caller needs only the `metadata` tier on the tables it names.
+    With no agent connected and elastic compute on, compute is started and the
+    call waits for it, answering 503 `compute_starting` if it is not up in time.
+    Statements that return no grid (DML, DDL) answer with `columns: null` without
+    touching an agent."""
+    workspace = await get_workspace(db, ws)
+    if workspace is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace not found")
+    await assert_workspace_member(db, workspace.id, user.id)
+
+    try:
+        statements = duckdb.extract_statements(body.sql)
+    except duckdb.Error as exc:
+        raise _not_describable(f"The SQL does not parse: {exc}") from exc
+    if len(statements) != 1:
+        # A PIVOT without an IN list counts too: DuckDB plans it as a CREATE TYPE
+        # (which reads the pivoted values) followed by the query.
+        raise _not_describable(
+            "Describe takes exactly one statement. A PIVOT without an IN list is two."
+        )
+    names = sorted(statements[0].named_parameters, key=lambda n: (not n.isdigit(), n.zfill(9)))
+    parameters = body.parameters
+    if parameters is None and names:
+        # No values yet (a driver describing before it binds): NULL stands in.
+        parameters = (
+            [None] * len(names) if all(n.isdigit() for n in names) else dict.fromkeys(names)
+        )
+    sql = sql_params.render_for_request(body.sql, parameters)
+    try:
+        assert_allowed(sql)
+    except SQLNotAllowed as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={"error": "sql_not_allowed", "detail": str(exc)},
+        ) from exc
+
+    statement_type = classify_statement(sql)
+    if statements[0].type != duckdb.StatementType.SELECT:
+        return DescribeOut(statement_type=statement_type, columns=None, parameter_names=names)
+    first = sqlglot.tokenize(sql, read="duckdb")[0].text.upper()
+    if first in _NOT_DESCRIBABLE:
+        raise _not_describable(f"{first} statements cannot be described.")
+
+    agent = None
+    if body.agent_id is not None:
+        agent = await db.get(Agent, body.agent_id)
+        if agent is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+        await assert_agent_tier(db, user, agent, "use")
+        if not await is_agent_connected(db, agent.id):
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={"error": "unavailable", "detail": "Agent not connected"},
+            )
+    wait_s = (
+        settings.sql_session_wait_timeout_s if body.wait_timeout_s is None else body.wait_timeout_s
+    )
+    try:
+        query = await query_service.run_internal_query(
+            db,
+            workspace=workspace,
+            user_id=user.id,
+            sql=f"DESCRIBE {sql}",
+            origin="describe",
+            active_catalog=body.catalog,
+            agent=agent,
+            wait_s=wait_s,
+        )
+    except GrantDenied as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={"error": "grant_denied", "detail": str(exc)},
+        ) from exc
+    except AgentNotDispatchable as exc:
+        raise _not_dispatchable(exc) from None
+    except query_service.ComputeStarting as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error": "compute_starting", "detail": str(exc)},
+            headers={"Retry-After": "5"},
+        ) from exc
+    except query_service.AgentUnavailable as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error": "unavailable", "detail": str(exc)},
+        ) from exc
+
+    if query.status == "failed":
+        raise _not_describable(query.error or "The statement does not bind.")
+    if query.status != "done":
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail={"error": "upstream_timeout", "detail": "The agent did not answer in time."},
+        )
+    page = await query_service.fetch_result_page(db, query, limit=1000)
+    return DescribeOut(
+        statement_type=statement_type,
+        columns=[
+            ColumnSchemaOut(name=row["column_name"], type=row["column_type"]) for row in page.rows
+        ],
+        parameter_names=names,
+    )
+
+
+def _not_describable(detail: str) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        detail={"error": "not_describable", "detail": detail},
+    )
 
 
 @router.get("/workspaces/{workspace}/sql-metadata", response_model=SqlMetadataOut)

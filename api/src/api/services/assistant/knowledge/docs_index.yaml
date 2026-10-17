@@ -73,7 +73,8 @@ pages:
 - path: concepts/query-execution.md
   title: Query execution
   section: Concepts
-  summary: Queueing, memory estimation, and concurrency.
+  summary: Queueing, memory estimation and concurrency, and the column types and exact values a result
+    carries.
 - path: concepts/result-cache.md
   title: Result cache
   section: Concepts
@@ -283,7 +284,7 @@ pages:
 - path: reference/sql-support.md
   title: SQL support
   section: Reference
-  summary: Supported SQL surface and DuckDB features.
+  summary: Supported SQL surface and DuckDB features, and binding typed query parameters.
 - path: reference/agent-reference.md
   title: Agent reference
   section: Reference
@@ -295,7 +296,8 @@ pages:
 - path: reference/rest-api.md
   title: REST API
   section: Reference
-  summary: The control-plane REST API.
+  summary: 'The control-plane REST API: exact result values, Arrow and Parquet downloads, query parameters,
+    describe, workspace metadata, waiting for a result, and client and tags.'
 - path: reference/api-conventions.md
   title: API conventions
   section: Reference

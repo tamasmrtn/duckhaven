@@ -20,7 +20,8 @@ the assistant can see and do with the same grants they already use for people.
   [lineage graph](lineage.md) rather than by guessing from column names. A source it holds no grant on comes back
   unnamed but still present, and it is told to say so rather than report the path as ending there.
 - **Run SQL** — write and execute a query, then reason over a capped sample of the results. The full result set is
-  available to you in the UI, exactly as if you had run the query yourself.
+  available to you in the UI, exactly as if you had run the query yourself. Decimals and large integers reach it as
+  exact values with each column's type, so it quotes them as they are rather than as rounded approximations.
 - **Propose editor edits** — on the worksheet, write or change the SQL in your editor as a highlighted, accept-or-reject
   suggestion (it never edits or runs on its own). If your worksheet has a non-empty text selection when you ask, the
   proposed edit is scoped to just that selection instead of rewriting the whole worksheet.
@@ -104,7 +105,10 @@ recreates the account — again with no access.
 When the assistant makes a call, the runtime mints a **short-lived personal access token** for the service account, uses
 it for that turn, and deletes it immediately after. Nothing long-lived or reconstructable is stored, and every query the
 assistant runs is attributed to the service account in the query history and audit trail, with `duckhaven-assistant`
-as its client.
+as its client. Each query also carries an `assistant.conversation`
+[tag](../guides/run-queries.md#find-an-earlier-run) with the conversation's id, so History can tell one conversation's
+queries from another's. A query answered from a metric definition is also tagged with the `semantic.model` and
+`semantic.metrics` it used.
 
 ## Write approval
 

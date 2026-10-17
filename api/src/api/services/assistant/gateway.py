@@ -24,6 +24,8 @@ import json
 
 import httpx
 
+from api.config import settings
+
 # Query statuses that mean the run has stopped (mirrors the scheduler's terminal set).
 _TERMINAL = {"done", "failed", "cancelled"}
 _POLL_INTERVAL_S = 0.25
@@ -76,6 +78,15 @@ def _aggregated_columns(sql: str) -> dict[tuple[str | None, str, str], set[str]]
                     continue
                 found.setdefault(origin, set()).add(column.name.lower())
     return found
+
+
+def metric_tags(model: str, metrics: list[str]) -> dict[str, str]:
+    """Tags naming the semantic model and metrics a compiled query answers.
+
+    Cut to the server's 256-character value limit: a long metric list must not
+    turn a good query into a 422.
+    """
+    return {"semantic.model": model[:256], "semantic.metrics": ",".join(metrics)[:256]}
 
 
 class GatewayError(Exception):
@@ -131,6 +142,7 @@ class Gateway:
         row_cap: int,
         byte_cap: int,
         service_account_id: str,
+        tags: dict[str, str] | None = None,
     ) -> None:
         self._client = client
         self._ws = workspace_slug
@@ -139,6 +151,9 @@ class Gateway:
         # The id the assistant's queries are attributed to; used to refuse paging
         # results of queries run by *other* principals.
         self._service_account_id = service_account_id
+        # Sent with every query this gateway runs, so History can tell whose
+        # conversation or which MCP client a run came from.
+        self._tags = tags or {}
 
     async def _get(self, path: str, **kwargs) -> httpx.Response:
         resp = await self._client.get(path, **kwargs)
@@ -477,19 +492,39 @@ class Gateway:
             return []
 
     # ── SQL execution ─────────────────────────────────────────────────────────
-    async def run_sql(self, sql: str, *, catalog: str | None, timeout_s: float) -> dict:
-        """Submit a query, poll to completion, and return a capped result sample.
+    async def run_sql(
+        self,
+        sql: str,
+        *,
+        catalog: str | None,
+        timeout_s: float,
+        tags: dict[str, str] | None = None,
+    ) -> dict:
+        """Submit a query, wait for it to finish, and return a capped result sample.
 
-        Returns a dict with ``query_id``, ``status``, ``columns``, capped ``rows``,
-        ``total`` row count, and a ``truncated`` flag. Raises :class:`GatewayError`
+        Returns a dict with ``query_id``, ``status``, ``columns``, ``column_types``,
+        capped ``rows``, ``total`` row count, and a ``truncated`` flag. ``tags`` are
+        added to the gateway's own for this query. Raises :class:`GatewayError`
         with a model-friendly message on any governed rejection or failure.
         """
         # No agent_id: the server picks one the way it does for any caller that
         # doesn't care which — compatible with the workspace, on the default
         # runtime first, never a beta one — and starts compute when elastic.
-        body = {"sql": sql, "timeout_s": timeout_s}
+        body: dict[str, object] = {
+            "sql": sql,
+            "timeout_s": timeout_s,
+            # The server holds the call until the query finishes, up to its cap,
+            # so most queries cost this one request; slower ones are polled below.
+            "wait_timeout_s": min(timeout_s, settings.sql_statement_max_wait_timeout_s),
+        }
         if catalog:
             body["catalog"] = catalog
+        if self._tags or tags:
+            body["tags"] = {**self._tags, **(tags or {})}
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout_s
+        # A turn cancelled during this call cannot cancel the query, whose id is
+        # not known yet: it runs on to its timeout_s, and its result goes unread.
         resp = await self._client.post(f"/workspaces/{self._ws}/queries", json=body)
         try:
             resp.raise_for_status()
@@ -498,8 +533,6 @@ class Gateway:
         query = resp.json()
         query_id = query["id"]
 
-        loop = asyncio.get_running_loop()
-        deadline = loop.time() + timeout_s
         status = query["status"]
         try:
             while status not in _TERMINAL:
@@ -551,10 +584,9 @@ class Gateway:
             await self._client.delete(f"/queries/{query_id}")
 
     async def get_query_result(self, query_id: str, *, cursor: str | None, limit: int) -> dict:
-        # Governance: the shared rows endpoint authorizes on workspace membership
-        # only, so restrict paging to queries this service account actually ran —
-        # otherwise the assistant could read data from a more-privileged member's
-        # query id, exceeding its own grants.
+        # The rows endpoint re-checks the reader's grants, but paging stays limited
+        # to queries this principal ran: a query id from a colleague's History is
+        # not something a conversation should be able to pull results from.
         record = (await self._get(f"/queries/{query_id}")).json()
         if str(record.get("user_id")) != self._service_account_id:
             raise GatewayError("I can only page results of queries I ran in this conversation.")
@@ -569,13 +601,19 @@ class Gateway:
         resp = await self._get(f"/queries/{query_id}/rows", params=params)
         data = resp.json()
         rows, truncated = self._cap_bytes(data.get("rows", []))
-        return {
+        page: dict[str, object] = {
             "columns": data.get("columns", []),
             "rows": rows,
             "total": data.get("total", len(rows)),
             "cursor": data.get("cursor"),
             "truncated": truncated or len(rows) < len(data.get("rows", [])),
         }
+        # DECIMAL and the wide integers arrive as exact strings, so without the
+        # types a count of "2" reads like text. Absent for an agent too old to
+        # report them.
+        if data.get("column_schema"):
+            page["column_types"] = {c["name"]: c["type"] for c in data["column_schema"]}
+        return page
 
     def _cap_bytes(self, rows: list[dict]) -> tuple[list[dict], bool]:
         """Trim rows so the JSON-serialized sample stays under the byte cap."""

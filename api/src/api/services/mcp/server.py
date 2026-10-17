@@ -59,6 +59,10 @@ Writing SQL for `run_sql`:
   compute agent sees it, and says which rule refused it; treat that as final
   rather than rephrasing the same statement.
 
+Reading what `run_sql` returns: DECIMAL and 64- or 128-bit integer values arrive
+as JSON strings so that they stay exact, inside lists and structs too. They are
+numbers; quote them exactly. `column_types` gives each column's type.
+
 When a question is about a business measure — revenue, orders, churn — call
 `search_semantic` before browsing the catalog. A published metric is what the
 organization agreed the number means; computing your own from column names

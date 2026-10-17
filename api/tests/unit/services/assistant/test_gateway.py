@@ -1,8 +1,11 @@
+import json
+
 import httpx
 import pytest
 import respx
 
-from api.services.assistant.gateway import Gateway, GatewayError, _translate
+from api.config import settings
+from api.services.assistant.gateway import Gateway, GatewayError, _translate, metric_tags
 
 
 def _gateway(client=None, **kw) -> Gateway:
@@ -299,3 +302,109 @@ def test_translate_says_plainly_when_no_agent_can_run_sql():
         )
     )
     assert str(err) == "No compute agent is currently available to run SQL."
+
+
+@respx.mock
+async def test_run_sql_waits_on_the_server_instead_of_polling():
+    """A query that finishes inside the wait costs one call, not a stream of polls."""
+    submitted = respx.post("http://assistant.internal/workspaces/ws/queries").mock(
+        return_value=httpx.Response(200, json={"id": "q1", "status": "done"})
+    )
+    polled = respx.get("http://assistant.internal/queries/q1")
+    respx.get("http://assistant.internal/queries/q1/rows").mock(
+        return_value=httpx.Response(200, json={"columns": [], "rows": [], "total": 0})
+    )
+    async with httpx.AsyncClient(base_url="http://assistant.internal") as client:
+        await _gateway(client=client).run_sql("SELECT 1", catalog=None, timeout_s=5)
+
+    assert json.loads(submitted.calls.last.request.content)["wait_timeout_s"] == 5
+    assert not polled.called
+
+
+@respx.mock
+async def test_run_sql_caps_the_wait_and_polls_past_it():
+    submitted = respx.post("http://assistant.internal/workspaces/ws/queries").mock(
+        return_value=httpx.Response(202, json={"id": "q1", "status": "running"})
+    )
+    polled = respx.get("http://assistant.internal/queries/q1").mock(
+        return_value=httpx.Response(200, json={"id": "q1", "status": "done"})
+    )
+    respx.get("http://assistant.internal/queries/q1/rows").mock(
+        return_value=httpx.Response(200, json={"columns": [], "rows": [], "total": 0})
+    )
+    async with httpx.AsyncClient(base_url="http://assistant.internal") as client:
+        page = await _gateway(client=client).run_sql("SELECT 1", catalog=None, timeout_s=600)
+
+    sent = json.loads(submitted.calls.last.request.content)["wait_timeout_s"]
+    assert sent == settings.sql_statement_max_wait_timeout_s
+    assert polled.called
+    assert page["status"] == "done"
+
+
+@respx.mock
+async def test_run_sql_sends_the_gateways_tags_and_the_calls_own():
+    submitted = respx.post("http://assistant.internal/workspaces/ws/queries").mock(
+        return_value=httpx.Response(200, json={"id": "q1", "status": "done"})
+    )
+    respx.get("http://assistant.internal/queries/q1/rows").mock(
+        return_value=httpx.Response(200, json={"columns": [], "rows": [], "total": 0})
+    )
+    async with httpx.AsyncClient(base_url="http://assistant.internal") as client:
+        gw = _gateway(client=client, tags={"assistant.conversation": "c-1"})
+        await gw.run_sql("SELECT 1", catalog=None, timeout_s=5, tags={"semantic.model": "sales"})
+        await _gateway(client=client).run_sql("SELECT 1", catalog=None, timeout_s=5)
+
+    first, second = (json.loads(c.request.content) for c in submitted.calls)
+    assert first["tags"] == {"assistant.conversation": "c-1", "semantic.model": "sales"}
+    assert "tags" not in second
+
+
+@respx.mock
+async def test_a_result_names_its_column_types():
+    """Exact numbers arrive as strings; the types say which strings are numbers."""
+    respx.get("http://assistant.internal/queries/q-mine").mock(
+        return_value=httpx.Response(200, json={"id": "q-mine", "user_id": "sa-1"})
+    )
+    respx.get("http://assistant.internal/queries/q-mine/rows").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "rows": [{"n": "2", "label": "x"}],
+                "columns": ["n", "label"],
+                "column_schema": [
+                    {"name": "n", "type": "BIGINT"},
+                    {"name": "label", "type": "VARCHAR"},
+                ],
+                "cursor": None,
+                "total": 1,
+            },
+        )
+    )
+    async with httpx.AsyncClient(base_url="http://assistant.internal") as client:
+        page = await _gateway(client=client).get_query_result("q-mine", cursor=None, limit=10)
+
+    assert page["column_types"] == {"n": "BIGINT", "label": "VARCHAR"}
+
+
+@respx.mock
+async def test_a_result_without_a_schema_has_no_column_types():
+    respx.get("http://assistant.internal/queries/q-mine").mock(
+        return_value=httpx.Response(200, json={"id": "q-mine", "user_id": "sa-1"})
+    )
+    respx.get("http://assistant.internal/queries/q-mine/rows").mock(
+        return_value=httpx.Response(
+            200, json={"rows": [{"n": 1}], "columns": ["n"], "cursor": None, "total": 1}
+        )
+    )
+    async with httpx.AsyncClient(base_url="http://assistant.internal") as client:
+        page = await _gateway(client=client).get_query_result("q-mine", cursor=None, limit=10)
+
+    assert "column_types" not in page
+
+
+def test_metric_tags_fit_the_servers_value_limit():
+    tags = metric_tags("sales", [f"metric_{i}" for i in range(100)])
+
+    assert tags["semantic.model"] == "sales"
+    assert tags["semantic.metrics"].startswith("metric_0,metric_1,")
+    assert len(tags["semantic.metrics"]) == 256

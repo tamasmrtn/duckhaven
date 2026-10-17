@@ -429,8 +429,8 @@ the session.
 Richer, client-supplied context — a dbt model name, a dlt load id — travels as **tags**: free-form `key=value` labels a
 client may send with each statement (`"tags": {"dbt.model": "orders"}`), recorded on that statement's run and shown in
 History beneath its SQL. They are per statement rather than per session, because one session runs many models. Unlike
-the client, tags are declared by the client and only as accurate as it makes them. The DuckHaven clients do not send
-any yet. See [Client and tags](../reference/rest-api.md#client-and-tags) for the limits.
+the client, tags are declared by the client and only as accurate as it makes them. `dbt-duckhaven` and
+`dlt-duckhaven` do not send any yet. See [Client and tags](../reference/rest-api.md#client-and-tags) for the limits.
 
 ### Who can see what
 

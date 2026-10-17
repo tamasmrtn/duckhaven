@@ -85,5 +85,5 @@ anything from it. Three additions connect the two views:
 Attribution stops at the tool unless the tool says more. DuckHaven records that `dbt-duckhaven 1.2.0` opened a session
 and what SQL it ran, and every statement carries the session's client. Which dbt model or invocation produced a given
 statement is known only if the client attaches it as a **tag** (`"tags": {"dbt.model": "orders"}` on the statement),
-which History shows beneath the SQL. The DuckHaven clients do not send tags yet, so for now the session boundary is the
-unit of attribution: one session is one client's run.
+which History shows beneath the SQL. `dbt-duckhaven` and `dlt-duckhaven` do not send tags yet, so for now the session
+boundary is the unit of attribution: one session is one client's run.

@@ -333,11 +333,9 @@ class _NullSessionFactory:
 async def test_the_gateway_is_built_for_the_calling_principal():
     """Paging is restricted to the caller's own queries by this id.
 
-    `/queries/{id}/rows` authorizes on workspace membership alone, so the gateway
-    compares the query's owner against the principal it was built for. Passing the
-    wrong id here would let a reader page a workspace owner's results and exceed
-    their own grants — so the id has to come from the authenticated call, not from
-    anything the client sent.
+    The gateway compares the query's owner against the principal it was built
+    for, so the id has to come from the authenticated call, not from anything the
+    client sent.
     """
     call = McpCall(user_id="user-42", client=object())
     request = SimpleNamespace(scope={SCOPE_KEY: call})
@@ -348,3 +346,31 @@ async def test_the_gateway_is_built_for_the_calling_principal():
     assert gateway._ws == "ws"
     assert gateway._row_cap == settings.mcp_result_row_cap
     assert gateway._byte_cap == settings.mcp_result_byte_cap
+
+
+async def test_the_gateway_tags_queries_with_the_calling_client():
+    call = McpCall(user_id="user-42", client=object(), caller="claude-code/2.1.0")
+    request = SimpleNamespace(scope={SCOPE_KEY: call})
+    gateway = tools._gateway(
+        SimpleNamespace(request_context=SimpleNamespace(request=request)), "ws"
+    )
+    assert gateway._tags == {"mcp.client": "claude-code/2.1.0"}
+
+
+async def test_an_unnamed_client_adds_no_tag():
+    call = McpCall(user_id="user-42", client=object())
+    request = SimpleNamespace(scope={SCOPE_KEY: call})
+    gateway = tools._gateway(
+        SimpleNamespace(request_context=SimpleNamespace(request=request)), "ws"
+    )
+    assert gateway._tags == {}
+
+
+async def test_query_metric_tags_its_query_with_the_model_and_metrics(gateways):
+    gateways.overrides["compile_metric_query"] = {"sql": "SELECT 1"}
+    gateways.overrides["run_sql"] = {"rows": []}
+
+    await tools.query_metric(ctx(), "ws", "sales", ["revenue", "orders"])
+
+    (_, _, kwargs) = next(c for c in gateways[0].calls if c[0] == "run_sql")
+    assert kwargs["tags"] == {"semantic.model": "sales", "semantic.metrics": "revenue,orders"}

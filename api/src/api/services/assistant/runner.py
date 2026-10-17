@@ -186,6 +186,7 @@ def _docs_search(session_factory: async_sessionmaker[AsyncSession]):
 @contextlib.asynccontextmanager
 async def _turn_context(
     session_factory: async_sessionmaker[AsyncSession],
+    conversation_id: uuid.UUID,
     workspace_id: uuid.UUID,
     workspace_slug: str,
     catalog: str | None,
@@ -220,6 +221,8 @@ async def _turn_context(
                 row_cap=settings.assistant_result_row_cap,
                 byte_cap=settings.assistant_result_byte_cap,
                 service_account_id=str(service_account_id),
+                # Every query the conversation runs, findable from History.
+                tags={"assistant.conversation": str(conversation_id)},
             )
             # Independent lookups, so they run concurrently; the turn waits on
             # all of them before the model sees anything.
@@ -321,7 +324,13 @@ async def _stream(
     require_enabled()
     async with _semaphore():
         async with _turn_context(
-            session_factory, workspace_id, workspace_slug, catalog, editor_sql, selection_sql
+            session_factory,
+            conversation_id,
+            workspace_id,
+            workspace_slug,
+            catalog,
+            editor_sql,
+            selection_sql,
         ) as deps:
             queue: asyncio.Queue = asyncio.Queue()
             scoped = deps.selection_sql is not None

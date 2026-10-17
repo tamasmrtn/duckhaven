@@ -9,6 +9,7 @@ import pytest
 from httpx import AsyncClient
 
 from api.config import settings
+from api.services.mcp.auth import caller_from
 from api.services.mcp.server import MCP_PATH
 
 from .conftest import rpc_body, rpc_headers
@@ -164,3 +165,16 @@ async def test_the_endpoint_also_answers_with_a_trailing_slash(mcp_client: Async
     resp = await mcp_client.post(f"{MCP_PATH}/", headers={**headers, **auth}, json=body)
     assert resp.status_code == 200, resp.text
     assert resp.json()["result"]["tools"]
+
+
+@pytest.mark.parametrize(
+    ("user_agent", "caller"),
+    [
+        ("claude-code/2.1.0 (external, cli)", "claude-code/2.1.0"),
+        ("cursor", "cursor"),
+        ("Mozilla/5.0 (X11; Linux x86_64)", None),
+        (None, None),
+    ],
+)
+def test_the_caller_is_named_by_its_user_agent(user_agent, caller):
+    assert caller_from(user_agent) == caller

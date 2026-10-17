@@ -200,9 +200,7 @@ and dlt load data, and the prefix is private to the session. Workspaces with no 
 A query's result holds the data it read, so opening a result is checked like running the query. When you page through
 a result's rows or open its profile, whether you ran the query or a colleague did, DuckHaven checks your current grants
 against every table the query read, in the catalog and schema it resolved names in. Without them the result is refused
-with a 403. This applies to the query's author too: a revoked grant also closes results run before the revocation. In
-the web UI, the worksheet's results and the query profile then say that you lack access to the data the query read,
-rather than showing an empty grid or a missing profile.
+with a 403. This applies to the query's author too: a revoked grant also closes results run before the revocation.
 
 Results of a session's staged-file reads are readable only by the session's author. A result from a session whose
 current context was unknown (see

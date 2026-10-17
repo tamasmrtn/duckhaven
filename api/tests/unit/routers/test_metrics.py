@@ -333,6 +333,31 @@ async def test_queue_wait_recorded_on_first_running_transition(db_session):
     assert _value("duckhaven_query_queue_wait_seconds_count", {"replica_id": RID}) == before + 1
 
 
+async def test_queue_wait_is_recorded_once_per_query(db_session):
+    """Only the first progress frame is the queued -> running transition."""
+    query = await _make_query(db_session, origin=None)
+    query.status = "queued"
+    await db_session.commit()
+    frame = Frame(type=FrameType.QUERY_PROGRESS, payload={"query_id": str(query.id)})
+    await query_service.handle_agent_frame(db_session, frame)
+    before = _value("duckhaven_query_queue_wait_seconds_count", {"replica_id": RID}) or 0
+    await query_service.handle_agent_frame(db_session, frame)
+    assert _value("duckhaven_query_queue_wait_seconds_count", {"replica_id": RID}) == before
+
+
+async def test_queue_wait_is_not_recorded_for_a_session_statement(db_session):
+    """Interactive queries only, as before: a session statement waits on its lock."""
+    before = _value("duckhaven_query_queue_wait_seconds_count", {"replica_id": RID}) or 0
+    query = await _make_query(db_session, origin="session")
+    query.status = "queued"
+    await db_session.commit()
+    await query_service.handle_agent_frame(
+        db_session,
+        Frame(type=FrameType.QUERY_PROGRESS, payload={"query_id": str(query.id)}),
+    )
+    assert _value("duckhaven_query_queue_wait_seconds_count", {"replica_id": RID}) == before
+
+
 async def test_queue_rejection_counted(db_session):
     before = (
         _value("duckhaven_query_queue_rejected_total", {"replica_id": RID, "reason": "queue_full"})

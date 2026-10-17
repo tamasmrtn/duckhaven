@@ -305,6 +305,54 @@ async def test_await_query_done_returns_when_the_statement_finishes(db_engine):
     assert query.duration_ms == 42
 
 
+async def test_await_query_done_with_an_early_waiter_reads_only_once_done(db_engine):
+    """Given a waiter entered before dispatch, the wait does not read back the row
+    the caller just committed as queued: the one read is after the completion."""
+    import asyncio
+
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from api.services.query import completion_waiter, signal_completion
+    from api.services.sql_sessions.service import await_query_done
+
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+    async with factory() as db:
+        session = await _open_session(db)
+        q = Query(
+            workspace_id=session.workspace_id,
+            agent_id=session.agent_id,
+            sql="select 1",
+            status="queued",
+            session_id=session.id,
+        )
+        db.add(q)
+        await db.commit()
+        query_id = q.id
+
+    async with factory() as db:
+        query = await db.get(Query, query_id)
+        refreshes = []
+        real_refresh = db.refresh
+
+        async def counting_refresh(*args, **kwargs):
+            refreshes.append(1)
+            return await real_refresh(*args, **kwargs)
+
+        db.refresh = counting_refresh
+        with completion_waiter(query_id) as done:
+            # Finished and signalled before the wait begins: a waiter registered
+            # only inside the wait would have missed this.
+            async with factory() as other:
+                row = await other.get(Query, query_id)
+                row.status = "done"
+                await other.commit()
+            signal_completion(query_id)
+            await asyncio.wait_for(await_query_done(db, query, timeout_s=5.0, done=done), 1.0)
+
+    assert query.status == "done"
+    assert len(refreshes) == 1
+
+
 async def test_await_query_done_leaves_a_slow_statement_running(db_engine):
     """A statement that outlives the budget is handed back untouched, for the client
     to poll. Cancelling it -- the other thing a wait could do on expiry -- would

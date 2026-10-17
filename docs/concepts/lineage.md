@@ -48,7 +48,8 @@ lineage without any integration at all.
 Some omissions are deliberate, and knowing them is part of reading the graph correctly:
 
 - **Reads.** A `SELECT` touches tables but produces no dataset, so it is not lineage. Query history already records
-  who read what.
+  who read what. A statement made only of reads is not parsed for lineage at all, so the failure count below covers
+  only statements that write.
 - **Writes with no source dataset.** `INSERT … VALUES` and `COPY … FROM '<file>'` have nothing upstream to point at.
   DuckHaven records nothing rather than inventing an edge.
 - **`CREATE TABLE` with only a column list.** It declares a shape; it derives nothing.

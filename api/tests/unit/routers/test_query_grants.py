@@ -735,3 +735,25 @@ async def test_dispatch_records_the_catalog_names_resolved_in(
     row = await db_session.get(Query, uuid.UUID(resp.json()["id"]))
     await db_session.refresh(row)
     assert row.active_catalog == cat.slug
+
+
+async def test_scoped_catalog_ids_agrees_with_is_scoped(db_session, mixed_ws):
+    """One query for every attached catalog, with the same answer as asking each:
+    an open attachment and a catalog the workspace does not attach are not scoped."""
+    ws, open_cat, scoped_cat = mixed_ws
+    unattached = Catalog(
+        slug="elsewhere",
+        name="Elsewhere",
+        polaris_name="mixed-ws-elsewhere",
+        storage_backend_id=scoped_cat.storage_backend_id,
+        created_by=scoped_cat.created_by,
+    )
+    db_session.add(unattached)
+    await db_session.commit()
+    catalogs = [open_cat, scoped_cat, unattached]
+
+    batched = await grant_service.scoped_catalog_ids(db_session, ws.id, catalogs)
+
+    one_by_one = {c.id for c in catalogs if await grant_service.is_scoped(db_session, ws.id, c)}
+    assert batched == one_by_one == {scoped_cat.id}
+    assert await grant_service.scoped_catalog_ids(db_session, ws.id, []) == set()

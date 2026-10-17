@@ -239,12 +239,15 @@ async def handle_statement_ack(db: AsyncSession, frame: Frame) -> None:
 
     Only ``queued`` -> ``running``. A fast statement's QUERY_DONE can beat its own
     ack (both are sent by the agent but applied by separate DB sessions), so an
-    already-terminal row is left alone rather than resurrected.
+    already-terminal row is left alone rather than resurrected. One conditional
+    update rather than a read and a write: it runs for every statement.
     """
-    query = await db.get(Query, uuid.UUID(frame.payload["query_id"]))
-    if query is None or query.status != "queued":
-        return
-    query.status = "running"
+    await db.execute(
+        sa.update(Query)
+        .where(Query.id == uuid.UUID(frame.payload["query_id"]), Query.status == "queued")
+        .values(status="running")
+        .execution_options(synchronize_session=False)
+    )
     await db.commit()
 
 
@@ -374,6 +377,7 @@ async def await_query_done(
     timeout_s: float,
     poll_interval_s: float = 0.05,
     poll_max_s: float = 0.5,
+    done: asyncio.Event | None = None,
 ) -> Query:
     """Block until the statement reaches a terminal state, or ``timeout_s`` runs out.
 
@@ -401,17 +405,26 @@ async def await_query_done(
     transaction is rolled back before each sleep so the pooled connection goes back
     for the duration. Holding it would cap concurrent statements at ``db_pool_size
     + db_max_overflow`` and deadlock a `dbt run` with more threads than that.
+
+    ``done`` is a :func:`~api.services.query.completion_waiter` the caller entered
+    before dispatching the statement. It has seen every completion since, so the
+    wait starts without reading the row back: the caller has just committed it as
+    queued, and that read was a transaction on every statement for nothing.
     """
     from api.services.query import completion_waiter
 
     loop = asyncio.get_event_loop()
     deadline = loop.time() + timeout_s
     interval = poll_interval_s
-    with completion_waiter(query.id) as done:
+    known_pending = done is not None
+    waiter = contextlib.nullcontext(done) if done is not None else completion_waiter(query.id)
+    with waiter as done:
         while True:
-            await db.refresh(query)
-            if query.status not in _STATEMENT_PENDING:
-                break
+            if not known_pending:
+                await db.refresh(query)
+                if query.status not in _STATEMENT_PENDING:
+                    break
+            known_pending = False
             remaining = deadline - loop.time()
             if remaining <= 0:
                 break

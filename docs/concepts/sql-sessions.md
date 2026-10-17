@@ -155,6 +155,21 @@ the rows could not be fetched — the statement still succeeded, and asking the 
 endpoint directly reports why. The response's `has_result` says which: `false` means a
 DDL or DML statement with nothing to read, so the client need not ask.
 
+A client that reads results as Arrow, as `duckhaven-sql-connector` does when pyarrow is
+installed, asks for `inline_format: "arrow"` instead: the response then carries the whole
+result as an Arrow stream rather than a JSON page, when it is at most
+`SQL_STATEMENT_INLINE_ARROW_MAX_BYTES` (256 KiB). Anything larger is read from
+`GET /api/queries/{query_id}/result` as before, which streams any size in one more call. The
+cap is small because the stream travels base64-encoded in the JSON response, a third
+larger: past a few hundred KB, those extra bytes cost more than the round trip they save.
+`duckhaven_statement_inline_results_total{outcome}` counts how often results fit
+(`inlined`) or not, which is what to tune the cap against. A result that is too big as a
+file, or certain to be too big as Arrow from its row count and column types, is
+`too_large` and never read; `arrow_too_large` is one that was read and encoded before it
+turned out not to fit, the only outcome that costs the server work for nothing. `unsized`
+and `unavailable` are results from an agent too old to report their size, and ones that
+could not be read.
+
 ## Statement delivery and deadlines
 
 A statement's own execution timeout (`timeout_s` on the request) is enforced by the agent around execution, but that

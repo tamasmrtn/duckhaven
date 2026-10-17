@@ -182,6 +182,14 @@ SQL_STATEMENTS = Counter(
     "Statements run inside SQL sessions reaching a terminal state, by outcome.",
     ["replica_id", "status"],
 )
+# How often a result asked for inline as Arrow fits, so the cap
+# (SQL_STATEMENT_INLINE_ARROW_MAX_BYTES) can be tuned against a real workload.
+STATEMENT_INLINE_RESULTS = Counter(
+    "duckhaven_statement_inline_results",
+    "Statement results asked for inline as Arrow, by outcome "
+    "(inlined/too_large/arrow_too_large/unsized/unavailable).",
+    ["replica_id", "outcome"],
+)
 STATEMENT_POLICY_REJECTIONS = Counter(
     "duckhaven_statement_policy_rejections",
     "Session statements rejected by the capability-scoped policy, by rule.",
@@ -358,6 +366,10 @@ def record_rows_proxy(seconds: float) -> None:
     client per call.
     """
     QUERY_ROWS_PROXY.labels(settings.replica_id).observe(seconds)
+
+
+def record_statement_inline(outcome: str) -> None:
+    STATEMENT_INLINE_RESULTS.labels(settings.replica_id, outcome).inc()
 
 
 def record_statement_policy_rejection(rule: str) -> None:

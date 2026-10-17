@@ -1532,6 +1532,110 @@ async def test_statement_does_not_inline_a_page_for_ddl(
     assert resp.json()["first_page"] is None
 
 
+def _done_with_result(result_bytes):
+    async def fake_exec(db, sess, query, timeout_s, catalogs):
+        query.status = "done"
+        query.row_count = 1
+        query.result_path = "/results/x.parquet"
+        query.result_bytes = result_bytes
+        await db.commit()
+        return True
+
+    return fake_exec
+
+
+async def test_statement_inlines_a_small_result_as_arrow_when_asked(
+    authed_client, db_session, workspace, agent, user, enabled, monkeypatch
+):
+    """One call for a small result, with the values Arrow keeps exact, and no JSON
+    first page fetched alongside it."""
+    from api.services import query as query_service
+    from api.services import result_stream
+
+    session = await _open_session_row(db_session, workspace, agent, user)
+
+    async def source(db, query):
+        return query_service.ResultSource(query=query, inline=b"parquet")
+
+    async def inline(src, max_bytes):
+        assert src.inline == b"parquet"
+        return "QVJST1c="
+
+    async def no_page(*a, **k):  # pragma: no cover - must not be reached
+        raise AssertionError("fetched a JSON page for an Arrow request")
+
+    monkeypatch.setattr(session_service, "dispatch_exec_statement", _done_with_result(500))
+    monkeypatch.setattr(query_service, "resolve_result_source", source)
+    monkeypatch.setattr(result_stream, "read_arrow_inline", inline)
+    monkeypatch.setattr(query_service, "fetch_result_page", no_page)
+    monkeypatch.setattr(settings, "sql_statement_wait_timeout_s", 5.0)
+
+    resp = await authed_client.post(
+        f"/sql/sessions/{session.id}/statements",
+        json={"sql": "SELECT 1 AS n", "inline_format": "arrow"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["inline_arrow"] == "QVJST1c="
+    assert resp.json()["has_result"] is True
+    assert resp.json()["first_page"] is None
+
+
+@pytest.mark.parametrize("result_bytes", [None, 2_000_000])
+async def test_a_large_or_unsized_result_is_not_inlined_as_arrow(
+    authed_client, db_session, workspace, agent, user, enabled, monkeypatch, result_bytes
+):
+    """Decided from the row before any read: the client then reads /result."""
+    from api.services import query as query_service
+
+    session = await _open_session_row(db_session, workspace, agent, user)
+
+    async def no_read(*a, **k):  # pragma: no cover - must not be reached
+        raise AssertionError("read a result that was not to be inlined")
+
+    monkeypatch.setattr(session_service, "dispatch_exec_statement", _done_with_result(result_bytes))
+    monkeypatch.setattr(query_service, "resolve_result_source", no_read)
+    monkeypatch.setattr(settings, "sql_statement_wait_timeout_s", 5.0)
+    monkeypatch.setattr(settings, "sql_statement_inline_arrow_max_bytes", 1_048_576)
+
+    resp = await authed_client.post(
+        f"/sql/sessions/{session.id}/statements",
+        json={"sql": "SELECT 1 AS n", "inline_format": "arrow"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["inline_arrow"] is None
+    assert resp.json()["first_page"] is None
+
+
+async def test_an_arrow_request_says_when_there_is_no_result_to_read(
+    authed_client, db_session, workspace, agent, user, enabled, monkeypatch
+):
+    """DDL/DML: the client needs no second call to learn there are no rows."""
+    from api.services import query as query_service
+
+    session = await _open_session_row(db_session, workspace, agent, user)
+
+    async def fake_exec(db, sess, query, timeout_s, catalogs):
+        query.status = "done"
+        query.result_path = None
+        await db.commit()
+        return True
+
+    async def no_read(*a, **k):  # pragma: no cover - must not be reached
+        raise AssertionError("read a result a DDL statement never wrote")
+
+    monkeypatch.setattr(session_service, "dispatch_exec_statement", fake_exec)
+    monkeypatch.setattr(query_service, "resolve_result_source", no_read)
+    monkeypatch.setattr(settings, "sql_statement_wait_timeout_s", 5.0)
+
+    resp = await authed_client.post(
+        f"/sql/sessions/{session.id}/statements",
+        json={"sql": "CREATE TABLE t AS SELECT 1", "inline_format": "arrow"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["has_result"] is False
+    assert resp.json()["inline_arrow"] is None
+
+
 async def test_a_json_statement_says_when_there_is_no_result_to_read(
     authed_client, db_session, workspace, agent, user, enabled, monkeypatch
 ):
@@ -1554,6 +1658,132 @@ async def test_a_json_statement_says_when_there_is_no_result_to_read(
     assert resp.status_code == 200, resp.text
     assert resp.json()["has_result"] is False
     assert resp.json()["first_page"] is None
+
+
+async def test_a_statement_still_running_has_no_has_result(
+    authed_client, db_session, workspace, agent, user, enabled, monkeypatch
+):
+    """Unknown until it finishes: a client must poll, not conclude there are no rows."""
+    session = await _open_session_row(db_session, workspace, agent, user)
+
+    async def fake_exec(db, sess, query, timeout_s, catalogs):
+        return True
+
+    monkeypatch.setattr(session_service, "dispatch_exec_statement", fake_exec)
+
+    resp = await authed_client.post(
+        f"/sql/sessions/{session.id}/statements",
+        json={"sql": "SELECT 1", "wait_timeout_s": 0, "inline_format": "arrow"},
+    )
+    assert resp.status_code == 202, resp.text
+    assert resp.json()["has_result"] is None
+    assert resp.json()["inline_arrow"] is None
+
+
+async def test_inline_outcomes_are_counted(
+    authed_client, db_session, workspace, agent, user, enabled, monkeypatch
+):
+    """The cap is a tuning knob; this is what it is tuned against."""
+    from prometheus_client import REGISTRY
+
+    from api.services import query as query_service
+    from api.services import result_stream
+
+    def count(outcome):
+        return (
+            REGISTRY.get_sample_value(
+                "duckhaven_statement_inline_results_total",
+                {"replica_id": settings.replica_id, "outcome": outcome},
+            )
+            or 0
+        )
+
+    session = await _open_session_row(db_session, workspace, agent, user)
+
+    async def source(db, query):
+        return query_service.ResultSource(query=query, inline=b"parquet")
+
+    async def inline(src, max_bytes):
+        return "QVJST1c="
+
+    monkeypatch.setattr(query_service, "resolve_result_source", source)
+    monkeypatch.setattr(result_stream, "read_arrow_inline", inline)
+    monkeypatch.setattr(settings, "sql_statement_wait_timeout_s", 5.0)
+    monkeypatch.setattr(settings, "sql_statement_inline_arrow_max_bytes", 1000)
+    before = {o: count(o) for o in ("inlined", "too_large")}
+
+    for result_bytes in (500, 5000):
+        monkeypatch.setattr(
+            session_service, "dispatch_exec_statement", _done_with_result(result_bytes)
+        )
+        resp = await authed_client.post(
+            f"/sql/sessions/{session.id}/statements",
+            json={"sql": "SELECT 1 AS n", "inline_format": "arrow"},
+        )
+        assert resp.status_code == 200, resp.text
+
+    assert count("inlined") - before["inlined"] == 1
+    assert count("too_large") - before["too_large"] == 1
+
+
+async def test_a_result_certain_to_be_too_big_as_arrow_is_not_read(
+    authed_client, db_session, workspace, agent, user, enabled, monkeypatch
+):
+    """A small file can still be a large stream: 10,000 BIGINTs are 80 KB as Arrow
+    however well they compress, so the floor rules them out before any read."""
+    from api.services import query as query_service
+
+    session = await _open_session_row(db_session, workspace, agent, user)
+
+    async def fake_exec(db, sess, query, timeout_s, catalogs):
+        query.status = "done"
+        query.row_count = 10_000
+        query.result_path = "/results/x.parquet"
+        query.result_bytes = 2_000
+        query.result_schema = [{"name": "n", "type": "BIGINT"}]
+        await db.commit()
+        return True
+
+    async def no_read(*a, **k):  # pragma: no cover - must not be reached
+        raise AssertionError("read a result the floor already ruled out")
+
+    monkeypatch.setattr(session_service, "dispatch_exec_statement", fake_exec)
+    monkeypatch.setattr(query_service, "resolve_result_source", no_read)
+    monkeypatch.setattr(settings, "sql_statement_wait_timeout_s", 5.0)
+    monkeypatch.setattr(settings, "sql_statement_inline_arrow_max_bytes", 50_000)
+
+    resp = await authed_client.post(
+        f"/sql/sessions/{session.id}/statements",
+        json={"sql": "SELECT n FROM t", "inline_format": "arrow"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["inline_arrow"] is None
+    assert resp.json()["has_result"] is True
+
+
+async def test_statement_still_succeeds_when_the_arrow_result_cannot_be_read(
+    authed_client, db_session, workspace, agent, user, enabled, monkeypatch
+):
+    from fastapi import HTTPException
+
+    from api.services import query as query_service
+
+    session = await _open_session_row(db_session, workspace, agent, user)
+
+    async def unavailable(*a, **k):
+        raise HTTPException(status_code=503, detail="Agent result endpoint unavailable")
+
+    monkeypatch.setattr(session_service, "dispatch_exec_statement", _done_with_result(500))
+    monkeypatch.setattr(query_service, "resolve_result_source", unavailable)
+    monkeypatch.setattr(settings, "sql_statement_wait_timeout_s", 5.0)
+
+    resp = await authed_client.post(
+        f"/sql/sessions/{session.id}/statements",
+        json={"sql": "SELECT 1 AS n", "inline_format": "arrow"},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["status"] == "done"
+    assert resp.json()["inline_arrow"] is None
 
 
 async def test_first_page_limit_above_the_cap_is_rejected(

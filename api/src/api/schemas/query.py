@@ -225,6 +225,10 @@ class QueryOut(BaseModel):
     # to call GET /queries/{id}/rows at all, which is otherwise mandatory just to
     # learn the result's column names.
     first_page: RowsPageOut | None = None
+    # The whole result as a base64 Arrow IPC stream, when a statement submit asked
+    # for it (`inline_format: "arrow"`) and the result was small enough. Null
+    # everywhere else: the result is then read from GET /queries/{id}/result.
+    inline_arrow: str | None = None
     # Whether a finished query has a result grid to read: false for DDL/DML, so a
     # client knows not to ask for rows. Null until the query is done.
     has_result: bool | None = None

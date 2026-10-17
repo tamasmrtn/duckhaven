@@ -1,7 +1,10 @@
+import json
+
 import httpx
 import pytest
 import respx
 
+from api.config import settings
 from api.services.assistant.gateway import Gateway, GatewayError, _translate
 
 
@@ -342,3 +345,40 @@ async def test_a_result_without_a_schema_has_no_column_types():
         page = await _gateway(client=client).get_query_result("q-mine", cursor=None, limit=10)
 
     assert "column_types" not in page
+
+
+@respx.mock
+async def test_run_sql_waits_on_the_server_instead_of_polling():
+    """A query that finishes inside the wait costs one call, not a stream of polls."""
+    submitted = respx.post("http://assistant.internal/workspaces/ws/queries").mock(
+        return_value=httpx.Response(200, json={"id": "q1", "status": "done"})
+    )
+    polled = respx.get("http://assistant.internal/queries/q1")
+    respx.get("http://assistant.internal/queries/q1/rows").mock(
+        return_value=httpx.Response(200, json={"columns": [], "rows": [], "total": 0})
+    )
+    async with httpx.AsyncClient(base_url="http://assistant.internal") as client:
+        await _gateway(client=client).run_sql("SELECT 1", catalog=None, timeout_s=5)
+
+    assert json.loads(submitted.calls.last.request.content)["wait_timeout_s"] == 5
+    assert not polled.called
+
+
+@respx.mock
+async def test_run_sql_caps_the_wait_and_polls_past_it():
+    submitted = respx.post("http://assistant.internal/workspaces/ws/queries").mock(
+        return_value=httpx.Response(202, json={"id": "q1", "status": "running"})
+    )
+    polled = respx.get("http://assistant.internal/queries/q1").mock(
+        return_value=httpx.Response(200, json={"id": "q1", "status": "done"})
+    )
+    respx.get("http://assistant.internal/queries/q1/rows").mock(
+        return_value=httpx.Response(200, json={"columns": [], "rows": [], "total": 0})
+    )
+    async with httpx.AsyncClient(base_url="http://assistant.internal") as client:
+        page = await _gateway(client=client).run_sql("SELECT 1", catalog=None, timeout_s=600)
+
+    sent = json.loads(submitted.calls.last.request.content)["wait_timeout_s"]
+    assert sent == settings.sql_statement_max_wait_timeout_s
+    assert polled.called
+    assert page["status"] == "done"

@@ -24,6 +24,8 @@ import json
 
 import httpx
 
+from api.config import settings
+
 # Query statuses that mean the run has stopped (mirrors the scheduler's terminal set).
 _TERMINAL = {"done", "failed", "cancelled"}
 _POLL_INTERVAL_S = 0.25
@@ -478,7 +480,7 @@ class Gateway:
 
     # ── SQL execution ─────────────────────────────────────────────────────────
     async def run_sql(self, sql: str, *, catalog: str | None, timeout_s: float) -> dict:
-        """Submit a query, poll to completion, and return a capped result sample.
+        """Submit a query, wait for it to finish, and return a capped result sample.
 
         Returns a dict with ``query_id``, ``status``, ``columns``, ``column_types``,
         capped ``rows``, ``total`` row count, and a ``truncated`` flag. Raises
@@ -488,9 +490,19 @@ class Gateway:
         # No agent_id: the server picks one the way it does for any caller that
         # doesn't care which — compatible with the workspace, on the default
         # runtime first, never a beta one — and starts compute when elastic.
-        body = {"sql": sql, "timeout_s": timeout_s}
+        body: dict[str, object] = {
+            "sql": sql,
+            "timeout_s": timeout_s,
+            # The server holds the call until the query finishes, up to its cap,
+            # so most queries cost this one request; slower ones are polled below.
+            "wait_timeout_s": min(timeout_s, settings.sql_statement_max_wait_timeout_s),
+        }
         if catalog:
             body["catalog"] = catalog
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout_s
+        # A turn cancelled during this call cannot cancel the query, whose id is
+        # not known yet: it runs on to its timeout_s, and its result goes unread.
         resp = await self._client.post(f"/workspaces/{self._ws}/queries", json=body)
         try:
             resp.raise_for_status()
@@ -499,8 +511,6 @@ class Gateway:
         query = resp.json()
         query_id = query["id"]
 
-        loop = asyncio.get_running_loop()
-        deadline = loop.time() + timeout_s
         status = query["status"]
         try:
             while status not in _TERMINAL:

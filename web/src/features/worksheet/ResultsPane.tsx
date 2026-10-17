@@ -28,6 +28,8 @@ export function resultsAreStale(worksheetSql: string, ranSql: string): boolean {
 
 function rowsErrorMessage(err: unknown): string | null {
   if (!(err instanceof ApiError)) return null;
+  if (err.status === 403)
+    return "You don't have access to the data this query read, so its results can't be shown.";
   if (err.status === 410)
     return "These results have expired: agents keep them for 24 hours. Run the query again.";
   if (err.status === 503)

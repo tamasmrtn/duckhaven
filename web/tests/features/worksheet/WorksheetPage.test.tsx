@@ -150,7 +150,9 @@ describe("WorksheetPage tabs", () => {
   it("keeps renaming when the rename input is clicked", async () => {
     const user = userEvent.setup();
     renderWithProviders({ initialRoute: WS_ROUTE });
-    await user.dblClick(await screen.findByRole("tab", { name: /funnel-draft/ }));
+    await user.dblClick(
+      await screen.findByRole("tab", { name: /funnel-draft/ }),
+    );
 
     const input = screen.getByRole("textbox", { name: "Rename worksheet" });
     await user.click(input);
@@ -801,6 +803,30 @@ describe("WorksheetPage results", () => {
     renderWithProviders({ initialRoute: WS_ROUTE });
 
     expect(await screen.findByRole("alert")).toHaveTextContent(/expired/i);
+  });
+
+  it("explains results the reader no longer has access to", async () => {
+    sheet("wk-1").last_query_id = "q-denied";
+    server.use(
+      http.get("/api/queries/q-denied", () =>
+        HttpResponse.json(doneQuery("q-denied")),
+      ),
+      http.get("/api/queries/q-denied/rows", () =>
+        HttpResponse.json(
+          {
+            error: "grant_denied",
+            message: "reader access required",
+            details: null,
+          },
+          { status: 403 },
+        ),
+      ),
+    );
+    renderWithProviders({ initialRoute: WS_ROUTE });
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /don't have access/i,
+    );
   });
 
   it("forgets a last run that no longer exists", async () => {

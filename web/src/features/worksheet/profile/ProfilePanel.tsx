@@ -1,9 +1,17 @@
+import { ApiError } from "@/api/client";
 import { useQueryProfile } from "@/queries/queries";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatBytes } from "@/utils";
 import { ProfileSummary } from "./ProfileSummary";
 import { ProfileTree } from "./ProfileTree";
 import { BADGE_LABELS, isSpilled } from "./highlights";
+
+/** Why no profile is shown: a 403 means the reader lacks the query's grants. */
+export function noProfileMessage(error: unknown): string {
+  if (error instanceof ApiError && error.status === 403)
+    return "You don't have access to the data this query read, so its profile can't be shown.";
+  return "No profile for this query (DDL/DML or profiling unavailable).";
+}
 
 function EmptyState({ message }: { message: string }) {
   return (
@@ -24,7 +32,7 @@ export function ProfilePanel({
   // the run that produced the result.
   cached?: boolean;
 }) {
-  const { data: profile, isLoading } = useQueryProfile(queryId, enabled);
+  const { data: profile, isLoading, error } = useQueryProfile(queryId, enabled);
 
   if (!enabled) {
     return (
@@ -41,9 +49,7 @@ export function ProfilePanel({
     );
   }
   if (!profile) {
-    return (
-      <EmptyState message="No profile for this query (DDL/DML or profiling unavailable)." />
-    );
+    return <EmptyState message={noProfileMessage(error)} />;
   }
 
   return (

@@ -119,4 +119,23 @@ describe("ProfilePanel", () => {
       screen.queryByText(/Served from the result cache/i),
     ).not.toBeInTheDocument();
   });
+
+  it("says the reader lacks access when the profile is refused", async () => {
+    server.use(
+      http.get("/api/queries/:id/profile", () =>
+        HttpResponse.json(
+          {
+            error: "grant_denied",
+            message: "reader access required",
+            details: null,
+          },
+          { status: 403 },
+        ),
+      ),
+    );
+    renderPanel();
+    expect(
+      await screen.findByText(/don't have access to the data this query read/i),
+    ).toBeInTheDocument();
+  });
 });

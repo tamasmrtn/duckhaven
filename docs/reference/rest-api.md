@@ -823,3 +823,22 @@ Together with the wait above, a statement whose result fits in that page costs *
 
 `API_VERSION` is **unchanged**: both fields are optional, an older server ignores them, and a client
 that never sends them sees the previous always-202 behaviour.
+
+### The whole result as Arrow on the statement response
+
+| Field | Default | Meaning |
+|---|---|---|
+| `inline_format` | `json` | `arrow` returns the whole result as `inline_arrow`, a base64 [Arrow IPC stream](#whole-results-as-arrow-or-parquet), in place of `first_page`; `first_page_limit` is then ignored. |
+
+A result is inlined when the statement finishes within its wait and the result is at most
+`SQL_STATEMENT_INLINE_ARROW_MAX_BYTES` (256 KiB) both as a file and as an Arrow stream. Otherwise `inline_arrow` is
+null, and the result is read from [`GET /api/queries/{query_id}/result`](#whole-results-as-arrow-or-parquet): a larger
+result, one that could not be read, and one whose statement outran the wait. A small result then costs **one** HTTP
+call, as in JSON, and its values are as exact as the stream's. A server without the field ignores it and sends no
+`inline_arrow`.
+
+### Whether a query has a result to read
+
+Every query response carries `has_result`: `true` when the finished query has a result grid, `false` for DDL/DML,
+which has none, and `null` until the query is done. A client that sees `false` has nothing to fetch, so a DDL statement
+costs it one call too.

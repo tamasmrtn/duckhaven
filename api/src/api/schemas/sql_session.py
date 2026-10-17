@@ -117,6 +117,12 @@ class SqlStatementCreate(BaseModel):
     # default -- should say so: the page is serialized onto the same response the
     # completion wait exists to keep short.
     first_page_limit: int | None = Field(default=None, ge=0, le=MAX_FIRST_PAGE_LIMIT)
+    # "arrow" inlines the whole result as an Arrow IPC stream (`inline_arrow`) in
+    # place of the JSON first page (first_page_limit is then ignored), when the
+    # statement finishes inside its wait and the result is at most
+    # sql_statement_inline_arrow_max_bytes. Otherwise the response has neither,
+    # and the client reads GET /queries/{id}/result.
+    inline_format: Literal["json", "arrow"] = "json"
     # False runs this statement even when a cached result would do. The session's
     # own `use_cache` must also allow the cache for it to be used.
     use_cache: bool = True

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import glob
 import os
 import tempfile
@@ -13,6 +14,7 @@ import pyarrow as pa
 import pytest
 import pytest_asyncio
 from conftest import seed_workspace
+from fastapi import HTTPException
 from httpx import AsyncClient
 from sqlalchemy import update
 
@@ -251,3 +253,89 @@ async def test_an_empty_result_is_still_a_readable_stream():
     table = pa.ipc.open_stream(content).read_all()
     assert table.num_rows == 0
     assert table.schema.names == ["n"]
+
+
+# --- the whole result inline, for a statement response -------------------------
+
+
+async def test_an_inline_result_is_the_same_arrow_as_the_stream(agent_file, agent):
+    source = query_service.ResultSource(query=Query(), agent=agent)
+    encoded = await result_stream.read_arrow_inline(source, max_bytes=1_048_576)
+    table = pa.ipc.open_stream(base64.b64decode(encoded)).read_all()
+    [row] = table.to_pylist()
+    assert row["dec"] == Decimal("123456789012345678.1234567891")
+    assert row["big"] == 9007199254740993
+    assert row["rec"] == {"x": Decimal("1.5")}
+    assert agent_file.closed == 1
+
+
+async def test_a_result_file_over_the_cap_is_not_inlined(agent_file, agent):
+    source = query_service.ResultSource(query=Query(), agent=agent)
+    assert await result_stream.read_arrow_inline(source, max_bytes=100) is None
+    assert agent_file.closed == 1  # stopped reading, and let the upstream go
+
+
+async def test_a_result_over_the_cap_as_arrow_is_not_inlined():
+    """Parquet compresses what Arrow does not: a small file can be a large stream."""
+    content = _parquet("SELECT 7::BIGINT AS n FROM range(200000)")
+    source = query_service.ResultSource(query=Query(), inline=content)
+    assert len(content) < 10_000
+    assert await result_stream.read_arrow_inline(source, max_bytes=10_000) is None
+
+
+async def test_an_unreadable_inline_result_is_an_error_status(agent_file, agent):
+    agent_file.status = 404
+    source = query_service.ResultSource(query=Query(), agent=agent)
+    with pytest.raises(HTTPException) as exc:
+        await result_stream.read_arrow_inline(source, max_bytes=1_048_576)
+    assert exc.value.status_code == 410
+
+
+async def test_encoding_stops_soon_after_the_stream_passes_the_cap(monkeypatch):
+    """A few KB of Parquet can be a gigabyte of Arrow: a constant column is one
+    run-length entry on disk and eight bytes a row in memory. Encoding must stop at
+    the cap rather than build the whole stream to measure it."""
+    content = _parquet("SELECT 7::BIGINT AS n FROM range(5000000)")
+    consumed = 0
+    real = result_stream.pq.ParquetFile
+
+    class Counting(real):
+        def iter_batches(self, *args, **kwargs):
+            nonlocal consumed
+            for batch in super().iter_batches(*args, **kwargs):
+                consumed += 1
+                yield batch
+
+    monkeypatch.setattr(result_stream.pq, "ParquetFile", Counting)
+    source = query_service.ResultSource(query=Query(), inline=content)
+
+    assert await result_stream.read_arrow_inline(source, max_bytes=65_536) is None
+    # 4096 rows of 8 bytes is 32 KiB a batch: the cap is passed on the third.
+    assert consumed <= 3, consumed
+
+
+FLOOR_SQL = """
+SELECT (i % 100)::TINYINT AS a, (i % 1000)::SMALLINT AS b, i::INTEGER AS c,
+       i::BIGINT AS d, i::UBIGINT AS e,
+       i::DECIMAL(4,0) AS f, i::DECIMAL(38,10) AS g, i::FLOAT AS h, i::DOUBLE AS j,
+       DATE '2026-01-01' + i::INTEGER AS k, TIMESTAMP '2026-01-01' + to_seconds(i) AS l,
+       TIMESTAMPTZ '2026-01-01 00:00:00+00' AS m, TIME '01:02:03' AS n, to_days(i::INTEGER) AS o,
+       uuid() AS p, CASE WHEN i % 3 = 0 THEN NULL ELSE 'v' || i END AS q, ''::BLOB AS r,
+       [i, i] AS s, MAP {'k': i} AS t, {'x': i} AS u, i % 2 = 0 AS v,
+       NULL::BIGINT AS w, NULL::VARCHAR AS x
+FROM range(@N@) r(i)
+"""
+
+
+@pytest.mark.parametrize("n", [1, 100, 5000])
+def test_the_size_floor_never_exceeds_the_real_stream(n):
+    """A floor that overshoots would refuse results that fit; it must not, for any type."""
+    sql = FLOOR_SQL.replace("@N@", str(n))
+    conn = duckdb.connect()
+    try:
+        schema = [{"name": c, "type": t} for c, t, *_ in conn.sql(f"DESCRIBE {sql}").fetchall()]
+    finally:
+        conn.close()
+    ipc = result_stream._arrow_ipc_within(_parquet(sql), max_bytes=1 << 30)
+    floor = result_stream.arrow_size_floor(n, schema)
+    assert 0 < floor <= len(ipc), (floor, len(ipc))

@@ -25,7 +25,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.config import settings
 from api.deps import get_current_user, get_db, get_polaris_client
-from api.metrics import record_sql_session_closed, record_statement_policy_rejection
+from api.metrics import (
+    record_sql_session_closed,
+    record_statement_inline,
+    record_statement_policy_rejection,
+)
 from api.models.agent import Agent
 from api.models.query import Query
 from api.models.sql_session import SqlSession
@@ -43,7 +47,7 @@ from api.schemas.sql_session import (
     StagingFilesOut,
 )
 from api.services import query as query_service
-from api.services import session_credentials, sql_params, staging_presign
+from api.services import result_stream, session_credentials, sql_params, staging_presign
 from api.services import statement_policy as policy
 from api.services.agent_access import assert_agent_tier
 from api.services.agent_dispatch import is_agent_connected
@@ -702,6 +706,8 @@ async def run_statement(
 async def _with_first_page(db: AsyncSession, query: Query, body: SqlStatementCreate):
     """The statement's response, with its first page of rows inlined when it is
     done, produced rows, and the caller did not opt out."""
+    if body.inline_format == "arrow":
+        return await _with_inline_arrow(db, query)
     # On unless the caller opts out with 0: the round trip this removes is paid by
     # every client, including ones that will never send the field.
     first_page_limit = (
@@ -730,6 +736,40 @@ async def _with_first_page(db: AsyncSession, query: Query, body: SqlStatementCre
             logger.warning("Could not inline the first page for statement %s", query.id)
         return out
     return query
+
+
+async def _with_inline_arrow(db: AsyncSession, query: Query):
+    """The statement's response with its whole result inlined as Arrow, when it is
+    done, produced rows, and is small enough to carry."""
+    if not query.has_result:
+        # Still running, failed, or DDL/DML: has_result tells the client which.
+        return query
+    max_bytes = settings.sql_statement_inline_arrow_max_bytes
+    if query.result_bytes is None:
+        # An agent too old to report the size: the client reads /result, as it
+        # would against a server without this field.
+        record_statement_inline("unsized")
+        return query
+    if (
+        query.result_bytes > max_bytes
+        or result_stream.arrow_size_floor(query.row_count or 0, query.result_schema) > max_bytes
+    ):
+        # Too big as a file, or certain to be once decoded: not worth reading.
+        record_statement_inline("too_large")
+        return query
+    out = QueryOut.model_validate(query, from_attributes=True)
+    try:
+        source = await query_service.resolve_result_source(db, query)
+        out.inline_arrow = await result_stream.read_arrow_inline(source, max_bytes)
+    except HTTPException:
+        # As for the JSON first page: the statement succeeded, only its result is
+        # momentarily unreachable, and /result reports why.
+        logger.warning("Could not inline the Arrow result for statement %s", query.id)
+        record_statement_inline("unavailable")
+        return out
+    # "arrow_too_large" is the one wasted read: it fit every check before encoding.
+    record_statement_inline("inlined" if out.inline_arrow is not None else "arrow_too_large")
+    return out
 
 
 @router.post(

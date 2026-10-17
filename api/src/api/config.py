@@ -265,6 +265,13 @@ class Settings(BaseSettings):
     # for a different number, or 0 to opt out. Bounded because a statement response
     # is not a bulk transport -- a result larger than this pages from here as usual.
     sql_statement_first_page_limit: int = 200
+    # Largest result a statement response carries whole as Arrow, when the request
+    # asks for it with `inline_format: "arrow"`: checked against the result file
+    # before reading it, and against the Arrow stream while encoding it. A bigger
+    # result is read from GET /queries/{id}/result instead. Small, because the
+    # stream travels base64 in JSON, a third larger: past a few hundred KB the
+    # extra bytes cost more than the round trip they save on an ordinary link.
+    sql_statement_inline_arrow_max_bytes: int = 262_144
 
     # ── Result cache ──────────────────────────────────────────────────────────
     # A repeated read is answered from an earlier run's result while every table

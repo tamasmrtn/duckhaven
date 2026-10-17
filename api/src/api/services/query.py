@@ -206,35 +206,43 @@ async def dispatch_query(
     await db.commit()
 
 
+def _utc(value: datetime) -> datetime:
+    """A timestamp read back from the database, as an aware UTC datetime (SQLite
+    returns them naive)."""
+    return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+
+
 async def handle_agent_frame(db: AsyncSession, frame: Frame, polaris=None) -> None:
     query_id = uuid.UUID(frame.payload["query_id"])
     if frame.type == FrameType.QUERY_PROGRESS:
         progress = {k: v for k, v in frame.payload.items() if k != "query_id"}
-        # First queued -> running transition: record how long the query waited in
-        # the agent's admission queue before it started executing.
-        query = await db.get(Query, query_id)
-        # A late frame (the reaper already failed the row) must never bring a
-        # terminal query back to life.
-        if query is None or query.status not in ("queued", "running"):
-            return
-        if query.status == "queued" and query.origin is None:
-            started = query.started_at
-            if started.tzinfo is None:
-                started = started.replace(tzinfo=UTC)
-            record_query_queue_wait((datetime.now(tz=UTC) - started).total_seconds())
-        values: dict = {"status": "running", "progress": progress or None}
-        # The first progress frame is when execution started. Persisted for every
-        # origin, unlike the histogram above (interactive only). A session statement
-        # is already "running" once its receipt is acked, before it gets the session
-        # lock, so it is the missing running_at, not the status, that marks it.
-        if query.running_at is None:
-            values["running_at"] = datetime.now(tz=UTC)
-        await db.execute(
-            sa.update(Query)
-            .where(Query.id == query_id, Query.status.in_(("queued", "running")))
-            .values(**values)
-        )
+        now = datetime.now(tz=UTC)
+        # One statement, not a read then a write. The status condition is what
+        # keeps a late frame (the reaper already failed the row) from bringing a
+        # terminal query back to life. The first progress frame is when execution
+        # started, so it stamps running_at, kept by every later one. A session
+        # statement is already "running" once its receipt is acked, before it gets
+        # the session lock, so it is the missing running_at, not the status, that
+        # marks it.
+        row = (
+            await db.execute(
+                sa.update(Query)
+                .where(Query.id == query_id, Query.status.in_(("queued", "running")))
+                .values(
+                    status="running",
+                    progress=progress or None,
+                    running_at=sa.func.coalesce(Query.running_at, now),
+                )
+                .returning(Query.origin, Query.started_at, Query.running_at)
+                .execution_options(synchronize_session=False)
+            )
+        ).first()
         await db.commit()
+        # This frame set running_at only if it was the first, so this is the
+        # queued -> running transition: record how long an interactive query
+        # waited in the agent's admission queue before it started executing.
+        if row is not None and row.origin is None and _utc(row.running_at) == now:
+            record_query_queue_wait((now - _utc(row.started_at)).total_seconds())
         return
     if frame.type == FrameType.QUERY_DONE:
         status_val = frame.payload.get("status", "done")
@@ -323,12 +331,19 @@ async def _record_lineage(db: AsyncSession, query: Query, polaris=None) -> None:
     from api.services.lineage.columns import CatalogSchemaLookup
     from api.services.lineage.ingest import record_execution_lineage, workspace_catalog_context
 
+    # Only a write establishes a relationship, so a statement made only of reads
+    # has none to record: skip it before reading the workspace's catalogs and
+    # committing, which every completed query otherwise paid for nothing.
+    if not query.sql or is_read_only(query.sql):
+        return
     try:
-        schemas = None
-        if polaris is not None:
-            context = await workspace_catalog_context(db, query.workspace_id)
-            schemas = CatalogSchemaLookup(polaris, {c.id: c for c in context.catalogs})
-        await record_execution_lineage(db, query, schemas=schemas)
+        context = await workspace_catalog_context(db, query.workspace_id)
+        schemas = (
+            CatalogSchemaLookup(polaris, {c.id: c for c in context.catalogs})
+            if polaris is not None
+            else None
+        )
+        await record_execution_lineage(db, query, schemas=schemas, context=context)
         await db.commit()
     except Exception:
         logger.exception("Lineage extraction failed for query %s", query.id)

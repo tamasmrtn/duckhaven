@@ -1306,6 +1306,38 @@ async def test_statement_wait_expiry_returns_202_still_running(
     assert query.status == "queued"
 
 
+@pytest.mark.parametrize(("local", "interval"), [(True, 0.5), (False, 0.05)])
+async def test_statement_wait_polls_fast_only_when_it_cannot_hear_completion(
+    authed_client, db_session, workspace, agent, user, enabled, monkeypatch, local, interval
+):
+    """With the agent's socket here, its QUERY_DONE wakes the wait, so the poll is
+    only a backstop; with the socket on another replica the poll is the signal."""
+    session = await _open_session_row(db_session, workspace, agent, user)
+    if local:
+        registry.register(agent.id, MockWebSocket())  # type: ignore[arg-type]
+    seen = {}
+
+    async def fake_exec(db, sess, query, timeout_s, catalogs):
+        return True
+
+    async def fake_wait(db, query, timeout_s, **kwargs):
+        seen.update(kwargs)
+        return query
+
+    monkeypatch.setattr(session_service, "dispatch_exec_statement", fake_exec)
+    monkeypatch.setattr(session_service, "await_query_done", fake_wait)
+
+    try:
+        resp = await authed_client.post(
+            f"/sql/sessions/{session.id}/statements", json={"sql": "SELECT 1", "wait_timeout_s": 5}
+        )
+    finally:
+        registry.unregister(agent.id)
+    assert resp.status_code == 202, resp.text
+    assert seen["poll_interval_s"] == interval
+    assert seen["done"] is not None
+
+
 async def test_statement_wait_zero_answers_immediately(
     authed_client, db_session, workspace, agent, user, enabled, monkeypatch
 ):

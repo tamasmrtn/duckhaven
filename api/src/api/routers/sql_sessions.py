@@ -51,6 +51,7 @@ from api.services import result_stream, session_credentials, sql_params, staging
 from api.services import statement_policy as policy
 from api.services.agent_access import assert_agent_tier
 from api.services.agent_dispatch import is_agent_connected
+from api.services.agent_registry import registry
 from api.services.compute import service as compute_service
 from api.services.grants import GrantDenied, assert_query_access
 from api.services.migration.service import workspace_has_active_migration
@@ -81,6 +82,12 @@ from api.services.workspace import (
 
 router = APIRouter()
 
+# How soon a statement wait first re-reads the row. Its agent's socket on another
+# replica means the completion event cannot fire here and the read is the only
+# signal; on this replica the event does, and the read is just the backstop.
+_REMOTE_POLL_S = 0.05
+_BACKSTOP_POLL_S = 0.5
+
 logger = logging.getLogger(__name__)
 
 
@@ -91,8 +98,10 @@ def _require_enabled() -> None:
         )
 
 
-async def _load_session(db: AsyncSession, session_id: uuid.UUID, user: User) -> SqlSession:
-    session = await db.get(SqlSession, session_id)
+async def _load_session(
+    db: AsyncSession, session_id: uuid.UUID, user: User, *, for_update: bool = False
+) -> SqlSession:
+    session = await db.get(SqlSession, session_id, with_for_update=for_update)
     if session is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
     await assert_workspace_member(db, session.workspace_id, user.id)
@@ -542,12 +551,12 @@ async def run_statement(
     that outlives the budget comes back 202 and is polled through
     `GET /queries/{id}` as before — it is never cancelled for outrunning a wait."""
     _require_enabled()
-    session = await _load_session(db, session_id, user)
-    # Lock the session row until this statement is committed. The grant check
-    # below resolves unqualified names in the context left by the statements
-    # before it; a concurrent submit on the same session (say, a USE) must be
-    # visible to that check, not land between the check and this dispatch.
-    await db.refresh(session, with_for_update=True)
+    # Lock the session row until this statement is committed, in the read that
+    # loads it. The grant check below resolves unqualified names in the context
+    # left by the statements before it; a concurrent submit on the same session
+    # (say, a USE) must be visible to that check, not land between the check and
+    # this dispatch.
+    session = await _load_session(db, session_id, user, for_update=True)
     if session.status != "open":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -675,24 +684,37 @@ async def run_statement(
     # `queued` until QUERY_DONE arrives.
     await db.commit()
 
-    if not await session_service.dispatch_exec_statement(
-        db, session, query, body.timeout_s, catalogs
-    ):
-        query.status = "failed"
-        query.error = "agent not connected"
-        query.finished_at = datetime.now(tz=UTC)
-        await db.commit()
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Agent not connected"
-        )
+    # Listening before dispatch, so a completion however fast is not missed, and
+    # the wait need not read back a row this request has just committed as queued.
+    with query_service.completion_waiter(query.id) as done:
+        if not await session_service.dispatch_exec_statement(
+            db, session, query, body.timeout_s, catalogs
+        ):
+            query.status = "failed"
+            query.error = "agent not connected"
+            query.finished_at = datetime.now(tz=UTC)
+            await db.commit()
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Agent not connected"
+            )
 
-    wait_s = (
-        settings.sql_statement_wait_timeout_s
-        if body.wait_timeout_s is None
-        else body.wait_timeout_s
-    )
-    if wait_s > 0:
-        await session_service.await_query_done(db, query, wait_s)
+        wait_s = (
+            settings.sql_statement_wait_timeout_s
+            if body.wait_timeout_s is None
+            else body.wait_timeout_s
+        )
+        if wait_s > 0:
+            # With the agent's socket in this process, its QUERY_DONE is handled
+            # here and sets `done`, so the poll is only the backstop for a statement
+            # the reaper fails: it need not wake every 50 ms to find it running.
+            local = session.agent_id is not None and registry.get(session.agent_id) is not None
+            await session_service.await_query_done(
+                db,
+                query,
+                wait_s,
+                done=done,
+                poll_interval_s=_BACKSTOP_POLL_S if local else _REMOTE_POLL_S,
+            )
     if query.status not in ("queued", "running"):
         # Finished inside the budget: answer 200 with the terminal row rather than
         # the decorator's 202, which promises a result that has not happened yet.

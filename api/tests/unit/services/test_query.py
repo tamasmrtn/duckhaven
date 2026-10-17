@@ -566,6 +566,56 @@ async def test_lineage_failure_does_not_break_frame_handling(db_session, monkeyp
     assert (await db_session.execute(select(LineageEdge))).scalars().all() == []
 
 
+async def _done_with_lineage_spy(db_session, monkeypatch, sql):
+    """Finish a query with ``sql``; return what the lineage path read and recorded."""
+    from api.models.lineage import LineageEdge
+    from api.services.lineage import ingest
+
+    ws, catalog = await _make_workspace(db_session)
+    query = Query(
+        workspace_id=ws.id,
+        sql=sql.format(c=catalog.slug),
+        status="queued",
+        active_catalog=catalog.slug,
+    )
+    db_session.add(query)
+    await db_session.commit()
+    reads = []
+    real = ingest.workspace_catalog_context
+
+    async def counting(*args, **kwargs):
+        reads.append(1)
+        return await real(*args, **kwargs)
+
+    monkeypatch.setattr(ingest, "workspace_catalog_context", counting)
+    await query_service.handle_agent_frame(
+        db_session,
+        Frame(type=FrameType.QUERY_DONE, payload={"query_id": str(query.id), "status": "done"}),
+        polaris=object(),
+    )
+    edges = (await db_session.execute(select(LineageEdge))).scalars().all()
+    return len(reads), len(edges)
+
+
+async def test_a_read_only_statement_skips_lineage_entirely(db_session, monkeypatch):
+    """A read establishes no relationship, so there is nothing to look up for it."""
+    reads, edges = await _done_with_lineage_spy(
+        db_session, monkeypatch, "SELECT * FROM {c}.analytics.src"
+    )
+    assert (reads, edges) == (0, 0)
+
+
+async def test_a_script_that_writes_after_a_read_still_records_lineage(db_session, monkeypatch):
+    """The skip looks at every statement, not the first: this one starts as a read."""
+    reads, edges = await _done_with_lineage_spy(
+        db_session,
+        monkeypatch,
+        "SELECT 1; CREATE TABLE {c}.analytics.dim AS SELECT * FROM {c}.analytics.src",
+    )
+    assert reads == 1  # read once and shared, not once per caller
+    assert edges == 1
+
+
 async def test_pick_agent_for(db_session):
     ws, _catalog = await _make_workspace(db_session)
     agent = Agent(

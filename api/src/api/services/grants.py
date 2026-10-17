@@ -223,6 +223,23 @@ async def is_scoped(db: AsyncSession, workspace_id: uuid.UUID, catalog: Catalog)
     return await attachment_access_mode(db, workspace_id, catalog.id) == "scoped"
 
 
+async def scoped_catalog_ids(
+    db: AsyncSession, workspace_id: uuid.UUID, catalogs: list[Catalog]
+) -> set[uuid.UUID]:
+    """Which of ``catalogs`` the workspace attaches in scoped mode: :func:`is_scoped`
+    for all of them in one query, for the checks every statement runs."""
+    if not catalogs:
+        return set()
+    rows = await db.execute(
+        select(WorkspaceCatalog.catalog_id).where(
+            WorkspaceCatalog.workspace_id == workspace_id,
+            WorkspaceCatalog.catalog_id.in_([c.id for c in catalogs]),
+            WorkspaceCatalog.access_mode == "scoped",
+        )
+    )
+    return set(rows.scalars())
+
+
 async def enforce_leaf(
     db: AsyncSession,
     workspace_id: uuid.UUID,
@@ -636,7 +653,7 @@ async def assert_query_access(
     # Import here to avoid a module-level cycle with the workspace service.
     from api.services.workspace import DEFAULT_SCHEMA
 
-    scoped_ids = {c.id for c in catalogs if await is_scoped(db, workspace_id, c)}
+    scoped_ids = await scoped_catalog_ids(db, workspace_id, catalogs)
     if not scoped_ids:
         return
 

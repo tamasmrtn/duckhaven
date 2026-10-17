@@ -114,6 +114,9 @@ it. See [Manage catalogs](manage-catalogs.md#browse).
 - Results belong to the worksheet that produced them: switching tabs shows each tab's own last run, and a new tab starts
   empty. After a reload the last run's results come back for as long as the agent keeps them (24 hours); after that the
   pane says they have expired and to run the query again.
+- In a workspace with a scoped catalog, reading a result needs the grants that running its query would (see
+  [Permissions](../concepts/permissions.md#reading-a-result-needs-the-same-grants-as-running-its-query)). Without
+  them, the results pane and the query profile say you don't have access to the data the query read.
 - When you edit the SQL after running it, a *From an earlier version of this query* marker appears beside the results.
 - Each column header shows its data type; hover a header for the full type when it's too long to fit.
 - Click a column header to sort by that column. Sorting only reorders the rows already loaded — if

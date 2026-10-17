@@ -239,4 +239,24 @@ describe("QueryProfilePage", () => {
       ).toBeInTheDocument(),
     );
   });
+
+  it("says the reader lacks access when the profile is refused", async () => {
+    server.use(
+      http.get("/api/queries/:id/profile", () =>
+        HttpResponse.json(
+          {
+            error: "grant_denied",
+            message: "reader access required",
+            details: null,
+          },
+          { status: 403 },
+        ),
+      ),
+    );
+    renderWithProviders({ initialRoute: ROUTE });
+    expect(
+      await screen.findByText(/don't have access to the data this query read/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/No profile for this query/i)).toBeNull();
+  });
 });

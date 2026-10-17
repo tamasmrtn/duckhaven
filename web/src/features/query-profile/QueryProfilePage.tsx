@@ -8,6 +8,7 @@ import { PageHeader } from "@/components/ui/page-header";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useQuery_, useQueryProfile } from "@/queries/queries";
 import { ProfileSummary } from "@/features/worksheet/profile/ProfileSummary";
+import { noProfileMessage } from "@/features/worksheet/profile/ProfilePanel";
 import { ProfileGraph } from "./ProfileGraph";
 import { ProfileSidebar } from "./ProfileSidebar";
 import { layoutTree } from "./layout";
@@ -24,7 +25,7 @@ export function QueryProfilePage() {
   const { ws, queryId } = useParams({ from: "/$ws/queries/$queryId" });
   const { data: query } = useQuery_(queryId);
   const done = query?.status === "done";
-  const { data: profile, isLoading } = useQueryProfile(queryId, done);
+  const { data: profile, isLoading, error } = useQueryProfile(queryId, done);
   const [selectedId, setSelectedId] = useState<string | null>("0");
 
   const layout = useMemo(
@@ -69,7 +70,7 @@ export function QueryProfilePage() {
           ))}
         </div>
       ) : !profile || !layout ? (
-        <Centered message="No profile for this query (DDL/DML or profiling unavailable)." />
+        <Centered message={noProfileMessage(error)} />
       ) : (
         <>
           {query?.cache_status === "hit" && query.result_source_query_id && (

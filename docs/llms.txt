@@ -29,7 +29,7 @@
 - [Elastic compute](https://tamasmrtn.github.io/duckhaven/concepts/elastic-compute/): Provisioning agents on demand and terminating them when they go idle.
 - [Runtimes](https://tamasmrtn.github.io/duckhaven/concepts/runtimes/): A runtime is the DuckDB an agent runs, together with the extensions baked into its image.
 - [Storage backends](https://tamasmrtn.github.io/duckhaven/concepts/storage-backends/): Where Iceberg data physically lives, and how credentials reach an agent.
-- [Query execution](https://tamasmrtn.github.io/duckhaven/concepts/query-execution/): Queueing, memory estimation, and concurrency.
+- [Query execution](https://tamasmrtn.github.io/duckhaven/concepts/query-execution/): Queueing, memory estimation and concurrency, and the column types and exact values a result carries.
 - [Result cache](https://tamasmrtn.github.io/duckhaven/concepts/result-cache/): Answering a repeated query from an earlier run's result while nothing it reads has changed.
 - [SQL sessions](https://tamasmrtn.github.io/duckhaven/concepts/sql-sessions/): Persistent connections for dbt, dlt and other Python DB-API clients, brokered through the API.
 - [Permissions](https://tamasmrtn.github.io/duckhaven/concepts/permissions/): Per-workspace access control and audit trail.
@@ -91,9 +91,9 @@
 ## Reference
 
 - [Configuration](https://tamasmrtn.github.io/duckhaven/reference/configuration/): Every control-plane and agent environment variable.
-- [SQL support](https://tamasmrtn.github.io/duckhaven/reference/sql-support/): Supported SQL surface and DuckDB features.
+- [SQL support](https://tamasmrtn.github.io/duckhaven/reference/sql-support/): Supported SQL surface and DuckDB features, and binding typed query parameters.
 - [Agent reference](https://tamasmrtn.github.io/duckhaven/reference/agent-reference/): Agent configuration and behavior.
 - [CLI reference](https://tamasmrtn.github.io/duckhaven/reference/cli/): Every dh command, its summary and its flags.
-- [REST API](https://tamasmrtn.github.io/duckhaven/reference/rest-api/): The control-plane REST API.
+- [REST API](https://tamasmrtn.github.io/duckhaven/reference/rest-api/): The control-plane REST API: exact result values, Arrow and Parquet downloads, query parameters, describe, workspace metadata, waiting for a result, and client and tags.
 - [API conventions](https://tamasmrtn.github.io/duckhaven/reference/api-conventions/): The rules every DuckHaven REST endpoint follows.
 - [Operator scripts](https://tamasmrtn.github.io/duckhaven/reference/operator-scripts/): DuckHaven ships a few small helper scripts under scripts/ for operators.

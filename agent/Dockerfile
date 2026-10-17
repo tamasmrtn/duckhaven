@@ -1,7 +1,9 @@
 # ── Builder ──────────────────────────────────────────────────────────────────
 # -dev keeps a shell for the build; runtime below is distroless. Pinned by
-# digest since :latest rebuilds continuously (tracked by Dependabot).
-FROM cgr.dev/chainguard/python:latest-dev@sha256:f07413fa2abb281095b499d58ba7bf6e87d45411dda711e59f2c755efff1d91e AS builder
+# digest since :latest rebuilds continuously (tracked by Dependabot). The tag
+# also follows new Python minors: check `python --version` of a bumped digest,
+# since every compiled dependency needs wheels for that minor first.
+FROM cgr.dev/chainguard/python:latest-dev@sha256:48431f8d4bc6837b375af28570a4b0245410360b56d5633768de5490bbc283e4 AS builder
 USER root
 
 # uv is a build-time tool — copy the pinned binary instead of pip-installing it.
@@ -18,8 +20,10 @@ COPY pyproject.toml uv.lock ./
 COPY agent/pyproject.toml agent/
 COPY shared/pyproject.toml shared/
 
-# Install third-party dependencies only (no workspace members yet).
-RUN uv sync --frozen --no-dev --no-editable --package duckhaven-agent --no-install-workspace
+# Install third-party dependencies only (no workspace members yet). --no-build:
+# wheels only, so a dependency with no wheel for this Python fails here at once
+# instead of compiling from source (hours for Rust or C++ under arm64 emulation).
+RUN uv sync --frozen --no-dev --no-editable --package duckhaven-agent --no-install-workspace --no-build
 
 # Bring in workspace source and build + install the duckhaven-shared and
 # duckhaven-agent wheels into /app/.venv (--no-editable: source not needed at runtime).
@@ -35,7 +39,7 @@ ARG DUCKHAVEN_RUNTIME=1.5
 ARG DUCKHAVEN_APP_VERSION=0.0.0-dev
 COPY agent/runtimes agent/runtimes
 RUN if [ -f "agent/runtimes/${DUCKHAVEN_RUNTIME}.txt" ]; then \
-        uv pip install --python /app/.venv/bin/python --require-hashes --no-deps \
+        uv pip install --python /app/.venv/bin/python --require-hashes --no-deps --no-build \
             -r "agent/runtimes/${DUCKHAVEN_RUNTIME}.txt"; \
     fi
 
@@ -61,7 +65,7 @@ RUN mkdir -p /var/duckhaven-agent/results
 # ── Runtime ──────────────────────────────────────────────────────────────────
 # Distroless: no shell, package manager, or apt/dpkg — the unfixable
 # OS-package CVEs the old purge-and-upgrade step chased don't exist here.
-FROM cgr.dev/chainguard/python:latest@sha256:197cf542e9f4dc373864faecd4fd1a4f642622e654e9196881ca852e8fdf26bd AS runtime
+FROM cgr.dev/chainguard/python:latest@sha256:1961420e5f93bd056d4b0b40eca12cdf01b3ed09177aa4d6ec71fab38cbf158f AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \

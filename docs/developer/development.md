@@ -169,7 +169,12 @@ dependencies and appear only in `uv.lock`. Keeping those current is the part tha
   grouped pull request; major bumps come one at a time. Without this, a package that is only in the lockfile
   stays on whatever version was first resolved.
 - **Chainguard base images** are pinned by digest, and Dependabot bumps those digests weekly, which is how
-  operating-system fixes (zlib, the Python interpreter) reach the images.
+  operating-system fixes (zlib, the Python interpreter) reach the images. The free `latest` tags also move to
+  each new **Python minor** as soon as it ships, so a digest bump can silently change Python (3.14 to 3.15 did).
+  Before merging one, check `python --version` in the new image. Every compiled dependency (DuckDB,
+  `pydantic-core`, …) needs wheels for that Python first. The images install third-party packages with
+  `--no-build`, so a missing wheel fails the PR's image build within seconds, naming the package, instead of
+  compiling it from source for hours.
 - **A weekly Trivy scan** (`.github/workflows/security.yml`) builds both images from `main` and also scans the
   images of the latest release as published on GHCR. HIGH and CRITICAL findings land in the repository's
   code scanning alerts, under one category per image (`trivy-api`, `trivy-agent-<runtime>`,

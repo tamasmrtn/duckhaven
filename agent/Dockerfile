@@ -3,7 +3,7 @@
 # digest since :latest rebuilds continuously (tracked by Dependabot). The tag
 # also follows new Python minors: check `python --version` of a bumped digest,
 # since every compiled dependency needs wheels for that minor first.
-FROM cgr.dev/chainguard/python:latest-dev@sha256:48431f8d4bc6837b375af28570a4b0245410360b56d5633768de5490bbc283e4 AS builder
+FROM cgr.dev/chainguard/python:latest-dev@sha256:f5915032c39146631447a42ef7421350d1a0312e4224a0658b96a4af47e56aa2 AS builder
 USER root
 
 # uv is a build-time tool — copy the pinned binary instead of pip-installing it.
@@ -65,7 +65,7 @@ RUN mkdir -p /var/duckhaven-agent/results
 # ── Runtime ──────────────────────────────────────────────────────────────────
 # Distroless: no shell, package manager, or apt/dpkg — the unfixable
 # OS-package CVEs the old purge-and-upgrade step chased don't exist here.
-FROM cgr.dev/chainguard/python:latest@sha256:1961420e5f93bd056d4b0b40eca12cdf01b3ed09177aa4d6ec71fab38cbf158f AS runtime
+FROM cgr.dev/chainguard/python:latest@sha256:26a608c1549ee52eeb717bf66bce5e60cebaa4a0cd2a57774dfd49484bd38c9a AS runtime
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \

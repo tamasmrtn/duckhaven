@@ -308,3 +308,14 @@ def test_the_product_block_names_the_v1_scope_limits():
     assert "cannot render a chart" in PRODUCT_PROMPT
     assert "charted in a worksheet" in PRODUCT_PROMPT
     assert "cannot run on a schedule" in PRODUCT_PROMPT
+
+
+def test_exact_numbers_are_presented_as_exact():
+    """api_version 3 sends DECIMAL and wide integers as exact strings. The rule
+    this replaced told the model they had passed through a float, so it hedged
+    on numbers that were exact."""
+    text = build_instructions(ctx())
+
+    assert "through a float" not in text
+    assert "exact JSON strings" in text
+    assert "column_types" in text

@@ -86,9 +86,10 @@ DuckHaven itself:
 
 The server also hands the agent a short set of instructions about DuckHaven's own behaviour — that the dialect is DuckDB
 over Iceberg, that tables are addressed as `catalog.schema.table`, that an Iceberg table's columns come from
-`describe_table` rather than `information_schema.columns`, and that the [SQL guard](../reference/sql-support.md) rejects
-disallowed statements before a compute agent sees them. Agents get these wrong from general knowledge of other
-platforms, and a confidently wrong answer is worse than none.
+`describe_table` rather than `information_schema.columns`, that the [SQL guard](../reference/sql-support.md) rejects
+disallowed statements before a compute agent sees them, and that decimals and large integers arrive as exact strings,
+with a `column_types` entry in each result naming every column's type. Agents get these wrong from general knowledge
+of other platforms, and a confidently wrong answer is worse than none.
 
 ### Documentation lookup
 
@@ -116,9 +117,8 @@ because the pages are the same for everyone.
 `MCP_RESULT_BYTE_CAP`. The rest is not lost: the result carries a `query_id` and a `cursor` that `get_query_result`
 pages through. This keeps a `SELECT *` over a large table from filling the agent's context in one call.
 
-Paging is restricted to queries **your own token ran**. The underlying rows endpoint authorizes on workspace membership
-alone, so without that restriction a reader could page a colleague's result set by query id and see more than their own
-grants allow.
+Paging is restricted to queries **your own token ran**. Reading any result already needs the grants its query needs,
+but an agent has no reason to reach into a colleague's runs by query id, so it cannot.
 
 ### Lineage
 

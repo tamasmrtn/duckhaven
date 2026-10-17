@@ -480,9 +480,10 @@ class Gateway:
     async def run_sql(self, sql: str, *, catalog: str | None, timeout_s: float) -> dict:
         """Submit a query, poll to completion, and return a capped result sample.
 
-        Returns a dict with ``query_id``, ``status``, ``columns``, capped ``rows``,
-        ``total`` row count, and a ``truncated`` flag. Raises :class:`GatewayError`
-        with a model-friendly message on any governed rejection or failure.
+        Returns a dict with ``query_id``, ``status``, ``columns``, ``column_types``,
+        capped ``rows``, ``total`` row count, and a ``truncated`` flag. Raises
+        :class:`GatewayError` with a model-friendly message on any governed
+        rejection or failure.
         """
         # No agent_id: the server picks one the way it does for any caller that
         # doesn't care which — compatible with the workspace, on the default
@@ -551,10 +552,9 @@ class Gateway:
             await self._client.delete(f"/queries/{query_id}")
 
     async def get_query_result(self, query_id: str, *, cursor: str | None, limit: int) -> dict:
-        # Governance: the shared rows endpoint authorizes on workspace membership
-        # only, so restrict paging to queries this service account actually ran —
-        # otherwise the assistant could read data from a more-privileged member's
-        # query id, exceeding its own grants.
+        # The rows endpoint re-checks the reader's grants, but paging stays limited
+        # to queries this principal ran: a query id from a colleague's History is
+        # not something a conversation should be able to pull results from.
         record = (await self._get(f"/queries/{query_id}")).json()
         if str(record.get("user_id")) != self._service_account_id:
             raise GatewayError("I can only page results of queries I ran in this conversation.")
@@ -569,13 +569,19 @@ class Gateway:
         resp = await self._get(f"/queries/{query_id}/rows", params=params)
         data = resp.json()
         rows, truncated = self._cap_bytes(data.get("rows", []))
-        return {
+        page: dict[str, object] = {
             "columns": data.get("columns", []),
             "rows": rows,
             "total": data.get("total", len(rows)),
             "cursor": data.get("cursor"),
             "truncated": truncated or len(rows) < len(data.get("rows", [])),
         }
+        # DECIMAL and the wide integers arrive as exact strings, so without the
+        # types a count of "2" reads like text. Absent for an agent too old to
+        # report them.
+        if data.get("column_schema"):
+            page["column_types"] = {c["name"]: c["type"] for c in data["column_schema"]}
+        return page
 
     def _cap_bytes(self, rows: list[dict]) -> tuple[list[dict], bool]:
         """Trim rows so the JSON-serialized sample stays under the byte cap."""

@@ -299,3 +299,46 @@ def test_translate_says_plainly_when_no_agent_can_run_sql():
         )
     )
     assert str(err) == "No compute agent is currently available to run SQL."
+
+
+@respx.mock
+async def test_a_result_names_its_column_types():
+    """Exact numbers arrive as strings; the types say which strings are numbers."""
+    respx.get("http://assistant.internal/queries/q-mine").mock(
+        return_value=httpx.Response(200, json={"id": "q-mine", "user_id": "sa-1"})
+    )
+    respx.get("http://assistant.internal/queries/q-mine/rows").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "rows": [{"n": "2", "label": "x"}],
+                "columns": ["n", "label"],
+                "column_schema": [
+                    {"name": "n", "type": "BIGINT"},
+                    {"name": "label", "type": "VARCHAR"},
+                ],
+                "cursor": None,
+                "total": 1,
+            },
+        )
+    )
+    async with httpx.AsyncClient(base_url="http://assistant.internal") as client:
+        page = await _gateway(client=client).get_query_result("q-mine", cursor=None, limit=10)
+
+    assert page["column_types"] == {"n": "BIGINT", "label": "VARCHAR"}
+
+
+@respx.mock
+async def test_a_result_without_a_schema_has_no_column_types():
+    respx.get("http://assistant.internal/queries/q-mine").mock(
+        return_value=httpx.Response(200, json={"id": "q-mine", "user_id": "sa-1"})
+    )
+    respx.get("http://assistant.internal/queries/q-mine/rows").mock(
+        return_value=httpx.Response(
+            200, json={"rows": [{"n": 1}], "columns": ["n"], "cursor": None, "total": 1}
+        )
+    )
+    async with httpx.AsyncClient(base_url="http://assistant.internal") as client:
+        page = await _gateway(client=client).get_query_result("q-mine", cursor=None, limit=10)
+
+    assert "column_types" not in page

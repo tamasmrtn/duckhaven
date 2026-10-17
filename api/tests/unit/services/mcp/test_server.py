@@ -10,7 +10,7 @@ import pytest
 from httpx import AsyncClient
 
 from api.config import settings
-from api.services.mcp.server import MCP_PATH, build_server
+from api.services.mcp.server import INSTRUCTIONS, MCP_PATH, build_server
 
 from ...conftest import seed_workspace
 from .conftest import call_tool, rpc_body, rpc_headers
@@ -270,3 +270,9 @@ def test_the_transport_metadata_headers_are_part_of_the_contract(method):
     assert headers["MCP-Protocol-Version"] == "2026-07-28"
     assert headers["Mcp-Method"] == method
     assert rpc_body(method)["params"]["_meta"]["io.modelcontextprotocol/protocolVersion"]
+
+
+def test_the_instructions_say_how_exact_numbers_arrive():
+    """MCP clients have no other prompt: without this a "2" reads like text."""
+    assert "exact" in INSTRUCTIONS
+    assert "`column_types`" in INSTRUCTIONS

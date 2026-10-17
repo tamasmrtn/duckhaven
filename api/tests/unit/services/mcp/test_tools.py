@@ -333,11 +333,9 @@ class _NullSessionFactory:
 async def test_the_gateway_is_built_for_the_calling_principal():
     """Paging is restricted to the caller's own queries by this id.
 
-    `/queries/{id}/rows` authorizes on workspace membership alone, so the gateway
-    compares the query's owner against the principal it was built for. Passing the
-    wrong id here would let a reader page a workspace owner's results and exceed
-    their own grants — so the id has to come from the authenticated call, not from
-    anything the client sent.
+    The gateway compares the query's owner against the principal it was built
+    for, so the id has to come from the authenticated call, not from anything the
+    client sent.
     """
     call = McpCall(user_id="user-42", client=object())
     request = SimpleNamespace(scope={SCOPE_KEY: call})

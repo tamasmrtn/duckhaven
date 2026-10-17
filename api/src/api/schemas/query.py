@@ -225,6 +225,9 @@ class QueryOut(BaseModel):
     # to call GET /queries/{id}/rows at all, which is otherwise mandatory just to
     # learn the result's column names.
     first_page: RowsPageOut | None = None
+    # Whether a finished query has a result grid to read: false for DDL/DML, so a
+    # client knows not to ask for rows. Null until the query is done.
+    has_result: bool | None = None
     # What the result cache did with this run: "hit" (answered from an earlier run's
     # result; nothing executed), "miss" (executed), "bypass" (the cache was off or
     # could not decide in time) or "ineligible" (the query can never be cached).

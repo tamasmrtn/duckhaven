@@ -64,6 +64,13 @@ class Query(Base):
         JSON().with_variant(JSONB, "postgresql"), nullable=True
     )
     result_path: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+
+    @property
+    def has_result(self) -> bool | None:
+        """Whether a finished run has a result grid to read: False for DDL/DML,
+        None until the run is done."""
+        return self.result_path is not None if self.status == "done" else None
+
     # The result's column types as the agent reported them: `[{"name", "type"}, ...]`
     # where `type` is DuckDB's own logical-type spelling. Null for DDL/DML (no
     # result grid) and for runs by an agent that predates the field — the API

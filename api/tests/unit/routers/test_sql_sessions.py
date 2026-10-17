@@ -1532,6 +1532,30 @@ async def test_statement_does_not_inline_a_page_for_ddl(
     assert resp.json()["first_page"] is None
 
 
+async def test_a_json_statement_says_when_there_is_no_result_to_read(
+    authed_client, db_session, workspace, agent, user, enabled, monkeypatch
+):
+    """Not only for Arrow: a JSON client also learns from has_result that a DDL
+    statement has no rows, instead of asking for an empty page."""
+    session = await _open_session_row(db_session, workspace, agent, user)
+
+    async def fake_exec(db, sess, query, timeout_s, catalogs):
+        query.status = "done"
+        query.result_path = None
+        await db.commit()
+        return True
+
+    monkeypatch.setattr(session_service, "dispatch_exec_statement", fake_exec)
+    monkeypatch.setattr(settings, "sql_statement_wait_timeout_s", 5.0)
+
+    resp = await authed_client.post(
+        f"/sql/sessions/{session.id}/statements", json={"sql": "CREATE TABLE t AS SELECT 1"}
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["has_result"] is False
+    assert resp.json()["first_page"] is None
+
+
 async def test_first_page_limit_above_the_cap_is_rejected(
     authed_client, db_session, workspace, agent, user, enabled
 ):

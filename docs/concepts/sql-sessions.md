@@ -152,7 +152,8 @@ from there as normal.
 
 `first_page` is absent for DDL and DML, which finish without a result file, and absent if
 the rows could not be fetched — the statement still succeeded, and asking the rows
-endpoint directly reports why.
+endpoint directly reports why. The response's `has_result` says which: `false` means a
+DDL or DML statement with nothing to read, so the client need not ask.
 
 ## Statement delivery and deadlines
 

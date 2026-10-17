@@ -683,6 +683,39 @@ async def test_get_query(
     assert resp.json()["id"] == query_id
 
 
+@pytest.mark.parametrize(
+    ("status", "result_path", "expected"),
+    [("done", "/r/x.parquet", True), ("done", None, False), ("running", None, None)],
+)
+async def test_a_query_says_whether_it_has_a_result_to_read(
+    authed_client: AsyncClient,
+    workspace: Workspace,
+    connected_agent,
+    db_session,
+    status,
+    result_path,
+    expected,
+):
+    """A client following a statement that outran its wait learns here, not from
+    an empty fetch, that DDL/DML left nothing to read."""
+    from api.models.query import Query
+
+    agent, _ = connected_agent
+    q = Query(
+        workspace_id=workspace.id,
+        agent_id=agent.id,
+        sql="SELECT 1",
+        status=status,
+        result_path=result_path,
+    )
+    db_session.add(q)
+    await db_session.commit()
+
+    resp = await authed_client.get(f"/queries/{q.id}")
+    assert resp.status_code == 200
+    assert resp.json()["has_result"] is expected
+
+
 async def test_get_query_not_found(authed_client: AsyncClient):
     resp = await authed_client.get(f"/queries/{uuid.uuid4()}")
     assert resp.status_code == 404

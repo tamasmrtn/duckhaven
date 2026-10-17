@@ -823,3 +823,9 @@ Together with the wait above, a statement whose result fits in that page costs *
 
 `API_VERSION` is **unchanged**: both fields are optional, an older server ignores them, and a client
 that never sends them sees the previous always-202 behaviour.
+
+### Whether a query has a result to read
+
+Every query response carries `has_result`: `true` when the finished query has a result grid, `false` for DDL/DML,
+which has none, and `null` until the query is done. A client that sees `false` has nothing to fetch, so a DDL statement
+costs it one call too.

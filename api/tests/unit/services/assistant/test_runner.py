@@ -262,6 +262,12 @@ async def test_streamed_segments_match_the_persisted_transcript(client, db_sessi
     assert segments == persisted
 
 
+async def test_a_turn_tags_its_queries_with_the_conversation(client, db_session, factory):
+    ws, _catalog, conv = await _seed(db_session, sa_role="reader")
+    async with runner._turn_context(factory, conv.id, ws.id, ws.slug, None) as deps:
+        assert deps.gateway._tags == {"assistant.conversation": str(conv.id)}
+
+
 async def test_read_only_assistant_refuses_write(client, db_session, factory):
     ws, _catalog, conv = await _seed(db_session, sa_role="reader")
     # The model tries a write, then (after the ModelRetry refusal) answers.

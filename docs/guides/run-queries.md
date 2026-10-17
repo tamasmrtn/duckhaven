@@ -170,7 +170,8 @@ Runs sent by a tool rather than the web app say which tool. A **Client** column 
 naming the tool and its version from its `User-Agent`: `dbt-duckhaven`, `dlt-duckhaven`, `duckhaven-cli`, or
 `duckhaven-assistant` and `duckhaven-mcp` for runs made by the [assistant](../concepts/assistant.md) and the
 [MCP server](../concepts/mcp-server.md). A tool can also attach **tags** to a run, free-form `key=value` labels such as
-the dbt model or dashboard it was for, shown beneath the SQL. Your own worksheet runs and scheduled runs carry neither.
+the dbt model or dashboard it was for, shown beneath the SQL. The assistant tags each run with its conversation, and
+the MCP server with the agent that called it. Your own worksheet runs and scheduled runs carry neither.
 The Client column belongs to a workspace's history; the cross-workspace view an admin opens does not show it, though
 tags still appear there.
 

@@ -120,6 +120,14 @@ pages through. This keeps a `SELECT *` over a large table from filling the agent
 Paging is restricted to queries **your own token ran**. Reading any result already needs the grants its query needs,
 but an agent has no reason to reach into a colleague's runs by query id, so it cannot.
 
+### Queries name the agent that ran them
+
+Queries from the MCP server show `duckhaven-mcp` as their client in
+[History](../guides/run-queries.md#find-an-earlier-run), which says the MCP server ran them but not for which agent. So
+each one also carries an `mcp.client` tag naming the agent and its version as its `User-Agent` gives them, such as
+`claude-code/2.1.0`; a client that sends none gets no tag. A query from `query_metric` is also tagged with the
+`semantic.model` and `semantic.metrics` it answered.
+
 ### Lineage
 
 `get_table_lineage` answers "what breaks if I change this?" from what DuckHaven has actually observed running, plus

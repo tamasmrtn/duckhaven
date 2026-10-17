@@ -80,6 +80,15 @@ def _aggregated_columns(sql: str) -> dict[tuple[str | None, str, str], set[str]]
     return found
 
 
+def metric_tags(model: str, metrics: list[str]) -> dict[str, str]:
+    """Tags naming the semantic model and metrics a compiled query answers.
+
+    Cut to the server's 256-character value limit: a long metric list must not
+    turn a good query into a 422.
+    """
+    return {"semantic.model": model[:256], "semantic.metrics": ",".join(metrics)[:256]}
+
+
 class GatewayError(Exception):
     """A governed REST call failed. The message is safe to surface to the model."""
 
@@ -133,6 +142,7 @@ class Gateway:
         row_cap: int,
         byte_cap: int,
         service_account_id: str,
+        tags: dict[str, str] | None = None,
     ) -> None:
         self._client = client
         self._ws = workspace_slug
@@ -141,6 +151,9 @@ class Gateway:
         # The id the assistant's queries are attributed to; used to refuse paging
         # results of queries run by *other* principals.
         self._service_account_id = service_account_id
+        # Sent with every query this gateway runs, so History can tell whose
+        # conversation or which MCP client a run came from.
+        self._tags = tags or {}
 
     async def _get(self, path: str, **kwargs) -> httpx.Response:
         resp = await self._client.get(path, **kwargs)
@@ -479,13 +492,20 @@ class Gateway:
             return []
 
     # ── SQL execution ─────────────────────────────────────────────────────────
-    async def run_sql(self, sql: str, *, catalog: str | None, timeout_s: float) -> dict:
+    async def run_sql(
+        self,
+        sql: str,
+        *,
+        catalog: str | None,
+        timeout_s: float,
+        tags: dict[str, str] | None = None,
+    ) -> dict:
         """Submit a query, wait for it to finish, and return a capped result sample.
 
         Returns a dict with ``query_id``, ``status``, ``columns``, ``column_types``,
-        capped ``rows``, ``total`` row count, and a ``truncated`` flag. Raises
-        :class:`GatewayError` with a model-friendly message on any governed
-        rejection or failure.
+        capped ``rows``, ``total`` row count, and a ``truncated`` flag. ``tags`` are
+        added to the gateway's own for this query. Raises :class:`GatewayError`
+        with a model-friendly message on any governed rejection or failure.
         """
         # No agent_id: the server picks one the way it does for any caller that
         # doesn't care which — compatible with the workspace, on the default
@@ -499,6 +519,8 @@ class Gateway:
         }
         if catalog:
             body["catalog"] = catalog
+        if self._tags or tags:
+            body["tags"] = {**self._tags, **(tags or {})}
         loop = asyncio.get_running_loop()
         deadline = loop.time() + timeout_s
         # A turn cancelled during this call cannot cancel the query, whose id is

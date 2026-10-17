@@ -37,7 +37,7 @@ from pydantic import Field
 
 from api.config import settings
 from api.db.session import async_session_factory
-from api.services.assistant.gateway import Gateway, GatewayError
+from api.services.assistant.gateway import Gateway, GatewayError, metric_tags
 from api.services.assistant.knowledge.loader import (
     DocsUnavailableError,
     PageNotIndexed,
@@ -65,6 +65,7 @@ def _gateway(ctx: Context, workspace: str) -> Gateway:
         # is the only other caller; here it is the human or service account whose
         # token this request carried.
         service_account_id=call.user_id,
+        tags={"mcp.client": call.caller} if call.caller else None,
     )
 
 
@@ -356,7 +357,10 @@ async def query_metric(
         # itself instead of falling back to inventing SQL.
         compiled = await gateway.compile_metric_query(body)
         result = await gateway.run_sql(
-            compiled["sql"], catalog=None, timeout_s=settings.mcp_query_timeout_s
+            compiled["sql"],
+            catalog=None,
+            timeout_s=settings.mcp_query_timeout_s,
+            tags=metric_tags(model, metrics),
         )
     except GatewayError as exc:
         raise ToolError(str(exc)) from exc

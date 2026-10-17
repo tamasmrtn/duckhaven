@@ -23,7 +23,7 @@ from pydantic_ai import ApprovalRequired, ModelRetry, RunContext
 
 from api.config import settings
 from api.services.assistant.deps import AssistantDeps
-from api.services.assistant.gateway import GatewayError
+from api.services.assistant.gateway import GatewayError, metric_tags
 from api.services.assistant.knowledge.loader import (
     DocsUnavailableError,
     PageNotIndexed,
@@ -288,7 +288,10 @@ async def query_metric(
 
     try:
         result = await ctx.deps.gateway.run_sql(
-            compiled["sql"], catalog=ctx.deps.catalog, timeout_s=ctx.deps.query_timeout_s
+            compiled["sql"],
+            catalog=ctx.deps.catalog,
+            timeout_s=ctx.deps.query_timeout_s,
+            tags=metric_tags(model, metrics),
         )
     except GatewayError as exc:
         raise ModelRetry(str(exc)) from exc

@@ -29,6 +29,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from api.config import settings
 from api.deps import _bearer
+from api.services.sql_sessions.client_info import parse_user_agent
 
 #: Where :class:`PatAuthMiddleware` leaves the authenticated call for the tools.
 #: A private key on the ASGI scope, read back via ``ctx.request_context.request``.
@@ -54,6 +55,16 @@ class McpCall:
 
     user_id: str
     client: httpx.AsyncClient
+    # The MCP client named by the request's User-Agent ("claude-code/2.1.0"), or
+    # None when it sent none. The loopback's own User-Agent names the MCP server,
+    # so without this History could not say which client a run came from.
+    caller: str | None = None
+
+
+def caller_from(user_agent: str | None) -> str | None:
+    """The MCP client a ``User-Agent`` names, as ``name/version``, or None."""
+    name, version = parse_user_agent(user_agent)
+    return f"{name}/{version}" if name and version else name
 
 
 def _allowed_origin(origin: str) -> bool:
@@ -147,7 +158,11 @@ class PatAuthMiddleware:
                 )
                 return
             body: dict[str, Any] = me.json()
-            scope[SCOPE_KEY] = McpCall(user_id=str(body["id"]), client=client)
+            scope[SCOPE_KEY] = McpCall(
+                user_id=str(body["id"]),
+                client=client,
+                caller=caller_from(headers.get("user-agent")),
+            )
             await self.app(scope, receive, send)
 
 

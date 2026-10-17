@@ -98,8 +98,8 @@ class StubGateway:
             "status": "published",
         }
 
-    async def run_sql(self, sql, *, catalog, timeout_s):
-        self._record("run_sql", (sql,), {"catalog": catalog})
+    async def run_sql(self, sql, *, catalog, timeout_s, tags=None):
+        self._record("run_sql", (sql,), {"catalog": catalog, "tags": tags})
         self._maybe_raise("run_sql")
         return dict(
             self.overrides.get(
@@ -194,6 +194,22 @@ async def test_query_metric_executes_the_compiled_sql_not_the_models_own():
 
     executed = next(c for c in gateway.calls if c[0] == "run_sql")[1][0]
     assert executed == COMPILED_SQL
+
+
+async def test_query_metric_tags_its_query_with_the_model_and_metrics():
+    """So History can show which metric a run answered, not just its SQL."""
+    gateway = StubGateway()
+    agent = agent_with(
+        [
+            tool_step("query_metric", {"model": "sales", "metrics": ["revenue"]}),
+            text_step("done"),
+        ]
+    )
+
+    await agent.run("revenue?", deps=deps(gateway))
+
+    tags = next(c for c in gateway.calls if c[0] == "run_sql")[2]["tags"]
+    assert tags == {"semantic.model": "sales", "semantic.metrics": "revenue"}
 
 
 async def test_query_metric_returns_the_sql_and_the_definitions_it_used():

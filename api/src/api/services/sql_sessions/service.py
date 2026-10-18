@@ -14,11 +14,13 @@ import asyncio
 import contextlib
 import uuid
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 import sqlalchemy as sa
 import sqlglot
 from opentelemetry import trace
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import set_committed_value
 
 from api.metrics import record_sql_session_closed, record_sql_session_opened, record_sql_statement
 from api.models.agent import Agent
@@ -32,6 +34,9 @@ from api.services.catalog_refs import ON_DEMAND_ATTACH, dispatch_catalogs, state
 from api.services.session_credentials import build_catalog_attach, build_polaris_block
 from duckhaven_shared.protocol import Frame, FrameType
 from duckhaven_shared.telemetry import inject_trace_context
+
+if TYPE_CHECKING:
+    from api.services.query import Completion
 
 _tracer = trace.get_tracer("duckhaven.api")
 
@@ -377,7 +382,7 @@ async def await_query_done(
     timeout_s: float,
     poll_interval_s: float = 0.05,
     poll_max_s: float = 0.5,
-    done: asyncio.Event | None = None,
+    done: Completion | None = None,
 ) -> Query:
     """Block until the statement reaches a terminal state, or ``timeout_s`` runs out.
 
@@ -409,7 +414,9 @@ async def await_query_done(
     ``done`` is a :func:`~api.services.query.completion_waiter` the caller entered
     before dispatching the statement. It has seen every completion since, so the
     wait starts without reading the row back: the caller has just committed it as
-    queued, and that read was a transaction on every statement for nothing.
+    queued, and that read was a transaction on every statement for nothing. Nor
+    is the row read once the wait is woken by a QUERY_DONE handled here: the
+    handler passes the terminal row it committed.
     """
     from api.services.query import completion_waiter
 
@@ -420,6 +427,12 @@ async def await_query_done(
     waiter = contextlib.nullcontext(done) if done is not None else completion_waiter(query.id)
     with waiter as done:
         while True:
+            if done.is_set() and done.row is not None:
+                # The QUERY_DONE handler here passed the terminal row it committed:
+                # take it rather than read it back.
+                for key, value in done.row.items():
+                    set_committed_value(query, key, value)
+                break
             if not known_pending:
                 await db.refresh(query)
                 if query.status not in _STATEMENT_PENDING:

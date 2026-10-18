@@ -58,6 +58,15 @@ from duckhaven_shared.telemetry import inject_trace_context
 logger = logging.getLogger(__name__)
 _tracer = trace.get_tracer("duckhaven.api")
 
+
+class Completion(asyncio.Event):
+    """Set when a statement reaches a terminal state here. ``row`` is the terminal
+    row as committed, by attribute name, when the setter had it: the waiter takes
+    it rather than reading back what this process has just written."""
+
+    row: dict[str, Any] | None = None
+
+
 # Requests waiting for a statement to finish, by query id (see
 # sql_sessions.service.await_query_done). QUERY_DONE arrives on the agent's
 # WebSocket, so completion is an *event* this process already observes -- a waiter
@@ -68,13 +77,13 @@ _tracer = trace.get_tracer("duckhaven.api")
 # backstop poll, not a mechanism the correctness depends on. When the agent's socket
 # is owned by another replica nothing here fires and the waiter falls back to
 # polling, which is what it would have done anyway.
-_completion_waiters: dict[uuid.UUID, asyncio.Event] = {}
+_completion_waiters: dict[uuid.UUID, Completion] = {}
 
 
 @contextlib.contextmanager
 def completion_waiter(query_id: uuid.UUID):
     """Register an event fired when ``query_id`` reaches a terminal state here."""
-    event = asyncio.Event()
+    event = Completion()
     _completion_waiters[query_id] = event
     try:
         yield event
@@ -82,11 +91,13 @@ def completion_waiter(query_id: uuid.UUID):
         _completion_waiters.pop(query_id, None)
 
 
-def signal_completion(query_id: uuid.UUID) -> None:
+def signal_completion(query_id: uuid.UUID, row: dict[str, Any] | None = None) -> None:
     """Wake anything waiting on ``query_id``. Called after the status is committed,
-    so a woken waiter's next read is guaranteed to see the terminal row."""
+    so a woken waiter's next read is guaranteed to see the terminal row, or need
+    not read it at all when ``row`` is that row."""
     event = _completion_waiters.get(query_id)
     if event is not None:
+        event.row = row
         event.set()
 
 
@@ -261,26 +272,34 @@ async def handle_agent_frame(db: AsyncSession, frame: Frame, polaris=None) -> No
         # wall-clock as queue wait. COALESCE leaves an already-stamped value alone.
         duration_ms = frame.payload.get("duration_ms")
         ran_at = finished - timedelta(milliseconds=duration_ms) if duration_ms else finished
-        await db.execute(
-            sa.update(Query)
-            .where(Query.id == query_id)
-            .values(
-                status=status_val,
-                row_count=frame.payload.get("row_count"),
-                duration_ms=duration_ms,
-                result_bytes=frame.payload.get("result_bytes"),
-                error=frame.payload.get("error"),
-                result_path=frame.payload.get("result_path"),
-                result_schema=frame.payload.get("result_schema"),
-                profile=frame.payload.get("profile"),
-                running_at=sa.func.coalesce(Query.running_at, ran_at),
-                finished_at=finished,
+        columns = sa.inspect(Query).columns
+        terminal = (
+            await db.execute(
+                sa.update(Query)
+                .where(Query.id == query_id)
+                .values(
+                    status=status_val,
+                    row_count=frame.payload.get("row_count"),
+                    duration_ms=duration_ms,
+                    result_bytes=frame.payload.get("result_bytes"),
+                    error=frame.payload.get("error"),
+                    result_path=frame.payload.get("result_path"),
+                    result_schema=frame.payload.get("result_schema"),
+                    profile=frame.payload.get("profile"),
+                    running_at=sa.func.coalesce(Query.running_at, ran_at),
+                    finished_at=finished,
+                )
+                # The whole row, for a request here waiting on this statement.
+                .returning(*columns)
             )
-        )
+        ).first()
         await db.commit()
         # Before the stats/lineage work below, which is deliberately not on the
         # client's critical path: the row is terminal and committed as of here.
-        signal_completion(query_id)
+        signal_completion(
+            query_id,
+            None if terminal is None else {k: terminal._mapping[c] for k, c in columns.items()},
+        )
         query = await db.get(Query, query_id)
         if query is not None and query.origin is None:
             record_query_completion(

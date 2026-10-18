@@ -8,7 +8,7 @@ import tempfile
 import duckdb
 import pytest
 from conftest import seed_workspace
-from sqlalchemy import select
+from sqlalchemy import inspect, select
 
 from api.models.agent import Agent
 from api.models.query import Query
@@ -235,6 +235,41 @@ async def test_done_preserves_a_running_at_already_stamped(db_session):
 
     await db_session.refresh(query)
     assert query.running_at == stamped
+
+
+async def test_done_hands_its_waiter_the_terminal_row(db_session):
+    """A request here waiting on the statement is given the row the handler
+    committed, so it need not read it back; the row is exactly what a read sees."""
+    ws, _ = await _make_workspace(db_session)
+    query = await _queued_query(db_session, ws)
+    await query_service.handle_agent_frame(
+        db_session,
+        Frame(type=FrameType.QUERY_PROGRESS, payload={"query_id": str(query.id)}),
+    )
+
+    with query_service.completion_waiter(query.id) as done:
+        await query_service.handle_agent_frame(
+            db_session,
+            Frame(
+                type=FrameType.QUERY_DONE,
+                payload={
+                    "query_id": str(query.id),
+                    "status": "done",
+                    "row_count": 3,
+                    "duration_ms": 5,
+                    "result_schema": [{"name": "a", "type": "INTEGER"}],
+                },
+            ),
+        )
+
+    assert done.is_set()
+    await db_session.refresh(query)
+    assert done.row["status"] == "done"
+    assert done.row["row_count"] == 3
+    assert done.row["result_schema"] == [{"name": "a", "type": "INTEGER"}]
+    assert done.row["running_at"] == query.running_at
+    assert done.row["finished_at"] == query.finished_at
+    assert done.row.keys() == {a.key for a in inspect(Query).column_attrs}
 
 
 async def test_query_done_upserts_table_stats(db_session):

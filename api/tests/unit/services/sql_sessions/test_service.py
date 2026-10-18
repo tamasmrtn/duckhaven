@@ -353,6 +353,47 @@ async def test_await_query_done_with_an_early_waiter_reads_only_once_done(db_eng
     assert len(refreshes) == 1
 
 
+async def test_await_query_done_takes_the_row_it_is_handed(db_engine):
+    """Woken with the terminal row, the wait applies it rather than reading it, and
+    leaves the object clean: nothing on it is pending a write."""
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from api.services.query import completion_waiter, signal_completion
+    from api.services.sql_sessions.service import await_query_done
+
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+    async with factory() as db:
+        session = await _open_session(db)
+        q = Query(
+            workspace_id=session.workspace_id,
+            agent_id=session.agent_id,
+            sql="select 1",
+            status="queued",
+            session_id=session.id,
+        )
+        db.add(q)
+        await db.commit()
+        query_id = q.id
+
+    async with factory() as db:
+        query = await db.get(Query, query_id)
+        refreshes = []
+        real_refresh = db.refresh
+
+        async def counting_refresh(*args, **kwargs):
+            refreshes.append(1)
+            return await real_refresh(*args, **kwargs)
+
+        db.refresh = counting_refresh
+        with completion_waiter(query_id) as done:
+            signal_completion(query_id, {"status": "done", "row_count": 7})
+            await await_query_done(db, query, timeout_s=5.0, done=done)
+
+        assert refreshes == []
+        assert (query.status, query.row_count) == ("done", 7)
+        assert query not in db.dirty
+
+
 async def test_await_query_done_leaves_a_slow_statement_running(db_engine):
     """A statement that outlives the budget is handed back untouched, for the client
     to poll. Cancelling it -- the other thing a wait could do on expiry -- would

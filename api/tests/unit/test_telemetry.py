@@ -54,3 +54,13 @@ def test_spans_are_recorded_when_enabled(span_exporter):
         assert any("/ping" in n for n in names)
     finally:
         FastAPIInstrumentor.uninstrument_app(app)
+
+
+def test_fastapi_does_not_add_a_second_exporter():
+    """setup_telemetry owns export. FastAPI's own setup reads the same OTEL_*
+    environment at startup and, left on, adds another exporter to the provider,
+    so every span is processed and sent twice."""
+    from api.main import api_app, app
+
+    assert app._telemetry["auto_configure"] is False
+    assert api_app._telemetry["auto_configure"] is False

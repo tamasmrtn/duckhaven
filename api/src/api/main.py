@@ -229,6 +229,9 @@ api_app = FastAPI(
     version=settings.app_version,
     lifespan=lifespan,
     generate_unique_id_function=operation_id,
+    # setup_telemetry owns the exporter. Left on, FastAPI adds a second one from
+    # the same OTEL_* environment and every span is processed and sent twice.
+    telemetry={"auto_configure": False},
 )
 
 # Record request count/latency by route template (skips the /metrics scrape).
@@ -401,7 +404,7 @@ async def _outer_lifespan(outer: FastAPI) -> AsyncIterator[None]:
 # Outer ASGI app: agent WebSocket at root (agents dial /agents/connect), the
 # REST API under /api, the MCP endpoint at /mcp, and the built SPA at / (only
 # present in the image).
-app = FastAPI(lifespan=_outer_lifespan)
+app = FastAPI(lifespan=_outer_lifespan, telemetry={"auto_configure": False})
 app.include_router(agents_ws.router, tags=["agents"])
 # Network-private inter-replica dispatch; never exposed past the internal network.
 app.include_router(internal.router)

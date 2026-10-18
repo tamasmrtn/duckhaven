@@ -19,13 +19,18 @@ from api.models.docs import DocsCorpusMeta, DocsPage
 from api.services.assistant.knowledge import generate, sync
 from api.services.assistant.knowledge.loader import (
     INDEX_PATH,
+    DocsIndex,
     DocsUnavailableError,
+    Page,
     PageNotIndexed,
     docs_available,
+    expand_snippets,
     load_index,
+    page_body,
     page_url,
     read_page,
 )
+from api.services.assistant.persistence import _sources
 
 REPO_ROOT = generate._repo_root()
 DOCS_DIR = REPO_ROOT / "docs"
@@ -365,3 +370,152 @@ async def test_a_database_that_refuses_the_write_still_lets_the_replica_boot(
     monkeypatch.setattr(type(db_session), "execute", refuse)
 
     assert await sync.sync_corpus(db_session) is False
+
+
+# ── Moved pages, front matter and snippets ────────────────────────────────────
+
+
+def _config(redirect_maps: dict) -> dict:
+    return {"plugins": ["search", {"redirects": {"redirect_maps": redirect_maps}}]}
+
+
+def test_a_redirect_to_an_indexed_page_becomes_an_alias():
+    aliases = generate.aliases_from(
+        _config({"guides/old.md": "querying/new.md#section"}), {"querying/new.md"}
+    )
+
+    assert aliases == {"guides/old.md": "querying/new.md"}
+
+
+def test_a_redirect_into_excluded_docs_is_not_an_alias():
+    """The site follows it; the assistant has no page to send anyone to."""
+    assert generate.aliases_from(_config({"guides/old.md": "developer/new.md"}), set()) == {}
+
+
+@pytest.mark.parametrize(
+    ("maps", "indexed", "message"),
+    [
+        ({"a.md": "b.md"}, {"a.md", "b.md"}, "still a page"),
+        ({"a.md": "b.md", "b.md": "c.md"}, {"c.md"}, "chains"),
+        ({"a.md": "missing.md"}, {"b.md"}, "points at no page"),
+    ],
+)
+def test_a_bad_redirect_map_fails_generation(maps, indexed, message):
+    with pytest.raises(ValueError, match=message):
+        generate.aliases_from(_config(maps), indexed)
+
+
+def test_a_moved_page_keeps_its_hand_written_summary():
+    moved = Page("querying/new.md", "New", "Querying", "derived")
+    existing = {"pages": [{"path": "guides/old.md", "summary": "Hand-written."}]}
+
+    (page,) = generate.merge([moved], existing, {"guides/old.md": "querying/new.md"})
+
+    assert page.summary == "Hand-written."
+
+
+def test_a_typed_page_takes_its_summary_from_its_lead():
+    """Rewritten pages are held to a lead that answers the page's question, so
+    that sentence is the summary and an edit to it can never be shadowed."""
+    page = Page("querying/new.md", "New", "Querying", "The lead sentence.")
+    existing = {"pages": [{"path": "querying/new.md", "summary": "Stale."}]}
+
+    (merged,) = generate.merge([page], existing, typed=frozenset({"querying/new.md"}))
+
+    assert merged.summary == "The lead sentence."
+
+
+def test_the_summary_ignores_front_matter():
+    body = "---\ntype: how-to\n---\n\n# Rotate a token\n\nIssue a new token, then revoke the old.\n"
+
+    assert generate.summarise(body) == "Issue a new token, then revoke the old."
+
+
+def test_typed_pages_are_found_by_their_front_matter(tmp_path):
+    (tmp_path / "a.md").write_text("---\ntype: concept\n---\n# A\n")
+    (tmp_path / "b.md").write_text("# B\n\ntype: not front matter\n")
+    pages = [Page("a.md", "A", "", ""), Page("b.md", "B", "", "")]
+
+    assert generate.typed_paths(tmp_path, pages) == {"a.md"}
+
+
+def test_a_third_nav_level_is_labelled_with_its_nearest_section(tmp_path):
+    docs = tmp_path / "docs"
+    (docs / "querying").mkdir(parents=True)
+    (docs / "querying" / "run.md").write_text("# Run\n\nA lead sentence.\n")
+    mkdocs = tmp_path / "mkdocs.yml"
+    mkdocs.write_text("nav:\n  - Use:\n    - Querying:\n      - Run: querying/run.md\n")
+
+    (page,) = generate.discover(docs, mkdocs)
+
+    assert page.section == "Querying"
+
+
+def test_aliases_are_written_only_when_there_are_some():
+    page = Page("a.md", "A", "S", "Summary.")
+
+    assert "aliases" not in generate.render_index([page], "intro")
+    assert "old.md: a.md" in generate.render_index([page], "intro", {"old.md": "a.md"})
+
+
+def test_front_matter_is_stripped_and_snippets_are_expanded(tmp_path):
+    (tmp_path / "_snippets").mkdir()
+    (tmp_path / "_snippets" / "allowed.md").write_text("- `SELECT`\n- `INSERT`\n")
+    text = (
+        "---\ntype: reference\n---\n# SQL\n\n"
+        '--8<-- "allowed.md"\n\n!!! note\n    --8<-- "allowed.md"\n'
+    )
+
+    body = page_body(text, tmp_path)
+
+    assert body.startswith("# SQL")
+    assert "- `SELECT`\n- `INSERT`" in body
+    assert "    - `SELECT`\n    - `INSERT`" in body
+
+
+@pytest.mark.parametrize("name", ["missing.md", "../outside.md"])
+def test_a_snippet_that_does_not_resolve_inside_the_snippets_dir_is_left_alone(tmp_path, name):
+    (tmp_path / "_snippets").mkdir()
+    (tmp_path / "outside.md").write_text("secret\n")
+    line = f'--8<-- "{name}"'
+
+    assert expand_snippets(f"# T\n\n{line}\n", tmp_path) == f"# T\n\n{line}\n"
+
+
+def test_an_old_path_reads_the_page_it_moved_to(monkeypatch):
+    index = load_index()
+    moved = DocsIndex(pages=index.pages, aliases={"guides/sql.md": "reference/sql-support.md"})
+    monkeypatch.setattr("api.services.assistant.knowledge.loader.load_index", lambda: moved)
+
+    result = read_page("guides/sql.md")
+
+    assert (result["path"], result["title"]) == ("reference/sql-support.md", "SQL support")
+
+
+def test_a_read_page_is_returned_as_rendered(monkeypatch, tmp_path):
+    docs = tmp_path / "docs"
+    (docs / "_snippets").mkdir(parents=True)
+    (docs / "_snippets" / "fact.md").write_text("The shared fact.\n")
+    (docs / "reference").mkdir()
+    (docs / "reference" / "sql-support.md").write_text(
+        '---\ntype: reference\n---\n# SQL support\n\n--8<-- "fact.md"\n'
+    )
+    monkeypatch.setattr(settings, "assistant_docs_dir", docs)
+
+    text = read_page("reference/sql-support.md")["text"]
+
+    assert text == "# SQL support\n\nThe shared fact.\n"
+
+
+def test_a_citation_recorded_before_a_move_points_at_the_new_page(monkeypatch):
+    index = load_index()
+    moved = DocsIndex(pages=index.pages, aliases={"guides/sql.md": "reference/sql-support.md"})
+    monkeypatch.setattr("api.services.assistant.knowledge.loader.load_index", lambda: moved)
+
+    (source,) = _sources(["guides/sql.md"])
+
+    assert source == {
+        "path": "reference/sql-support.md",
+        "title": "SQL support",
+        "url": page_url("reference/sql-support.md"),
+    }

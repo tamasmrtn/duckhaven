@@ -23,7 +23,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.config import settings
 from api.models.docs import DocsCorpusMeta, DocsPage
-from api.services.assistant.knowledge.loader import DocsUnavailableError, docs_dir, load_index
+from api.services.assistant.knowledge.loader import (
+    DocsUnavailableError,
+    docs_dir,
+    load_index,
+    page_body,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +43,7 @@ def _corpus() -> tuple[str, list[dict]]:
     digest = hashlib.sha256()
     pages: list[dict] = []
     for page in load_index().pages:
-        body = (directory / page.path).read_text()
+        body = page_body((directory / page.path).read_text(encoding="utf-8"), directory)
         digest.update(page.path.encode())
         digest.update(body.encode())
         pages.append(

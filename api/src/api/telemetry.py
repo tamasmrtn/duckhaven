@@ -44,9 +44,13 @@ def setup_telemetry(*apps: FastAPI) -> bool:
     provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(endpoint=endpoint)))
     trace.set_tracer_provider(provider)
 
-    # Health and metrics scrapes would dominate span volume; exclude them.
+    # Health and metrics scrapes would dominate span volume; exclude them. So
+    # would the ASGI send/receive spans: a request's response start and body,
+    # and every frame on an agent's long-lived WebSocket, each its own span.
     for app in apps:
-        FastAPIInstrumentor.instrument_app(app, excluded_urls="healthz,readyz,metrics")
+        FastAPIInstrumentor.instrument_app(
+            app, excluded_urls="healthz,readyz,metrics", exclude_spans=["send", "receive"]
+        )
     # Covers the shared PolarisClient session and the per-request clients used
     # for cross-replica forwarding; adds W3C traceparent headers to both.
     HTTPXClientInstrumentor().instrument()

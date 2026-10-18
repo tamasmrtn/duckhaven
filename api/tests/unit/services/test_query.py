@@ -8,7 +8,7 @@ import tempfile
 import duckdb
 import pytest
 from conftest import seed_workspace
-from sqlalchemy import select
+from sqlalchemy import inspect, select
 
 from api.models.agent import Agent
 from api.models.query import Query
@@ -274,6 +274,71 @@ async def test_done_preserves_a_running_at_already_stamped(db_session):
 
     await db_session.refresh(query)
     assert query.running_at == stamped
+
+
+async def test_done_hands_its_waiter_the_terminal_row(db_session):
+    """A request here waiting on the statement is given the row the handler
+    committed, so it need not read it back; the row is exactly what a read sees."""
+    ws, _ = await _make_workspace(db_session)
+    query = await _queued_query(db_session, ws)
+    await query_service.handle_agent_frame(
+        db_session,
+        Frame(type=FrameType.QUERY_PROGRESS, payload={"query_id": str(query.id)}),
+    )
+
+    with query_service.completion_waiter(query.id) as done:
+        await query_service.handle_agent_frame(
+            db_session,
+            Frame(
+                type=FrameType.QUERY_DONE,
+                payload={
+                    "query_id": str(query.id),
+                    "status": "done",
+                    "row_count": 3,
+                    "duration_ms": 5,
+                    "result_schema": [{"name": "a", "type": "INTEGER"}],
+                },
+            ),
+        )
+
+    assert done.is_set()
+    await db_session.refresh(query)
+    assert done.row["status"] == "done"
+    assert done.row["row_count"] == 3
+    assert done.row["result_schema"] == [{"name": "a", "type": "INTEGER"}]
+    assert done.row["running_at"] == query.running_at
+    assert done.row["finished_at"] == query.finished_at
+    assert done.row.keys() == {a.key for a in inspect(Query).column_attrs}
+
+
+async def test_done_without_a_waiter_does_not_read_the_row_back(db_session):
+    """Most completions have no request waiting on them here: they do not pay for
+    returning a row whose SQL and profile can be large."""
+    from sqlalchemy import event
+
+    ws, _ = await _make_workspace(db_session)
+    query = await _queued_query(db_session, ws)
+    updates = []
+
+    def capture(conn, cursor, statement, *args):
+        if statement.lstrip().upper().startswith("UPDATE QUERIES"):
+            updates.append(statement)
+
+    engine = db_session.bind.sync_engine
+    event.listen(engine, "before_cursor_execute", capture)
+    try:
+        await query_service.handle_agent_frame(
+            db_session,
+            Frame(
+                type=FrameType.QUERY_DONE,
+                payload={"query_id": str(query.id), "status": "done"},
+            ),
+        )
+    finally:
+        event.remove(engine, "before_cursor_execute", capture)
+
+    assert len(updates) == 1
+    assert "RETURNING" not in updates[0].upper()
 
 
 async def test_query_done_upserts_table_stats(db_session):
@@ -603,6 +668,56 @@ async def test_lineage_failure_does_not_break_frame_handling(db_session, monkeyp
     assert query.status == "done"
     assert query.row_count == 3
     assert (await db_session.execute(select(LineageEdge))).scalars().all() == []
+
+
+async def _done_with_lineage_spy(db_session, monkeypatch, sql):
+    """Finish a query with ``sql``; return what the lineage path read and recorded."""
+    from api.models.lineage import LineageEdge
+    from api.services.lineage import ingest
+
+    ws, catalog = await _make_workspace(db_session)
+    query = Query(
+        workspace_id=ws.id,
+        sql=sql.format(c=catalog.slug),
+        status="queued",
+        active_catalog=catalog.slug,
+    )
+    db_session.add(query)
+    await db_session.commit()
+    reads = []
+    real = ingest.workspace_catalog_context
+
+    async def counting(*args, **kwargs):
+        reads.append(1)
+        return await real(*args, **kwargs)
+
+    monkeypatch.setattr(ingest, "workspace_catalog_context", counting)
+    await query_service.handle_agent_frame(
+        db_session,
+        Frame(type=FrameType.QUERY_DONE, payload={"query_id": str(query.id), "status": "done"}),
+        polaris=object(),
+    )
+    edges = (await db_session.execute(select(LineageEdge))).scalars().all()
+    return len(reads), len(edges)
+
+
+async def test_a_read_only_statement_skips_lineage_entirely(db_session, monkeypatch):
+    """A read establishes no relationship, so there is nothing to look up for it."""
+    reads, edges = await _done_with_lineage_spy(
+        db_session, monkeypatch, "SELECT * FROM {c}.analytics.src"
+    )
+    assert (reads, edges) == (0, 0)
+
+
+async def test_a_script_that_writes_after_a_read_still_records_lineage(db_session, monkeypatch):
+    """The skip looks at every statement, not the first: this one starts as a read."""
+    reads, edges = await _done_with_lineage_spy(
+        db_session,
+        monkeypatch,
+        "SELECT 1; CREATE TABLE {c}.analytics.dim AS SELECT * FROM {c}.analytics.src",
+    )
+    assert reads == 1  # read once and shared, not once per caller
+    assert edges == 1
 
 
 async def test_pick_agent_for(db_session):

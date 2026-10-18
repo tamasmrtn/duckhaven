@@ -549,6 +549,53 @@ async def test_ws_query_done_visible_to_separate_session(ws_client, db_engine):
                 assert done.duration_ms == 123
 
 
+async def test_ws_ack_and_progress_are_visible_to_separate_session(ws_client, db_engine):
+    """STATEMENT_ACK and QUERY_PROGRESS run outside a transaction: each takes effect
+    for every other session as it is applied, with nothing left to commit."""
+    import asyncio
+
+    from httpx import AsyncClient
+    from httpx_ws import aconnect_ws
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from api.models.query import Query
+    from api.models.workspace import Workspace
+
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+    token = "dh_boot_ackprog"
+    await _add_bootstrap(factory, token)
+
+    async with factory() as db:
+        ws_row = Workspace(slug="ap-ws", name="AP WS")
+        db.add(ws_row)
+        await db.flush()
+        query = Query(workspace_id=ws_row.id, sql="SELECT 1", status="queued", origin="session")
+        db.add(query)
+        await db.commit()
+        query_id = query.id
+
+    async def read() -> Query:
+        async with factory() as db:
+            return await db.get(Query, query_id)
+
+    async with AsyncClient(transport=ws_client, base_url="http://test") as c:
+        async with aconnect_ws("http://test/agents/connect", c) as ws:
+            await ws.send_text(
+                json.dumps({"type": "auth", "payload": {"token": token, "result_port": 8001}})
+            )
+            await asyncio.wait_for(ws.receive_text(), timeout=5.0)
+
+            payload = {"query_id": str(query_id)}
+            await ws.send_text(json.dumps({"type": "statement_ack", "payload": payload}))
+            await asyncio.sleep(0.2)
+            acked = await read()
+            assert (acked.status, acked.running_at) == ("running", None)
+
+            await ws.send_text(json.dumps({"type": "query_progress", "payload": payload}))
+            await asyncio.sleep(0.2)
+            assert (await read()).running_at is not None
+
+
 async def test_ws_bootstrap_rebinds_precreated_elastic_agent(ws_client, db_engine):
     """An elastic bootstrap token (bound to a pre-created row) rebinds that row on
     dial-home — provisioning -> running — instead of minting a second agent."""

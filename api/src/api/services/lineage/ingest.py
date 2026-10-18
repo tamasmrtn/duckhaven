@@ -594,7 +594,11 @@ def _active_catalog(query: Query, context: WorkspaceCatalogs) -> str | None:
 
 
 async def record_execution_lineage(
-    db: AsyncSession, query: Query, *, schemas: SchemaLookup | None = None
+    db: AsyncSession,
+    query: Query,
+    *,
+    schemas: SchemaLookup | None = None,
+    context: WorkspaceCatalogs | None = None,
 ) -> IngestResult:
     """Derive and persist lineage for a query that just completed successfully.
 
@@ -605,13 +609,15 @@ async def record_execution_lineage(
     ``schemas`` is where column-level extraction reads source table schemas.
     Without one the graph is table-level, exactly as it was before columns
     existed — so a caller that has no catalog client to hand loses detail rather
-    than failing.
+    than failing. ``context`` is the workspace's catalogs, when the caller has
+    already read them.
     """
     result = IngestResult()
     if not query.sql or query.origin in _INTERNAL_ORIGINS:
         return result
 
-    context = await workspace_catalog_context(db, query.workspace_id)
+    if context is None:
+        context = await workspace_catalog_context(db, query.workspace_id)
     if not context.ids:
         return result
 

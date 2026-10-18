@@ -5,7 +5,7 @@ import uuid
 from fastapi import HTTPException, status
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import joinedload, selectinload
 
 from api.config import settings
 from api.models.assistant import AssistantConversation
@@ -333,12 +333,16 @@ def validate_catalog_slug(slug: str) -> str:
 
 
 async def resolve_workspace_catalogs(db: AsyncSession, workspace_id: uuid.UUID) -> list[Catalog]:
-    """All catalogs attached to a workspace, each with its storage backend loaded."""
+    """All catalogs attached to a workspace, each with its storage backend loaded.
+
+    Joined rather than select-in loaded: each catalog has at most one of either, and
+    every session statement calls this, so the two extra queries were paid per
+    statement."""
     rows = await db.execute(
         select(Catalog)
         .join(WorkspaceCatalog, WorkspaceCatalog.catalog_id == Catalog.id)
         .where(WorkspaceCatalog.workspace_id == workspace_id)
-        .options(selectinload(Catalog.storage_backend), selectinload(Catalog.ducklake_credential))
+        .options(joinedload(Catalog.storage_backend), joinedload(Catalog.ducklake_credential))
         .order_by(Catalog.slug)
     )
     return list(rows.scalars().all())

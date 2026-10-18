@@ -14,11 +14,13 @@ import asyncio
 import contextlib
 import uuid
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 import sqlalchemy as sa
 import sqlglot
 from opentelemetry import trace
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import set_committed_value
 
 from api.metrics import record_sql_session_closed, record_sql_session_opened, record_sql_statement
 from api.models.agent import Agent
@@ -32,6 +34,9 @@ from api.services.catalog_refs import ON_DEMAND_ATTACH, dispatch_catalogs, state
 from api.services.session_credentials import build_catalog_attach, build_polaris_block
 from duckhaven_shared.protocol import Frame, FrameType
 from duckhaven_shared.telemetry import inject_trace_context
+
+if TYPE_CHECKING:
+    from api.services.query import Completion
 
 _tracer = trace.get_tracer("duckhaven.api")
 
@@ -216,7 +221,13 @@ async def fail_inflight_statements(
     session is gone they never will. Without this they stay ``queued`` forever and
     every client polls one until its own deadline (#156). Returns the row count;
     the caller commits.
+
+    A request here waiting on one of them is woken once that commit lands, as a
+    QUERY_DONE would wake it: its wait polls only as a backstop, and an agent
+    that disconnected mid-statement would otherwise be reported that much later.
     """
+    from api.services.query import signal_completion
+
     if not session_ids:
         return 0
     result = await db.execute(
@@ -227,8 +238,17 @@ async def fail_inflight_statements(
             Query.status.in_(_IN_FLIGHT),
         )
         .values(status="failed", error=error, finished_at=datetime.now(tz=UTC))
+        .returning(Query.id)
     )
-    count = result.rowcount or 0
+    failed = list(result.scalars())
+
+    def wake(_session) -> None:
+        for query_id in failed:
+            signal_completion(query_id)
+
+    if failed:
+        sa.event.listen(db.sync_session, "after_commit", wake, once=True)
+    count = len(failed)
     for _ in range(max(0, count)):
         record_sql_statement("failed")
     return count
@@ -239,12 +259,15 @@ async def handle_statement_ack(db: AsyncSession, frame: Frame) -> None:
 
     Only ``queued`` -> ``running``. A fast statement's QUERY_DONE can beat its own
     ack (both are sent by the agent but applied by separate DB sessions), so an
-    already-terminal row is left alone rather than resurrected.
+    already-terminal row is left alone rather than resurrected. One conditional
+    update rather than a read and a write: it runs for every statement.
     """
-    query = await db.get(Query, uuid.UUID(frame.payload["query_id"]))
-    if query is None or query.status != "queued":
-        return
-    query.status = "running"
+    await db.execute(
+        sa.update(Query)
+        .where(Query.id == uuid.UUID(frame.payload["query_id"]), Query.status == "queued")
+        .values(status="running")
+        .execution_options(synchronize_session=False)
+    )
     await db.commit()
 
 
@@ -374,6 +397,7 @@ async def await_query_done(
     timeout_s: float,
     poll_interval_s: float = 0.05,
     poll_max_s: float = 0.5,
+    done: Completion | None = None,
 ) -> Query:
     """Block until the statement reaches a terminal state, or ``timeout_s`` runs out.
 
@@ -401,17 +425,34 @@ async def await_query_done(
     transaction is rolled back before each sleep so the pooled connection goes back
     for the duration. Holding it would cap concurrent statements at ``db_pool_size
     + db_max_overflow`` and deadlock a `dbt run` with more threads than that.
+
+    ``done`` is a :func:`~api.services.query.completion_waiter` the caller entered
+    before dispatching the statement. It has seen every completion since, so the
+    wait starts without reading the row back: the caller has just committed it as
+    queued, and that read was a transaction on every statement for nothing. Nor
+    is the row read once the wait is woken by a QUERY_DONE handled here: the
+    handler passes the terminal row it committed.
     """
     from api.services.query import completion_waiter
 
     loop = asyncio.get_event_loop()
     deadline = loop.time() + timeout_s
     interval = poll_interval_s
-    with completion_waiter(query.id) as done:
+    known_pending = done is not None
+    waiter = contextlib.nullcontext(done) if done is not None else completion_waiter(query.id)
+    with waiter as done:
         while True:
-            await db.refresh(query)
-            if query.status not in _STATEMENT_PENDING:
+            if done.is_set() and done.row is not None:
+                # The QUERY_DONE handler here passed the terminal row it committed:
+                # take it rather than read it back.
+                for key, value in done.row.items():
+                    set_committed_value(query, key, value)
                 break
+            if not known_pending:
+                await db.refresh(query)
+                if query.status not in _STATEMENT_PENDING:
+                    break
+            known_pending = False
             remaining = deadline - loop.time()
             if remaining <= 0:
                 break

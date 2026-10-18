@@ -176,13 +176,15 @@ async def lookup(
     db: AsyncSession,
     *,
     session: SqlSession,
-    workspace: Workspace,
     catalogs: list[Catalog],
     sql: str,
     use_cache: bool,
     polaris: Any,
 ) -> service.Lookup:
-    """Whether a session statement can be answered from the cache right now."""
+    """Whether a session statement can be answered from the cache right now.
+
+    The workspace is read only once the session's own state allows a lookup, so a
+    session that opted out does not read it on every statement."""
     if not session.use_cache:
         return service.Lookup(status=service.BYPASS, detail="opted_out")
     if await _busy(db, session.id):
@@ -207,7 +209,7 @@ async def lookup(
     )
     return await service.lookup(
         db,
-        workspace=workspace,
+        workspace=await db.get(Workspace, session.workspace_id),
         catalogs=catalogs,
         sql=sql,
         origin="session",

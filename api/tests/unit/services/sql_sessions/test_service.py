@@ -130,6 +130,23 @@ async def test_fail_inflight_statements_resolves_only_in_flight_rows(db_session)
     assert queued.finished_at is not None
 
 
+async def test_failing_in_flight_statements_wakes_their_waiters_once_committed(db_session):
+    """A request here waiting on a statement whose agent disconnected learns of it
+    as it would of a QUERY_DONE, not at its next backstop poll; and only once the
+    failure is committed, so the row it then reads is the failed one."""
+    from api.services.query import completion_waiter
+
+    session = await _open_session(db_session)
+    q = await _statement(db_session, session, status="running")
+
+    with completion_waiter(q.id) as done:
+        await fail_inflight_statements(db_session, [session.id], "agent disconnected")
+        assert not done.is_set()
+        await db_session.commit()
+        assert done.is_set()
+        assert done.row is None
+
+
 async def test_agent_disconnect_resolves_in_flight_statements(db_session):
     """The #156 defect-3 regression: fail_sessions_for_agent flipped the *session*
     to failed but left its statements queued forever, so a client polling one
@@ -303,6 +320,95 @@ async def test_await_query_done_returns_when_the_statement_finishes(db_engine):
 
     assert query.status == "done"
     assert query.duration_ms == 42
+
+
+async def test_await_query_done_with_an_early_waiter_reads_only_once_done(db_engine):
+    """Given a waiter entered before dispatch, the wait does not read back the row
+    the caller just committed as queued: the one read is after the completion."""
+    import asyncio
+
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from api.services.query import completion_waiter, signal_completion
+    from api.services.sql_sessions.service import await_query_done
+
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+    async with factory() as db:
+        session = await _open_session(db)
+        q = Query(
+            workspace_id=session.workspace_id,
+            agent_id=session.agent_id,
+            sql="select 1",
+            status="queued",
+            session_id=session.id,
+        )
+        db.add(q)
+        await db.commit()
+        query_id = q.id
+
+    async with factory() as db:
+        query = await db.get(Query, query_id)
+        refreshes = []
+        real_refresh = db.refresh
+
+        async def counting_refresh(*args, **kwargs):
+            refreshes.append(1)
+            return await real_refresh(*args, **kwargs)
+
+        db.refresh = counting_refresh
+        with completion_waiter(query_id) as done:
+            # Finished and signalled before the wait begins: a waiter registered
+            # only inside the wait would have missed this.
+            async with factory() as other:
+                row = await other.get(Query, query_id)
+                row.status = "done"
+                await other.commit()
+            signal_completion(query_id)
+            await asyncio.wait_for(await_query_done(db, query, timeout_s=5.0, done=done), 1.0)
+
+    assert query.status == "done"
+    assert len(refreshes) == 1
+
+
+async def test_await_query_done_takes_the_row_it_is_handed(db_engine):
+    """Woken with the terminal row, the wait applies it rather than reading it, and
+    leaves the object clean: nothing on it is pending a write."""
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from api.services.query import completion_waiter, signal_completion
+    from api.services.sql_sessions.service import await_query_done
+
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+    async with factory() as db:
+        session = await _open_session(db)
+        q = Query(
+            workspace_id=session.workspace_id,
+            agent_id=session.agent_id,
+            sql="select 1",
+            status="queued",
+            session_id=session.id,
+        )
+        db.add(q)
+        await db.commit()
+        query_id = q.id
+
+    async with factory() as db:
+        query = await db.get(Query, query_id)
+        refreshes = []
+        real_refresh = db.refresh
+
+        async def counting_refresh(*args, **kwargs):
+            refreshes.append(1)
+            return await real_refresh(*args, **kwargs)
+
+        db.refresh = counting_refresh
+        with completion_waiter(query_id) as done:
+            signal_completion(query_id, {"status": "done", "row_count": 7})
+            await await_query_done(db, query, timeout_s=5.0, done=done)
+
+        assert refreshes == []
+        assert (query.status, query.row_count) == ("done", 7)
+        assert query not in db.dirty
 
 
 async def test_await_query_done_leaves_a_slow_statement_running(db_engine):

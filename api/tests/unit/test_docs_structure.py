@@ -132,9 +132,9 @@ def problems(text: str) -> list[str]:
 
 
 def _pages() -> list[str]:
-    return sorted(
-        str(p.relative_to(DOCS_DIR)) for p in DOCS_DIR.rglob("*.md") if not p.name.startswith("_")
-    )
+    # Underscored files and folders (docs/_snippets/) are fragments, not pages.
+    paths = (p.relative_to(DOCS_DIR) for p in DOCS_DIR.rglob("*.md"))
+    return sorted(str(p) for p in paths if not any(part.startswith("_") for part in p.parts))
 
 
 def _redirect_maps(root: Path = REPO_ROOT) -> dict[str, str]:

@@ -55,8 +55,17 @@ extra_css:
 extra_javascript:
   - javascripts/theme-switch.js
 
+# Fragments included into several pages with --8<-- (see docs/developer/
+# writing-docs.md). Excluded so they are not built as pages of their own.
+exclude_docs: |
+  _snippets/
+
 plugins:
   - search
+  # One entry per moved or merged page: old path -> new path. Keep it flat (no
+  # chains); `make docs-index` turns it into the assistant's path aliases.
+  - redirects:
+      redirect_maps: {}
   - social:
       cards_layout_options:
         background_color: "#0b0f19"
@@ -76,7 +85,9 @@ markdown_extensions:
   - pymdownx.highlight:
       anchor_linenums: true
   - pymdownx.inlinehilite
-  - pymdownx.snippets
+  - pymdownx.snippets:
+      base_path: [docs/_snippets]
+      check_paths: true
   - pymdownx.tabbed:
       alternate_style: true
   - pymdownx.superfences:

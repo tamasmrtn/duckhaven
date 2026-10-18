@@ -5,7 +5,8 @@
         polaris-dev polaris-dev-down \
         localstack-dev localstack-dev-down \
         idp-dev idp-dev-down \
-        lint format docs-index eval-synth eval-judged eval-compare \
+        lint format docs-index docs-serve docs-build docs-lint docs-check \
+        eval-synth eval-judged eval-compare \
         migrate migrate-new migrate-down \
         compose-up compose-down \
         runtimes-lock build-agent \
@@ -222,6 +223,27 @@ format:
 # adding, removing or renaming a docs page; pre-commit and CI check for drift.
 docs-index:
 	uv run --package duckhaven-api python -m api.services.assistant.knowledge.generate
+
+# ── Documentation site ────────────────────────────────────────────────────────
+# The MkDocs toolchain is pinned in requirements-docs.txt. Python 3.13 because
+# the imaging extra's pinned Pillow ships no 3.14 wheel and a source build needs
+# system image headers. Vale is a single binary (https://vale.sh/docs/install);
+# CI pins its version in ci.yml.
+DOCS_RUN = uv run --python 3.13 --no-project --with-requirements requirements-docs.txt
+
+docs-serve:
+	$(DOCS_RUN) mkdocs serve
+
+docs-build:
+	$(DOCS_RUN) mkdocs build --strict
+
+docs-lint:
+	@command -v vale >/dev/null || { echo "vale is not on PATH; install it from https://vale.sh/docs/install"; exit 1; }
+	vale docs/
+	pre-commit run markdownlint --all-files
+
+docs-check: docs-lint docs-build
+	uv run --package duckhaven-api pytest api/tests/unit/test_docs_structure.py -q
 
 # ── Assistant evals ───────────────────────────────────────────────────────────
 # Tier 1 (deterministic, free) runs inside `make test-api`; the retrieval half

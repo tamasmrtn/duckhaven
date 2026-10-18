@@ -34,12 +34,15 @@ make test && pre-commit run --all-files
 ## Documentation
 
 The docs site is built with Material for MkDocs and published to GitHub Pages by the
-`Docs` workflow. Build and preview it locally with:
+`Docs` workflow. The toolchain is pinned in `requirements-docs.txt`. Preview the site locally with:
 
 ```bash
-pip install 'mkdocs-material[imaging]==9.5.49'
-mkdocs serve
+make docs-serve
 ```
+
+Before opening a pull request that touches `docs/`, run `make docs-check`. It lints prose with
+[Vale](https://vale.sh/docs/install) (install the binary once) and Markdown with markdownlint, runs the page-structure
+tests, and builds the site in strict mode.
 
 The `[imaging]` extra (Pillow + CairoSVG) is required because the built-in `social` plugin
 generates a per-page Open Graph / Twitter card image at build time; it also emits the

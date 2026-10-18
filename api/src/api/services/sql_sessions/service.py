@@ -221,7 +221,13 @@ async def fail_inflight_statements(
     session is gone they never will. Without this they stay ``queued`` forever and
     every client polls one until its own deadline (#156). Returns the row count;
     the caller commits.
+
+    A request here waiting on one of them is woken once that commit lands, as a
+    QUERY_DONE would wake it: its wait polls only as a backstop, and an agent
+    that disconnected mid-statement would otherwise be reported that much later.
     """
+    from api.services.query import signal_completion
+
     if not session_ids:
         return 0
     result = await db.execute(
@@ -232,8 +238,17 @@ async def fail_inflight_statements(
             Query.status.in_(_IN_FLIGHT),
         )
         .values(status="failed", error=error, finished_at=datetime.now(tz=UTC))
+        .returning(Query.id)
     )
-    count = result.rowcount or 0
+    failed = list(result.scalars())
+
+    def wake(_session) -> None:
+        for query_id in failed:
+            signal_completion(query_id)
+
+    if failed:
+        sa.event.listen(db.sync_session, "after_commit", wake, once=True)
+    count = len(failed)
     for _ in range(max(0, count)):
         record_sql_statement("failed")
     return count

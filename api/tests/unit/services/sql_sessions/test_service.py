@@ -130,6 +130,23 @@ async def test_fail_inflight_statements_resolves_only_in_flight_rows(db_session)
     assert queued.finished_at is not None
 
 
+async def test_failing_in_flight_statements_wakes_their_waiters_once_committed(db_session):
+    """A request here waiting on a statement whose agent disconnected learns of it
+    as it would of a QUERY_DONE, not at its next backstop poll; and only once the
+    failure is committed, so the row it then reads is the failed one."""
+    from api.services.query import completion_waiter
+
+    session = await _open_session(db_session)
+    q = await _statement(db_session, session, status="running")
+
+    with completion_waiter(q.id) as done:
+        await fail_inflight_statements(db_session, [session.id], "agent disconnected")
+        assert not done.is_set()
+        await db_session.commit()
+        assert done.is_set()
+        assert done.row is None
+
+
 async def test_agent_disconnect_resolves_in_flight_statements(db_session):
     """The #156 defect-3 regression: fail_sessions_for_agent flipped the *session*
     to failed but left its statements queued forever, so a client polling one

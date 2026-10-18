@@ -125,6 +125,13 @@ async def _on_first_report(db: AsyncSession, agent_id: uuid.UUID) -> None:
     await bind_scheduled_work(db, agent_row)
 
 
+async def _autocommit(db: AsyncSession) -> None:
+    """Run ``db``'s statements outside a transaction. For the frames that are one
+    conditional UPDATE each, and arrive for every statement on the path to its
+    QUERY_DONE: BEGIN and COMMIT would be two of their three round trips."""
+    await db.connection(execution_options={"isolation_level": "AUTOCOMMIT"})
+
+
 # In-flight CATALOG_REQUEST answers, held so they are not collected mid-flight.
 _catalog_answers: set[asyncio.Task] = set()
 
@@ -415,6 +422,8 @@ async def agent_connect(
                     from api.services.query import handle_agent_frame
 
                     async with session_factory() as db:
+                        if msg_frame.type == FrameType.QUERY_PROGRESS:
+                            await _autocommit(db)
                         # The catalog client goes along so lineage extraction can
                         # resolve a source table's columns. It is the process-wide
                         # one the lifespan owns, the same instance every request
@@ -433,6 +442,7 @@ async def agent_connect(
                     from api.services.sql_sessions.service import handle_statement_ack
 
                     async with session_factory() as db:
+                        await _autocommit(db)
                         await handle_statement_ack(db, msg_frame)
 
                 elif msg_frame.type == FrameType.CATALOG_REQUEST:

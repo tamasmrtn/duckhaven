@@ -34,7 +34,6 @@ from api.models.agent import Agent
 from api.models.query import Query
 from api.models.sql_session import SqlSession
 from api.models.user import User
-from api.models.workspace import Workspace
 from api.schemas.page import Page
 from api.schemas.query import QueryOut
 from api.schemas.sql_session import (
@@ -618,7 +617,6 @@ async def run_statement(
     cache = await session_cache.lookup(
         db,
         session=session,
-        workspace=await db.get(Workspace, session.workspace_id),
         catalogs=catalogs,
         sql=body.sql,
         use_cache=body.use_cache,

@@ -272,6 +272,36 @@ async def test_done_hands_its_waiter_the_terminal_row(db_session):
     assert done.row.keys() == {a.key for a in inspect(Query).column_attrs}
 
 
+async def test_done_without_a_waiter_does_not_read_the_row_back(db_session):
+    """Most completions have no request waiting on them here: they do not pay for
+    returning a row whose SQL and profile can be large."""
+    from sqlalchemy import event
+
+    ws, _ = await _make_workspace(db_session)
+    query = await _queued_query(db_session, ws)
+    updates = []
+
+    def capture(conn, cursor, statement, *args):
+        if statement.lstrip().upper().startswith("UPDATE QUERIES"):
+            updates.append(statement)
+
+    engine = db_session.bind.sync_engine
+    event.listen(engine, "before_cursor_execute", capture)
+    try:
+        await query_service.handle_agent_frame(
+            db_session,
+            Frame(
+                type=FrameType.QUERY_DONE,
+                payload={"query_id": str(query.id), "status": "done"},
+            ),
+        )
+    finally:
+        event.remove(engine, "before_cursor_execute", capture)
+
+    assert len(updates) == 1
+    assert "RETURNING" not in updates[0].upper()
+
+
 async def test_query_done_upserts_table_stats(db_session):
     ws, catalog = await _make_workspace(db_session)
     query = Query(workspace_id=ws.id, sql="SELECT 1", status="running", origin="sample")

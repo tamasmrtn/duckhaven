@@ -272,27 +272,29 @@ async def handle_agent_frame(db: AsyncSession, frame: Frame, polaris=None) -> No
         # wall-clock as queue wait. COALESCE leaves an already-stamped value alone.
         duration_ms = frame.payload.get("duration_ms")
         ran_at = finished - timedelta(milliseconds=duration_ms) if duration_ms else finished
-        columns = sa.inspect(Query).columns
-        terminal = (
-            await db.execute(
-                sa.update(Query)
-                .where(Query.id == query_id)
-                .values(
-                    status=status_val,
-                    row_count=frame.payload.get("row_count"),
-                    duration_ms=duration_ms,
-                    result_bytes=frame.payload.get("result_bytes"),
-                    error=frame.payload.get("error"),
-                    result_path=frame.payload.get("result_path"),
-                    result_schema=frame.payload.get("result_schema"),
-                    profile=frame.payload.get("profile"),
-                    running_at=sa.func.coalesce(Query.running_at, ran_at),
-                    finished_at=finished,
-                )
-                # The whole row, for a request here waiting on this statement.
-                .returning(*columns)
+        update = (
+            sa.update(Query)
+            .where(Query.id == query_id)
+            .values(
+                status=status_val,
+                row_count=frame.payload.get("row_count"),
+                duration_ms=duration_ms,
+                result_bytes=frame.payload.get("result_bytes"),
+                error=frame.payload.get("error"),
+                result_path=frame.payload.get("result_path"),
+                result_schema=frame.payload.get("result_schema"),
+                profile=frame.payload.get("profile"),
+                running_at=sa.func.coalesce(Query.running_at, ran_at),
+                finished_at=finished,
             )
-        ).first()
+        )
+        # The whole row, but only for a request here waiting on this statement:
+        # the SQL and profile can be large, and most completions have no waiter.
+        columns = sa.inspect(Query).columns if query_id in _completion_waiters else None
+        if columns is not None:
+            update = update.returning(*columns)
+        result = await db.execute(update)
+        terminal = result.first() if columns is not None else None
         await db.commit()
         # Before the stats/lineage work below, which is deliberately not on the
         # client's critical path: the row is terminal and committed as of here.

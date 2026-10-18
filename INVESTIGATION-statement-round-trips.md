@@ -202,7 +202,8 @@ def _api_frames():
     return [
         f"{f.filename.split('site-packages/')[1]}:{f.name}"
         for f in traceback.extract_stack()
-        if "/site-packages/api/" in f.filename and not f.filename.endswith(("_session_probe.py", "db/session.py"))
+        if "/site-packages/api/" in f.filename
+        and not f.filename.endswith(("_session_probe.py", "db/session.py"))
     ]
 
 
@@ -220,14 +221,28 @@ def _init(self, *args, **kwargs):
 
 
 AsyncSession.__init__ = _init
-for _name in ("execute", "scalar", "scalars", "get", "commit", "flush", "refresh", "delete", "merge", "rollback"):
+for _name in (
+    "execute",
+    "scalar",
+    "scalars",
+    "get",
+    "commit",
+    "flush",
+    "refresh",
+    "delete",
+    "merge",
+    "rollback",
+):
+
     def _wrap(orig, op):
         async def method(self, *args, **kwargs):
             caller = _api_frames()[-3:]
             _last_op[id(self.sync_session)] = " > ".join(caller[-1:])
             _write(ev="op", sid=id(self.sync_session), op=op, caller=caller)
             return await orig(self, *args, **kwargs)
+
         return method
+
     setattr(AsyncSession, _name, _wrap(getattr(AsyncSession, _name), _name))
 
 

@@ -39,6 +39,45 @@ def test_decode_parquet_page_paginates():
     assert rows == [{"n": "2"}, {"n": "3"}]
 
 
+def test_decode_parquet_page_opens_its_database_once(monkeypatch):
+    """A fresh DuckDB per page cost about half of each decode, on the event loop."""
+    content = _parquet_bytes("SELECT * FROM range(3) t(n)")
+    opened = []
+    real = query_service.duckdb.connect
+
+    def counting(*args, **kwargs):
+        opened.append(1)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(query_service, "_decoder", None)
+    monkeypatch.setattr(query_service.duckdb, "connect", counting)
+    for _ in range(3):
+        assert query_service.decode_parquet_page(content, limit=10, offset=0)[1] == ["n"]
+    assert len(opened) == 1
+
+
+def test_decode_parquet_page_is_safe_across_threads():
+    """Callers off the event loop decode concurrently; each gets its own cursor."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    contents = {n: _parquet_bytes(f"SELECT * FROM range({n}) t(n)") for n in range(1, 9)}
+
+    def decode(n):
+        rows, _ = query_service.decode_parquet_page(contents[n], limit=100, offset=0)
+        return n, len(rows)
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(decode, [n for n in contents for _ in range(10)]))
+    assert all(n == count for n, count in results)
+
+
+def test_a_failed_decode_does_not_break_the_next():
+    with pytest.raises(duckdb.Error):
+        query_service.decode_parquet_page(b"not parquet", limit=10, offset=0)
+    content = _parquet_bytes("SELECT 1 AS n")
+    assert query_service.decode_parquet_page(content, limit=10, offset=0)[1] == ["n"]
+
+
 def test_decode_parquet_page_json_coerces_types():
     content = _parquet_bytes("SELECT DATE '2026-01-02' AS d, 1.5::DECIMAL(4,2) AS amt")
     rows, _ = query_service.decode_parquet_page(content, limit=10, offset=0)

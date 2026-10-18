@@ -4,6 +4,7 @@ import datetime as dt
 import logging
 import os
 import tempfile
+import threading
 import time
 import uuid
 from dataclasses import dataclass
@@ -705,6 +706,22 @@ def _json_value(value: Any, value_type: duckdb.DuckDBPyType | None) -> Any:
     return _json_safe(value)
 
 
+# One in-memory DuckDB for every page decode. Opening and closing a database per
+# page took about half of a 1000-row decode, on the event loop. Each decode reads
+# through its own cursor, a separate connection to this database, because a
+# connection is not safe to share between threads.
+_decoder: duckdb.DuckDBPyConnection | None = None
+_decoder_lock = threading.Lock()
+
+
+def _decoder_cursor() -> duckdb.DuckDBPyConnection:
+    global _decoder
+    with _decoder_lock:
+        if _decoder is None:
+            _decoder = duckdb.connect()
+        return _decoder.cursor()
+
+
 def decode_parquet_page(
     content: bytes, limit: int, offset: int
 ) -> tuple[list[dict[str, Any]], list[str]]:
@@ -713,7 +730,7 @@ def decode_parquet_page(
         tmp.write(content)
         path = tmp.name
     try:
-        conn = duckdb.connect()
+        conn = _decoder_cursor()
         try:
             cur = conn.execute(
                 "SELECT * FROM read_parquet(?) LIMIT ? OFFSET ?", [path, limit, offset]

@@ -65,65 +65,91 @@ early waiter
 reads once and does not miss a completion signalled before it starts; the wait polls fast only when the agent socket
 is remote; the queue-wait histogram is recorded once per query and never for session statements.
 
-## Results so far
+## Second round (2026-10-18)
 
-Round trips (probe image, 40 statements):
+Six more commits on top of the four changes above:
 
-| | SQL | Transactions = pool checkouts | Sessions |
+1. **The workspace's catalogs load in one query** (`resolve_workspace_catalogs` joins the storage backend and DuckLake
+   login instead of select-in loading them: 3 queries became 1, on every statement and every other caller).
+2. **The session cache lookup reads the workspace only when it runs**, not before its own early returns.
+3. **Each trace span is exported once.** FastAPI 0.142 configures OTLP export from the `OTEL_*` environment at lifespan
+   startup (`fastapi/telemetry/_runtime.py`) and added a second `BatchSpanProcessor` to the provider
+   `setup_telemetry` already exports through. Fixed with `telemetry={"auto_configure": False}` on both apps.
+4. **No per-ASGI-message spans** (`exclude_spans=["send", "receive"]`): 12 of a statement's 15 spans were `http send`,
+   `http receive` and `websocket receive` (one per agent frame). 3 spans remain: the two server spans and
+   `exec_statement`.
+5. **QUERY_DONE hands the waiting request the terminal row** (`UPDATE … RETURNING` every column, passed through
+   `signal_completion`), so the woken request does not read it back. Without the row (reaper, remote socket) it still
+   reads.
+6. **STATEMENT_ACK and QUERY_PROGRESS run in autocommit** (one round trip instead of BEGIN, UPDATE, COMMIT).
+
+### Results
+
+Probe image, per statement:
+
+| | SQL | Transactions | Spans |
 |---|---|---|---|
-| `main` | 26.9 | 7.8 | 4.25 |
-| this branch | **19.4** | **6.5** | 4.25 |
+| `main` | 27.0 | 7.0 | 30 |
+| first round (PR as pushed) | 18.0 | 6.0 | 30 |
+| this round | **14.0** | **5.0** | **3** |
 
-API CPU and throughput (cgroup `cpu.stat` deltas, no instrumentation; `main` and the branch alternated):
+API CPU and throughput, battery, `SELECT 42`, cache off, medians of 3 alternating rounds (`main`, the PR as first
+pushed, this round), no instrumentation:
 
-| Condition | `main` | Branch |
-|---|---|---|
-| Battery, 1 client: API CPU per statement | 52.5 ms | 48.6 ms |
-| AC, 1 client: API CPU per statement | 29.0 ms | **31.5 ms** |
-| AC, 1 client: median latency | 48.7 ms | **59 ms** |
-| AC, 4 clients: statements/s | 58–60 | **67–68** |
-| AC, 8 clients: statements/s | 55 | **65** |
-| AC, 8 clients: median latency | 137 ms | **116 ms** |
+| | `main` | First round | This round |
+|---|---|---|---|
+| 1 client: median latency | 74.4 ms | 68.3 ms | **61.3 ms** |
+| 1 client: API CPU per statement | 49.5 ms | 43.6 ms | **36.6 ms** |
+| 4 clients: statements/s | 25.2 | 30.9 | **37.9** |
+| 8 clients: statements/s | 26.2 | — | **38.4** |
+| 8 clients: median latency | 303 ms | — | **217 ms** |
 
-The laptop switched from battery to AC during the session; only same-condition pairs are comparable.
+Per-change contribution (same campaign, 1 client): items 1–3 took API CPU 43.6 → 39.5 ms, item 5 to 39.4,
+item 4 to 37.1, item 6 to 36.6 (and 4-client throughput 33.8 → 37.9). With tracing off entirely the same build
+measured 35.3 ms, so tracing now costs 1–2 ms per statement instead of about 6.
 
-## What still needs to be investigated before the PR is ready
+### Answers to the first round's questions
 
-1. **The single-client regression on AC (+10 ms median latency, +2 ms API CPU, and agent CPU per statement up from
-   about 19 to 22 ms) is unexplained.** Under load the branch is clearly better, but one client should not get slower.
-   Ruled out so far: the `FOR UPDATE` query (identical SQL, no joins) and `is_read_only` (0.002 ms per call).
-   Next step
-   was a bisection: images of `main` plus exactly one change group, each measured for single-client latency and
-   CPU. The
-   groups by hunk of `git diff -U2 main`:
+1. **The single-client regression does not reproduce.** On battery, in every one of 6 alternating pairs (two
+   campaigns), the first round's branch was faster than `main` for one client (66–69 ms against 70–74 ms median,
+   41–44 against 48–50 ms API CPU). The probe shows the wait always woke by event, never by the 0.5 s backstop. The
+   likely cause of the AC result is CPU frequency and core placement, not the code: this laptop has P-cores 0–3 and
+   E-cores 4–7, CPU per statement is *lower* at 4 clients than at 1 (the governor clocks up under load), and in the AC
+   run the agent's CPU per statement rose too, though its code did not change. Not verified on AC: the laptop was on
+   battery throughout.
+2. **Transactions fell by 1, not 2,** because on `main` the pre-wait read was never its own transaction: it ran in the
+   one the dispatch's `db.get(Agent)` had opened after the commit. Removing it saved a SQL statement, not a
+   transaction. The transaction saved was lineage's.
+3. **HA** is still unchecked. Item 5 only applies when the QUERY_DONE is handled in the waiting process; otherwise
+   the wait reads the row as before.
+4. **AC re-measurement** is still to do; the numbers above are battery only.
 
-   | Group | Hunks |
-   |---|---|
-   | wait | `routers/sql_sessions.py` 0, 1, 4; `services/sql_sessions/service.py` 1, 2, 3 |
-   | lock | `routers/sql_sessions.py` 2, 3 |
-   | ack/progress | `services/sql_sessions/service.py` 0; `services/query.py` 0 |
-   | lineage | `services/query.py` 1; `services/lineage/ingest.py` 0, 1, 2 |
-   | batch | `services/grants.py` 0, 1 |
+## Where the time goes now
 
-   Prime suspects:
-   - **The wait change.** Does `QUERY_DONE` always arrive and set the event before the 0.5 s backstop? A median shift
-     with an unchanged p90 suggests a different wake-up timing, not missed events. Log, per statement, whether
-     the wait
-     woke by event or by timeout.
-   - **Agent frame ordering.** The three frames are applied in sequence on the agent's websocket loop, and completion
-     is signalled only after `QUERY_DONE` commits. Time how long each frame handler takes on `main` and on the branch.
-2. **Transactions fell by 1.3, not the expected 2.** The lineage commit and the pre-wait read are each one
-   transaction.
-   Confirm with the probe which one still happens.
-3. **The wait change under high availability.** The fast poll is kept when the agent's socket is on another replica.
-   Run the HA compose file (`deploy/docker-compose.ha.yml`) and check that statements on a remote-socket agent are not
-   slower, and that an agent reconnecting to another replica mid-statement costs at most the 0.5 s backstop.
-4. **Repeat the measurements on AC**, with at least 3 alternating runs, before quoting numbers in the PR description.
-   The battery and AC figures above disagree on direction for one client.
-5. **Not in this PR, but next:** per-session caching of membership, catalogs and access modes (about 6 SQL per
-   statement). It needs a decision on how fast a revoked grant or removed member must take effect. Also: OpenTelemetry
-   sampling (about 6 ms per statement), and the JSON first page's remaining ~26 ms of API CPU, likely a new
-   `httpx.AsyncClient` per agent fetch in `proxy_rows`.
+Per-statement timeline from the probe (battery, one client, from dispatch): agent reached and acked at ~6 ms; ack
+applied ~4 ms; progress applied ~4 ms; QUERY_DONE applied and signalled at ~32 ms; request resumed 0.7 ms later.
+**The three frames are applied one after another on the agent's socket loop**, so QUERY_DONE waits behind the ack and
+progress frames, which the agent sends within a millisecond or two of each other for a fast statement.
+
+The 14 remaining SQL statements: auth, session lock, membership, catalogs, in-flight statements, scoped access modes,
+INSERT, `last_active_at` UPDATE, the dispatch's agent read (its own transaction, after the commit), ack UPDATE,
+progress UPDATE, and in QUERY_DONE the query read, session read and UPDATE.
+
+## Next, not in this PR
+
+- **Apply ack and progress frames off the socket loop's critical path** (for example on a per-agent background queue,
+  keeping them ordered among themselves). Both UPDATEs are conditional on a non-terminal status, so one applied after
+  QUERY_DONE is a no-op. About 8 ms of single-client latency. Needs a decision first: the queue-wait histogram is
+  recorded by the first progress frame, so a fast interactive query whose QUERY_DONE overtakes it would go unsampled.
+- **Read the agent in the request's transaction** for sessions with the cache off (the cache lookup already loads it
+  for the rest), saving the dispatch's separate transaction.
+- **Per-session caching** of membership, catalogs and access modes (about 4 SQL per statement), which needs a decision
+  on how fast a revoked grant or removed member must take effect.
+- **Tracing has no database spans.** `SQLAlchemyInstrumentor` refuses SQLAlchemy 2.1.4 ("only instruments sqlalchemy
+  >= 1.0.0, < 2.1.0 … nothing can be instrumented"), so `docs/operations/tracing.md` describes SQL spans that are not
+  produced. Re-enabling them would add about 14 spans per statement.
+- The cache-on path (the default for clients) was not measured: its lookup adds an in-flight count that repeats
+  `name_context`'s query.
 
 ## How the measurements were taken
 
@@ -150,6 +176,13 @@ The scripts lived in a session scratchpad and are not in the repo; this is enoug
 - **Profilers that do not work here.** py-spy cannot attach (`ptrace_scope=1` and the container runs as uid 65532); as
   the parent of uvicorn it works only in `--nonblocking` mode, which truncates stacks. cProfile misattributes time
   across SQLAlchemy's greenlet switches and coroutine resumes, so only per-function self time is usable.
+- **The timeline probe (second round).** A second overlay-only probe appended to `api/main.py` as
+  `from api import _probe; _probe.install()`. It logs SQL (`before_cursor_execute`), pool checkouts, ORM begins and
+  every span ended (by patching `BatchSpanProcessor.on_end`, which is how the duplicate processor showed: each span id
+  arrived from two processor instances), and times `dispatch_exec_statement`, `handle_statement_ack`,
+  `handle_agent_frame`, `signal_completion` and `await_query_done` by wrapping them on their modules. Wrappers must pass
+  through extra arguments; one that did not broke `signal_completion` and the wait fell back to the backstop.
+- **Do not run the test suite during a benchmark.** It takes several cores for minutes and skews every run it overlaps.
 - **The session probe.** Saved as `api/_session_probe.py` in the overlay only, and enabled by appending
   `from api import _session_probe` and `_session_probe.install_pool_probe(engine)` to the overlay's
   `api/db/session.py`.

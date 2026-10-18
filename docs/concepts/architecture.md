@@ -205,7 +205,7 @@ presents as a Bearer credential when reading result rows.
 |---|---|---|
 | **DuckDB** | The query engine — present *only* on agents. Also used by the control plane as a pure SQL parser. | `agent/.../executor/`, `api/.../services/sql_guard.py` |
 | **Apache Polaris** | Iceberg REST catalog: metadata authority + vendor of short-lived storage credentials (via access delegation). | `api/.../services/polaris.py` |
-| **Storage backends** | Where Iceberg tables physically live (all object storage): `object_store` (the bundled store, `httpfs`), S3 (`httpfs`), ADLS Gen 2 (`azure`). One per catalog. | `agent/.../executor/runner.py` (iceberg attach), `StorageBackend` model |
+| **Storage backends** | Where Iceberg tables physically live (all object storage): `object_store` (the bundled store, `httpfs`), S3 (`httpfs`), ADLS Gen 2 (`azure`). One per catalog. | `agent/.../executor/runner.py` (Iceberg attach), `StorageBackend` model |
 | **Postgres** | State-of-record for DuckHaven entities + the Polaris metastore. | `api/.../db/`, `models/` |
 | **AI model providers (opt-in)** | Backs the AI data assistant: OpenAI, Anthropic, or Mistral SDKs via Pydantic AI, plus any OpenAI-compatible `base_url` (Ollama, vLLM, Azure OpenAI). Config-driven, disabled by default. | `api/.../services/assistant/agent.py` |
 | **Tailscale (operational)** | Recommended private network providing the transport-layer security perimeter. Not a code dependency. | deployment only |

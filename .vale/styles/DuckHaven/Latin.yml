@@ -1,0 +1,10 @@
+# Readers scanning a page, and readers whose first language is not English,
+# parse "for example" faster than "e.g.".
+extends: substitution
+message: "Use '%s' instead of '%s'."
+level: warning
+ignorecase: true
+nonword: true
+swap:
+  '\be\.g\.': for example
+  '\bi\.e\.': that is

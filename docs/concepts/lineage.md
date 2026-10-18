@@ -13,8 +13,8 @@ records which of them asserted it.
 
 An edge runs from a **source** dataset to a **target** dataset and means *"data in the target was produced using the
 source"*. That is deliberately a slightly weaker claim than "data flowed from the source into the target": on its own,
-a table-level edge does not distinguish a table that was copied from from one that was only joined against or filtered
-on, and pretending otherwise would be the kind of confident-but-wrong metadata that is worse than none.
+a table-level edge does not distinguish a source table whose rows were copied from one that was only joined against or
+filtered on, and pretending otherwise would be the kind of confident-but-wrong metadata that is worse than none.
 
 For impact analysis — the common reason to look — the weaker claim is the useful one anyway. If a table was referenced
 in building yours, changing it is your problem.

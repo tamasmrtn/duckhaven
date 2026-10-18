@@ -21,7 +21,7 @@ boot, so every variable below is optional.
 | `DATABASE_URL` | built from `POSTGRES_*` | Full SQLAlchemy URL. Set it to override the `POSTGRES_*` variables entirely — required for a connection they cannot express, such as passwordless Microsoft Entra authentication, where there is no password to interpolate. |
 | `DB_AUTH_MODE` | `password` | `password` takes the credential from `DATABASE_URL`. `entra` leaves it out and has the driver present a Microsoft Entra access token instead, minted per connection from the ambient managed identity. Requires the server to have Entra authentication enabled and a login role for that identity. |
 | `DB_ENTRA_SCOPE` | `https://ossrdbms-aad.database.windows.net/.default` | Token audience for `DB_AUTH_MODE=entra`. Change only for a sovereign cloud. |
-| `POSTGRES_PASSWORD` | `duckhaven` | Internal Postgres password. Postgres publishes no port; shared with the polaris and api services via Compose interpolation. |
+| `POSTGRES_PASSWORD` | `duckhaven` | Internal Postgres password. Postgres publishes no port; shared with the `polaris` and `api` services via Compose interpolation. |
 | `POLARIS_IMAGE_TAG` | `1.7.0` | Apache Polaris image tag. Already pinned — override only to test a different Polaris release. |
 | `POLARIS_REALM` | `POLARIS` | Polaris realm name. |
 | `POLARIS_CLIENT_ID` | `root` | Polaris OAuth2 client id used by the API. |

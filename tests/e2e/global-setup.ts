@@ -19,8 +19,8 @@ export default async function globalSetup(_config: FullConfig): Promise<void> {
       if (!SETUP_TOKEN) {
         throw new Error(
           "Stack needs a first admin but DH_SETUP_TOKEN is not set. Provide it via:\n" +
-            '  export DH_SETUP_TOKEN="$(docker compose -f deploy/docker-compose.yml ' +
-            'exec -T api cat /var/duckhaven/setup_token)"',
+            "  docker compose -f deploy/docker-compose.yml cp api:/var/duckhaven/setup_token ./setup_token\n" +
+            '  export DH_SETUP_TOKEN="$(cat ./setup_token)"',
         );
       }
       const created = await ctx.post("/api/setup/admin", {

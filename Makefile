@@ -74,9 +74,10 @@ test-cross-component:
 	  rc=$$?; if [ $$rc -ne 0 ] && [ $$rc -ne 5 ]; then exit $$rc; fi
 
 # End-to-end (Layer 3): Playwright against the full compose stack. Bring it up
-# first (`make compose-up`) and export DH_SETUP_TOKEN for a fresh stack:
-#   export DH_SETUP_TOKEN="$$(docker compose -f deploy/docker-compose.yml \
-#     exec -T api cat /var/duckhaven/setup_token)"
+# first (`make compose-up`) and export DH_SETUP_TOKEN for a fresh stack (the api
+# image has no shell, so copy the token out rather than `exec ... cat` it):
+#   docker compose -f deploy/docker-compose.yml cp api:/var/duckhaven/setup_token ./setup_token
+#   export DH_SETUP_TOKEN="$$(cat ./setup_token)"
 test-e2e:
 	cd tests/e2e && npm ci && npx playwright install --with-deps chromium && npx playwright test
 

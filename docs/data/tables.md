@@ -1,8 +1,14 @@
+---
+type: concept
+---
+
 # Tables & Iceberg
 
-Every table in an Iceberg [catalog](catalogs.md) is an [Apache Iceberg](https://iceberg.apache.org/) table,
-catalog-managed by Polaris. Iceberg gives DuckHaven snapshots, schema evolution, and time-travel queries out of the
-box.
+A table in an Iceberg catalog is an Apache Iceberg table that Polaris manages, with snapshots, schema evolution and
+time travel.
+
+Every table in an Iceberg [catalog](catalogs.md) is an [Apache Iceberg](https://iceberg.apache.org/) table. Polaris
+arbitrates every commit to it, and any engine that reads Iceberg can open it.
 
 This page describes the default catalog kind. A table in a [DuckLake](ducklake.md) catalog is a DuckLake table
 instead — same Parquet underneath, different metadata and a few different limits.

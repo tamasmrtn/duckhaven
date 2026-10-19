@@ -1,39 +1,40 @@
+---
+type: how-to
+---
+
 # Create a DuckLake catalog
 
-A walkthrough of creating, using and dropping a [DuckLake](ducklake.md) catalog. It assumes DuckLake is
-[enabled](../deployment/ducklake.md) and at least one agent is running an image that carries the `ducklake` and
-`postgres` extensions.
+Create a DuckLake catalog, create and query its tables, and drop it when you are done with it.
 
-## Before you start
+A [DuckLake](ducklake.md) catalog's tables are readable by DuckDB and nothing else. If Spark, Trino or a PyIceberg
+script needs to read the data, create an Iceberg catalog instead. A DuckLake catalog can be
+[exported to Iceberg](ducklake.md#exporting-to-iceberg) later, which copies its data and current state but not its
+snapshot history.
 
-A DuckLake catalog's tables are readable by DuckDB and nothing else. If anything outside DuckHaven needs to read this
-data — Spark, Trino, a PyIceberg script — create an Iceberg catalog instead.
+## Before you begin
 
-That is not irreversible: a DuckLake catalog can be [exported to Iceberg](ducklake.md#exporting-to-iceberg)
-later, which copies the data and its current state but not its snapshot history. Prefer Iceberg from the start if you
-already know something else will read it.
+- **You need:** the workspace `owner` role, and a connected agent whose image carries the `ducklake` and `postgres`
+  extensions.
+- **Enabled by:** `DUCKLAKE_ENABLED`, on by default; see [Enable DuckLake](../deployment/ducklake.md).
 
-## Create it
+## Create the catalog
 
-**Catalog → + → New catalog.**
+1. In the catalog tree, click **+** (*Create*) and choose **Create catalog**.
+2. In **New catalog**, fill in:
+    - **Name:** lowercase letters, digits and underscores, starting with a letter. It is the name you use in SQL
+      (`raw.staging.events`), and names the PostgreSQL schema that holds the catalog's metadata (`cat_raw`).
+    - **Catalog kind:** *DuckLake*. The choice appears only when DuckLake is enabled.
+    - **Storage backend:** *Bundled object storage*, or any registered S3 or ADLS Gen2 backend. The backend is
+      independent of the kind.
+    - **Who can see its data:** open or scoped, as for any catalog; see [Scoped access](../access/scoped-access.md).
+3. Create it. The catalog is attached to the current workspace.
 
-1. **Catalog kind** — pick *DuckLake*. This step only appears when DuckLake is enabled; a deployment with one kind
-   shows no choice.
-2. **Name** — lowercase letters, digits and underscores, starting with a letter. This becomes the name you use in
-   SQL (`raw.analytics.events`) and the PostgreSQL schema that holds the catalog's metadata (`cat_raw`).
-3. **Storage backend** — bundled object storage, or any registered S3 / ADLS Gen 2 backend. This is independent of the
-   kind.
-4. **Access mode** — `open` or `scoped`, exactly as for an Iceberg catalog.
+Until an agent first attaches the catalog, its metadata schema exists but holds no tables: the DuckLake extension
+creates them on first use. Browsing it before then shows nothing.
 
-The catalog is created and attached to the current workspace.
+## Create and query tables
 
-!!! note "It starts empty and un-materialised"
-    Until an agent first attaches the catalog, its metadata schema exists but holds no tables — the DuckLake extension
-    creates them on first use. Browsing it before then correctly shows nothing rather than an error.
-
-## Use it
-
-Nothing about querying differs. Create a schema and a table from the catalog tree, or in a worksheet:
+Create a schema and a table from the catalog tree, or in a worksheet:
 
 ```sql
 CREATE SCHEMA raw.staging;
@@ -48,67 +49,75 @@ INSERT INTO raw.staging.events
 SELECT i, now(), 'payload-' || i FROM range(100000) r(i);
 ```
 
-A workspace can attach catalogs of both kinds, and a query can join across them:
+A query can join DuckLake and Iceberg catalogs:
 
 ```sql
-SELECT o.id, c.name
-FROM   raw.staging.events o
-JOIN   curated.analytics.customers c ON c.id = o.id;
+SELECT e.id, o.customer
+FROM raw.staging.events e
+JOIN sales.analytics.orders o ON o.order_id = e.id;
 ```
 
-## Time travel
-
-DuckLake snapshots are catalog-wide, so a table's **History** tab lists the catalog snapshots in which that table
-changed. "Query at this snapshot" generates:
-
-```sql
-SELECT * FROM raw.staging.events AT (VERSION => 42);
-SELECT * FROM raw.staging.events AT (TIMESTAMP => TIMESTAMP '2026-09-01 00:00:00');
-```
-
-## Evolve a table
-
-Add, drop and rename columns, and widen a column's type:
+Change a table's columns with `ALTER TABLE`. A type change must widen the column, such as `INTEGER` to `BIGINT` or
+`FLOAT` to `DOUBLE`.
 
 ```sql
 ALTER TABLE raw.staging.events ADD COLUMN source VARCHAR;
 ALTER TABLE raw.staging.events RENAME payload TO body;
-ALTER TABLE raw.staging.events ALTER id SET TYPE BIGINT;
 ```
 
-Only lossless type promotions are allowed — `INTEGER` to `BIGINT`, `FLOAT` to `DOUBLE`. Narrowing a column fails.
+Snapshots are catalog-wide, and a table's **History** tab lists the catalog snapshots in which it changed; see
+[Snapshots & time travel](snapshots-time-travel.md).
 
-## Drop it
+## Check that it worked
 
-Detach the catalog from every workspace, then drop it from **Catalog → catalog → Drop**, or:
-
-```bash
-dh api DELETE /catalogs/<catalog-id>
+```sql
+SELECT count(*) FROM raw.staging.events;
 ```
 
-Dropping a catalog **deletes its data**: the object-storage prefix is purged and the metadata schema is dropped. There
-is no undo.
+The count is `100000`, and the catalog appears in the tree with its schema and table.
 
-## Troubleshooting
+## Drop the catalog
 
-**"No compatible agent is connected"** — the agents you can use do not advertise the `ducklake` and `postgres_scanner`
-extensions. Check the agent's **Overview** tab on the **Compute** page; an older agent image needs updating.
+Dropping a catalog **deletes its data**: the object-storage prefix is purged and the metadata schema dropped, with no
+undo.
 
-**A statement is rejected mentioning `__ducklake_metadata_`** — DuckLake's internal catalog tables are deliberately not
-queryable through DuckHaven. Writing them by hand bypasses the format's transaction protocol and corrupts the table.
-Use the catalog browser, or query the tables themselves.
+1. Detach the catalog from every workspace that attaches it: right-click it and choose **Detach from workspace**.
+2. Drop it: right-click and choose **Drop catalog**, or run `dh api DELETE /catalogs/⟨catalog id⟩`.
 
-**"DuckLake cannot represent column type(s)"** — `ARRAY`, `ENUM`, `UNION`, `VARINT` and `BITSTRING` have no DuckLake
-representation. Use a supported type, or put the table in an Iceberg catalog.
+A catalog still attached somewhere is refused with `Catalog 'raw' is still attached to 1 workspace(s). Detach it
+everywhere before dropping.`
 
-**A catalog shows no schemas** — it has never been attached by an agent. Run any query against it.
+## If it goes wrong
 
-## Moving an existing Iceberg catalog here
+### "No compatible agent is connected"
 
-You cannot convert one. `iceberg_to_ducklake()` — the metadata-only path that would carry snapshot history across —
-does not support DuckLake 1.0 yet ([upstream issue](https://github.com/duckdb/ducklake/issues/1278)). Copying with
-`CREATE TABLE … AS SELECT` works and rewrites the data, starting fresh history. See
-[DuckLake](ducklake.md#converting-an-existing-iceberg-catalog).
+No agent you can use has the `ducklake` and `postgres_scanner` extensions. Check the agent's **Overview** tab under
+**Compute**, and update an older agent image.
+
+### A statement is refused for naming `__ducklake_metadata_`
+
+DuckLake's internal catalog tables cannot be queried through DuckHaven: writing them by hand bypasses the format's
+transaction protocol and corrupts the catalog. Use the catalog browser, or query the tables themselves.
+
+### "Failed to convert DuckDB type to DuckLake - unsupported type …"
+
+Fixed-size arrays (`INTEGER[3]`), `ENUM`, `UNION`, `VARINT` and `BITSTRING` have no DuckLake representation. Use another
+type, such as a list (`INTEGER[]`) or `VARCHAR`, or put the table in an Iceberg catalog.
+
+### "Cannot change type of column … - only widening type promotions are allowed"
+
+`ALTER … SET TYPE` can only widen a column. To narrow one, create a new table with the type you want and copy the
+rows.
+
+### The catalog shows no schemas
+
+No agent has attached it so far. Run any query against it.
+
+### You want to convert an existing Iceberg catalog
+
+That is not possible. Create the DuckLake catalog and copy each table with `CREATE TABLE … AS SELECT`, which rewrites
+the data and starts a new history; see
+[Converting an existing Iceberg catalog](ducklake.md#converting-an-existing-iceberg-catalog).
 
 ## Related
 

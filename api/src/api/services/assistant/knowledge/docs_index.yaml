@@ -86,27 +86,33 @@ pages:
 - path: data/catalogs.md
   title: Catalogs
   section: Data & storage
-  summary: Catalogs of either kind, how they bind to workspaces, and what a kind decides.
+  summary: A catalog is a collection of schemas and tables with its own metadata store and storage,
+    which any number of workspaces can attach.
 - path: data/manage-catalogs.md
   title: Manage catalogs
   section: Data & storage
-  summary: Create and govern catalogs.
+  summary: Browse a workspace's catalogs, create, attach, detach and drop catalogs, and create and
+    drop their schemas and tables.
 - path: data/tables.md
   title: Tables & Iceberg
   section: Data & storage
-  summary: Iceberg-native tables, snapshots, and time travel.
+  summary: A table in an Iceberg catalog is an Apache Iceberg table that Polaris manages, with snapshots,
+    schema evolution and time travel.
 - path: data/snapshots-time-travel.md
   title: Snapshots & time travel
   section: Data & storage
-  summary: Query tables at a past snapshot.
+  summary: Browse a table's snapshot history and query the table as it was at an earlier snapshot
+    or time.
 - path: data/ducklake.md
   title: DuckLake
   section: Data & storage
-  summary: DuckLake is the second kind of catalog DuckHaven can create.
+  summary: A DuckLake catalog keeps its metadata in PostgreSQL and its data as Parquet in object storage;
+    only DuckDB can read it, but DuckHaven can maintain it.
 - path: data/create-a-ducklake-catalog.md
   title: Create a DuckLake catalog
   section: Data & storage
-  summary: A walkthrough of creating, using and dropping a DuckLake catalog.
+  summary: Create a DuckLake catalog, create and query its tables, and drop it when you are done with
+    it.
 - path: data/storage-backends.md
   title: Storage backends
   section: Data & storage
@@ -115,11 +121,13 @@ pages:
 - path: data/configure-storage.md
   title: Configure storage
   section: Data & storage
-  summary: Point DuckHaven at your object storage backend.
+  summary: Register an AWS S3 or Azure ADLS Gen2 bucket as a storage backend, test it, and create
+    catalogs on it.
 - path: data/migrate-catalog-storage.md
   title: Migrate a catalog's storage
   section: Data & storage
-  summary: Move a catalog to a different storage backend without losing data.
+  summary: Move a catalog to another storage backend, such as from the bundled object store to an
+    S3 bucket, with all its data and snapshot history.
 - path: data/maintenance.md
   title: Lakehouse maintenance
   section: Data & storage

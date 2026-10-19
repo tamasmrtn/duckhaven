@@ -32,15 +32,15 @@
 
 ## Data & storage
 
-- [Catalogs](https://tamasmrtn.github.io/duckhaven/data/catalogs/): Catalogs of either kind, how they bind to workspaces, and what a kind decides.
-- [Manage catalogs](https://tamasmrtn.github.io/duckhaven/data/manage-catalogs/): Create and govern catalogs.
-- [Tables & Iceberg](https://tamasmrtn.github.io/duckhaven/data/tables/): Iceberg-native tables, snapshots, and time travel.
-- [Snapshots & time travel](https://tamasmrtn.github.io/duckhaven/data/snapshots-time-travel/): Query tables at a past snapshot.
-- [DuckLake](https://tamasmrtn.github.io/duckhaven/data/ducklake/): DuckLake is the second kind of catalog DuckHaven can create.
-- [Create a DuckLake catalog](https://tamasmrtn.github.io/duckhaven/data/create-a-ducklake-catalog/): A walkthrough of creating, using and dropping a DuckLake catalog.
+- [Catalogs](https://tamasmrtn.github.io/duckhaven/data/catalogs/): A catalog is a collection of schemas and tables with its own metadata store and storage, which any number of workspaces can attach.
+- [Manage catalogs](https://tamasmrtn.github.io/duckhaven/data/manage-catalogs/): Browse a workspace's catalogs, create, attach, detach and drop catalogs, and create and drop their schemas and tables.
+- [Tables & Iceberg](https://tamasmrtn.github.io/duckhaven/data/tables/): A table in an Iceberg catalog is an Apache Iceberg table that Polaris manages, with snapshots, schema evolution and time travel.
+- [Snapshots & time travel](https://tamasmrtn.github.io/duckhaven/data/snapshots-time-travel/): Browse a table's snapshot history and query the table as it was at an earlier snapshot or time.
+- [DuckLake](https://tamasmrtn.github.io/duckhaven/data/ducklake/): A DuckLake catalog keeps its metadata in PostgreSQL and its data as Parquet in object storage; only DuckDB can read it, but DuckHaven can maintain it.
+- [Create a DuckLake catalog](https://tamasmrtn.github.io/duckhaven/data/create-a-ducklake-catalog/): Create a DuckLake catalog, create and query its tables, and drop it when you are done with it.
 - [Storage backends](https://tamasmrtn.github.io/duckhaven/data/storage-backends/): A storage backend is an object-storage location, such as a bucket and prefix, where the tables of one or more catalogs live.
-- [Configure storage](https://tamasmrtn.github.io/duckhaven/data/configure-storage/): Point DuckHaven at your object storage backend.
-- [Migrate a catalog's storage](https://tamasmrtn.github.io/duckhaven/data/migrate-catalog-storage/): Move a catalog to a different storage backend without losing data.
+- [Configure storage](https://tamasmrtn.github.io/duckhaven/data/configure-storage/): Register an AWS S3 or Azure ADLS Gen2 bucket as a storage backend, test it, and create catalogs on it.
+- [Migrate a catalog's storage](https://tamasmrtn.github.io/duckhaven/data/migrate-catalog-storage/): Move a catalog to another storage backend, such as from the bundled object store to an S3 bucket, with all its data and snapshot history.
 - [Lakehouse maintenance](https://tamasmrtn.github.io/duckhaven/data/maintenance/): The maintenance advisor scans every table, scores its health, and recommends compaction, snapshot expiry and cleanup; for DuckLake tables it can also run them.
 
 ## Metadata & lineage

@@ -1,13 +1,21 @@
+---
+type: concept
+---
+
 # DuckLake
 
-**DuckLake** is the second kind of [catalog](catalogs.md) DuckHaven can create. Where an Iceberg catalog keeps its
-metadata in Apache Polaris, a DuckLake catalog keeps it in SQL tables in a PostgreSQL database, and its data in plain
-Parquet in the same [object storage](storage-backends.md) everything else uses.
+A DuckLake catalog keeps its metadata in PostgreSQL and its data as Parquet in object storage; only DuckDB can read it,
+but DuckHaven can maintain it.
 
-Apache Iceberg + Polaris remains the **default kind** for a new catalog, and existing catalogs are untouched by this
-feature existing. DuckLake is available to choose rather than opt into: it matches the Iceberg path on every
-capability DuckHaven exposes, and exceeds it on maintenance, which is the one thing DuckDB can do for DuckLake and
-cannot do for Iceberg.
+DuckLake is the second kind of [catalog](catalogs.md) DuckHaven can create. An Iceberg catalog keeps its metadata in
+Apache Polaris; a DuckLake catalog keeps it in SQL tables in a PostgreSQL database, and its data in Parquet in the same
+[object storage](storage-backends.md) everything else uses. Iceberg with Polaris is the default kind for a new
+catalog. DuckLake matches it on every capability DuckHaven exposes, and exceeds it on maintenance, which DuckDB can run
+for DuckLake but not for Iceberg.
+
+!!! info "Availability"
+    On by default; an operator can [turn it off](../deployment/ducklake.md). Creating a DuckLake catalog needs the
+    workspace `owner` role, and an agent with the `ducklake` and `postgres` extensions.
 
 ## The trade-off, stated plainly
 
@@ -75,7 +83,7 @@ fully-qualified names.
 ### Where the metadata lives
 
 Each DuckLake catalog owns one PostgreSQL schema — `cat_<slug>` — in a dedicated `ducklake` database, alongside the
-`duckhaven` database that holds DuckHaven's own state and the `polaris` database Polaris has always used. The
+`duckhaven` database that holds DuckHaven's own state and the `polaris` database Polaris uses. The
 `ducklake_*` tables inside it are defined by the [DuckLake specification](https://ducklake.select/docs/stable/), not by
 DuckHaven, and are created by the DuckDB extension the first time an agent attaches the catalog.
 
@@ -113,8 +121,9 @@ SELECT * FROM raw.analytics.events AT (TIMESTAMP => TIMESTAMP '2026-09-01 00:00:
 From the [specification's own list](https://ducklake.select/docs/stable/duckdb/unsupported_features):
 
 - No indexes, and no enforced primary-key, unique or foreign-key constraints.
-- No `ARRAY`, `ENUM`, `UNION`, `VARINT` or `BITSTRING` columns. DuckHaven refuses to create these with a clear error
-  rather than letting the statement fail partway through.
+- No `ARRAY` (fixed-size, such as `INTEGER[3]`), `ENUM`, `UNION`, `VARINT` or `BITSTRING` columns. A `CREATE TABLE`
+  with one fails with `Failed to convert DuckDB type to DuckLake - unsupported type …`. Variable-length lists
+  (`INTEGER[]`) work.
 - No sequences, and no non-literal column defaults.
 - `MERGE INTO` is the only upsert.
 
@@ -138,22 +147,29 @@ Within DuckHaven specifically:
 
 ## Exporting to Iceberg
 
-The DuckDB-only limitation is real, and it is not permanent. **Catalog → Export to Iceberg** creates a new
-[Iceberg catalog](catalogs.md#catalog-kinds) and copies the whole DuckLake catalog into it, in one
-`COPY FROM DATABASE` statement. The result is an ordinary Iceberg catalog: Spark, Trino, Flink and PyIceberg can open
-it, and DuckHaven treats it like any other.
+The DuckDB-only limitation can be undone. An export creates a new [Iceberg catalog](catalogs.md#catalog-kinds) and
+copies the whole DuckLake catalog into it, in one `COPY FROM DATABASE` statement. The result is an ordinary Iceberg
+catalog: Spark, Trino, Flink and PyIceberg can open it, and DuckHaven treats it like any other.
 
-You choose the new catalog's name and storage backend; the backend is independent of the source's, as the two axes
-always are. It runs in the background and appears in [History](../operations/monitoring.md#query-history-and-audit-log)
-under your name, because it is a query like any other.
+Start an export with the [command line](../reference/cli.md), `dh` 0.3.0 or later, as the catalog's creator or with
+`catalogs:admin`, and the `owner` role in the workspace the new catalog joins:
+
+```bash
+dh catalog export create ⟨catalog id⟩ --target-name ⟨new catalog name⟩ --storage-backend ⟨backend id⟩
+dh catalog export list ⟨catalog id⟩
+```
+
+The new catalog is attached to your current workspace, on the storage backend you choose. The export runs in the
+background and appears in [History](../querying/run-queries.md#find-an-earlier-run) under your name. The web app has no
+export button; the REST endpoint is `POST /api/catalogs/{catalog_id}/exports`.
 
 !!! warning "The copy carries state, not history"
     It copies the catalog's **current** contents. Snapshots, and therefore [time travel](tables.md) into the past, do
     not cross — the exported tables start with a single snapshot of the data as it was when the export ran. The
     confirmation says so before you start.
 
-What this changes is the shape of the decision, not the trade-off itself. Choosing DuckLake still means that *today*,
-in place, only DuckDB reads it. It no longer means choosing once and forever.
+The trade-off itself stays: in place, only DuckDB reads a DuckLake catalog. But choosing DuckLake is not a choice made
+once and forever.
 
 !!! note "One direction only"
     Iceberg → DuckLake is a different problem and is not supported; see below.
@@ -172,10 +188,9 @@ Invalid Input Error: 'iceberg_to_ducklake' only support version 0.4 currently, d
 ```
 
 This is an upstream limitation, tracked as [duckdb/ducklake#1278](https://github.com/duckdb/ducklake/issues/1278).
-When it is fixed, conversion becomes worth building; until then anything DuckHaven offered would be a hand-rolled
-reimplementation that loses the snapshot history, which is most of the point.
+DuckHaven does not hand-roll a replacement, because one would lose the snapshot history, which is most of the point.
 
-To move data between kinds today, create the new catalog and copy with SQL:
+To move data between kinds, create the new catalog and copy with SQL:
 
 ```sql
 CREATE TABLE lake.analytics.events AS SELECT * FROM raw.analytics.events;

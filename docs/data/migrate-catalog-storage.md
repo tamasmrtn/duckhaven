@@ -1,84 +1,87 @@
+---
+type: how-to
+---
+
 # Migrate a catalog's storage
 
-A [catalog](catalogs.md)'s [storage backend](storage-backends.md) is chosen when the catalog is
-created, but it is not permanent. An admin can **migrate** a catalog to a different backend — for example off the
-bundled object store onto a corporate S3 bucket, or from S3 to Azure ADLS Gen 2 — preserving all data and full
-snapshot history. Both [catalog kinds](catalogs.md#catalog-kinds) can be migrated, by different procedures.
-This guide covers the operator workflow.
+Move a catalog to another storage backend, such as from the bundled object store to an S3 bucket, with all its data
+and snapshot history.
 
-## The two procedures
+The catalog keeps its name, so workspaces and SQL that use it keep working. Reads work throughout; writes are refused
+until the move finishes.
 
-**Iceberg** references every file by **absolute** URI, so a raw copy would leave the new tree pointing at the old
-location. The runner stands up a shadow Polaris catalog at the target, copies each file while rewriting that prefix
-inside the metadata and manifests, registers the rewritten tables, and cuts over.
+## Before you begin
 
-**[DuckLake](ducklake.md)** records file paths *relative* to a `data_path` held in the catalog itself, so
-there is no tree to rewrite. The runner copies the prefix, updates that one row, and re-points the catalog. Same
-phases, same progress, same cancel — a shorter road to the same place.
+- **You need:** the `storage:manage` permission to open **Admin → Migrations**, and to be the catalog's creator or hold
+  `catalogs:admin`. The `admin` role has all three.
+- **Applies to:** Iceberg and DuckLake catalogs. The target backend must be registered and pass **Test access**; see
+  [Configure storage](configure-storage.md).
+- **Plan for:** a write freeze on the catalog while it copies, which grows with the catalog's size.
 
-!!! warning "Files registered in place cannot be migrated"
-    `ducklake_add_data_files` registers existing Parquet without copying it, recording an **absolute** path. Those
-    files do not move when `data_path` changes, and the path may name a bucket the target's credentials cannot reach.
-    DuckHaven refuses the migration with **422** rather than guessing, naming how many such files exist. Rewrite or
-    drop them first — a catalog DuckHaven wrote itself has none of these.
+## How the copy works
 
-## Who can migrate
+**Iceberg** metadata names every file by its full path, so copying the objects alone would leave the new tree pointing
+at the old location. DuckHaven creates a shadow catalog in Polaris on the target backend, copies each table's files
+while rewriting the old location inside the metadata and manifests, registers the rewritten tables, and verifies that
+each loads and keeps its snapshot history.
 
-Starting a migration requires the catalog's **creator** or an admin with the `catalogs:admin` permission — the same
-gate as dropping a catalog.
+**DuckLake** records file paths relative to the catalog's data path, so DuckHaven copies the files and changes that one
+setting.
 
-## What happens during a migration
-
-DuckHaven cannot simply copy the objects to a new bucket: Iceberg references every file by **absolute** URI (metadata →
-manifest lists → manifests → data files), so a raw copy would leave the new tree pointing at the old location. Instead
-the runner:
-
-1. **Provisions a shadow catalog** in Polaris at the target backend.
-2. **Copies and rewrites** every table — copying each file and rewriting the old location prefix to the new one in the
-   metadata and manifest files (data files are copied unchanged), then registering the rewritten table in the shadow
-   catalog.
-3. **Verifies** each table loads from the new location and its snapshot history matches the source.
-4. **Cuts over atomically** — re-points the catalog at the new backend in a single step. The user-facing slug never
-   changes, so attached workspaces and existing SQL keep working.
-
-The old catalog and its data are retained for a configurable window
-(`MIGRATION_RETENTION_DAYS`, see [Configuration](../reference/configuration.md)) after cutover, then cleaned up
-automatically.
-
-## Read-only window
-
-While a migration is in progress the catalog is **read-only**:
-
-- **Reads keep working** against the old location until cutover.
-- **Writes are rejected** with a clear error (any `INSERT`/`UPDATE`/`DELETE`/`MERGE`/`CREATE`/`ALTER`/`DROP` against a
-  workspace that has the migrating catalog attached). This is conservative by design — migrations are infrequent admin
-  operations and correctness takes priority over write availability.
-
-There is **no downtime for reads** and no data loss is possible: the catalog only ever points at the new backend after
-every table has been copied and verified.
+Either way the catalog is re-pointed at the new backend in one atomic step, only after every table is copied and
+verified. Until then it stays on the original backend, so a failure never loses data. The old data is kept for
+`MIGRATION_RETENTION_DAYS` (7 by default) after the switch, then removed.
 
 ## Run a migration
 
 1. Open **Admin → Migrations**.
-2. Find the catalog in the list and click **Migrate…**.
-3. Choose the **target backend** from the dropdown (the catalog's current backend is excluded) and **Start migration**.
-4. The migration appears under **Migrations for &lt;catalog&gt;** with a live status badge and progress bar. Select
-   it to watch the streamed log and per-table progress.
+2. Find the catalog and click **Migrate…**.
+3. Choose the target backend (the current one is not offered) and click **Start migration**.
+4. The migration appears under the catalog with a status and progress bar. Select it to follow its log and per-table
+   progress.
 
-The status moves through `pending → copying → verifying → cutover → completed`. You can **Cancel** a migration any time
-before cutover; the shadow catalog and its partial copy are torn down and the catalog stays on its original backend.
+The status moves through `pending`, `copying`, `verifying`, `cutover` and `completed`. Until `cutover`, **Cancel** stops
+it, removes the partial copy and leaves the catalog where it was.
 
-## If a migration fails
+While it runs, a write to the catalog, from any workspace that attaches it, fails with
+`A storage backend migration is in progress; the catalog is read-only.` Reads continue against the old location.
 
-A failure (storage unreachable, network interruption, a process restart, …) always leaves the catalog on its **original
-backend** — the backend pointer changes only in the final atomic cutover. The migration is marked `failed` with the
-error shown in the log, and the partial shadow copy is cleaned up. Re-run the migration once the underlying problem is
-resolved; a crashed runner resumes in-progress migrations automatically from the last completed table.
+## Check that it worked
 
-See the [operator runbook](../operations/runbook.md) for recovering a stuck migration.
+The status reads `completed`, and the catalog's **Catalog information** names the new backend. Query a table to
+confirm it reads.
+
+## If it goes wrong
+
+### The migration is `failed`
+
+The catalog is still on its original backend: the switch happens only at the end. Read the error in the log, fix the
+cause, such as an unreachable backend, and start a new migration. The failed run's shadow catalog is removed on a best
+effort basis; if a Polaris catalog named `⟨name⟩__m⟨hex⟩` remains, drop it in Polaris.
+
+### It stays in `copying` or `verifying`
+
+Check that `MIGRATION_RUNNER_ENABLED` is `true` on at least one healthy API replica, and that the target backend passes
+**Test access**. The runner retries passing storage and Polaris errors, and a restarted runner resumes from the last
+completed table; a backend that stays unreachable ends the migration as `failed`.
+
+### "… data file(s) in '⟨catalog⟩' are recorded with an absolute path and will not move with the catalog"
+
+The DuckLake catalog has files that were registered in place with `ducklake_add_data_files` rather than written by
+DuckHaven. They would not move with the catalog, and their path may name a bucket the new backend cannot reach, so the
+migration is refused with **422**. Rewrite or drop those tables first.
+
+### "A migration is already in progress for this catalog."
+
+Wait for it to finish, or cancel it.
+
+### You want to undo a completed migration
+
+Within `MIGRATION_RETENTION_DAYS` of the switch, start a new migration back to the original backend.
 
 ## Related
 
-- [Catalogs & Polaris](catalogs.md#storage-migration) — the concept and consistency guarantees.
 - [Storage backends](storage-backends.md) — registering the target backend.
-- [Configuration](../reference/configuration.md) — the migration runner settings.
+- [Catalogs](catalogs.md#storage-migration) — what a migration changes for users.
+- [REST API → Catalog storage migrations](../reference/rest-api.md#catalog-storage-migrations) — the same steps from a
+  script.

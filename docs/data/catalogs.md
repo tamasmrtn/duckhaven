@@ -1,8 +1,15 @@
+---
+type: concept
+---
+
 # Catalogs
 
-A **catalog** is a first-class, decoupled entity — a data domain with its own metadata store and
-[storage backend](storage-backends.md) — attached to one or more [workspaces](../access/workspaces.md) (a many-to-many
-relationship).
+A catalog is a collection of schemas and tables with its own metadata store and storage, which any number of
+workspaces can attach.
+
+A catalog holds the data; a [workspace](../access/workspaces.md) only attaches it, and the same catalog can be attached
+to several workspaces. Each catalog has a kind, which decides its table format, and a
+[storage backend](storage-backends.md), which decides where its files live.
 
 ## Catalog kinds
 
@@ -51,7 +58,7 @@ FROM raw.analytics.events e
 JOIN curated.analytics.users u ON e.user_id = u.id;
 ```
 
-The active catalog is chosen per worksheet; existing single-catalog SQL keeps working unchanged.
+The active catalog is chosen per worksheet.
 
 ## The metastore owns structure; DuckHaven does not
 
@@ -63,7 +70,7 @@ invariant](../developer/architecture.md#architectural-invariants).
 
 A DuckLake catalog's metadata being *in* PostgreSQL does not change that: those tables belong to the DuckLake
 specification, live in their own database that DuckHaven's migrations do not manage, and are read directly rather than
-cached — the same relationship the Polaris metastore has always had with the same PostgreSQL instance.
+cached, the same relationship Polaris has with its own database on the same PostgreSQL instance.
 
 ## DuckHaven-owned catalogs
 
@@ -73,20 +80,10 @@ When DuckHaven creates a catalog it grants its service principal the full catalo
 
 ## Storage migration
 
-A catalog's [storage backend](storage-backends.md) is chosen at creation but is **not permanent**. An admin can move a
-catalog of either kind to a different backend — for example off the bundled object store onto a corporate S3 bucket,
-or from S3 to ADLS Gen 2 — without losing data or snapshot history.
-
-Iceberg references every file by **absolute** URI (metadata → manifest lists → manifests → data files), so a migration
-cannot be a plain object copy: DuckHaven copies each table's files to the new location, rewrites those absolute paths,
-and re-registers the tables in Polaris under a fresh shadow catalog. DuckLake records paths relative to the catalog's
-`data_path`, so its migration copies the files and updates that one setting. Either way, once every table is copied and
-verified, the catalog is **atomically** re-pointed at the new backend — the user-facing slug never changes, so attached
-workspaces and existing SQL keep working.
-
-While a migration runs the catalog is **read-only**: reads continue against the old location, but writes are rejected
-until cutover. The old data is retained for a configurable window afterwards so a migration can be reversed if needed.
-See [Migrate a catalog's storage](migrate-catalog-storage.md) for the operator workflow.
+A catalog's storage backend is chosen when it is created, and an admin can move it later, for example from the bundled
+object store to an S3 bucket, with its data and snapshot history. The catalog keeps its slug, so workspaces and SQL
+that use it keep working. While the move runs, the catalog is read-only: reads work, writes are refused. See
+[Migrate a catalog's storage](migrate-catalog-storage.md).
 
 ## Credential vending
 
@@ -95,12 +92,9 @@ For an Iceberg catalog, Polaris vends short-lived, connection-scoped storage cre
 credentials itself and sends them with the query. Either way nothing long-lived is written to an agent. See [Storage
 backends](storage-backends.md) and [DuckLake](ducklake.md).
 
-An Iceberg catalog also carries a fallback credential minted the DuckLake way, scoped to that catalog's storage
-location. The agent's Iceberg reader replaces a table's vended credential every time a statement reads the table, so a
-statement that reads one table twice briefly has none, and a file read landing in that gap would fail and take the agent
-process down with it. The fallback is what such a read finds instead. While the vended credential exists it always takes
-precedence, because it is scoped to the table. For an external store the fallback is minted in the background and
-cached, so it never delays a query; the first query after it expires runs without it.
+An Iceberg catalog also carries a fallback credential, minted the DuckLake way and scoped to the catalog's storage
+location, for the moments when a table's vended credential is being replaced. The vended credential always takes
+precedence while it exists, because it is scoped to the one table.
 
 ## Related
 

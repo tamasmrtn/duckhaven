@@ -1,9 +1,23 @@
+---
+type: how-to
+---
+
 # Manage catalogs
 
-A [workspace](../access/workspaces.md) attaches one or more [catalogs](catalogs.md) — decoupled data
-domains, each holding schemas and tables of one [kind](catalogs.md#catalog-kinds): Iceberg tables in
-Apache Polaris, or DuckLake tables. You can manage catalogs and their contents from the catalog browser or with SQL;
-both change the same catalog.
+Browse a workspace's catalogs, create, attach, detach and drop catalogs, and create and drop their schemas and tables.
+
+A [workspace](../access/workspaces.md) attaches one or more [catalogs](catalogs.md), each holding schemas and tables of
+one [kind](catalogs.md#catalog-kinds): Iceberg tables in Apache Polaris, or DuckLake tables. The catalog browser and SQL
+change the same catalog.
+
+## Before you begin
+
+| To | You need |
+|---|---|
+| Browse, preview rows, recount | Any workspace role |
+| Create, alter and drop schemas and tables | Workspace `writer` or `owner` (in a scoped catalog, a `writer` grant) |
+| Create, attach and detach catalogs | Workspace `owner` |
+| Drop a catalog | Its creator, or the `catalogs:admin` permission |
 
 ## Browse
 
@@ -20,12 +34,12 @@ tables written through DuckHaven, and are left out of the hover card otherwise.
 A table's **size** is the bytes of its live data files, shown in B, KB, MB, GB or TB, whichever reads best. A DuckLake
 table reports it directly. An Iceberg table's size is in its snapshot only when the engine that wrote it recorded one,
 and DuckDB does not, so an agent measures it: each time the table is opened or refreshed, it reads the Parquet footer of
-each data file, which records the file's exact size. Up to 100 files that total is exact; a wider table is sized from
-an evenly spaced sample of 100 files, scaled up. The [maintenance advisor](maintenance.md) sizes files the
-same way, so the two agree. An Iceberg table not yet measured shows "—". A schema's total counts only the tables whose
-size is known, and says so ("Size · 6 of 8 tables") when some are missing; it never counts an unknown size as zero.
-A DuckLake table whose rows are all [inlined](ducklake.md) in the catalog database has no data files, so it
-shows **Inlined** rather than a misleading 0 B.
+each data file, which records the file's exact size. Up to 100 files that total is exact; a wider table is sized from an
+evenly spaced sample of 100 files, scaled up. The [maintenance advisor](maintenance.md) sizes files the same way, so the
+two agree. An Iceberg table that has not been measured shows "—". A schema's total counts only the tables whose size is
+known, and says so ("Size · 6 of 8 tables") when some are missing; it never counts an unknown size as zero. A DuckLake
+table whose rows are all [inlined](ducklake.md) in the catalog database has no data files, so it shows **Inlined**
+rather than a misleading 0 B.
 
 **Search** the tree by typing at least two characters in the box above it. The search runs on the server across every
 attached catalog — including catalogs and schemas you have not expanded — matching catalog, schema and table names, and
@@ -105,12 +119,22 @@ extension version on the executing agent.
 !!! warning "Drops purge data"
     Dropping a table reclaims its data files. There is no off-box result durability — treat drops as permanent.
 
-!!! note "Tables dropped by earlier releases"
-    In earlier releases a `DROP TABLE` run as SQL on an Iceberg catalog removed the table from the catalog but left
-    its files on object storage. Tables dropped that way still occupy space under their old location and are not
-    reclaimed retroactively.
+## If it goes wrong
 
-## Roles
+### "Catalog '⟨name⟩' is still attached to N workspace(s). Detach it everywhere before dropping."
 
-Browsing requires `reader`; creating/altering/dropping schemas and tables requires `writer` or `owner`; managing
-catalogs (create/attach/detach/drop) requires `owner`. See [Permissions](../access/how-access-works.md).
+Another workspace still attaches the catalog. Detach it there first, or ask an owner of that workspace to.
+
+### Row counts and sizes stay blank after Refresh
+
+Measuring them needs a connected agent. Connect one, or start one under **Compute**, then refresh again.
+
+### A new table does not appear in the tree
+
+Click **refresh** at the top of the tree; a worksheet `CREATE` does not update a tree that is already open.
+
+## Related
+
+- [Catalogs](catalogs.md) — what a catalog is, and how workspaces share one.
+- [Create a DuckLake catalog](create-a-ducklake-catalog.md) — the other catalog kind.
+- [Configure storage](configure-storage.md) — the backends a catalog can use.

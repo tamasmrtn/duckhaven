@@ -1,35 +1,72 @@
+---
+type: how-to
+---
+
 # Snapshots & time travel
 
-Every Iceberg [table](tables.md) keeps a snapshot history. DuckHaven lets you browse it and query a table as
-it existed at a past snapshot.
+Browse a table's snapshot history and query the table as it was at an earlier snapshot or time.
 
-## Browse snapshot history
+Every write to a table creates a snapshot. Time travel reads a table as of one of them; it never changes the table.
 
-Open a table in the catalog browser and switch to the **History** tab. DuckHaven reads the snapshot list live from
-Polaris (it is never persisted) and shows, per snapshot:
+## Before you begin
 
-- the snapshot id and its parent,
-- the committed timestamp and operation,
-- and metrics — added/deleted/total records and data-file counts.
+- **You need:** read access to the table: any workspace role in an open catalog, or a `reader` grant in a
+  [scoped one](../access/scoped-access.md).
+- **Applies to:** Iceberg and DuckLake catalogs. An Iceberg snapshot belongs to one table; a DuckLake snapshot is a
+  commit to the whole catalog, numbered in one sequence (see [DuckLake](ducklake.md#snapshots-are-catalog-wide)).
 
-## Query at a snapshot
+## Browse the history
 
-From a snapshot, choose **Query at this snapshot** to open a worksheet pinned to it using DuckDB's time-travel clause:
+Open a table in the catalog browser and choose the **History** tab. It lists each snapshot: its id and its
+parent, when it was committed and by which operation, and the records and data files added and deleted. For a DuckLake
+table, it lists the catalog snapshots in which that table changed. The history is read live from the catalog each time.
+
+## Query a past snapshot
+
+1. On a snapshot in **History**, choose **Query at this snapshot**. A worksheet opens with the time-travel query.
+2. Run it. To read the table as of a time instead, change `VERSION` to `TIMESTAMP`:
 
 ```sql
-SELECT * FROM analytics.events AT (VERSION => 7287998166701990000);
--- or by time:
-SELECT * FROM analytics.events AT (TIMESTAMP => '2026-05-01 00:00:00');
+SELECT * FROM sales.crm.customers AT (VERSION => 2656692730316015973);
+SELECT * FROM sales.crm.customers AT (TIMESTAMP => TIMESTAMP '2026-10-19 18:35:40');
 ```
 
-The read is pinned to that snapshot; the UI describes it as querying the table "as of" a point in time.
+A `TIMESTAMP` reads the latest snapshot committed at or before that moment. A DuckLake `VERSION` is the catalog's
+snapshot number, such as `AT (VERSION => 42)`.
 
-!!! note "Read-only"
-    Time travel is read-only, and DuckHaven does not roll a table back to a snapshot. For an Iceberg table it also does
-    not expire or compact snapshots: the [maintenance advisor](maintenance.md) recommends those operations
-    for an external engine. A [DuckLake](ducklake.md) catalog's snapshots can be expired from the advisor's
-    **Apply** button.
+To list snapshots in SQL, use `iceberg_snapshots('sales.crm.customers')` for an Iceberg table, or the catalog's
+`snapshots()` method, such as `sales.snapshots()`, for a DuckLake catalog.
+
+## Check that it worked
+
+The query returns the rows as they were. Compare a count at the snapshot with the current count:
+
+```sql
+SELECT
+    (SELECT count(*) FROM sales.crm.customers AT (VERSION => 2656692730316015973)) AS then_rows,
+    (SELECT count(*) FROM sales.crm.customers) AS now_rows;
+```
+
+## If it goes wrong
+
+### The table has no older snapshots
+
+Old snapshots are removed when they expire. For a DuckLake catalog, the
+[maintenance advisor](maintenance.md) expires snapshots past the retention target when someone applies it; for an
+Iceberg catalog, an external engine does. Time travel reaches only the snapshots that remain.
+
+### `iceberg_snapshots()` or `snapshots()` is refused
+
+The workspace has a [scoped catalog](../access/scoped-access.md#finding-objects-in-a-scoped-catalog), and these
+functions name their table in a string, which grants cannot be checked against. Use the **History** tab.
+
+### Restoring a table to an old snapshot
+
+DuckHaven does not roll a table back. Copy the old rows into a table with `CREATE TABLE … AS SELECT … AT (VERSION =>
+…)`, then swap it in.
 
 ## Related
 
 - [Tables & Iceberg](tables.md) — how snapshots are produced.
+- [DuckLake](ducklake.md#snapshots-are-catalog-wide) — catalog-wide snapshots.
+- [SQL support](../reference/sql-support.md#time-travel-syntax) — the `AT` clause.

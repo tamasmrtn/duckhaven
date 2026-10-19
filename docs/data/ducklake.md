@@ -68,7 +68,7 @@ The create dialog says so at the moment you choose. It is repeated here because 
 ```
 
 **Catalog kind and storage backend are independent.** A DuckLake catalog binds to a storage backend exactly as an
-Iceberg one does, and the same [invariant](../getting-started/how-duckhaven-works.md#7-architectural-invariants) holds:
+Iceberg one does, and the same [invariant](../developer/architecture.md#architectural-invariants) holds:
 one catalog, one backend. A workspace can attach catalogs of both kinds and join across them in a single query with
 fully-qualified names.
 

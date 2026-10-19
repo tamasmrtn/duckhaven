@@ -59,7 +59,7 @@ DuckHaven never shadows catalog *structure* (schemas, tables, columns) in its ow
 source of truth — Polaris for an Iceberg catalog, the `ducklake` database for a DuckLake one — and DuckHaven's own
 database holds only a supplementary [metadata](../metadata/table-metadata.md) sidecar for facts the metastore does not
 track, such as ownership and last-write provenance. This split is an [architectural
-invariant](../getting-started/how-duckhaven-works.md#7-architectural-invariants).
+invariant](../developer/architecture.md#architectural-invariants).
 
 A DuckLake catalog's metadata being *in* PostgreSQL does not change that: those tables belong to the DuckLake
 specification, live in their own database that DuckHaven's migrations do not manage, and are read directly rather than

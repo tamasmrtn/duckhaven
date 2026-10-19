@@ -101,6 +101,7 @@
 
 - [Configuration](https://tamasmrtn.github.io/duckhaven/reference/configuration/): Every control-plane and agent environment variable.
 - [SQL support](https://tamasmrtn.github.io/duckhaven/reference/sql-support/): Supported SQL surface and DuckDB features, and binding typed query parameters.
+- [Permissions](https://tamasmrtn.github.io/duckhaven/reference/permissions/): Every global permission, workspace role, data-grant tier and agent tier in DuckHaven, and what each one allows.
 - [Agent reference](https://tamasmrtn.github.io/duckhaven/reference/agent-reference/): Agent configuration and behavior.
 - [CLI reference](https://tamasmrtn.github.io/duckhaven/reference/cli/): Every dh command, its summary and its flags.
 - [REST API](https://tamasmrtn.github.io/duckhaven/reference/rest-api/): The control-plane REST API: exact result values, Arrow and Parquet downloads, query parameters, describe, workspace metadata, waiting for a result, and client and tags.

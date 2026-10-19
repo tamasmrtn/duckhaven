@@ -231,6 +231,7 @@ nav:
   - Reference:
       - Configuration: reference/configuration.md
       - SQL support: reference/sql-support.md
+      - Permissions: reference/permissions.md
       - Agent reference: reference/agent-reference.md
       - CLI reference: reference/cli.md
       - REST API: reference/rest-api.md

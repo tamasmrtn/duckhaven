@@ -276,6 +276,11 @@ pages:
   title: SQL support
   section: Reference
   summary: Supported SQL surface and DuckDB features, and binding typed query parameters.
+- path: reference/permissions.md
+  title: Permissions
+  section: Reference
+  summary: Every global permission, workspace role, data-grant tier and agent tier in DuckHaven, and
+    what each one allows.
 - path: reference/agent-reference.md
   title: Agent reference
   section: Reference

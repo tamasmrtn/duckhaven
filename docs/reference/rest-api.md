@@ -423,48 +423,9 @@ set in the API:
 
 ## SQL sessions
 
-A [SQL session](../querying/sql-sessions.md) holds state between statements on one agent, for dbt, dlt and other
-drivers. This section covers how a client waits; the session's other fields are in the OpenAPI schema.
-
-### Waiting for compute
-
-Opening a session needs a running agent. With [elastic compute](../compute/elastic-compute.md) scaled to zero,
-`POST /api/workspaces/{workspace}/sql/sessions` starts one and waits, controlled by two optional fields:
-
-| Field | Default | Meaning |
-|---|---|---|
-| `wait_timeout_s` | `SQL_SESSION_WAIT_TIMEOUT_S` (45) | How long to wait while compute starts. `0` never waits. Above `SQL_SESSION_MAX_WAIT_TIMEOUT_S` (120) is a **422** |
-| `on_wait_timeout` | `cancel` | When the wait runs out: `cancel` answers **503** `compute_starting` with `Retry-After`; `continue` answers **202** with the session `pending`. `0` with `cancel` is a **422** |
-
-After a **202**, poll `GET /api/sql/sessions/{session_id}` until `status` is `open`. A statement sent before then
-answers **409** `session_not_open`. A **503** means compute is still starting, not that it failed: retry, and the retry
-lands on the agent that is starting.
-
-### Waiting for a statement
-
-`POST /api/sql/sessions/{session_id}/statements` holds its response until the statement finishes, so a short statement
-costs one call:
-
-| Field | Default | Meaning |
-|---|---|---|
-| `wait_timeout_s` | `SQL_STATEMENT_WAIT_TIMEOUT_S` (10) | How long to wait. `0` never waits. Above `SQL_STATEMENT_MAX_WAIT_TIMEOUT_S` (60) is a **422** |
-| `first_page_limit` | `SQL_STATEMENT_FIRST_PAGE_LIMIT` (200) | Rows to return on the response as `first_page`. `0` returns none. Above 200 is a **422** |
-| `inline_format` | `json` | `arrow` returns the whole result as `inline_arrow` instead of `first_page`; see below |
-
-**200** carries the finished statement, `done` or `failed`; a failed statement's error is on the row. **202** means it
-is still running: poll `GET /api/queries/{query_id}`. A statement is never cancelled for outlasting the wait.
-
-`first_page` has the shape of `GET /api/queries/{query_id}/rows`, `cursor` included, so a larger result continues from
-it. It is absent for DDL and DML, and when the rows could not be fetched; the statement still succeeded, and `/rows`
-reports why.
-
-### The whole result as Arrow on the statement response
-
-With `inline_format: "arrow"`, a result of at most `SQL_STATEMENT_INLINE_ARROW_MAX_BYTES` (256 KiB), both as a file and
-as an Arrow stream, arrives as `inline_arrow`: a base64 [Arrow IPC stream](#whole-results-as-arrow-or-parquet), with
-`first_page_limit` ignored. Otherwise `inline_arrow` is `null` and the result is read from
-`GET /api/queries/{query_id}/result`: a larger result, one that could not be read, and one whose statement outlasted
-the wait.
+A [SQL session](../querying/sql-sessions.md) holds a connection on one agent between statements, for dbt, dlt and other
+drivers. Its endpoints, the waits for compute and for each statement, the first page of rows, Arrow results and staged
+files are in the [SQL sessions API](sql-sessions-api.md).
 
 ## Workspace metadata
 

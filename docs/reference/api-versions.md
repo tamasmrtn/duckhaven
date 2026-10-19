@@ -126,8 +126,8 @@ These request fields are optional. A server without them ignores the field, so a
 | Field | On | Effect |
 |---|---|---|
 | `wait_timeout_s` | `POST …/queries`, `GET /api/queries/{query_id}` | Hold the response until the query finishes |
-| `wait_timeout_s`, `on_wait_timeout` | `POST …/sql/sessions` | [Wait for compute](rest-api.md#waiting-for-compute) |
-| `wait_timeout_s`, `first_page_limit`, `inline_format` | `POST …/statements` | [One-call statements](rest-api.md#waiting-for-a-statement) |
+| `wait_timeout_s`, `on_wait_timeout` | `POST …/sql/sessions` | [Wait for compute](sql-sessions-api.md#waiting-for-compute) |
+| `wait_timeout_s`, `first_page_limit`, `inline_format` | `POST …/statements` | [One-call statements](sql-sessions-api.md#waiting-for-a-statement) |
 | `parameters` | `POST …/queries`, `POST …/statements` | [Placeholders](rest-api.md#query-parameters). A server without it fails the statement for missing values |
 | `tags` | `POST …/queries`, `POST …/statements` | [Labels on the run](rest-api.md#client-and-tags) |
 | `use_cache` | `POST …/queries`, sessions, statements | Skip the [result cache](rest-api.md#result-cache-fields) |

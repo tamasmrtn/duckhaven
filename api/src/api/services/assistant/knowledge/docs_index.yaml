@@ -57,8 +57,8 @@ pages:
 - path: querying/sql-sessions.md
   title: SQL sessions
   section: Querying
-  summary: Persistent connections for dbt, dlt and other Python DB-API clients, brokered through the
-    API.
+  summary: A SQL session is a database connection that DuckHaven holds open on one agent, so a tool
+    can run many statements that share state.
 - path: querying/session-audit.md
   title: Read the session audit trail
   section: Querying
@@ -311,6 +311,11 @@ pages:
   section: Reference
   summary: DuckHaven's REST API, under /api, does everything the web UI does, so any task can be scripted
     with a token.
+- path: reference/sql-sessions-api.md
+  title: SQL sessions API
+  section: Reference
+  summary: The endpoints a driver uses to open a SQL session, run statements in it, stage files and
+    close it.
 - path: reference/api-versions.md
   title: API versions
   section: Reference

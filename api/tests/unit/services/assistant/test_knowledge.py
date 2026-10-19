@@ -95,7 +95,6 @@ def test_contributor_docs_are_left_out():
 TRUNCATES = {
     "reference/configuration.md",
     "reference/rest-api.md",
-    "querying/sql-sessions.md",
 }
 
 

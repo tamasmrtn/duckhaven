@@ -112,7 +112,7 @@ Nested types (`LIST`, `STRUCT`, `MAP`, `ARRAY`) come back as JSON arrays and obj
 applied. A fixed-size `INTEGER[2]` is *reported* as `INTEGER[2]` but arrives as an ordinary JSON array.
 
 Read the column's `column_schema` type to convert a string value back to a number; see
-[Migrating to `api_version` 3](rest-api.md#migrating-to-api_version-3).
+[Result values](rest-api.md#result-values).
 
 !!! warning "`information_schema.columns` does not work for Iceberg tables"
     DuckDB cannot introspect the columns of an attached Iceberg REST table through `information_schema.columns`,

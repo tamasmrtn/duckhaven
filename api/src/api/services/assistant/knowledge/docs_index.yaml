@@ -308,8 +308,8 @@ pages:
 - path: reference/rest-api.md
   title: REST API
   section: Reference
-  summary: 'The control-plane REST API: exact result values, Arrow and Parquet downloads, query parameters,
-    describe, workspace metadata, waiting for a result, and client and tags.'
+  summary: DuckHaven's REST API, under /api, does everything the web UI does, so any task can be scripted
+    with a token.
 - path: reference/api-versions.md
   title: API versions
   section: Reference

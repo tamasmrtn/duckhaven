@@ -106,7 +106,7 @@
 - [Permissions](https://tamasmrtn.github.io/duckhaven/reference/permissions/): Every global permission, workspace role, data-grant tier and agent tier in DuckHaven, and what each one allows.
 - [Agent reference](https://tamasmrtn.github.io/duckhaven/reference/agent-reference/): Agent configuration and behavior.
 - [CLI reference](https://tamasmrtn.github.io/duckhaven/reference/cli/): Every dh command, its summary and its flags.
-- [REST API](https://tamasmrtn.github.io/duckhaven/reference/rest-api/): The control-plane REST API: exact result values, Arrow and Parquet downloads, query parameters, describe, workspace metadata, waiting for a result, and client and tags.
+- [REST API](https://tamasmrtn.github.io/duckhaven/reference/rest-api/): DuckHaven's REST API, under /api, does everything the web UI does, so any task can be scripted with a token.
 - [API versions](https://tamasmrtn.github.io/duckhaven/reference/api-versions/): GET /api/version reports api_version, an integer that changes only when a change breaks existing API clients.
 - [Errors](https://tamasmrtn.github.io/duckhaven/reference/errors/): Every API error has an HTTP status and a stable error code; this page lists each code, what causes it and what to do.
 - [Operator scripts](https://tamasmrtn.github.io/duckhaven/reference/operator-scripts/): DuckHaven ships a few small helper scripts under scripts/ for operators.

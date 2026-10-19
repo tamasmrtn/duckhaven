@@ -213,7 +213,7 @@ agent from before this release still rounds, and the [result cache](result-cache
 !!! note "Exact values in JSON"
     Row values are JSON, so a `DECIMAL`, `BIGINT`, `UBIGINT`, `HUGEINT` or `UHUGEINT` value is sent as a string: a JSON
     number cannot hold them exactly. Read the column's `column_schema` type to convert it, as described in
-    [Migrating to `api_version` 3](../reference/rest-api.md#migrating-to-api_version-3). `column_schema` is `null` for
+    [Result values](../reference/rest-api.md#result-values). `column_schema` is `null` for
     statements that produce no result grid (DDL and DML) and for queries run by an agent older than this feature.
 
 ## Related

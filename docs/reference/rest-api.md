@@ -1,444 +1,369 @@
+---
+type: reference
+---
+
 # REST API
 
-The DuckHaven control plane is a FastAPI application. The web UI is a thin client over the same REST API documented
-here, so anything the UI does can be scripted.
+DuckHaven's REST API, under `/api`, does everything the web UI does, so any task can be scripted with a token.
 
-## Base path and interactive docs
+The running server publishes its own complete, always-current description: Swagger UI at `/api/docs` and the OpenAPI
+schema at `/api/openapi.json`. This page covers what the schema cannot say: the conventions every endpoint follows,
+and the endpoints whose behavior needs explaining. Error codes are listed in [Errors](errors.md), and the contract's
+version history in [API versions](api-versions.md).
 
-The REST API is mounted under **`/api`** (it shares an origin with the SPA). FastAPI serves live, interactive
-documentation generated from the running server:
+## A first call
 
-- Swagger UI: `http://<host>:8000/api/docs`
-- OpenAPI schema: `http://<host>:8000/api/openapi.json`
+You need a personal access token (`dh_pat_…`): a [service-account token](../access/service-accounts.md) for automation,
+or your own from `dh auth login`. Submit a query and wait up to 30 seconds for it to finish:
 
-Because the schema is generated from the server, it always matches the deployed version — prefer it over any static
-list.
+```bash
+export DH=https://duckhaven.example.com
+export DH_TOKEN=dh_pat_…
 
-## Server version
+curl -s -X POST "$DH/api/workspaces/analytics/queries" \
+  -H "Authorization: Bearer $DH_TOKEN" -H "Content-Type: application/json" \
+  -d '{
+        "sql": "SELECT customer, sum(amount) AS revenue FROM sales.analytics.orders GROUP BY 1 ORDER BY 2 DESC",
+        "wait_timeout_s": 30
+      }'
+```
 
-`GET /api/version` is an unauthenticated endpoint that reports which build is running:
+The answer is **200** with the finished query (some fields omitted):
 
 ```json
 {
-  "version": "1.4.0",
-  "api_version": 3
+  "id": "360e83e5-4c9f-4c32-b903-f52b021f2932",
+  "status": "done",
+  "statement_type": "select",
+  "row_count": 3,
+  "duration_ms": 76,
+  "column_schema": [
+    {"name": "customer", "type": "VARCHAR"},
+    {"name": "revenue", "type": "DECIMAL(38,2)"}
+  ],
+  "has_result": true,
+  "error": null
 }
 ```
 
-The two fields are distinct on purpose:
+Then read its rows:
 
-- **`version`** — the release/build version of the running server (the git tag it was built from). Use it for
-  provenance and bug reports — *"which build is this?"*. It moves with every release.
-- **`api_version`** — the API contract version, a single integer bumped only when a change breaks the contract. It does
-  not move on ordinary releases.
+```bash
+curl -s -H "Authorization: Bearer $DH_TOKEN" "$DH/api/queries/360e83e5-4c9f-4c32-b903-f52b021f2932/rows"
+```
 
-A server old enough to lack this endpoint returns **404**; treat that as the oldest supported version.
+```json
+{
+  "rows": [
+    {"customer": "initech", "revenue": "310.00"},
+    {"customer": "acme", "revenue": "162.25"},
+    {"customer": "globex", "revenue": "75.50"}
+  ],
+  "columns": ["customer", "revenue"],
+  "column_schema": [{"name": "customer", "type": "VARCHAR"}, {"name": "revenue", "type": "DECIMAL(38,2)"}],
+  "cursor": null,
+  "total": 3
+}
+```
 
-## Resource groups
+`revenue` is a string because a JSON number cannot hold every decimal exactly; see [Result values](#result-values). A
+query that runs longer than the wait answers **202** instead; see [Submitting a query](#submitting-a-query).
 
-| Group | Covers |
+## Conventions
+
+### Authentication
+
+Apart from a few public endpoints, such as `GET /api/version` and sign-in, every endpoint needs a credential:
+
+- **Bearer token**: `Authorization: Bearer dh_pat_…`. Use this from scripts and tools. DuckHaven reads tokens only from
+  this header, never from a query parameter or cookie, because those end up in proxy and access logs.
+- **Session cookie**: what the browser sends after signing in.
+
+Both resolve to the same account and the same [access checks](../access/how-access-works.md). The OpenAPI schema
+declares them as the `bearerAuth` and `cookieAuth` security schemes, so a generated client sets credentials once.
+
+### Addresses
+
+- The API is mounted at `/api`, on the same origin as the web UI.
+- `{workspace}` accepts the workspace's slug (`analytics`) or its UUID.
+- Objects with a server-generated id are created and listed under their workspace, and read or changed at a global
+  address: `POST /api/workspaces/{workspace}/queries` creates a query, and `GET /api/queries/{query_id}` reads it. An
+  id is enough to reach the object; access is still checked.
+- `{schema}` and `{table}` are the names the catalog holds, not slugs.
+
+### Methods and status codes
+
+| Method | Meaning |
 |---|---|
-| `auth` | Sign in / out, current user (`/api/auth/*`, `/api/me`) |
-| `setup` | First-admin creation from the setup token |
-| `workspaces` | Create and list workspaces and members |
-| `catalog` | Catalogs (create/attach/detach/drop), [storage migrations](#catalog-storage-migrations), schemas, tables, table detail, sample rows, snapshot history |
-| `queries` | Submit queries, page result rows, profiles, saved queries, history |
-| `worksheets` | Your private, autosaved [worksheets](#worksheets) (the editor's tabs) |
-| `search` | Find catalogs, schemas, tables and saved queries by name ([search](#search-endpoint)) |
-| `lineage` | Read a table's [lineage](../metadata/lineage.md) graph; import and retire external lineage |
-| `semantic` | Define, validate, publish and query [semantic models](../metadata/semantic-layer.md) |
-| `agents` | List the agents you may use, with their capabilities |
-| `admin-agents` | Agent detail, monitoring, lifecycle, bootstrap/revoke, [access](#per-agent-access) |
+| `GET` | Reads; no side effects |
+| `POST` | Creates, starts an action (such as `/cancel`), or opens a stream |
+| `PUT` | Creates or replaces, idempotently |
+| `PATCH` | Changes the fields you send. A field you leave out is untouched; an explicit `null` clears it |
+| `DELETE` | Removes, answering **204**. A batch delete answers **200** with a count |
+
+**201** answers a create with the new object. **202** means work was accepted and is still running: poll the object's
+address. **204** means success with no body. Everything else that succeeds is **200**.
+
+### Errors
+
+Every failure has one body shape, `{"error": …, "message": …, "details": …}`. Branch on `error`, which is stable, and
+show `message` to people. Every code is in [Errors](errors.md).
+
+### Pagination
+
+Collections that grow with use, such as query history, users and saved queries, return a page:
+
+```json
+{"items": [], "cursor": null, "has_more": false}
+```
+
+- Pass `cursor` back to get the next page, and `limit` to size it (default 100, at most 1000).
+- `cursor` is opaque: send it back exactly as you got it. It is `null` on the last page.
+- Pages stay correct while rows are being added, because a cursor names a position, not an offset.
+- There is no total count. `has_more` says whether another page exists.
+- A cursor whose row was deleted answers **422** `stale_cursor`: start again from the first page.
+
+Collections bounded by the deployment's size return a plain array and take no cursor: workspaces, members, catalogs,
+agents, storage backends, schedules and semantic models, among others. The OpenAPI schema shows which shape each
+endpoint returns. Three endpoints differ:
+
+- **Search** returns `{"items": […], "has_more": …}` with no cursor. Narrow the query instead of paging.
+- **Migration logs** take `after`, the last sequence number you saw, and are polled forward.
+- **Query rows** use their own shape, `rows`, `columns`, `column_schema`, `cursor` and `total`, described under
+  [Reading results](#reading-results).
+
+### Filtering and sorting
+
+List endpoints share parameter names. Filtering and sorting cover the whole collection, before the page is cut.
+
+| Parameter | Type | Meaning |
+|---|---|---|
+| `status` | repeatable string | Keep only these states. Omitted, every state is returned |
+| `user_id`, `agent_id` | UUID | Keep only one principal's or agent's objects |
+| `since`, `until` | ISO 8601 date-time | A time window |
+| `q` | string | Free text; required on search endpoints |
+| `sort`, `dir` | enum; `asc` or `desc` | Sort order |
+| `cursor`, `limit` | string, integer | Paging |
+
+An unrecognized value for an enumerated parameter is a **422**, not ignored.
+
+### Versions
+
+`GET /api/version` needs no credentials and reports the server's release and its contract version:
+
+```json
+{"version": "0.0.0-dev", "api_version": 3}
+```
+
+`version` is the release the server was built from (`0.0.0-dev` for a local build). `api_version` changes only when a
+change breaks existing clients. What each version changed is in
+[API versions](api-versions.md).
+
+### Client and tags
+
+DuckHaven records which tool sent a query, as `client_name` and `client_version`, from the first product token of the
+request's `User-Agent`: `dbt-duckhaven/1.2.0 (linux)` records `dbt-duckhaven` and `1.2.0`, cut to 64 and 32 characters.
+Start your `User-Agent` with your tool's name to be recognized. Both fields are `null` for a browser, and for runs
+DuckHaven starts itself, such as schedules. A SQL session statement takes its session's client.
+
+`POST /api/workspaces/{workspace}/queries` and `POST /api/sql/sessions/{session_id}/statements` also take `tags`, an
+object of free-form labels returned on the run:
+
+```json
+{"sql": "SELECT 1", "tags": {"pipeline": "nightly", "run_id": "2026-10-19"}}
+```
+
+At most 20 tags. Keys are letters, digits and `_ . : -`, up to 64 characters; values are up to 256 characters. Anything
+else is a **422**. Tags are stored as sent and not checked further, so treat them as the caller's claim.
+
+## Endpoint groups
+
+The OpenAPI schema groups endpoints by tag:
+
+| Tag | Covers |
+|---|---|
+| `auth` | Sign in and out, the current user (`/api/auth/*`, `/api/me`), your own tokens |
+| `setup` | Creating the first admin from the setup token |
+| `workspaces` | Workspaces and their members |
+| `catalog` | Catalogs, [storage migrations](#catalog-storage-migrations), schemas, tables, samples, snapshots |
+| `queries` | Queries, results, profiles, saved queries, history |
+| `worksheets` | Your private [worksheets](#worksheets) |
+| `search` | Finding catalogs, schemas, tables and saved queries by name |
+| `lineage` | A table's [lineage](#lineage), and importing lineage |
+| `semantic` | [Semantic models](#semantic-layer) |
+| `agents` | The agents you may use |
+| `admin-agents` | Agent detail, monitoring, lifecycle and [access](#per-agent-access) |
 | `admin-users` | User accounts and their workspace roles |
 | `admin-service-accounts` | Service accounts and their tokens |
 | `admin-storage` | Storage backends |
 | `admin-maintenance` | Maintenance policy and scans |
 
-## Authentication
+The agents' own control channel is a WebSocket at `/agents/connect`, not part of this API.
 
-The API accepts two credentials, both resolving to the same authorization checks:
+## Your own tokens
 
-- **Session cookie** — for browser clients. Authenticate as you would in the UI and send the session cookie with each
-  request.
-- **Bearer token** — for machine clients. Send a [service-account PAT](../access/service-accounts.md) on the
-  `Authorization: Bearer <token>` header. This is the supported path for unattended callers (CI, schedulers, tooling).
+A signed-in person can issue themselves a token, for a command-line client, without an admin. `dh auth login` does this
+for you. The call needs the session cookie:
 
-See [Permissions](../access/how-access-works.md) for the underlying model. Both are declared in the OpenAPI schema as
-security schemes (`cookieAuth`, `bearerAuth`), so a generated client configures credentials once rather than passing
-them on every call.
-
-### Issuing your own token
-
-A signed-in person can mint a token for themselves, which is how a human gets a credential for a command-line client
-without an admin issuing one:
-
-```sh
-curl -X POST "$DH/api/me/pats" \
-  -H 'Content-Type: application/json' \
-  -b "session=$SESSION_COOKIE" \
+```bash
+curl -s -X POST "$DH/api/me/pats" \
+  -H "Content-Type: application/json" -b "session=$SESSION_COOKIE" \
   -d '{"expires_in_days": 90}'
 ```
 
 ```json
-{ "id": "…", "token": "dh_pat_…", "expires_at": "2026-11-29T09:14:00Z" }
+{"id": "…", "token": "dh_pat_…", "expires_at": "2027-01-17T09:14:00Z"}
 ```
 
-The token carries the caller's own identity, so it can do exactly what they can — and it tracks their role as it
-changes, because permissions are resolved from the user on each request rather than frozen into the token. The secret
-is returned once and only its SHA-256 hash is stored.
+- The token acts as you, with your role as it is at each request, so a role change applies to it at once.
+- The secret is shown once; DuckHaven stores only its SHA-256 hash.
+- `expires_in_days` is required and at most 365. Only an admin-issued service-account token may never expire.
+- A bearer token cannot issue tokens: the call answers **403** `session_required`. A token that could mint more tokens
+  would outlive its own revocation.
+- You may hold 25 live tokens; a 26th answers **409** `too_many_tokens`.
+- A service account calling this gets **403** `service_account_tokens_are_managed`: an admin issues its tokens.
 
-Two properties are deliberate:
-
-- **`expires_in_days` is mandatory and capped at 365.** The admin-issued service-account form accepts `null` for a
-  token that never expires, because an admin grants it knowingly to an unattended pipeline. A token anyone can mint
-  for themselves is not that.
-- **This route accepts the session cookie only.** Presenting a bearer token returns **403 `session_required`**. A
-  token able to mint tokens would outlive its own revocation — revoking the leaked one would leave every successor it
-  issued working — so issuing one always costs an interactive sign-in.
-
-A principal may hold **25 live tokens**; issuing a 26th returns **409 `too_many_tokens`**. Self-issuance needs no
-permission, so a ceiling is what keeps the collection bounded — revoke one you no longer use to make room.
-
-Unattended callers do not use this endpoint. CI, schedulers and tooling authenticate with a
-[service-account PAT](../access/service-accounts.md), issued by an admin at
-`POST /api/admin/service-accounts/{service_account_id}/pats`. A service account presenting its own token here gets
-**403 `service_account_tokens_are_managed`**: its tokens are deliberately issued by an administrator at different
-trust levels, and one of them must not be able to revoke another.
-
-!!! note "Only password sign-ins can reach this today"
-    Issuing requires a session cookie, and the only client that mints one is `dh auth login`, which signs in with a
-    password. On a deployment that authenticates solely through an identity provider there is no way for a person to
-    issue themselves a token — the SPA has no interface for it — so ask an administrator for a
-    [service-account token](../access/service-accounts.md) instead.
+Issuing needs a password sign-in, because `dh auth login` is the only client that creates the session cookie for it. On
+a deployment that signs in only through an identity provider, ask an admin for a
+[service-account token](../access/service-accounts.md).
 
 ### Managing your own tokens
 
-`GET /api/me/pats` lists what you hold, and `DELETE /api/me/pats/{pat_id}` revokes one:
+`GET /api/me/pats` lists your tokens, and `DELETE /api/me/pats/{pat_id}` revokes one. Both accept a bearer token as
+well as a session, so a client can warn you before its own token expires, and a token can revoke itself.
 
-```json
-[
-  { "id": "…", "created_at": "2026-08-31T09:00:00Z", "expires_at": "2026-11-29T09:00:00Z",
-    "current": true }
-]
+```bash
+curl -s -H "Authorization: Bearer $DH_TOKEN" "$DH/api/me/pats"
 ```
 
-**The listing never returns a token, and cannot.** Only a SHA-256 hash of the secret is stored, so a
-token is shown once — when it is issued — and a forgotten one is replaced rather than recovered. This
-is the same contract GitHub and GitLab publish for their access tokens.
-
-That leaves a listing of hashes with nothing a person can read, so the token authenticating the
-request is marked **`current`**. Without it a caller holding three tokens sees three
-indistinguishable rows and cannot tell which expiry is the one about to break them.
-
-Unlike issuing, both of these accept a bearer token as well as a session:
-
-- **Listing** is what lets a client warn you before your own token expires, and a client
-  authenticates with that very token.
-- **Revoking** only ever removes access, so a leaked token cannot escalate with it — and a token
-  able to retire itself is worth more than the nuisance of one being used to retire its siblings.
-  GitLab reaches the same conclusion, letting any token call its self-revocation route.
-
-Revoking another user's token returns **404**, not 403, so the endpoint cannot be used to discover
-that one exists.
-
-## Errors
-
-Every `4xx` and `5xx` response has the same body:
-
 ```json
-{
-  "error": "sql_not_allowed",
-  "message": "DDL is not permitted in this session.",
-  "details": {}
-}
+[{"id": "27ea2ee1-926c-4847-a602-736e9d9f1632", "created_at": "2026-10-19T14:23:12Z",
+  "expires_at": "2027-01-17T14:23:12Z", "current": true}]
 ```
 
-- **`error`** — a stable machine-readable code. Branch on this, never on `message`.
-- **`message`** — human-readable and safe to display.
-- **`details`** — optional structured context; present only where an endpoint documents it (for example the list of
-  dependents blocking a semantic dataset delete).
+The list never includes the secret, which is not stored. `current` marks the token that made the request, so you can
+tell which expiry applies to you. Revoking another user's token answers **404**, so the endpoint does not reveal that
+it exists.
 
-Codes are specific where the endpoint has something specific to say (`sql_not_allowed`, `agent_required`,
-`catalog_read_only`, `invalid_cursor`) and derived from the status otherwise (`unauthorized`, `forbidden`, `not_found`,
-`conflict`, `unprocessable_content`).
+## Queries
 
-## Pagination
+### Submitting a query
 
-Collections that grow with usage return a page:
+`POST /api/workspaces/{workspace}/queries` runs one statement. The body takes:
 
-```json
-{ "items": [], "cursor": null, "has_more": false }
-```
-
-Pass `cursor` to fetch the next page and `limit` to size it (default 100, max 1000). The cursor is opaque — feed back
-exactly what you were given. It is keyset-based, not an offset, so a page stays correct while rows are being written
-ahead of it. `has_more` tells you whether another page exists; `cursor` is `null` on the last one.
-
-Collections bounded by your deployment's topology — workspaces, members, catalogs, agents, storage backends, schedules,
-semantic models — return a plain array and take no cursor. Two endpoints are deliberately different:
-
-- **Search** (`/search`, `/semantic/search`) returns `{"items": [...], "has_more": …}` with no cursor. Search is
-  truncated by `limit`, not walked; narrow the query instead.
-- **Migration logs** returns a plain array and takes `after`, the last sequence number you saw. It is a tail you poll
-  forward, not a page you walk.
-
-Query result rows (`/queries/{query_id}/rows`) use a different envelope again — `rows`, `columns`, `column_schema` —
-because a result grid is not a resource collection.
-
-!!! note "Private by design"
-    DuckHaven is designed to be reached over a private network (Tailscale recommended), not exposed to the public
-    internet; see [Install](../deployment/install.md). The agent control channel is a separate WebSocket at
-    `/agents/connect`, not part of this REST surface.
-
-## Migrating to `api_version` 3
-
-`api_version` moved from `2` to `3` for one change: **result values that JSON cannot carry exactly are now strings.**
-Check `GET /api/version` before relying on it.
-
-A JSON number is a 64-bit float in most readers, every browser included. It holds integers exactly only up to 2^53
-and no decimal fraction exactly, so `api_version` 2 rounded those values on the wire. Under `api_version` 3, every value
-of these types is sent as a string, wherever it appears in a result:
-
-| Column type | `api_version` 2 | `api_version` 3 |
+| Field | Default | Meaning |
 |---|---|---|
-| `DECIMAL(p,s)` | `12.5` (a float) | `"12.50"` (every digit, scale kept) |
-| `BIGINT`, `UBIGINT` | `9007199254740992` (rounded past 2^53) | `"9007199254740993"` |
-| `HUGEINT`, `UHUGEINT` | a float | `"12345678901234567890123"` |
+| `sql` | required | One statement. See [SQL support](sql-support.md) for what is allowed |
+| `catalog` | the workspace's default | The catalog that unqualified table names resolve in |
+| `agent_id` | chosen by the server | Run on this agent; you need the `use` tier on it |
+| `timeout_s` | `600` | Cancel the query after this many seconds |
+| `wait_timeout_s` | not sent | Hold the response until the query finishes, up to this many seconds (at most 60) |
+| `parameters` | – | Values for placeholders; see [Query parameters](#query-parameters) |
+| `use_cache` | `true` | `false` always runs the query instead of using the [result cache](#result-cache-fields) |
+| `tags` | – | Labels; see [Client and tags](#client-and-tags) |
 
-This applies to `GET /api/queries/{query_id}/rows`, the `first_page` of a SQL statement, and table samples. It follows
-the column's type, not the value, so a column always has one JSON shape. `count(*)` and `sum()` over integers return
-`BIGINT` or `HUGEINT`, so their results are strings too. Nested values follow the same rule: a `DECIMAL` inside a list,
-struct or map is a string as well. `column_schema` tells you each column's type, which is what a client converts by.
+Without `wait_timeout_s` the call answers **202** at once with the query, `queued` or `running`. Poll
+`GET /api/queries/{query_id}` until `status` is `done`, `failed` or `cancelled`. That `GET` also takes
+`wait_timeout_s` as a query parameter, so each poll can wait for the end. With `wait_timeout_s`, the call answers
+**200** with the finished query if it ends in time, and **202** otherwise. A query that outlasts the wait keeps running.
 
-Clients:
+`has_result` says whether a finished query has rows to read: `false` for DDL and DML, `null` until the query is done.
 
-- `duckhaven-sql-connector` converts every value by its column type from the release after 0.7.0. That release reads
-  both versions the same way, so upgrade the connector (and `dbt-duckhaven`/`dlt-duckhaven`, which use it) **before**
-  the server.
-- `dh` prints these values the same way in table and CSV output. With `--format json` they are strings, which keeps them
-  exact; scripts that read `dh` JSON should convert them.
-- Your own code: convert by `column_schema` instead of by the value's JSON type. Parse integer types to an integer
-  type that holds 64 bits or more (for example `BigInt` in JavaScript) and decimals with a decimal type.
+Naming an agent that is offline, and that the API cannot start, answers **503** `unavailable` with "Agent not
+connected". The attempt is recorded as a failed query, so it appears in history; its id is in `details.query_id`.
 
-## Migrating to `api_version` 2
+With [elastic compute](../compute/elastic-compute.md) and no agent running, the query is recorded `queued` with a
+`null` `agent_id`, and runs once compute starts. You poll it as usual.
 
-`api_version` moved from `1` to `2`. Check it at `GET /api/version` before assuming any of the below. Everything here
-changes on the wire; nothing else about the API did.
+### Query parameters
 
-### Every error body changed shape
+`POST /api/workspaces/{workspace}/queries` and `POST /api/sql/sessions/{session_id}/statements` take `parameters`:
+values for the placeholders in `sql`, as a list or an object. See [Query parameters](sql-support.md#query-parameters)
+for the placeholder styles and typed values. Values that do not fit the placeholders answer **422**
+`invalid_parameters`.
 
-Errors were `{"detail": "..."}`, or `{"detail": {"error": ..., "detail": ...}}` for the ones carrying a machine code.
-Both are now the single [error envelope](#errors). Read `message` for display and `error` for branching; the codes that
-existed under the old nested shape kept their names.
+### Describing a query
 
-### Nine collections became pages
+`POST /api/workspaces/{workspace}/queries/describe` returns a query's result columns and types without running it,
+which a driver or BI tool needs before executing. The agent binds the statement but reads no rows, so you need only the
+`metadata` tier on the tables it names.
 
-These returned a bare JSON array and now return `{"items": [...], "cursor": ..., "has_more": ...}` — see
-[Pagination](#pagination). Read `.items` where you read the array before, and page with `cursor` if you need more than
-the first 100.
-
-`GET /api/admin/users` · `GET /api/admin/service-accounts` · `GET /api/maintenance/recommendations` ·
-`GET /api/workspaces/{workspace}/saved-queries` · `GET /api/workspaces/{workspace}/sql/sessions` ·
-`GET /api/sql/sessions/{session_id}/statements` · `GET /api/workspaces/{workspace}/schedule-runs` ·
-`GET /api/workspaces/{workspace}/schedules/{schedule_id}/runs` ·
-`GET /api/workspaces/{workspace}/assistant/conversations` · `GET /api/catalogs/{catalog_id}/migrations`
-
-### Routes that moved
-
-| Was | Is | Why |
-|---|---|---|
-| `POST /api/workspaces/{workspace}/catalogs/attach` with `{"catalog_id": …}` | `PUT /api/workspaces/{workspace}/catalogs/{catalog}` with `{"make_default": …}` | Attaching is a membership write, so it lives at the membership's own address — the one `DELETE` already used. Idempotent: `201` the first time, `200` after. The catalog is named by slug in the path. |
-| `POST /api/admin/service-accounts/{id}/pat` | `POST /api/admin/service-accounts/{service_account_id}/pats` | The sub-resource was singular on two of its three routes. |
-| `DELETE /api/admin/service-accounts/{id}/pat/{pat_id}` | `DELETE /api/admin/service-accounts/{service_account_id}/pats/{pat_id}` | As above. |
-| `POST /api/workspaces/{workspace}/schemas/refresh-stats` | `POST /api/workspaces/{workspace}/catalogs/{catalog}/refresh-stats` | It walks every schema in the catalog, so it was never a schema-level operation — and under `/schemas/` it occupied the slot a namespace of that name would need. |
-
-### The default-catalog shim is gone
-
-Fourteen operations served schemas and tables without naming a catalog, resolving to the workspace's default. They were
-duplicates of the catalog-scoped family and are removed. Add the catalog segment:
-
-```text
-/api/workspaces/{workspace}/schemas/...
-→ /api/workspaces/{workspace}/catalogs/{catalog}/schemas/...
-```
-
-`GET /api/workspaces/{workspace}/catalogs` lists the attached catalogs and marks the default with `is_default`, if you
-need to reproduce the old behaviour explicitly.
-
-### Status codes that became honest
-
-`POST /api/setup/admin`, `POST /api/admin/agents/bootstrap` and `POST /api/sql/sessions/{session_id}/staging-files`
-return **201**; they create. Four more operations already returned a code they did not declare, so a client written
-against the old schema may see one it was not expecting:
-
-- `PUT .../catalogs/{catalog}/grants` and `PUT /api/admin/agents/{agent_id}/grants` return **201** on create, **200** on
-  replace.
-- `POST .../saved-queries` returns **200** when it overwrites a query of the same name, **201** when it creates one.
-- `POST .../sql/sessions` returns **202** when `on_wait_timeout=continue` and compute is still starting.
-- `POST .../sql/sessions/{session_id}/statements` returns **200** when the statement finished inside
-  its [completion wait](#waiting-for-a-statement), **202** when it is still running.
-
-### Search
-
-Both search endpoints now return `{"items": [...], …}` — `GET .../semantic/search` renamed `hits` to `items` — and `q`
-is required rather than defaulting to empty.
-
-### Two new error codes to expect
-
-- **`stale_cursor` (422)** on a paged collection, when the row your cursor names has been
-  deleted. Start paging again from the beginning; it is not an error in your request so much
-  as a position that no longer exists.
-- **`bad_request` (4xx)** is now the code derived for any 4xx the API does not name
-  specifically — a `405` from a wrong method, for instance. It previously read
-  `internal_error`, which pointed at the wrong side of the connection.
-
-An unhandled server error also returns the envelope now, as `internal_error`, rather than a
-plain-text body.
-
-### Filters no longer default
-
-`GET /api/maintenance/recommendations` used to default to `status=open`. It now returns every state unless you ask:
-send `?status=open` for the outstanding ones. `status` is repeatable everywhere it appears, including on
-`GET /api/workspaces/{workspace}/semantic/models`, where it previously took a single value.
-
----
-
-## Query parameters
-
-`POST /api/workspaces/{workspace}/queries` and `POST /api/sql/sessions/{session_id}/statements` accept a `parameters`
-field: values for placeholders in `sql`, as a list or an object. See
-[Query parameters](sql-support.md#query-parameters) for the placeholder styles, typed values, and the
-**422 `invalid_parameters`** answer when they do not fit. The field is optional and additive. A server older than
-this feature ignores it, and the statement then fails because its placeholders have no values.
-
-## Client and tags
-
-A query sent by a tool records **which tool**: `client_name` and `client_version` on `QueryOut`, read from the first
-product token of the request's `User-Agent` (`dbt-duckhaven/1.2.0 (linux)` gives `dbt-duckhaven` and `1.2.0`), cut to 64
-and 32 characters. A SQL session statement takes its session's client. Both fields are `null` for a browser's
-`User-Agent` (every web-app run would otherwise read `Mozilla`), for runs DuckHaven starts itself such as schedules,
-and for runs recorded before the fields existed. Lead your `User-Agent` with your own tool's name to be recognised.
-
-`POST /api/workspaces/{workspace}/queries` and `POST /api/sql/sessions/{session_id}/statements` also take **`tags`**:
-an object of free-form labels recorded on the run and returned as `tags` (`null` when none were sent). At most 20 tags;
-keys are letters, digits and `_ . : -` up to 64 characters, values up to 256 characters. Anything else is a **422**.
-Tags are stored as sent and not checked further, so treat them as the caller's claim. A server older than this feature
-ignores the field.
-
-## Describing a query
-
-`POST /api/workspaces/{workspace}/queries/describe` returns a query's result columns and their DuckDB types **without
-running it**. A driver or BI gateway needs this to report a result's shape before executing it. An agent binds the
-statement (`DESCRIBE <sql>`) but reads no rows, so the caller needs only the `metadata` tier on the tables it names.
-Reading the result of a `PIVOT` is the exception and needs `reader`.
-
-```json
-{ "sql": "SELECT region, sum(amount) AS total FROM sales.orders WHERE placed_at >= ?", "catalog": "warehouse" }
+```bash
+curl -s -X POST "$DH/api/workspaces/analytics/queries/describe" \
+  -H "Authorization: Bearer $DH_TOKEN" -H "Content-Type: application/json" \
+  -d '{"sql": "SELECT customer, sum(amount) AS revenue FROM sales.analytics.orders WHERE amount > ? GROUP BY 1"}'
 ```
 
 ```json
 {
   "statement_type": "select",
-  "columns": [{ "name": "region", "type": "VARCHAR" }, { "name": "total", "type": "DECIMAL(38,2)" }],
+  "columns": [{"name": "customer", "type": "VARCHAR"}, {"name": "revenue", "type": "DECIMAL(38,2)"}],
   "parameter_names": ["1"]
 }
 ```
 
-`parameters` is optional. A placeholder without a value is described as `NULL`; DuckDB types a bare `NULL` as `INTEGER`
-when nothing else in the query decides it, so pass the values when you have them. `parameter_names` lists the
-placeholders the statement uses.
+- `parameters` is optional. A placeholder without a value is typed as `NULL`, which DuckDB types as `INTEGER` when
+  nothing else decides it, so send values when you have them. `parameter_names` lists the placeholders.
+- A statement with no result grid, such as `INSERT` or `CREATE`, answers `columns: null` without using an agent.
+- Several statements, a `DESCRIBE`, `SHOW`, `SUMMARIZE` or `PRAGMA`, a `PIVOT` without an `IN` list, and a statement
+  that does not bind answer **422** `not_describable`. Describing a `PIVOT` needs `reader`, because its columns come
+  from the data.
+- With no agent running and elastic compute on, the call starts compute and waits up to `wait_timeout_s` (default
+  `SQL_SESSION_WAIT_TIMEOUT_S`, 45 seconds). If compute is not up by then it answers **503** `compute_starting` with
+  `Retry-After`; the retry lands on the agent that is starting.
+- Describes do not appear in history and record no lineage.
 
-- A statement that returns no result grid (an `INSERT`, a `CREATE`) answers with `columns: null` and no agent is used.
-- `DESCRIBE`, `SHOW`, `SUMMARIZE` and `PRAGMA` statements, several statements, and a `PIVOT` without an `IN` list
-  (which DuckDB plans as two statements) answer **422 `not_describable`**. So does a statement that does not bind, with
-  the engine's reason.
-- With no agent connected and [elastic compute](../compute/elastic-compute.md) on, compute is started and the call
-  waits up to `wait_timeout_s` (default `SQL_SESSION_WAIT_TIMEOUT_S`). If compute is not up by then it answers
-  **503 `compute_starting`** with `Retry-After`; retrying lands on the agent that is starting.
-- Describes do not appear in History and record no lineage.
+### Reading results
 
-## Workspace metadata
+| Endpoint | Returns |
+|---|---|
+| `GET /api/queries/{query_id}/rows` | One page of rows as JSON. `limit` (default 100, at most 1000) and `cursor` |
+| `GET /api/queries/{query_id}/result` | The whole result as Arrow or Parquet; see [below](#whole-results-as-arrow-or-parquet) |
+| `GET /api/queries/{query_id}/profile` | The query's [profile](../querying/query-profiles.md) |
 
-`GET /api/workspaces/{workspace}/metadata` returns everything you may see in a workspace as one tree: catalogs (with
-their kind and access mode), schemas, tables, and with `columns=true` each table's columns. It is what a driver or BI
-gateway answers its catalog listings from.
+`/rows` and `/result` answer **409** `Query not done` while the query runs, and **410** `gone` once the result has
+been deleted after its retention period. All three answer **403** `grant_denied` when your current grants would not
+let you run the query. In a workspace with a
+[scoped catalog](../access/scoped-access.md#opening-a-result-needs-the-same-grants-as-running-its-query), opening a
+result is checked like running it, for everyone including the person who ran it. In a workspace without one, any
+member can read any result.
 
-```json
-{
-  "catalogs": [{
-    "name": "warehouse", "kind": "iceberg_polaris", "access_mode": "scoped",
-    "schemas": [{ "name": "sales", "tables": [{
-      "name": "orders", "table_type": "MANAGED",
-      "columns": [{ "name": "id", "type": "BIGINT", "nullable": false }]
-    }]}]
-  }]
-}
-```
+`column_schema`, on the query and on each page, gives each column's type as DuckDB spells it, the same string `DESCRIBE`
+prints and that you can cast to (`DECIMAL(38,10)`). Precision, scale and nested field types are inside the string. It is
+`null` for a statement with no result grid. See [Column types](../querying/query-execution.md#column-types).
 
-- **Filtered by grant.** In a scoped catalog you see only what you hold a tier on, exactly as in the catalog tree.
-- **Narrowed by `catalog`, `schema` and `table`.** An unknown `catalog` is a 404. A catalog whose listing fails is
-  left out rather than failing the report.
-- **Names need no compute.** They come from each catalog's metastore.
-- **Columns come from the engine.** With `columns=true` an agent runs `DESCRIBE` on each table, about a hundred to a
-  query, so types arrive in DuckDB's spelling (`BIGINT`, not Iceberg's `long`). A table that cannot be described, for
-  example one dropped since it was listed, has `columns: null`.
-- **Columns are capped.** At most `METADATA_COLUMNS_MAX_TABLES` tables (1000) per request; more is
-  **422 `too_many_tables`**.
-- **Columns may start compute.** With no agent connected and elastic compute on, this `GET` starts compute and waits,
-  answering **503 `compute_starting`** with `Retry-After` if it is not up in time, as
-  [describing a query](#describing-a-query) does.
+#### Result values
 
-## Result column types
+A JSON number is a 64-bit float in most readers, so it holds integers exactly only up to 2^53 and no decimal fraction
+exactly. Values of these column types are therefore sent as strings:
 
-`GET /api/queries/{query_id}` and `GET /api/queries/{query_id}/rows` both return a **`column_schema`** field
-describing the
-result's columns:
+| Column type | Example value |
+|---|---|
+| `DECIMAL(p,s)` | `"12.50"`: every digit, scale kept |
+| `BIGINT`, `UBIGINT` | `"9007199254740993"` |
+| `HUGEINT`, `UHUGEINT` | `"12345678901234567890123"` |
 
-```json
-"column_schema": [
-  { "name": "shipped_at", "type": "TIMESTAMP WITH TIME ZONE" },
-  { "name": "amount", "type": "DECIMAL(38,10)" }
-]
-```
+The rule follows the column's type, not the value, so a column always has one JSON shape. It applies inside lists,
+structs and maps, in `first_page`, and in table samples. `count(*)` and `sum()` over integers return `BIGINT` or
+`HUGEINT`, so their results are strings too. Convert each value by its column's type in `column_schema`: integers to a
+type of 64 bits or more (`BigInt` in JavaScript), decimals to a decimal type. Or read the result as Arrow, which keeps
+every type.
 
-`type` is DuckDB's own logical-type spelling — the same string `DESCRIBE` prints, and the same one you can cast back to
-(`SELECT NULL::DECIMAL(38,10)`). It is complete on its own: precision, scale and nested field types are inside the
-string, so there are no separate `precision`/`scale` fields. See
-[Column types](../querying/query-execution.md#column-types) for how the types are captured and why.
+### Whole results as Arrow or Parquet
 
-The field is **additive** — `columns` still carries the names-only list it always has — and is `null` in two cases:
-
-- the statement produced no result grid (DDL and DML), and
-- the query ran on an agent older than this feature. The control plane reports nothing rather than deriving types from
-  the result Parquet, whose writer is lossy.
-
-## Reading results
-
-`GET /api/queries/{query_id}/rows`, `/result` and `/profile` answer **403 `grant_denied`** when the
-caller's current grants would not let them run the query. In a workspace with a scoped catalog, reading a result is
-checked like running its SQL, for every caller including the one who ran it. See
-[Reading results in Permissions][reading-results].
-Workspaces with no scoped catalog behave as before: any member can read any result in the workspace.
-
-[reading-results]: ../access/scoped-access.md#opening-a-result-needs-the-same-grants-as-running-its-query
-
-## Whole results as Arrow or Parquet
-
-`GET /api/queries/{query_id}/result` returns a finished query's **entire result in one response**, in a columnar format
-instead of JSON pages:
+`GET /api/queries/{query_id}/result` returns a finished query's entire result in one response, in a columnar format:
 
 | `format` | Media type | What you get |
 |---|---|---|
-| `arrow` (default) | `application/vnd.apache.arrow.stream` | An [Arrow IPC stream](https://arrow.apache.org/docs/format/Columnar.html#ipc-streaming-format), re-encoded batch by batch |
+| `arrow` (default) | `application/vnd.apache.arrow.stream` | An [Arrow IPC stream](https://arrow.apache.org/docs/format/Columnar.html#ipc-streaming-format) |
 | `parquet` | `application/vnd.apache.parquet` | The result file the agent wrote, byte for byte |
 
-Use it for anything larger than a page or two, and wherever exact values matter. Every value keeps its type: `DECIMAL`
-stays decimal and 64-bit integers stay integers, with no JSON rounding and no strings to convert. `HUGEINT` and
-`UHUGEINT` columns arrive as `DECIMAL(38,0)`. Parquet has no 128-bit integer; the query's
-`column_schema` still names the real type. In Python:
+Use it for anything larger than a page or two, and wherever exact values matter: every value keeps its type, with no
+strings to convert. In Python:
 
 ```python
-import httpx, pyarrow as pa
+import httpx
+import pyarrow as pa
 
 resp = httpx.get(
     f"{base}/api/queries/{query_id}/result", headers={"Authorization": f"Bearer {token}"}
@@ -446,400 +371,347 @@ resp = httpx.get(
 table = pa.ipc.open_stream(resp.content).read_all()
 ```
 
-It answers like `/rows`:
+- It answers like `/rows`, and **204** for a statement with no result grid.
+- Errors are decided before the body starts, so a response that begins with **200** is a whole result.
+- `HUGEINT` and `UHUGEINT` columns arrive as `DECIMAL(38,0)`, because Parquet has no 128-bit integer. `column_schema`
+  still names the real type.
+- An `INTERVAL` column arrives in Arrow as Parquet's raw 12-byte interval (months, days, milliseconds), because no Arrow
+  type maps it without loss.
 
-- **409** while the query is still running.
-- **204** for a statement with no result grid (DDL and DML).
-- **410** once retention has swept the result.
-- **403** when your grants would not let you run the query (see [Reading results](#reading-results)).
+### Result cache fields
 
-Errors are decided before the body starts, so a response that begins with 200 is a whole result. An `INTERVAL` column
-arrives in Arrow as Parquet's raw 12-byte interval (months, days, milliseconds), because there is no lossless mapping to
-an Arrow type.
-
-## Result cache fields
-
-A read can be answered from the [result cache](../querying/result-cache.md) instead of running. Requests opt out with
-`use_cache: false` on `POST /api/workspaces/{workspace}/queries`, on a session statement, or (for a whole session) on
-`POST /api/workspaces/{workspace}/sql/sessions`. `PATCH /api/workspaces/{workspace}` takes `result_cache_enabled`
-(owner only).
-
-Every query carries what the cache did with it:
+A query can be answered from the [result cache](../querying/result-cache.md) instead of running. `use_cache: false`
+opts out on a query, a session statement, or a whole session when sent to `POST …/sql/sessions`. A workspace owner turns
+the cache off for a workspace with `result_cache_enabled` on `PATCH /api/workspaces/{workspace}`.
 
 | Field | Meaning |
 |---|---|
-| `cache_status` | `hit` (answered from an earlier run; nothing executed), `miss` (executed and offered to the cache), `bypass` (the cache was off or could not decide in time), `ineligible` (the query can never be cached), or `null` when the cache never looked. |
-| `cache_detail` | Why, when there is a reason — a slug such as `volatile_function`, `opted_out` or `changed_during_run`. |
-| `result_source_query_id` | For a hit, the run whose result was served. `GET /api/queries/{query_id}/rows` and `/profile` of the hit answer with that run's rows and profile. |
+| `cache_status` | `hit`: answered from an earlier run, nothing executed. `miss`: executed and offered to the cache. `bypass`: the cache was off or could not decide in time. `ineligible`: the query can never be cached. `null`: the cache did not look |
+| `cache_detail` | The reason, when there is one: a slug such as `volatile_function`, `opted_out` or `changed_during_run` |
+| `result_source_query_id` | For a hit, the run whose result was served. `/rows` and `/profile` of the hit answer with that run's rows and profile |
 
-A hit is created already `done`, so `POST /api/workspaces/{workspace}/queries` still answers **202**, but with a
-finished query; its `agent_id` is `null` because no agent ran it.
+A hit is created already `done` and has a `null` `agent_id`, because no agent ran it.
 
-## Query history
+### Query history
 
-`GET /api/workspaces/{workspace}/queries` is the reference implementation of the
-[collection page](#pagination), and carries the richest filter set on the API — the vocabulary every other filtered
-list follows:
+`GET /api/workspaces/{workspace}/queries` lists runs, newest first, as a [page](#pagination). It has the fullest filter
+set in the API:
+
+| Parameter | Type | Meaning |
+|---|---|---|
+| `q` | string | Case-insensitive substring of the SQL. `%` and `_` match literally |
+| `query_id` | string | A full query id, or its first characters |
+| `since`, `until` | ISO 8601 | Bounds on `started_at` |
+| `status` | repeatable | `queued`, `running`, `done`, `failed`, `cancelled` |
+| `statement_type` | repeatable | `select`, `insert`, `update`, `delete`, `merge`, `copy`, `create`, `alter`, `drop`, `describe`, `other` |
+| `slower_than_ms` | integer | Runs that took longer than this |
+| `sort` | `started_at` or `duration` | Default `started_at` |
+| `dir` | `asc` or `desc` | Default `desc` |
+| `origin`, `session_id`, `agent_id` | | A kind of run, one SQL session, or one agent |
+| `user_id`, `all_workspaces` | | Another person's runs, or every workspace's |
+| `cursor`, `limit` | | Paging; `limit` 1–1000, default 100 |
+
+- **Duration** is the agent's execution time when it reported one, and otherwise `finished_at - started_at`, so failed
+  runs count. Unfinished runs have none: `slower_than_ms` leaves them out, and `sort=duration` puts them last in both
+  directions.
+- **`statement_type`** `null` means the statement did not parse; `other` means it parsed and nothing more specific fit.
+  Rows with `null` are left out only when you filter by `statement_type`.
+- **A cursor belongs to its sort.** Reusing one after changing `sort` is a **422**.
+- **Permissions.** Any member can use every filter on their own workspace, including their own `user_id`. Another
+  person's `user_id`, and `all_workspaces`, need the `queries:admin` permission and are otherwise a **403**.
+- Runs that DuckHaven makes for samples, metadata and maintenance are never listed.
+
+## SQL sessions
+
+A [SQL session](../querying/sql-sessions.md) holds state between statements on one agent, for dbt, dlt and other
+drivers. This section covers how a client waits; the session's other fields are in the OpenAPI schema.
+
+### Waiting for compute
+
+Opening a session needs a running agent. With [elastic compute](../compute/elastic-compute.md) scaled to zero,
+`POST /api/workspaces/{workspace}/sql/sessions` starts one and waits, controlled by two optional fields:
+
+| Field | Default | Meaning |
+|---|---|---|
+| `wait_timeout_s` | `SQL_SESSION_WAIT_TIMEOUT_S` (45) | How long to wait while compute starts. `0` never waits. Above `SQL_SESSION_MAX_WAIT_TIMEOUT_S` (120) is a **422** |
+| `on_wait_timeout` | `cancel` | When the wait runs out: `cancel` answers **503** `compute_starting` with `Retry-After`; `continue` answers **202** with the session `pending`. `0` with `cancel` is a **422** |
+
+After a **202**, poll `GET /api/sql/sessions/{session_id}` until `status` is `open`. A statement sent before then
+answers **409** `session_not_open`. A **503** means compute is still starting, not that it failed: retry, and the retry
+lands on the agent that is starting.
+
+### Waiting for a statement
+
+`POST /api/sql/sessions/{session_id}/statements` holds its response until the statement finishes, so a short statement
+costs one call:
+
+| Field | Default | Meaning |
+|---|---|---|
+| `wait_timeout_s` | `SQL_STATEMENT_WAIT_TIMEOUT_S` (10) | How long to wait. `0` never waits. Above `SQL_STATEMENT_MAX_WAIT_TIMEOUT_S` (60) is a **422** |
+| `first_page_limit` | `SQL_STATEMENT_FIRST_PAGE_LIMIT` (200) | Rows to return on the response as `first_page`. `0` returns none. Above 200 is a **422** |
+| `inline_format` | `json` | `arrow` returns the whole result as `inline_arrow` instead of `first_page`; see below |
+
+**200** carries the finished statement, `done` or `failed`; a failed statement's error is on the row. **202** means it
+is still running: poll `GET /api/queries/{query_id}`. A statement is never cancelled for outlasting the wait.
+
+`first_page` has the shape of `GET /api/queries/{query_id}/rows`, `cursor` included, so a larger result continues from
+it. It is absent for DDL and DML, and when the rows could not be fetched; the statement still succeeded, and `/rows`
+reports why.
+
+### The whole result as Arrow on the statement response
+
+With `inline_format: "arrow"`, a result of at most `SQL_STATEMENT_INLINE_ARROW_MAX_BYTES` (256 KiB), both as a file and
+as an Arrow stream, arrives as `inline_arrow`: a base64 [Arrow IPC stream](#whole-results-as-arrow-or-parquet), with
+`first_page_limit` ignored. Otherwise `inline_arrow` is `null` and the result is read from
+`GET /api/queries/{query_id}/result`: a larger result, one that could not be read, and one whose statement outlasted
+the wait.
+
+## Workspace metadata
+
+`GET /api/workspaces/{workspace}/metadata` returns everything you may see in a workspace as one tree: catalogs with
+their kind and access mode, schemas, tables, and with `columns=true`, each table's columns. Drivers and BI tools answer
+their catalog listings from it.
+
+```bash
+curl -s -H "Authorization: Bearer $DH_TOKEN" "$DH/api/workspaces/analytics/metadata?catalog=sales&columns=true"
+```
 
 ```json
 {
-  "items": [ /* QueryOut */ ],
-  "cursor": "eyJ...",
-  "has_more": true
+  "catalogs": [{
+    "name": "sales", "kind": "iceberg_polaris", "access_mode": "open",
+    "schemas": [{"name": "analytics", "tables": [{
+      "name": "orders", "table_type": "MANAGED",
+      "columns": [
+        {"name": "order_id", "type": "INTEGER", "nullable": true},
+        {"name": "customer", "type": "VARCHAR", "nullable": true},
+        {"name": "amount", "type": "DECIMAL(10,2)", "nullable": true},
+        {"name": "ordered_on", "type": "DATE", "nullable": true}
+      ]
+    }]}]
+  }]
 }
 ```
 
-Pass `cursor` back to fetch the next page; it is `null` on the last one. The cursor is opaque and is tied to the
-`sort` it was produced under — reusing one after changing `sort` is a `422`, not a silently different page.
-
-There is **no total**, here or on any paged collection. Counting the rows behind a filtered page means a second pass
-over the same predicates on every request, for a number that is stale as soon as another query is submitted.
-`has_more` costs nothing and is what the UI reports.
-
-### Parameters
-
-| Parameter | Type | Notes |
-|---|---|---|
-| `q` | string | Case-insensitive substring of the statement. `%` and `_` are matched literally |
-| `query_id` | string | A full query id or its leading characters |
-| `since`, `until` | ISO 8601 | Bound `started_at` |
-| `status` | string, repeatable | `queued`, `running`, `done`, `failed`, `cancelled` |
-| `statement_type` | string, repeatable | `select`, `insert`, `update`, `delete`, `merge`, `copy`, `create`, `alter`, `drop`, `describe`, `other` |
-| `slower_than_ms` | integer | See duration below |
-| `sort` | `started_at` \| `duration` | Default `started_at` |
-| `dir` | `asc` \| `desc` | Default `desc` |
-| `cursor` | string | From the previous page |
-| `limit` | integer 1-1000 | Page size, default 100 |
-| `origin`, `session_id`, `agent_id` | | Narrow to a kind of run, one session, or one agent |
-| `user_id`, `all_workspaces` | | Cross-principal; see below |
-
-An unrecognized value for an enumerated parameter is rejected with `422` rather than ignored. Sorting and filtering
-are applied to the whole result set before the page is cut.
-
-### Duration
-
-`slower_than_ms` and `sort=duration` use the agent's execution time when it reported one, and otherwise
-`finished_at - started_at`. Without that fallback every failed run would be excluded, which is backwards: a statement
-that hung and then died is what a slow-query search is for. Runs that have not finished have no duration — they are
-excluded from `slower_than_ms` and sort last under `sort=duration` in **both** directions.
-
-### Statement type
-
-Classified when the row is written. `null` means unknown — the statement did not parse, or it predates the field — and
-is distinct from `other`, which means it parsed and nothing more specific fit. Rows with `null` are returned normally
-and are excluded only when `statement_type` is supplied.
-
-### Permissions
-
-Any workspace member may use every filter above against their own workspace, including `since`/`until` and their own
-`user_id`. A `user_id` other than the caller's own, and `all_workspaces`, require the `queries:admin` permission and are
-otherwise `403`.
-
-Runs whose `origin` is `sample`, `metadata` or `maintenance` are never returned.
-
-### Runs rejected for an unreachable agent
-
-`POST /api/workspaces/{workspace}/queries` naming an agent that is not connected (and is not a stopped elastic agent the
-API can start) answers **503** `unavailable` with the message `Agent not connected`. The attempt is recorded as a
-**failed** query first, so it appears in history; its id is in `details.query_id`:
-
-```json
-{ "error": "unavailable", "message": "Agent not connected", "details": { "query_id": "…" } }
-```
+- **Filtered by grant.** In a scoped catalog you see only what you hold a tier on, as in the catalog tree.
+- **Narrowed by `catalog`, `schema` and `table`.** An unknown `catalog` is a **404**. A catalog whose listing fails is
+  left out instead of failing the report.
+- **Names need no compute.** They come from each catalog's metastore.
+- **Columns come from the engine.** With `columns=true` an agent runs `DESCRIBE` on each table, so types are in
+  DuckDB's spelling (`BIGINT`, not Iceberg's `long`). A table that cannot be described, such as one dropped since it
+  was listed, has `columns: null`.
+- **Columns are capped** at `METADATA_COLUMNS_MAX_TABLES` tables (1000) per request; more is a **422**
+  `too_many_tables`.
+- **Columns may start compute.** With no agent running and elastic compute on, the call starts compute and waits, and
+  answers **503** `compute_starting` if it is not up in time, as [describing a query](#describing-a-query) does.
 
 ## Worksheets
 
-A worksheet is one editor tab: a private draft that belongs to its owner. Every route is scoped to the caller — another
-member's worksheet is a **404**, exactly like one that does not exist. Any workspace member may keep worksheets,
-readers included.
+A worksheet is one editor tab: a private draft of its owner. Another member's worksheet answers **404**, like one that
+does not exist. Every workspace member, readers included, can keep worksheets.
 
 | Method and path | Does |
 |---|---|
 | `GET /api/workspaces/{workspace}/worksheets` | Your worksheets, as a [page](#pagination) |
-| `POST /api/workspaces/{workspace}/worksheets` | Create one (**201**). An open worksheet is appended as the last tab |
+| `POST /api/workspaces/{workspace}/worksheets` | Create one (**201**). An open worksheet becomes the last tab |
 | `GET /api/workspaces/{workspace}/worksheets/{worksheet_id}` | One worksheet, open or closed |
-| `PATCH /api/workspaces/{workspace}/worksheets/{worksheet_id}` | Autosave content, or change metadata |
-| `DELETE /api/workspaces/{workspace}/worksheets/{worksheet_id}` | Delete it (**204**). A linked saved query is unaffected |
+| `PATCH /api/workspaces/{workspace}/worksheets/{worksheet_id}` | Save content, or change other fields |
+| `DELETE /api/workspaces/{workspace}/worksheets/{worksheet_id}` | Delete it (**204**). A linked saved query is kept |
 
-The list takes `status` (`open` or `closed`, repeatable; both when omitted), `saved_query_id`, `q` (a case-insensitive
-title substring), `sort` (`updated_at`, `title` or `position`) and `dir`. `updated_at` sorts newest first by default.
+The list takes `status` (`open` or `closed`, repeatable), `saved_query_id`, `q` (a case-insensitive title substring),
+`sort` (`updated_at`, `title` or `position`) and `dir`. `updated_at` sorts newest first.
 
 ### Saving content without losing a concurrent edit
 
-`sql` and `title` are **content** and are versioned. Send the `version` you last read as `base_version`:
+`sql` and `title` are versioned. Send the `version` you last read as `base_version`:
 
 ```json
-{ "sql": "SELECT 1", "base_version": 4 }
+{"sql": "SELECT 1", "base_version": 4}
 ```
 
-A match saves the content and increments `version`. If the worksheet has moved on — another window saved it — the
-answer is **409** `worksheet_conflict`, with the current worksheet in `details.current`, so a client can offer to load
-it or to save its own edit against the new version. Content without `base_version` is a **422**
-`base_version_required`.
+If the worksheet is still at that version, the content is saved and `version` goes up by one. If another window saved
+it first, the answer is **409** `worksheet_conflict` with the current worksheet in `details.current`, so a client can
+offer to load it or to save over it. Content without `base_version` is a **422** `base_version_required`.
 
-Everything else — `agent_id`, `catalog`, `timeout_s`, `saved_query_id`, `last_query_id`, `is_open`, `tab_position` — is
-**metadata**: last write wins, no version needed, and neither `version` nor `updated_at` moves. An explicit `null`
-clears a nullable field. `saved_query_id` and `last_query_id` must name a saved query or query in the same workspace
-(**422** otherwise), and `agent_id` must be an agent you may use.
+The other fields, `agent_id`, `catalog`, `timeout_s`, `saved_query_id`, `last_query_id`, `is_open` and `tab_position`,
+are last-write-wins and need no version; changing them moves neither `version` nor `updated_at`. `saved_query_id` and
+`last_query_id` must name a saved query or query in the same workspace, and `agent_id` an agent you may use.
 
 ## Saved queries
 
-`POST /api/workspaces/{workspace}/saved-queries` saves SQL under a name. Names are unique per workspace **ignoring
-case**. What happens when the name is taken is up to `on_conflict`:
+`POST /api/workspaces/{workspace}/saved-queries` saves SQL under a name. Names are unique per workspace, ignoring case.
+`on_conflict` decides what happens when the name is taken:
 
-- `replace` (the default) replaces that query's SQL and default agent and answers **200**; a new name is **201**.
+- `replace` (the default) replaces that query's SQL and default agent and answers **200**. A new name answers **201**.
 - `error` answers **409** `saved_query_exists`, with the existing query's `id` and `name` in `details`, so a client can
   ask before overwriting a query others rely on.
 
-`PATCH .../saved-queries/{saved_query_id}` renames or edits one; renaming onto a taken name is a **409** as well.
+`PATCH …/saved-queries/{saved_query_id}` edits or renames one; renaming onto a taken name is also a **409**.
 
-Saved queries carry `updated_at` and `updated_by` alongside `created_by`. Changing the SQL or the default agent makes
-the caller `updated_by` — and a [scheduled run](../querying/schedule-queries.md#whose-data-grants-a-run-uses) is checked
-against `updated_by`'s data grants, not the creator's.
+Saved queries carry `created_by`, `updated_by` and `updated_at`. Changing the SQL or the default agent makes you the
+`updated_by`, and a [scheduled run](../querying/schedule-queries.md#whose-data-grants-a-run-uses) uses
+`updated_by`'s data grants.
 
 ## Search endpoint
 
 `GET /api/workspaces/{workspace}/search?q=` finds catalogs, schemas, tables and saved queries whose names contain `q`,
-ignoring case. Results are filtered by your grants. It returns `{"items": [...], "has_more": …}`: `limit` (default 20,
-up to 200) caps the report, and there is no cursor — narrow the query instead.
+ignoring case, filtered by your grants. It returns `{"items": […], "has_more": …}`. `limit` (default 20, at most 200)
+caps it, and there is no cursor: narrow the query instead.
 
-`types` (repeatable: `catalog`, `schema`, `table`, `saved_query`) limits the report to those kinds, and skips work the
-others would need: asking for catalogs and schemas only never lists tables. The worksheet's catalog tree searches with
-`types=catalog&types=schema&types=table&limit=200`.
+`types` (repeatable: `catalog`, `schema`, `table`, `saved_query`) limits the kinds returned and skips the work the
+others need: asking for catalogs and schemas only never lists tables.
 
 ## Semantic layer
 
 Define what business terms mean, and compile questions into SQL from those definitions. See
 [Semantic layer](../metadata/semantic-layer.md).
 
-| Method & path | Purpose |
+| Method and path | Purpose |
 |---|---|
-| `GET /api/workspaces/{workspace}/semantic/models` | List models. Optional `status` filter. A model binding any table the caller cannot read is absent, not forbidden. |
-| `POST /api/workspaces/{workspace}/semantic/models` | Create a model. Requires workspace **writer**. |
-| `GET /api/workspaces/{workspace}/semantic/models/{model}` | One model with its datasets, dimensions, metrics and relationships. |
-| `PATCH /api/workspaces/{workspace}/semantic/models/{model}` | Rename or re-describe. **409** on an imported model — a model has one owner. |
-| `DELETE /api/workspaces/{workspace}/semantic/models/{model}` | Delete. Requires workspace **owner**. |
-| `POST /api/workspaces/{workspace}/semantic/models/{model}/publish` | Make the model authoritative to the assistant. Validates first; **422** if anything is broken. Requires workspace **owner**. |
-| `POST /api/workspaces/{workspace}/semantic/models/{model}/deprecate` | Retire it: still readable, excluded from new answers. Requires **owner**. |
-| `POST /api/workspaces/{workspace}/semantic/models/{model}/validate` | Resolve every binding against the live catalog and record the outcome. |
-| `POST /api/workspaces/{workspace}/semantic/models/{model}/{datasets,dimensions,metrics,relationships}` | Add a definition. Requires **writer**, plus `metadata` tier on any table a dataset binds. **409** if the name is already used in this model. |
-| `PATCH /api/workspaces/{workspace}/semantic/models/{model}/metrics/{metric}` | Edit a metric. Resets its validation state to `unchecked`. |
-| `DELETE /api/workspaces/{workspace}/semantic/models/{model}/{metrics,dimensions,relationships}/{metric,dimension,relationship}` | Remove one definition. Requires **writer**; **409** on an imported model. A dimension is refused with **409** while a metric is measured on it — an absent time axis is indistinguishable from one never set, and would be answered on the dataset's default date. |
-| `DELETE /api/workspaces/{workspace}/semantic/models/{model}/datasets/{dataset}` | Remove a dataset. **409** naming the dependents while any dimension, metric or relationship still binds it — the delete would otherwise cascade to them. |
-| `GET /api/workspaces/{workspace}/semantic/models/{model}/metrics/{metric}/dimensions` | The dimensions this metric can legally be sliced by. |
-| `GET /api/workspaces/{workspace}/semantic/search?q=` | Rank metrics and dimensions against a question. Returns `items`, an `ambiguous` list of equally-matching metrics, and a `broken` list of matching definitions that exist but no longer resolve. |
-| `POST /api/workspaces/{workspace}/semantic/compile` | Compile a metric request to SQL. **Does not execute** — submit the SQL through `POST /api/workspaces/{workspace}/queries` like any other statement. |
-| `POST /api/workspaces/{workspace}/semantic/imports/{provider}` | Publish definitions from a producer, as `text/plain`. `duckhaven` takes a YAML document; `dbt` takes a `manifest.json`. `?reconcile=provider_run` (default) retires models the payload no longer declares. Requires **writer**. |
-| `DELETE /api/workspaces/{workspace}/semantic/imports?provider=<name>` | Remove everything a provider published. Requires workspace **owner**. |
-| `GET /api/workspaces/{workspace}/catalogs/{catalog}/schemas/{schema}/tables/{table}/semantic` | Which definitions depend on this table. Optional `column` narrows it. Requires `metadata` tier. |
+| `GET …/semantic/models` | List models. Optional `status`. A model that binds a table you cannot read is left out |
+| `POST …/semantic/models` | Create a model. Workspace `writer` |
+| `GET …/semantic/models/{model}` | One model with its datasets, dimensions, metrics and relationships |
+| `PATCH …/semantic/models/{model}` | Rename or re-describe. **409** `imported_model` on an imported model |
+| `DELETE …/semantic/models/{model}` | Delete. Workspace `owner` |
+| `POST …/semantic/models/{model}/publish` | Make it authoritative to the assistant. Validates first; **422** if anything is broken. `owner` |
+| `POST …/semantic/models/{model}/deprecate` | Retire it: still readable, left out of new answers. `owner` |
+| `POST …/semantic/models/{model}/validate` | Resolve every binding against the live catalog and record the outcome |
+| `POST …/semantic/models/{model}/{datasets,dimensions,metrics,relationships}` | Add a definition. `writer`, plus the `metadata` tier on any table a dataset binds. **409** if the name is taken |
+| `PATCH …/semantic/models/{model}/metrics/{metric}` | Edit a metric. Its validation state returns to `unchecked` |
+| `DELETE …/semantic/models/{model}/{metrics,dimensions,relationships}/{name}` | Remove one definition. `writer`. A dimension a metric is measured on answers **409** `dimension_in_use` |
+| `DELETE …/semantic/models/{model}/datasets/{dataset}` | Remove a dataset. **409** `dataset_in_use`, naming the dependents, while anything binds it |
+| `GET …/semantic/models/{model}/metrics/{metric}/dimensions` | The dimensions this metric can be sliced by |
+| `GET …/semantic/search?q=` | Rank metrics and dimensions against a question. Returns `items`, `ambiguous` (equally good metrics) and `broken` (matches whose bindings fail to resolve) |
+| `POST …/semantic/compile` | Compile a metric request to SQL. Does not run it: submit the SQL as a query |
+| `POST …/semantic/imports/{provider}` | Publish definitions from a producer, as `text/plain`: a YAML document for `duckhaven`, a `manifest.json` for `dbt`. `?reconcile=provider_run` (the default) retires models missing from the payload. `writer` |
+| `DELETE …/semantic/imports?provider=⟨name⟩` | Remove everything a provider published. `owner` |
+| `GET …/catalogs/{catalog}/schemas/{schema}/tables/{table}/semantic` | The definitions that depend on this table. Optional `column`. `metadata` tier |
 
-`POST /api/workspaces/{workspace}/semantic/compile` takes structured input only — metric and dimension names, an
-operator from a fixed set, values
-as JSON, and a time window as a kind plus a count. There is no field into which SQL can be passed. Refusals come back
-as **422** naming the legal alternatives: an unknown metric lists the real ones, an ambiguous join path names both
-candidates, and a grain a dimension does not support lists the ones it does.
+`…` stands for `/api/workspaces/{workspace}`.
 
-Time windows must be stated explicitly: `last_complete` (the last N complete periods), `trailing` (a rolling window
-ending today), `to_date` (period start through today), or `absolute` (explicit dates, end exclusive). There is no
-default, because "last month" means a different window to different people.
+`POST …/semantic/compile` takes structured input only: metric and dimension names, operators from a fixed set, values
+as JSON, and a time window. No field accepts SQL. A refusal is a **422** that names the legal alternatives: the real
+metrics for an unknown one, both candidates for an ambiguous join path, the supported grains for a dimension.
 
-An artifact the chosen provider cannot read — YAML posted to `dbt`, an empty file, anything that is not a JSON object
-where a manifest belongs — comes back as **422** naming the format that provider expects, not a 500. Which matters to a
-pipeline: a 5xx reads as "retry me", and a wrong file will never import no matter how often it is sent.
+Time windows are stated explicitly, because "last month" means different windows to different people: `last_complete`
+(the last N complete periods), `trailing` (a rolling window ending today), `to_date` (period start through today) or
+`absolute` (explicit dates, end exclusive).
+
+A file the provider cannot read, such as YAML sent to `dbt` or an empty body, answers **422** naming the format that
+provider expects. It is not a 5xx, because resending the same file will never work.
 
 ## Lineage
 
 Read the [lineage](../metadata/lineage.md) graph around a table, and import lineage produced elsewhere.
 
-| Method & path | Purpose |
+| Method and path | Purpose |
 |---|---|
-| `GET /api/workspaces/{workspace}/catalogs/{catalog}/schemas/{schema}/tables/{table}/lineage` | The bounded graph around a table. Requires `metadata` tier on the table. |
-| `POST /api/workspaces/{workspace}/lineage/imports` | Import canonical edges from any producer. Requires workspace **writer**, plus `writer` on each target's catalog. |
-| `POST /api/workspaces/{workspace}/lineage/imports/{provider}` | Import a producer's own artifact — `dbt` takes a `manifest.json` body, or `{"manifest": …, "catalog": …}` to include column detail. Same authorization. |
-| `DELETE /api/workspaces/{workspace}/lineage/imports?provider=<name>` | Remove every edge a retired producer asserted. Requires workspace **owner**. |
+| `GET …/catalogs/{catalog}/schemas/{schema}/tables/{table}/lineage` | The graph around a table. `metadata` tier on the table |
+| `POST …/lineage/imports` | Import edges from any producer. Workspace `writer`, plus `writer` on each target's catalog |
+| `POST …/lineage/imports/{provider}` | Import a producer's own file: `dbt` takes a `manifest.json`, or `{"manifest": …, "catalog": …}` for column detail. Same access |
+| `DELETE …/lineage/imports?provider=⟨name⟩` | Remove every edge a producer asserted. Workspace `owner` |
 
-Read parameters: `direction` (`upstream` \| `downstream` \| `both`, default `both`), `depth` (1–5, default 2), a
-repeatable `provider` filter, and a repeatable `columns_for` taking node keys. The response carries `nodes`, `edges`,
-`truncated`, `hidden` and `columns_truncated`. `truncated` is `true` when a cap stopped the walk early; `hidden` is
-`true` when the walk reached lineage in a catalog the workspace does not attach and dropped it — deliberately a bare
-flag, so a caller can tell "nothing here" from "something here you may not see" without learning anything about what
-was withheld.
+`…` stands for `/api/workspaces/{workspace}`.
 
-Node `kind` is `table`, `external` (an asset outside DuckHaven, named by whoever imported it), or `redacted` (a table
-in a scoped catalog the caller holds no grant on — present with no names, so the graph keeps its shape). Each node
-also carries `column_count`: how many of its columns take part in the lineage around it, and so how many rows it would
-show if opened. It arrives for every node — unlike the mappings, which only arrive for the nodes `columns_for` names —
-because it is what lets a client decide whether a node is worth opening. It is `0` for a redacted node, and `0`
-whenever there is nothing to show. Every edge
-carries a `providers` list — one entry per producer, each with its own `first_seen_at`, `last_seen_at`,
-`observation_count`, `stale` and `column_lineage` — plus edge-level totals and a `stale` that is `true` only when every
+The read takes `direction` (`upstream`, `downstream` or `both`, the default), `depth` (1–5, default 2), a repeatable
+`provider` filter, and a repeatable `columns_for` of node keys. The response has `nodes`, `edges`, `truncated`, `hidden`
+and `columns_truncated`:
+
+- `truncated` is `true` when a limit stopped the walk early.
+- `hidden` is `true` when the walk reached a catalog the workspace does not attach and dropped it. It is a bare flag,
+  so you can tell "nothing here" from "something you may not see" without learning what was withheld.
+
+A node's `kind` is `table`, `external` (an asset outside DuckHaven, named by whoever imported it) or `redacted` (a table
+in a scoped catalog you hold no grant on, shown without names so the graph keeps its shape). Every node has
+`column_count`, the number of its columns that take part in the lineage around it, so a client can decide whether a
+node is worth opening; it is `0` for a redacted node.
+
+Each edge has a `providers` list, one entry per producer with its own `first_seen_at`, `last_seen_at`,
+`observation_count`, `stale` and `column_lineage`, plus edge totals and a `stale` that is `true` only when every
 producer's claim is stale.
 
 ### Column detail
 
-`columns` is populated only for edges touching a node named in `columns_for`, and is empty otherwise. Column detail
-scales with how wide the tables are rather than how many nodes the walk found, so it is fetched for the nodes a caller
-is actually looking at instead of for the whole graph. `columns_truncated` is `true` when a cap stopped it short; the
-graph's own shape is still complete when it is.
+`columns` is filled only for edges that touch a node named in `columns_for`. Column detail grows with the tables'
+width, not the number of nodes, so a client fetches it for the nodes it shows. `columns_truncated` is `true` when a
+limit cut it short; the graph's shape is still complete. Each entry has `source_column`, `target_column`, the
+`providers` that assert it and `stale`. Column detail is withheld when either end is `redacted`.
 
-Each entry has `source_column`, `target_column`, the `providers` asserting it, and `stale`. Column detail is withheld
-entirely when either endpoint is `redacted`.
-
-`column_lineage` says how to read an empty `columns`, and the three values are different answers:
+`column_lineage` says how to read an empty `columns`:
 
 | Value | Meaning |
 |---|---|
-| `derived` | Worked out. With no columns listed, this means none of the source's values reach the target — it was joined against or filtered on. |
-| `unsupported` | Something tried and could not establish it. |
-| `unknown` | Nothing tried. |
+| `derived` | Worked out. With no columns listed, no value of the source reaches the target: it was joined or filtered on |
+| `unsupported` | Something tried and could not establish it |
+| `unknown` | Nothing tried |
 
-On import, `LineageEdgeIn` accepts a `columns` list of `{source_column, target_column}` and an optional
-`column_lineage`. Omitted, it is inferred: `derived` when columns were sent, `unknown` otherwise. Sending `derived`
-with an empty list is how a producer states that it checked and nothing flows. Any other value is rejected with
-**422**.
+On import, an edge takes a `columns` list of `{source_column, target_column}` and an optional `column_lineage`. Left
+out, it is `derived` when columns were sent and `unknown` otherwise. Send `derived` with an empty list to state that
+you checked and nothing flows; any other value is a **422**.
 
-The provider name `execution` is reserved for lineage DuckHaven derives from SQL it ran: importing it is rejected with
-**422**, and it cannot be purged. Imports are idempotent, and edges whose endpoints cannot be resolved are returned in
-`skipped` alongside a **200** rather than failing the whole batch.
+The provider name `execution` is reserved for lineage DuckHaven derives from SQL it ran: importing under it is a
+**422**, and it cannot be removed. Imports are idempotent. Edges whose ends cannot be resolved are returned in
+`skipped`, with a **200**, instead of failing the batch.
 
 ## Catalog storage migrations
 
-Move a catalog to a different [storage backend](../data/storage-backends.md). All endpoints require the catalog's
-creator or an admin with the `catalogs:admin` permission. See
-[Migrate a catalog's storage](../data/migrate-catalog-storage.md).
+Move a catalog to another [storage backend](../data/storage-backends.md). Every endpoint needs the catalog's creator,
+or an admin with `catalogs:admin`. See [Migrate a catalog's storage](../data/migrate-catalog-storage.md).
 
-| Method & path | Purpose |
+| Method and path | Purpose |
 |---|---|
-| `POST /api/catalogs/{catalog_id}/migrations` | Start a migration. Body: `{"target_storage_backend_id": "<uuid>"}`. Returns **202** with the migration record (`pending`). |
-| `GET /api/catalogs/{catalog_id}/migrations` | List the catalog's migrations, newest first. |
-| `GET /api/catalogs/{catalog_id}/migrations/{migration_id}` | Status and progress (phase, table counts, bytes, per-table state). |
-| `GET /api/catalogs/{catalog_id}/migrations/{migration_id}/logs` | User-facing log stream. `?after=<seq>` returns only events newer than `seq` (incremental polling). |
-| `POST /api/catalogs/{catalog_id}/migrations/{migration_id}/cancel` | Request cancellation (only before cutover). |
+| `POST /api/catalogs/{catalog_id}/migrations` | Start one. Body: `{"target_storage_backend_id": "⟨uuid⟩"}`. **202** with the migration, `pending` |
+| `GET /api/catalogs/{catalog_id}/migrations` | The catalog's migrations, newest first |
+| `GET /api/catalogs/{catalog_id}/migrations/{migration_id}` | Status and progress: phase, table counts, bytes, per-table state |
+| `GET /api/catalogs/{catalog_id}/migrations/{migration_id}/logs` | The log. `?after=⟨seq⟩` returns only newer events, for polling |
+| `POST /api/catalogs/{catalog_id}/migrations/{migration_id}/cancel` | Cancel, before cutover only |
 
-While a migration is active the catalog is read-only: write queries against a workspace with the migrating catalog
-attached are rejected with **409** (`{"error": "catalog_read_only"}`); reads are unaffected.
+While a migration runs, the catalog is read-only: writes in any workspace that attaches it answer **409**
+`catalog_read_only`. Reads work.
 
-## Per-agent access
+## Agents
 
-Every agent endpoint below `/api/admin/agents/{agent_id}` is authorized by the caller's **tier** on that specific
-agent — `use` < `operate` < `admin` — rather than by the global `agents:manage` permission alone. Holding
-`agents:manage` confers `admin` on every agent. See
-[Per-agent access](../access/agent-access.md) for the model.
+### Per-agent access
 
-| Tier required | Endpoints |
+Every endpoint under `/api/admin/agents/{agent_id}` checks your [tier](../access/agent-access.md) on that agent, `use`,
+`operate` or `admin`. The `agents:manage` permission gives `admin` on every agent.
+
+| Tier | Endpoints |
 |---|---|
-| `use` | `GET /api/admin/agents/{agent_id}`, `GET /api/admin/agents/{agent_id}/monitoring`, `GET /api/admin/agents/{agent_id}/queries` (which also needs the `queries:admin` permission) |
-| `operate` | `POST …/{id}/restart`, `POST …/{id}/terminate`, `POST …/{id}/disconnect`, `DELETE …/{id}/credential` |
-| `admin` | `DELETE /api/admin/agents/{agent_id}`, and the access endpoints below |
+| `use` | `GET …/{agent_id}`, `GET …/{agent_id}/monitoring`, and `GET …/{agent_id}/queries`, which also needs `queries:admin` |
+| `operate` | `POST …/{agent_id}/restart`, `/terminate` and `/disconnect`, and `DELETE …/{agent_id}/credential` |
+| `admin` | `DELETE …/{agent_id}`, and the access endpoints below |
 
-`POST /api/admin/agents/elastic`, `POST /api/admin/agents/bootstrap` and `GET /api/admin/agents/compute-options`
-remain on the global `agents:manage` permission: they are fleet-level, not about one agent. `POST .../elastic` accepts
-an optional `access_mode` (`open` | `restricted`, default `open`) so a reserved agent is created locked down rather
-than narrowed afterwards — it is applied to the row before the compute backend is asked for anything.
+`POST /api/admin/agents/elastic`, `POST /api/admin/agents/bootstrap` and `GET /api/admin/agents/compute-options` need
+the `agents:manage` permission, because they concern the fleet, not one agent. `POST …/elastic` takes an optional
+`access_mode` (`open`, the default, or `restricted`), applied before the agent is provisioned.
 
-An agent the caller has no tier on is **invisible** — omitted from `GET /api/agents`, `GET /api/admin/agents` and
-`GET /api/admin/agents/metrics`, and **404** from its own routes. An insufficient-but-nonzero tier returns **403**
-with `{"error": "agent_forbidden"}`. The same `use` check applies wherever an agent is named for work: submitting a
-query or opening a SQL session with an explicit `agent_id`, and setting `agent_id` on a schedule or
-`default_agent_id` on a saved query.
+An agent you hold no tier on is invisible: it is left out of `GET /api/agents`, `GET /api/admin/agents` and
+`GET /api/admin/agents/metrics`, and its own routes answer **404**. A tier that is too low answers **403**
+`agent_forbidden`. The `use` check also applies wherever you name an agent for work: a query or SQL session with
+`agent_id`, a schedule's `agent_id`, or a saved query's `default_agent_id`.
 
-Every agent object carries `access_tier` (the requesting caller's tier) and `access_mode` (`open` | `restricted`).
+Every agent object has `access_tier`, your tier on it, and `access_mode`, `open` or `restricted`.
 
-| Method & path | Purpose |
+| Method and path | Purpose |
 |---|---|
-| `GET /api/admin/agents/{agent_id}/access` | The agent's access mode, its grants, and the candidate principals to grant to. |
-| `PATCH /api/admin/agents/{agent_id}/access-mode` | Body: `{"access_mode": "open" \| "restricted"}`. Returns the full access payload. |
-| `PUT /api/admin/agents/{agent_id}/grants` | Upsert a grant. Body: `{"user_id"` **or** `"workspace_id", "tier"}`. **201** on insert, **200** on update. **422** if neither or both principals are given, or if a workspace is granted `admin`. |
-| `DELETE /api/admin/agents/{agent_id}/grants/{grant_id}` | Revoke a grant. **204**. |
+| `GET /api/admin/agents/{agent_id}/access` | The access mode, the grants, and the people and workspaces you could grant to |
+| `PATCH /api/admin/agents/{agent_id}/access-mode` | Body `{"access_mode": "open"}` or `"restricted"`. Returns the full access payload |
+| `PUT /api/admin/agents/{agent_id}/grants` | Add or change a grant. Body: a `user_id` or a `workspace_id`, and a `tier`. **201** on create, **200** on change. **422** for neither or both principals, or `admin` for a workspace |
+| `DELETE /api/admin/agents/{agent_id}/grants/{grant_id}` | Revoke a grant. **204** |
 
 ### Agent monitoring
 
 The two endpoints behind an agent's [Monitoring tab](../compute/agent-monitoring.md):
 
-| Method & path | Purpose |
+| Method and path | Purpose |
 |---|---|
-| `GET /api/admin/agents/{agent_id}/monitoring` | Every series for one range on a shared bucket grid: flat `buckets`, lifecycle `spans` and a `summary`. Takes `window` (`1h`, `3h`, `8h`, `12h`, `24h`, `3d`, `7d`; default `8h`, ending now) **or** `start` and `end` (a zoomed range, at least 5 minutes, clamped to now and to retention). **422** for both at once, an unknown window, only one of `start`/`end`, or too narrow a range. |
-| `GET /api/admin/agents/{agent_id}/queries` | The runs that were running or waiting during `start`–`end` (both required), as a paged collection. `sort` is `started_at`, `duration`, `wait`, `peak_memory`, `cpu_time`, `spill` or `bytes_read`, with `dir`; runs without a value sort last either way. Optional `status`, `cursor`, `limit` (≤ 200). Needs the `use` tier **and** the `queries:admin` permission, since it lists other workspaces' SQL. |
+| `GET /api/admin/agents/{agent_id}/monitoring` | Every series for one time range on a shared bucket grid: `buckets`, lifecycle `spans` and a `summary`. Takes `window` (`1h`, `3h`, `8h`, `12h`, `24h`, `3d`, `7d`; default `8h`, up to the present) **or** `start` and `end` (at least 5 minutes, clamped to the present and to retention). **422** for both, an unknown window, only one of `start` and `end`, or too short a range |
+| `GET /api/admin/agents/{agent_id}/queries` | The runs that were running or waiting between `start` and `end` (both required), as a page. `sort` by `started_at`, `duration`, `wait`, `peak_memory`, `cpu_time`, `spill` or `bytes_read`, with `dir`; runs without a value sort last. Optional `status`, `cursor` and `limit` (at most 200). Needs `use` and `queries:admin`, because it lists other workspaces' SQL |
 
-## Waiting for compute
+## Related
 
-When [elastic compute](../compute/elastic-compute.md) is enabled, a request can arrive with the pool
-scaled to zero. Submitting a **query** is unaffected: it is already asynchronous, so the run is
-recorded `queued` with a null `agent_id` and dispatches once compute registers — you poll
-`GET /api/queries/{query_id}` exactly as you would for a busy agent. That now also covers a query naming an
-idle-terminated elastic agent, which used to be **503**.
-
-Opening a **SQL session** is synchronous, so it cannot simply park. `POST /api/workspaces/{workspace}/sql/sessions`
-accepts two optional fields for it:
-
-| Field | Default | Meaning |
-|---|---|---|
-| `wait_timeout_s` | server default (`SQL_SESSION_WAIT_TIMEOUT_S`, 45s) | How long to block while compute starts. `0` never blocks. Above `SQL_SESSION_MAX_WAIT_TIMEOUT_S` is **422**. |
-| `on_wait_timeout` | `cancel` | `cancel` → **503** with `Retry-After` and `{"error": "compute_starting"}`; `continue` → **202** with the session still `pending`. `0` with `cancel` is **422**. |
-
-A **202** means the session exists but is not usable yet: poll `GET /api/sql/sessions/{session_id}` until its
-status reads `open` (a statement sent before then is **409** `session_not_open`). A **503** here means
-the compute is still coming up, not that it failed — retry, and the retry lands on the agent that is
-already starting.
-
-`API_VERSION` is deliberately **unchanged**: both fields are optional, an older server ignores them,
-and a client that never sends them sees exactly the previous 201/503 behaviour. A **202** on this
-route is itself the signal that a server supports the contract, so nothing needs to negotiate.
-
-## Waiting for a statement
-
-`POST /api/sql/sessions/{session_id}/statements` holds its response until the statement finishes, so
-a client learns of completion when it happens rather than on its next poll.
-
-| Field | Default | Meaning |
-|---|---|---|
-| `wait_timeout_s` | server default (`SQL_STATEMENT_WAIT_TIMEOUT_S`, 10s) | How long to block waiting for the statement. `0` never blocks. Above `SQL_STATEMENT_MAX_WAIT_TIMEOUT_S` is **422**. |
-
-**200** carries the finished statement (`done` *or* `failed` — a failed statement still completed,
-and its error is on the row). **202** means it is still running; poll `GET /api/queries/{query_id}`
-as before. A statement is never cancelled for outliving the wait.
-
-`POST /api/workspaces/{workspace}/queries` takes the same `wait_timeout_s` in its body, but there it is **opt-in**:
-omitted, the call never blocks and answers **202** as it always has. Sent, it answers **200** with the finished query
-when the run ends within the wait (a result-cache hit always has), and **202** otherwise. One request then submits a
-query and learns its outcome, with no polling.
-
-`GET /api/queries/{query_id}` accepts the same `wait_timeout_s` as a **query parameter**, for a
-client following a statement that outran the budget on submit. It is opt-in and defaults to `0`
-there — that route also serves the worksheet's status polling and the audit history, and neither
-should hold a request open.
-
-### First page of rows on the statement response
-
-| Field | Default | Meaning |
-|---|---|---|
-| `first_page_limit` | server default (`SQL_STATEMENT_FIRST_PAGE_LIMIT`, 200 rows) | Result rows to return on the response itself, as `first_page`. `0` opts out. Above the 200 cap is **422**. |
-
-`first_page` has the same shape as `GET /api/queries/{query_id}/rows` returns, `cursor` included,
-so a result larger than the page continues from it. It is absent for DDL/DML, which finish without
-a result file, and absent when the rows could not be fetched — the statement still succeeded, and
-the rows endpoint reports the reason.
-
-Together with the wait above, a statement whose result fits in that page costs **one** HTTP call.
-
-`API_VERSION` is **unchanged**: both fields are optional, an older server ignores them, and a client
-that never sends them sees the previous always-202 behaviour.
-
-### The whole result as Arrow on the statement response
-
-| Field | Default | Meaning |
-|---|---|---|
-| `inline_format` | `json` | `arrow` returns the whole result as `inline_arrow`, a base64 [Arrow IPC stream](#whole-results-as-arrow-or-parquet), in place of `first_page`; `first_page_limit` is then ignored. |
-
-A result is inlined when the statement finishes within its wait and the result is at most
-`SQL_STATEMENT_INLINE_ARROW_MAX_BYTES` (256 KiB) both as a file and as an Arrow stream. Otherwise `inline_arrow` is
-null, and the result is read from [`GET /api/queries/{query_id}/result`](#whole-results-as-arrow-or-parquet): a larger
-result, one that could not be read, and one whose statement outran the wait. A small result then costs **one** HTTP
-call, as in JSON, and its values are as exact as the stream's. A server without the field ignores it and sends no
-`inline_arrow`.
-
-### Whether a query has a result to read
-
-Every query response carries `has_result`: `true` when the finished query has a result grid, `false` for DDL/DML,
-which has none, and `null` until the query is done. A client that sees `false` has nothing to fetch, so a DDL statement
-costs it one call too.
+- [Errors](errors.md) — every error code.
+- [API versions](api-versions.md) — what each `api_version` changed.
+- [Service accounts & tokens](../access/service-accounts.md) — getting a token.
+- [SQL support](sql-support.md) — what SQL the API accepts.

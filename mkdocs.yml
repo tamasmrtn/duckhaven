@@ -206,6 +206,7 @@ nav:
           - Connect an IdP (SSO): access/connect-idp.md
           - Connect LDAP / AD: access/connect-ldap.md
           - Offboarding & break-glass: access/offboarding.md
+          - Troubleshoot sign-in and access: access/troubleshooting.md
       - Compute:
           - Agents: compute/agents.md
           - Add an agent: compute/add-agent.md

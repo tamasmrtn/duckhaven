@@ -166,29 +166,38 @@ pages:
 - path: access/workspaces.md
   title: Workspaces
   section: Access
-  summary: How workspaces isolate queries, permissions, and history.
+  summary: 'A workspace is where a team works: its members and their roles, the catalogs it uses,
+    and the worksheets, saved queries and history of everything run in it.'
 - path: access/manage-users.md
   title: Manage users & access
   section: Access
-  summary: Administer users and permissions.
+  summary: Add people to DuckHaven, give them a global role, and give them a role in the workspaces
+    they work in.
 - path: access/service-accounts.md
   title: Service accounts & tokens
   section: Access
-  summary: Machine auth via service accounts and Personal Access Tokens.
+  summary: Create a service account, give it access to a workspace, and call the API with its token,
+    for CI pipelines, schedulers and other unattended clients.
 - path: access/connect-idp.md
   title: Connect an IdP (SSO)
   section: Access
-  summary: Delegate sign-in to an OIDC provider, and map its groups to roles.
+  summary: Let people sign in to DuckHaven through your OpenID Connect identity provider, such as
+    Microsoft Entra ID, Okta, Keycloak, Authentik, AWS Cognito or Google Workspace.
 - path: access/connect-ldap.md
   title: Connect LDAP / AD
   section: Access
-  summary: As a secondary federated path, DuckHaven can authenticate users against an LDAP directory
-    or Active Directory.
+  summary: Let people sign in to DuckHaven with their LDAP or Active Directory credentials on the
+    normal login form.
 - path: access/offboarding.md
   title: Offboarding & break-glass
   section: Access
-  summary: How to remove someone's access cleanly, and how to stay in control when your identity provider
+  summary: Remove someone's access cleanly when they leave, and keep a way in when your identity provider
     is down.
+- path: access/troubleshooting.md
+  title: Troubleshoot sign-in and access
+  section: Access
+  summary: Find the message you see on the setup or login screen, in the results pane, or in an API
+    response, then follow what to do.
 - path: compute/agents.md
   title: Agents
   section: Compute

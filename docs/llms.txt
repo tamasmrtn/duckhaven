@@ -62,12 +62,13 @@
 - [How access works](https://tamasmrtn.github.io/duckhaven/access/how-access-works/): DuckHaven decides what you can do in four independent layers, and a request is allowed only if it clears every layer that applies to it.
 - [Scoped access](https://tamasmrtn.github.io/duckhaven/access/scoped-access/): A scoped catalog shows each workspace member only the schemas and tables a grant gives them, down to a single table, instead of applying their workspace role to everything.
 - [Agent access](https://tamasmrtn.github.io/duckhaven/access/agent-access/): Agent access decides who may run work on an agent and who may restart or administer it, so a team can reserve compute while the rest of the fleet stays open.
-- [Workspaces](https://tamasmrtn.github.io/duckhaven/access/workspaces/): How workspaces isolate queries, permissions, and history.
-- [Manage users & access](https://tamasmrtn.github.io/duckhaven/access/manage-users/): Administer users and permissions.
-- [Service accounts & tokens](https://tamasmrtn.github.io/duckhaven/access/service-accounts/): Machine auth via service accounts and Personal Access Tokens.
-- [Connect an IdP (SSO)](https://tamasmrtn.github.io/duckhaven/access/connect-idp/): Delegate sign-in to an OIDC provider, and map its groups to roles.
-- [Connect LDAP / AD](https://tamasmrtn.github.io/duckhaven/access/connect-ldap/): As a secondary federated path, DuckHaven can authenticate users against an LDAP directory or Active Directory.
-- [Offboarding & break-glass](https://tamasmrtn.github.io/duckhaven/access/offboarding/): How to remove someone's access cleanly, and how to stay in control when your identity provider is down.
+- [Workspaces](https://tamasmrtn.github.io/duckhaven/access/workspaces/): A workspace is where a team works: its members and their roles, the catalogs it uses, and the worksheets, saved queries and history of everything run in it.
+- [Manage users & access](https://tamasmrtn.github.io/duckhaven/access/manage-users/): Add people to DuckHaven, give them a global role, and give them a role in the workspaces they work in.
+- [Service accounts & tokens](https://tamasmrtn.github.io/duckhaven/access/service-accounts/): Create a service account, give it access to a workspace, and call the API with its token, for CI pipelines, schedulers and other unattended clients.
+- [Connect an IdP (SSO)](https://tamasmrtn.github.io/duckhaven/access/connect-idp/): Let people sign in to DuckHaven through your OpenID Connect identity provider, such as Microsoft Entra ID, Okta, Keycloak, Authentik, AWS Cognito or Google Workspace.
+- [Connect LDAP / AD](https://tamasmrtn.github.io/duckhaven/access/connect-ldap/): Let people sign in to DuckHaven with their LDAP or Active Directory credentials on the normal login form.
+- [Offboarding & break-glass](https://tamasmrtn.github.io/duckhaven/access/offboarding/): Remove someone's access cleanly when they leave, and keep a way in when your identity provider is down.
+- [Troubleshoot sign-in and access](https://tamasmrtn.github.io/duckhaven/access/troubleshooting/): Find the message you see on the setup or login screen, in the results pane, or in an API response, then follow what to do.
 
 ## Compute
 

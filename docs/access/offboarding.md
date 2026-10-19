@@ -1,13 +1,22 @@
+---
+type: how-to
+---
+
 # Offboarding & break-glass
 
-How to remove someone's access cleanly, and how to stay in control when your identity provider is down.
+Remove someone's access cleanly when they leave, and keep a way in when your identity provider is down.
+
+## Before you begin
+
+- **You need:** the `users:manage` permission, which the `admin` role holds.
+- **Applies to:** local accounts and accounts from single sign-on or LDAP.
 
 ## Offboard a user
 
 When someone leaves, what you do depends on how they signed in:
 
 - **SSO / LDAP user** — disable or remove them in your **identity provider** (or remove them from the mapped admin
-  group). DuckHaven re-checks the directory on every sign-in, so they can no longer authenticate and an admin group
+  group). DuckHaven re-checks the directory on every sign-in, so they cannot sign in and an admin group
   removal demotes them. To cut off any *currently live* DuckHaven session immediately rather than waiting for it to
   expire, also **Deactivate** them in **Admin → Users**.
 - **Local user** — **Deactivate** them in **Admin → Users**. This blocks new sign-ins and rejects their existing
@@ -24,9 +33,9 @@ When someone leaves, what you do depends on how they signed in:
 it takes effect on their next request. `Revoke sessions` on its own is enough only when you know the person holds no
 tokens.
 
-There is currently no operator view of a user's own tokens — `Admin → Service accounts` covers service accounts only. A
-user can list and revoke their own with `dh auth tokens` and `dh auth revoke`, so where the person is cooperative and
-merely changing machines, ask them to do that.
+DuckHaven has no operator view of a user's own tokens: **Admin** → **Service accounts** covers service accounts only.
+A user can list and revoke their own with `dh auth tokens` and `dh auth revoke`, so when the person is only changing
+machines, ask them to do that.
 
 The last remaining active admin cannot be demoted or deactivated, so you can never lock the system out of its own
 administration.
@@ -52,7 +61,20 @@ locks you out:
 
 Treat the break-glass admin like any other privileged credential: rotate it periodically and audit its use.
 
+## If it goes wrong
+
+### Deactivate or demote is refused for an admin
+
+DuckHaven never lets the last active admin be deactivated or demoted. Make another account an admin first.
+
+### A deactivated person's single sign-on still works
+
+It does not: a deactivated account is refused however it signs in. If they can still use DuckHaven, check that you
+deactivated the account they actually use; someone with a local account and a directory account with a different email
+has two.
+
 ## Related
 
-- [Manage users & access](manage-users.md) · [Identity & permissions](permissions.md)
-- [Connect an IdP (SSO)](connect-idp.md) · [Connect LDAP / AD](connect-ldap.md)
+- [Manage users & access](manage-users.md) — roles and memberships.
+- [How access works](how-access-works.md#signing-in) — how sign-in methods combine.
+- [Connect an IdP (SSO)](connect-idp.md) and [Connect LDAP / AD](connect-ldap.md).

@@ -1,74 +1,143 @@
-# Service accounts & access tokens
+---
+type: how-to
+---
 
-Every human sign-in flow in DuckHaven — password, [SSO](connect-idp.md), [LDAP](connect-ldap.md) — assumes a person at a
-browser. A **service account** is the machine equivalent: a non-human principal that authenticates to the REST API
-with a **personal access token (PAT)** instead of a password. Use one whenever an unattended client needs API access
-— a CI pipeline, a scheduled job runner, or internal tooling.
+# Service accounts & tokens
 
-A service account is a first-class member of the same access model as a user. It has a
-[global role](permissions.md) and per-[workspace](workspaces.md) membership, and every call it
-makes is authorized and audited exactly like a human user's — there is no separate permission system. It simply has no
-password and can never complete a browser login.
+Create a service account, give it access to a workspace, and call the API with its token, for CI pipelines,
+schedulers and other unattended clients.
 
-!!! tip "People can now issue their own tokens"
-    A service account is for **unattended** callers. A person who just wants to use
-    [the command line](../getting-started/cli-quickstart.md) runs `dh auth login`, which mints a
-    token for their own identity — no administrator needed, and no shared credential. Keep service
-    accounts for CI, schedulers and tooling, where a token tied to a person would break the day they
-    leave.
+A service account is a non-human principal. It has a global role and workspace roles like a person, is checked and
+audited the same way, and signs in only with a personal access token (`dh_pat_…`), never a password. A person who wants
+a token for their own use, for [the command line](../getting-started/cli-quickstart.md), runs `dh auth login` instead.
+Use a service account where a token tied to a person would break the day they leave.
 
-!!! note "Native tokens only, for now"
-    This covers DuckHaven-native PATs, which work with no external identity provider. Federating a service account to an
-    Azure Entra ID or AWS IAM identity is planned but **not yet available**.
+## Before you begin
 
-## Create a service account
+- **You need:** the `service_accounts:manage` permission to create the account and issue tokens, and `users:manage`, or
+  the workspace `owner` role, to give it workspace access.
+- **Applies to:** every deployment. Tokens are DuckHaven's own; they need no identity provider.
 
-**Admin → Service accounts → New service account**. Give it a name (e.g. `ci-runner`) and a global role. It defaults to
-the `user` role, which grants **no** global permissions — a new service account can do nothing until you grant it
-workspace access, so escalate deliberately.
+## Create the service account
 
-An email address is generated for it automatically (`<name>@service-account.local`); it is only an internal identifier,
-not a real mailbox.
+1. Open **Admin** → **Service accounts** → **New service account**.
+2. Enter a **Name**, such as `ci-runner`, and leave the **Role** at `user`.
+3. Click **Create service account**.
 
-### Grant workspace access
+The account appears in the list with the email `ci-runner@service-account.local`, which is an identifier, not a
+mailbox. With the `user` role it holds no global permissions and can do nothing until you give it workspace access.
+Give it `admin` only if it really administers DuckHaven.
 
-Open the account's **⋯ → Manage workspaces** and give it a role (`reader`, `writer`, or `owner`) in each workspace it
-needs, exactly as you would for a user. See [workspace roles](manage-users.md#workspace-membership-and-roles).
+## Give it access to a workspace
 
-## Issue an access token
+1. Open the account's **⋯** → **Manage workspaces**.
+2. Choose a role in each workspace it needs — `reader` to run queries, `writer` to change tables. The change saves
+   immediately.
 
-Open the account's **⋯ → Manage tokens → Issue token**. Choose an expiry (30 days, 90 days, 1 year, or never — a bounded
-lifetime is recommended so a leaked token eventually stops working) and the token is generated.
+In a [scoped catalog](scoped-access.md), it also needs a grant on the tables it reads, like any member.
 
-!!! warning "Shown only once"
-    The token (a `dh_pat_…` string) is displayed **exactly once**, at creation. Copy it into your client's secret store
-    immediately — DuckHaven stores only a hash and can never show it again. If you lose it, revoke it and issue a new
-    one.
+## Issue a token
 
-### Use the token
+1. Open the account's **⋯** → **Manage tokens**.
+2. Choose how long the token lasts under **Expires**, then click **Issue token**. Prefer a bounded expiry, so a leaked
+   token stops working on its own.
+3. Copy the `dh_pat_…` value with **Copy token** and store it in your client's secret store. It is shown once:
+   DuckHaven keeps only a hash.
 
-Send it as a bearer token on the `Authorization` header. Query-parameter and cookie transport are intentionally not
-supported (they leak into proxy and access logs):
+## Check that it worked
+
+Ask the API who the token belongs to:
 
 ```bash
-curl -H "Authorization: Bearer dh_pat_xxxxxxxx" \
-  https://<host>/api/me
+export DH=https://duckhaven.example.com
+export DH_TOKEN=dh_pat_…
+
+curl -s -H "Authorization: Bearer $DH_TOKEN" "$DH/api/me"
 ```
 
-The request resolves to the service account and is subject to the same role and workspace checks as any other caller.
+```json
+{
+  "email": "ci-runner@service-account.local",
+  "name": "ci-runner",
+  "role": "user",
+  "auth_provider": "service_account",
+  "is_active": true,
+  "permissions": []
+}
+```
 
-## Rotate and revoke
+(Some fields omitted.) Then run a query in the workspace and read its rows. `wait_timeout_s` makes the API answer once
+the query has finished, up to that many seconds:
 
-- **Rotate** — issue a new token, deploy it, then revoke the old one. Tokens are independent, so you can overlap them
-  for a zero-downtime rollover.
-- **Revoke** — **⋯ → Manage tokens → Revoke** removes a single token immediately; the next request using it gets `401`.
-- **Disable the account** — **⋯ → Deactivate** blocks *all* of its tokens at once without deleting anything, and is the
-  fastest response if an account is compromised. Reactivate to restore them.
-- **Delete the account** — **⋯ → Delete** removes it permanently. An account that has already run queries keeps that
-  audit history, so it cannot be deleted (you'll get a conflict); deactivate it instead.
+```bash
+curl -s -X POST "$DH/api/workspaces/analytics/queries" \
+  -H "Authorization: Bearer $DH_TOKEN" -H "Content-Type: application/json" \
+  -d '{
+        "sql": "SELECT customer, sum(amount) AS revenue FROM sales.analytics.orders GROUP BY 1 ORDER BY 2 DESC",
+        "wait_timeout_s": 30
+      }'
+```
 
-## Auditing
+The response is the query, with `"status": "done"` and its `id`. Read the result with that id:
 
-Calls made with a service account's token are recorded against that account in the query
-[audit log](../operations/monitoring.md), so machine-driven activity is always attributable to a named principal rather
-than to "nobody".
+```bash
+curl -s -H "Authorization: Bearer $DH_TOKEN" "$DH/api/queries/⟨id⟩/rows?limit=100"
+```
+
+```json
+{
+  "rows": [
+    {"customer": "initech", "revenue": "310.00"},
+    {"customer": "acme", "revenue": "162.25"},
+    {"customer": "globex", "revenue": "75.50"}
+  ],
+  "columns": ["customer", "revenue"],
+  "column_schema": [
+    {"name": "customer", "type": "VARCHAR"},
+    {"name": "revenue", "type": "DECIMAL(38,2)"}
+  ],
+  "cursor": null,
+  "total": 3
+}
+```
+
+`DECIMAL` values arrive as exact strings; `column_schema` gives each column's type. The
+[REST API reference](../reference/rest-api.md) describes paging and the other result formats. Send the token only in
+the `Authorization` header: DuckHaven does not accept it as a query parameter or a cookie, because those end up in
+proxy and access logs.
+
+Every call the token makes is recorded against the service account in the workspace's
+[query history](../querying/run-queries.md#find-an-earlier-run).
+
+## Rotate or revoke a token
+
+- **Rotate:** issue a new token, switch the client to it, then revoke the old one. Tokens are independent, so the two
+  can overlap with no downtime.
+- **Revoke one token:** **⋯** → **Manage tokens**, then revoke it under **Active tokens**. The next request with it
+  gets `401`.
+- **Stop every token at once:** **⋯** → **Deactivate**. Nothing is deleted, and reactivating restores the tokens. This
+  is the fastest response to a leaked token.
+- **Delete the account:** **⋯** → **Delete**. An account that has run queries keeps that history, so it cannot be
+  deleted; deactivate it instead.
+
+## If it goes wrong
+
+### `401 Unauthorized`
+
+The token is wrong, expired or revoked, or the account is deactivated. Check that the client sends
+`Authorization: Bearer dh_pat_…` exactly, then issue a new token if needed.
+
+### `403` with `"message": "Forbidden"` on a workspace
+
+The account is not a member of that workspace. Give it a role under **⋯** → **Manage workspaces**.
+
+### The query is refused for one table
+
+In a scoped catalog the account needs a grant on every table the query reads. See
+[Troubleshoot sign-in and access](troubleshooting.md).
+
+## Related
+
+- [How access works](how-access-works.md) — the layers a service account passes through.
+- [Command-line quickstart](../getting-started/cli-quickstart.md) — using a token from `dh` in CI.
+- [REST API](../reference/rest-api.md) — every endpoint.

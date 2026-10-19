@@ -51,7 +51,7 @@ docker compose -f docker-compose.yml -f docker-compose.tls.yml up -d
 ```
 
 Set `COOKIE_SECURE=true` in `.env` so the api issues `Secure`-flagged session
-cookies; otherwise the browser drops them and login appears to silently fail.
+cookies, which the browser then never sends over plain HTTP.
 
 Caddy auto-provisions a Let's Encrypt cert for the hostname on first request.
 
@@ -151,9 +151,8 @@ shorter sessions.
 
 ### Set `COOKIE_SECURE=true`
 
-Same as the Caddy path: NPM terminates TLS, so the api must issue
-`Secure`-flagged cookies or the browser will drop them. Add to DuckHaven's
-`.env`:
+Same as the Caddy path: NPM terminates TLS, so have the api issue
+`Secure`-flagged cookies. Add to DuckHaven's `.env`:
 
 ```sh
 COOKIE_SECURE=true

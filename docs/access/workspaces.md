@@ -1,46 +1,45 @@
+---
+type: concept
+---
+
 # Workspaces
 
-A **workspace** is DuckHaven's governance and collaboration boundary: it groups people and the work they run. It
-**attaches one or more [catalogs](../data/catalogs.md)** — the data domains a team works with — rather than owning a
-single catalog. A workspace is best thought of as a DTAP environment (e.g. `dev`, `prod`) that brings together the
-catalogs relevant to it.
+A workspace is where a team works: its members and their roles, the catalogs it uses, and the worksheets, saved
+queries and history of everything run in it.
 
-## What a workspace owns
+A workspace does not own data. It **attaches** [catalogs](../data/catalogs.md), and the same catalog can be attached to
+several workspaces — a shared `raw` catalog visible from both `dev` and `prod`, for example. Storage belongs to the
+catalog, not the workspace. A common pattern is one workspace per environment or per team, each attaching the catalogs
+relevant to it.
 
-- **A set of attached catalogs.** A workspace attaches any number of catalogs, and one of them is the **default** — the
-  catalog used for unqualified table names. Catalogs are first-class entities decoupled from workspaces (see [Catalogs &
-  Polaris](../data/catalogs.md)); the **same catalog can be attached to several workspaces** (for example a shared `raw`
-  catalog visible from both `dev` and `prod`). Storage lives on the catalog, not the workspace.
-- **Members and roles.** Users join a workspace as `reader`, `writer`, or `owner`. See [Permissions](permissions.md).
-- **Queries, saved queries, and history.** Everything a member runs is scoped to the workspace and recorded.
+## What a workspace holds
 
-## Creating a workspace
+- **Attached catalogs.** Any number; one is the **default**, used for unqualified table names. The first catalog
+  attached becomes the default.
+- **Members and roles.** People and service accounts join as `reader`, `writer` or `owner`; see
+  [How access works](how-access-works.md).
+- **Work.** Worksheets, saved queries, schedules, assistant conversations, and the history of every run.
 
-Workspaces are created **name-only** and start **empty** — no catalog, no storage. An owner then **creates a catalog**
-(its own Polaris catalog + storage; bundled object storage by default, or an external S3/ADLS backend) or **attaches an
-existing one**. The first catalog attached becomes the workspace's default. See
-[Manage catalogs](../data/manage-catalogs.md).
+A new workspace starts empty, with no catalogs. An owner then creates a catalog — on the bundled object store by
+default, or on an S3 or ADLS backend — or attaches an existing one; see [Manage catalogs](../data/manage-catalogs.md).
 
 !!! note "Shared catalogs"
-    Because a catalog can be attached to multiple workspaces, members of any attaching workspace can reach it. This is
-    the intended sharing semantic; a catalog cannot be dropped while any workspace still has it attached.
+    Every member of every workspace that attaches a catalog can reach it, at their role in that workspace. A catalog
+    cannot be dropped while any workspace still attaches it.
 
-## Settings: rename, describe, and delete
+## Renaming and deleting a workspace
 
-An owner manages a workspace's identity from **Settings → Workspace**, reachable from the user menu in the top bar.
+An owner changes a workspace from **Settings** → **Workspace**, in the user menu at the top right.
 
-- **Rename** and **description** are plain identity edits — the workspace's routable slug (the `/$ws/...` segment in
-  every URL) does not change, so existing links and bookmarks keep working.
-- **Delete** is permanent and requires typing the workspace's name to confirm. It removes the workspace's queries,
-  saved queries, schedules, and assistant conversation history — none of that is recoverable. **Attached catalogs are
-  not affected**: because a catalog is a decoupled, potentially shared entity (see the note above), deleting a
-  workspace only detaches it — the catalog and its data remain intact for any other workspace it is attached to.
-
-Both actions require the `owner` role — the same tier that already gates adding and removing members.
+- **Renaming** it, or changing its description, keeps its slug — the `/⟨slug⟩/…` part of every URL — so links and
+  bookmarks keep working.
+- **Deleting** it is permanent and asks you to type its name. Its queries, saved queries, schedules and assistant
+  conversations are deleted. Its catalogs are **not**: the workspace is detached from them, and their data stays
+  available to any other workspace that attaches them.
 
 ## Related
 
-- [Catalogs & Polaris](../data/catalogs.md) — how catalogs are governed and shared.
-- [Permissions](permissions.md) — what each role can do.
-- [Manage catalogs](../data/manage-catalogs.md) — create, attach, detach, and drop catalogs.
+- [Catalogs](../data/catalogs.md) — what a workspace attaches.
+- [How access works](how-access-works.md) — roles and the other access layers.
+- [Manage catalogs](../data/manage-catalogs.md) — create, attach, detach and drop catalogs.
 - [Manage users & access](manage-users.md) — add members and assign roles.

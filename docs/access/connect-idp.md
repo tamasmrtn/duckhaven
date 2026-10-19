@@ -1,16 +1,25 @@
+---
+type: how-to
+---
+
 # Connect an IdP (SSO)
 
-DuckHaven can delegate sign-in to one or more OpenID Connect identity providers — Microsoft Entra ID, Okta, Authentik,
-Keycloak, AWS Cognito, Google Workspace, and anything else that speaks standard OIDC. Each configured provider becomes
-its own **Sign in with …** button on the login page (Authorization Code + PKCE); local accounts keep working alongside
-them.
+Let people sign in to DuckHaven through your OpenID Connect identity provider, such as Microsoft Entra ID, Okta,
+Keycloak, Authentik, AWS Cognito or Google Workspace.
 
-## Before you start
+Each provider you configure becomes its own **Sign in with …** button on the login page. Local accounts keep working
+alongside them, so an admin can still sign in when the provider is down.
+
+## Before you begin
+
+- **You need:** shell access to the DuckHaven host, to edit its `.env`, and an administrator of the identity provider
+  to register an application.
+- **Applies to:** every deployment. Behind a reverse proxy, DuckHaven must be reachable at the HTTPS address users see.
 
 For each provider, register a **confidential** (server-side) application in that IdP with:
 
 - **Redirect URI** — `https://<your-duckhaven-host>/api/auth/oidc/<id>/callback`, where `<id>` is the short slug you
-  give the provider in DuckHaven (e.g. `entra`, `okta`, `authentik`).
+  give the provider in DuckHaven (for example `entra`, `okta` or `authentik`).
 - **Scopes** — `openid email profile` (plus a groups claim if you want [group-to-role mapping](#map-groups-to-roles)).
 - A **client ID** and **client secret**.
 
@@ -46,13 +55,14 @@ OIDC_REDIRECT_BASE_URL=https://duckhaven.example.com   # required behind a TLS p
 Each provider's `id` is the slug used in its callback path (`/api/auth/oidc/<id>/callback`); `label` is the button
 text. `OIDC_REDIRECT_BASE_URL` must match the host in your registered redirect URIs — it is required behind a reverse
 proxy (the in-container request can't see the public scheme/host); see
-[Reverse proxy & TLS](../deployment/reverse-proxy-tls.md). Restart the API; the login page now shows a button per
-provider.
+[Reverse proxy & TLS](../deployment/reverse-proxy-tls.md). Apply the change with `docker compose up -d`, which recreates
+the API container with the new settings.
 
-!!! note "Single-provider shorthand (back-compat)"
-    The older single-provider variables (`OIDC_ENABLED`, `OIDC_SERVER_METADATA_URL`, `OIDC_CLIENT_ID`,
-    `OIDC_CLIENT_SECRET`, `OIDC_SCOPES`, `OIDC_GROUP_ROLE_MAP`) still work: when set and `OIDC_PROVIDERS` is empty they
-    synthesize one provider with id `sso` (callback `/api/auth/oidc/sso/callback`). `OIDC_PROVIDERS` takes precedence.
+!!! note "Single-provider shorthand"
+    For one provider you can use the single-provider variables (`OIDC_ENABLED`, `OIDC_SERVER_METADATA_URL`,
+    `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_SCOPES`, `OIDC_GROUP_ROLE_MAP`) instead. When `OIDC_PROVIDERS` is
+    empty they define one provider with id `sso` (callback `/api/auth/oidc/sso/callback`); `OIDC_PROVIDERS` wins when
+    both are set.
 
 ## Provider presets
 
@@ -61,9 +71,9 @@ All speak standard OIDC, so only the discovery URL and the app-registration knob
 - **Microsoft Entra ID** — discovery is tenant-scoped:
   `https://login.microsoftonline.com/<tenant-id>/v2.0/.well-known/openid-configuration`. **Do not** add `groups` to
   `scopes` (not a valid Entra scope — sign-in fails with `invalid_scope`); Entra emits group claims from the app
-  registration's **groupMembershipClaims** (e.g. *SecurityGroup*) and puts group **object IDs** (GUIDs) in the `groups`
-  claim, so `group_role_map` keys are those GUIDs. Entra omits the `email` claim for some accounts — DuckHaven falls
-  back to `preferred_username`.
+  registration's **groupMembershipClaims** (for example *SecurityGroup*) and puts group **object IDs** (GUIDs) in the
+  `groups` claim, so `group_role_map` keys are those GUIDs. Entra omits the `email` claim for some accounts — DuckHaven
+  falls back to `preferred_username`.
 - **Authentik / Keycloak** — self-hosted; discovery is
   `https://<host>/application/o/<app>/.well-known/openid-configuration` (Authentik) or
   `https://<host>/realms/<realm>/.well-known/openid-configuration` (Keycloak). Add a groups mapper to the client so the
@@ -76,7 +86,7 @@ All speak standard OIDC, so only the discovery URL and the app-registration knob
 ## Map groups to roles
 
 To let your directory drive who is an admin, expose the user's groups as a claim and map group values to DuckHaven
-[global roles](permissions.md#global-roles-permissions) per provider:
+[global roles](../reference/permissions.md#global-permissions) per provider:
 
 ```json
 { "groups_claim": "groups", "group_role_map": {"dh-admins": "admin"} }
@@ -93,20 +103,41 @@ role only**; workspace membership stays a DuckHaven operation.
 2. After the user authenticates, the IdP redirects back to `/api/auth/oidc/<id>/callback` with an authorization code.
 3. DuckHaven exchanges the code server-to-server, validates the ID token (signature via JWKS, issuer, audience, expiry,
    nonce), resolves the identity (`email`, falling back to `preferred_username`/`upn`), then
-   [provisions](permissions.md#just-in-time-provisioning) the user and starts a normal session.
+   [provisions](how-access-works.md#signing-in) the user and starts a normal session.
 
 If anything fails — a bad state, an expired code, missing identity claims, or an unreachable IdP — the user is sent
-back to the login page with a generic error and can fall back to a local sign-in. Token contents are never logged.
+back to the login page with a generic error and can sign in locally instead. Token contents are never logged.
 
-## Troubleshooting
+## Check that it worked
 
-- **`error=sso` on the login page.** Check the API logs for the (non-sensitive) warning — it names the provider and,
-  for a missing-claim failure, the claim names present in the token. Verify the redirect URI and
-  `OIDC_REDIRECT_BASE_URL` match exactly, and that the discovery URL is reachable from the API container.
-- **Everyone is a plain `user`.** The groups claim isn't in the ID token or `group_role_map` doesn't match the values
-  your IdP emits (Entra uses group GUIDs; Cognito uses `cognito:groups`). Inspect a decoded ID token and align them.
+Open the login page: there is a **Sign in with ⟨label⟩** button per provider. Sign in with a test account. You land in
+DuckHaven, and **Admin** → **Users** lists the account with the role its groups map to.
+
+## If it goes wrong
+
+### The login page says "Single sign-on failed. Try again or sign in locally."
+
+The sign-in came back with `?error=sso`. The API log has a warning naming the provider and, when an identity claim was
+missing, the claims the token did contain (`docker compose logs api`). Check that the registered redirect URI and
+`OIDC_REDIRECT_BASE_URL` match exactly, and that the API container can reach the discovery URL.
+
+### Sign-in fails with `invalid_scope` on Microsoft Entra ID
+
+`groups` is in the provider's `scopes`. Entra does not accept it as a scope; remove it and configure group claims in the
+app registration instead.
+
+### Everyone signs in as a plain `user`
+
+The ID token has no groups claim, or `group_role_map` does not match the values your provider sends — Entra sends
+group object IDs, and Cognito uses `cognito:groups`. Decode a test user's ID token and align the two.
+
+### The **Sign in with …** button does not appear
+
+The API did not pick up the settings. Run `docker compose up -d` so the container is recreated, and check that
+`OIDC_PROVIDERS` is valid JSON.
 
 ## Related
 
-- [Identity & permissions](permissions.md) · [Connect LDAP / AD](connect-ldap.md) ·
-  [Offboarding & break-glass](offboarding.md)
+- [How access works](how-access-works.md#signing-in) — how sign-in methods combine.
+- [Connect LDAP / AD](connect-ldap.md) — the directory alternative.
+- [Offboarding & break-glass](offboarding.md) — removing access, and signing in when the provider is down.

@@ -1,74 +1,83 @@
+---
+type: how-to
+---
+
 # Manage users & access
 
-This guide is the **how-to** for the first two of DuckHaven's [four access layers](access-levels.md): a user's
-**global role** (what they can administer) and their **workspace membership** (which workspaces they can enter). The
-third layer — fine-grained data grants inside a *scoped* catalog — is managed from the catalog view, and the fourth —
-access to a restricted agent — from the agent's **Access** tab on the **Compute** page; see
-[How access works](access-levels.md) for the model and [Identity & permissions](permissions.md) for the
-full reference.
+Add people to DuckHaven, give them a global role, and give them a role in the workspaces they work in.
 
-## Users
+These are the first two of DuckHaven's [four access layers](how-access-works.md). Narrower access inside a catalog is
+covered by [Scoped access](scoped-access.md), and reserving compute by [Agent access](agent-access.md).
 
-The first admin is created during [installation](../getting-started/quickstart.md#2-create-the-first-admin) from a
-one-shot setup token. Admins manage everyone else from **Admin → Users**.
+## Before you begin
 
-### Add a local user
+- **You need:** the `users:manage` permission, which the `admin` role holds. A workspace `owner` can also manage the
+  members of their own workspace.
+- **Applies to:** local accounts and accounts from single sign-on or LDAP alike. The first admin is created during
+  [installation](../getting-started/quickstart.md#2-create-the-first-admin).
 
-**Admin → Users → New user** creates a local (password) account: enter an email, name, temporary password, and a global
-role (`admin` or `user`). Federated users do **not** need to be added here — they are provisioned automatically the
-first time they sign in through [SSO](connect-idp.md) or [LDAP](connect-ldap.md).
+## Add a user
 
-### Change a global role
+People who sign in through [single sign-on](connect-idp.md) or [LDAP](connect-ldap.md) get an account automatically the
+first time they sign in; skip to [giving them a workspace](#give-someone-access-to-a-workspace). For a local account:
 
-Use the role selector on a user's row. For SSO/LDAP users the role is re-synced from your IdP's group mapping on their
-next sign-in, so the durable way to change a federated user's role is to change their group membership in the IdP — see
+1. Open **Admin** → **Users** → **New user**.
+2. Enter their **Email**, **Name** and a **Temporary password**, and choose a **Role**: `user` for everyone who does not
+   administer DuckHaven, `admin` for those who do.
+3. Click **Create user**, and send them the password through a channel you trust.
+
+The new account appears in the list, but it can reach no data until it has a workspace.
+
+## Give someone access to a workspace
+
+1. In **Admin** → **Users**, open the person's **⋯** → **Manage workspaces**.
+2. Choose their role in each workspace: `reader`, `writer` or `owner`. The change saves immediately, and **No access**
+   removes them.
+
+What each role allows is in the [permissions reference](../reference/permissions.md#workspace-roles). A workspace
+`owner` can manage the same memberships for their own workspace without `users:manage`.
+
+Workspace membership is always set in DuckHaven. Identity-provider groups decide only the global role.
+
+## Change someone's global role
+
+Use the **Role for ⟨name⟩** selector on their row. For people who sign in through single sign-on or LDAP, the role is
+reset from their directory groups on their next sign-in, so change it there instead; see
 [Connect an IdP](connect-idp.md#map-groups-to-roles).
 
-### Deactivate or sign someone out
+## Sign someone out, or switch an account off
 
-The **⋯** menu on a user's row offers:
+The person's **⋯** menu has two actions:
 
-- **Deactivate** — blocks the account immediately. Any live session is rejected on its next request, and the user
-  cannot sign in again (locally or via SSO/LDAP) until reactivated. The last remaining admin cannot be deactivated.
-- **Revoke sessions** — force-logs-out the user without disabling the account (e.g. after a lost laptop). They can sign
-  in again.
+- **Revoke sessions** signs them out everywhere. They can sign in again. It does not stop personal access tokens.
+- **Deactivate** blocks the account: every session and token is refused on its next request, and they cannot sign in
+  again until reactivated.
 
-See [Offboarding & break-glass](offboarding.md) for the full departure checklist.
+For someone leaving, follow [Offboarding & break-glass](offboarding.md).
 
-## Workspace membership and roles
+## Check that it worked
 
-Access to a workspace's data starts with adding a user to it with a role:
+Ask the person to sign in and open the workspace. They see its catalogs in the catalog tree, and **Admin** appears in
+their navigation only if they are an `admin`.
 
-| Role | Grants |
-|---|---|
-| `reader` | Browse schemas and tables; run queries; view history |
-| `writer` | Reader, plus create/modify/drop tables and run DDL |
-| `owner` | Writer, plus manage membership, the workspace's settings and catalogs, publish semantic models, and purge imported lineage |
+## If it goes wrong
 
-There are two ways to manage membership:
+### Someone's role changes back after they sign in
 
-- **From Admin → Users** — open a user's **⋯ → Manage workspaces** to grant, change, or remove their role in any
-  workspace from one place. This is the admin path and works for any workspace (it requires the global `users:manage`
-  permission, not workspace ownership).
-- **Within a workspace** — an `owner` of a workspace manages that workspace's own members.
+They sign in through single sign-on or LDAP, and their directory groups map to a different role. Change their groups
+in the identity provider.
 
-Workspace membership is always managed inside DuckHaven (it is not driven by IdP groups, which set only the global
-role). Authorization is enforced at the API boundary before any query reaches an agent. See
-[Permissions](permissions.md).
+### A deactivate or demote is refused
 
-By default a member's role applies to every table in the workspace's catalogs. To narrow access to specific schemas or
-tables, switch a catalog to *scoped* mode and grant per-object access — the third access layer, covered in
-[How access works](access-levels.md).
+DuckHaven never lets the last active admin be deactivated or demoted, so it cannot lock itself out. Make another
+account an admin first.
 
-## Registering agents
+### Someone sees the workspace but not a catalog's tables
 
-Agents authenticate separately, with one-time bootstrap tokens rather than user accounts. See
-[Add an agent](../compute/add-agent.md).
+The catalog is scoped and they have no grant on it. See [Scoped access](scoped-access.md).
 
-### Who can use an agent
+## Related
 
-Any signed-in user can run work on any agent by default. To reserve one — or to let someone restart an agent without
-making them a deployment-wide admin — open **Compute → *an agent* → Access**, set the agent to **restricted**,
-and grant `use`, `operate`, or `admin` to a user or to a whole workspace. A workspace grant follows membership, so
-adding someone to the workspace gives them the agent with no further step. See
-[Per-agent access](permissions.md#per-agent-access).
+- [How access works](how-access-works.md) — the four layers.
+- [Service accounts & tokens](service-accounts.md) — accounts for automation.
+- [Offboarding & break-glass](offboarding.md) — removing access cleanly.

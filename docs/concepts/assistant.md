@@ -1,7 +1,7 @@
 # AI data assistant
 
 The AI data assistant is a governed, model-agnostic chat assistant that helps people explore a workspace's data. It can
-browse catalog metadata (catalogs → schemas → tables → columns), author and run SQL against the governed Iceberg
+browse catalog metadata (catalogs → schemas → tables → columns), author and run SQL against the workspace's governed
 catalogs, and explain the results — all in a conversation.
 
 Crucially, the assistant is **not** a privileged back door. It acts as an ordinary DuckHaven service-account principal,

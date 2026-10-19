@@ -6,8 +6,10 @@ access, laying out data, and the ongoing maintenance routine. For first-time reg
 
 ## Security baseline
 
-DuckHaven enforces access **only** through Polaris credential vending: the API and agents never hold a long-lived
-storage key, and the role assumption / SAS minting happens server-side. Everything else is enforced in your cloud
+DuckHaven hands agents only short-lived, scoped storage credentials: Polaris vends them for an Iceberg catalog, and
+the API mints them for a DuckLake catalog. Role assumption and SAS minting happen server-side. One exception: a DuckLake
+catalog on the bundled object store receives the store's static key, scoped to the catalog's prefix (see
+[Enable DuckLake](../deployment/ducklake.md)). Everything else is enforced in your cloud
 account — DuckHaven cannot substitute for it:
 
 | Control | AWS S3 | Azure ADLS Gen2 |
@@ -24,9 +26,9 @@ remove the role trust (S3) or the RBAC assignment / consent (ADLS) in the cloud 
 
 ## Data layout & isolation
 
-Each catalog is scoped to a `/{catalog-name}` prefix under its backend's root URI (added when the Polaris catalog is
-provisioned), so catalogs on one backend never collide. Choose the isolation boundary that matches your blast-radius
-needs:
+Each catalog is scoped to its own prefix under its backend's root URI (its Polaris name for an Iceberg catalog, its
+slug for a DuckLake one), so catalogs on one backend never collide. Choose the isolation boundary that matches your
+blast-radius needs:
 
 - **Shared backend, prefix isolation (default)** — one bucket/container, many catalogs under distinct prefixes. Simple
   and adequate when one IAM role / identity may reach the whole bucket.
@@ -42,9 +44,9 @@ latency.
 
 Iceberg tables accumulate snapshots, small files, and orphaned data over time. DuckHaven's
 [maintenance advisor](../concepts/maintenance.md) scans every catalog — including those on external backends — scores
-table health, and recommends `expire_snapshots`, `compact_small_files`, manifest rewrites, and `cleanup_orphans`. The
-advisor is read-only; run the recommended operation with your write engine (Spark / PyIceberg) against the same
-catalog.
+table health, and recommends `expire_snapshots`, `compact_small_files`, manifest rewrites, and `cleanup_orphans`. For
+an Iceberg catalog the advisor is read-only; run the recommended operation with your write engine (Spark / PyIceberg)
+against the same catalog. A DuckLake catalog's recommendations can be applied from DuckHaven.
 
 A practical cadence for a mid-sized org:
 

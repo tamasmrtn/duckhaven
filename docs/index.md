@@ -19,7 +19,7 @@ hide:
 
     ---
 
-    Browse schemas and tables with sample rows. Every table is Iceberg-native, with snapshot history and
+    Browse schemas and tables with sample rows. Tables are Apache Iceberg or DuckLake, with snapshot history and
     "query at this snapshot" time travel.
 
 -   :material-shield-account:{ .lg .middle } __Governed workspaces__

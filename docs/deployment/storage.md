@@ -1,12 +1,12 @@
 # Configure storage
 
-A [storage backend](../concepts/storage-backends.md) is the object-storage location where a workspace's Iceberg tables
-live. Admins register backends; each [workspace](../concepts/workspaces.md) binds to exactly one at creation.
+A [storage backend](../concepts/storage-backends.md) is the object-storage location where a catalog's tables live.
+Admins register backends; each [catalog](../concepts/catalogs.md) binds to exactly one when it is created.
 
 ## The bundled object store
 
-Out of the box, name-only workspace creation uses the bundled object store (`object_store`), isolating each
-workspace under a `/{slug}` prefix. No configuration is required to start. The store is
+Out of the box, a new catalog uses the bundled object store (`object_store`), isolating each catalog under its own
+prefix. No configuration is required to start. The store is
 [RustFS](https://rustfs.com), an Apache-2.0 S3-compatible server, running as the `objectstore` service.
 
 !!! warning "The bundled store is pinned to a release candidate"
@@ -21,8 +21,9 @@ Polaris must advertise the storage types you intend to use. The bundled stack se
 `SUPPORTED_CATALOG_STORAGE_TYPES=["S3","AZURE"]` in `deploy/docker-compose.yml`, which covers both AWS S3 and Azure
 ADLS Gen2.
 
-Credential vending happens inside Polaris, so no storage secrets ever reach the API or agents. The two clouds differ
-in what Polaris itself needs:
+For an Iceberg catalog, credential vending happens inside Polaris; for a DuckLake catalog the API mints the
+credentials and sends them with each query (see [Enable DuckLake](ducklake.md)). Either way, no long-lived storage key
+is written to an agent. The two clouds differ in what Polaris itself needs:
 
 - **AWS S3** — no static credentials anywhere; Polaris assumes the backend's IAM role via STS.
 - **Azure ADLS Gen2** — Polaris mints SAS tokens through a service principal read from *its own* environment
@@ -73,17 +74,16 @@ Turn on **hierarchical** for HNS accounts so SAS tokens are down-scoped to the p
 Each external backend row has a **Test access** button. It provisions a throwaway Polaris catalog from the config,
 forces a storage write under the assumed role / consented app, then vends scoped client credentials and lists the
 probe path — the same path agents use. A green result means register → vend → read/write works end to end; a red
-result shows a sanitized reason (no secrets). A backend in use by any workspace cannot be deleted.
+result shows a sanitized reason (no secrets). A backend in use by any catalog cannot be deleted.
 
 !!! note "Assume-role validation needs STS"
-    The bundled store has no STS, so the S3 assume-role leg is exercised against LocalStack or a real AWS account (see
-    `make localstack-dev`). Azure has no offline emulator for Entra credential vending, so the ADLS path is validated
-    against a real Azure account.
+    The bundled store has no STS, so the S3 assume-role leg needs LocalStack or a real AWS account. Azure has no
+    offline emulator for Entra credential vending, so the ADLS path is validated against a real Azure account.
 
-## Bind a workspace
+## Bind a catalog
 
-When creating a [workspace](../getting-started/first-workspace.md), select the registered backend. Every table in that
-catalog lives under the backend's location. The binding is no longer permanent: an admin can later move a catalog to a
+When creating a [catalog](../guides/manage-catalogs.md), select the registered backend in the **Storage backend**
+selector. Every table in that catalog lives under the backend's location. An admin can later move a catalog to a
 different backend with a [storage migration](../guides/migrate-catalog-storage.md).
 
 ## Moving off the bundled MinIO

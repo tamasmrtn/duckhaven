@@ -24,9 +24,11 @@ SELECT * FROM analytics.events AT (TIMESTAMP => '2026-05-01 00:00:00');
 
 The read is pinned to that snapshot; the UI describes it as querying the table "as of" a point in time.
 
-!!! note "Read-only — no expiration"
-    Time travel is read-only. DuckHaven does **not** currently expire, roll back, or compact snapshots — snapshot
-    cleanup is a roadmap item, not a shipped feature.
+!!! note "Read-only"
+    Time travel is read-only, and DuckHaven does not roll a table back to a snapshot. For an Iceberg table it also does
+    not expire or compact snapshots: the [maintenance advisor](../concepts/maintenance.md) recommends those operations
+    for an external engine. A [DuckLake](../concepts/ducklake.md) catalog's snapshots can be expired from the advisor's
+    **Apply** button.
 
 ## Related
 

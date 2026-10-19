@@ -24,9 +24,8 @@ This is the decision that matters, and it cannot be reversed later without copyi
 | Services required | Polaris + its database | None beyond Postgres |
 
 The first row is the one to weigh. An Iceberg table is portable: any engine that speaks the format can open it, which
-is what makes "no lock-in" a real claim rather than a slogan. A DuckLake table, today, can be opened by DuckDB and
-nothing else. Choosing DuckLake trades that portability for a simpler deployment and maintenance DuckHaven can
-eventually run for you.
+is what makes "no lock-in" a real claim rather than a slogan. A DuckLake table can be opened by DuckDB and nothing
+else. Choosing DuckLake trades that portability for a simpler deployment and maintenance DuckHaven runs for you.
 
 The create dialog says so at the moment you choose. It is repeated here because it is easy to skip past.
 
@@ -93,7 +92,7 @@ An Iceberg snapshot belongs to one table. A **DuckLake snapshot is a commit agai
 schema, inserting into a table and dropping another are each one snapshot of the catalog, numbered in a single
 sequence.
 
-A table's Snapshots tab therefore shows the catalog snapshots in which *that table* changed, and says so. Time travel
+A table's **History** tab therefore shows the catalog snapshots in which *that table* changed, and says so. Time travel
 works the same way as for Iceberg, with DuckLake's syntax:
 
 ```sql

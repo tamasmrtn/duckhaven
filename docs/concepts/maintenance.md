@@ -93,7 +93,8 @@ small unhealthy tables are not hidden behind one healthy large one.
 
 A recommendation is raised when a metric crosses its threshold. Each carries a `kind`, a `severity` (`warning` or
 `critical`, from how far past threshold the metric is), a `confidence`, a generated `rationale`, an `estimated_impact`,
-and a `remediation` command for an external engine.
+and a `remediation` command: for an Iceberg table, one to run in an external engine; for a DuckLake table, the
+command the **Apply** button runs.
 
 | Kind | Fires when | Confidence | Remediation |
 |---|---|---|---|
@@ -111,7 +112,7 @@ auto-**resolves**. A user can **dismiss** one; it stays suppressed until the met
 ## Scanning
 
 The scanner walks the catalog each cycle and probes tables through the same agent dispatch path as user queries, using
-the DuckDB `iceberg` extension over the attached Polaris catalog. To bound cost on large deployments:
+DuckDB's `iceberg` or `ducklake` extension, whichever matches the catalog's kind. To bound cost on large deployments:
 
 - **Cadence** — `off`, `hourly`, or `daily`, set by policy.
 - **Incremental** — tables whose current snapshot is unchanged since the last sample are skipped.

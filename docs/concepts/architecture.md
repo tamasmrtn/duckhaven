@@ -29,7 +29,7 @@ agent host when you need more compute).
 | Compute | 1..N DuckDB **agents** on separate hosts |
 | Engines | DuckDB only (heterogeneous versions allowed) |
 | Storage | Object storage (bundled RustFS) / S3 / ADLS Gen 2 — one backend per catalog |
-| Catalog kinds | Apache Iceberg + Polaris (default), or [DuckLake](ducklake.md) on PostgreSQL (opt-in) |
+| Catalog kinds | Apache Iceberg + Polaris (default), or [DuckLake](ducklake.md) on PostgreSQL (on by default) |
 | Frontend | React SPA — SQL worksheets (no notebooks) |
 | Network | Private only (Tailscale recommended); no public ingress |
 
@@ -64,9 +64,8 @@ design decision here:
   [SQL session](sql-sessions.md) stages Parquet to object storage and issues a
   `COPY`, which is how the `dlt` destination works — and external engines
   (PyIceberg, Spark) can still write to the backends directly.
-- **No cross-workspace joins, no row/column security** in the current scope.
-  Permissions are workspace-level. (DDL and destructive DML — `CREATE`/`ALTER`/
-  `DROP`, `UPDATE`/`DELETE`/`MERGE` — *are* supported; see Invariant I8.)
+- **No cross-workspace joins, no row/column security.** The finest grant is a
+  table. (DDL and destructive DML *are* supported; see Invariant I8.)
 
 ---
 
@@ -316,11 +315,11 @@ it explicitly rather than working around it.
   has no vendor. *Short-lived* is **deliberately relaxed** for DuckLake:
   see [why](../deployment/ducklake.md#why-the-isolation-matters).
 - **I8 — Data + catalog DDL reach an agent; sandbox escapes do not.**
-  `sql_guard` allows `SELECT`/`INSERT`/`UPDATE`/`DELETE`/`MERGE` and
-  `CREATE`/`ALTER`/`DROP`, executed on the agent against the attached catalogs,
-  and rejects anything that could break out of the per-query
-  sandbox (`ATTACH`/`DETACH`, `COPY`/`EXPORT`, `INSTALL`/`LOAD`, `SET`/`PRAGMA`,
-  `CALL`, `VACUUM`, transaction control). Type is not the only gate: both paths
+  `sql_guard` allows, by DuckDB statement type, `SELECT` (so `DESCRIBE`/`SHOW`),
+  `INSERT`/`UPDATE`/`DELETE` (so `TRUNCATE`)/`MERGE` and `CREATE`/`ALTER`/`DROP`,
+  run on the agent, and rejects anything that could break out of the
+  sandbox (`ATTACH`, `COPY`, `INSTALL`/`LOAD`, `SET` and setting `PRAGMA`s,
+  `CALL`, `EXPLAIN`, transactions). Type is not the only gate: both paths
   also refuse statements opening a foreign database (`postgres_query`) or
   touching DuckLake's `__ducklake_metadata_*` catalog. Only a single `SELECT` is
   materialized

@@ -11,9 +11,10 @@ catalogs both bind to one the same way, and a workspace can reach both through t
 
 ## S3-compatible object storage only
 
-Every backend is S3-compatible object storage. This is forced by DuckHaven's control-plane / compute split: DuckDB can
-only read and write Iceberg tables through the REST catalog when [Polaris](catalogs.md) can vend scoped credentials the
-remote [agent](agents.md) uses, which rules out local-file storage across the container boundary.
+Every backend is object storage: S3-compatible (the bundled store, AWS S3) or ADLS Gen 2. This is forced by
+DuckHaven's control-plane / compute split: DuckDB can only read and write Iceberg tables through the REST catalog when
+[Polaris](catalogs.md) can vend scoped credentials the remote [agent](agents.md) uses, which rules out local-file
+storage across the container boundary.
 
 ## Backend kinds
 

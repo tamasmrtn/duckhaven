@@ -14,8 +14,8 @@ choice, not two, because they are not independently selectable.
 | `iceberg_polaris` (default) | [Apache Polaris](https://polaris.apache.org/) | Apache Iceberg | Spark, Trino, Flink, PyIceberg, DuckDB |
 | `ducklake` | `ducklake_*` tables in PostgreSQL | [DuckLake](ducklake.md) | DuckDB only |
 
-Iceberg + Polaris is the default and needs no configuration. DuckLake is off unless an operator
-[enables it](../deployment/ducklake.md).
+Iceberg + Polaris is the default kind. DuckLake is available out of the box too; an operator can
+[turn it off](../deployment/ducklake.md).
 
 **Kind and storage backend are independent axes.** A catalog of either kind binds to any storage backend, one workspace
 can attach catalogs of both kinds, and a single query can join across them.
@@ -74,19 +74,16 @@ When DuckHaven creates a catalog it grants its service principal the full catalo
 
 ## Storage migration
 
-!!! note "Iceberg catalogs only"
-    Storage migration rewrites the absolute file URIs Iceberg embeds in its metadata tree. DuckLake records relative
-    paths and needs a different procedure, which does not exist yet — its catalogs are not offered here.
-
-A catalog's [storage backend](storage-backends.md) is chosen at creation but is **not permanent**. An admin can move an
-Iceberg catalog to a different backend — for example off the bundled object store onto a corporate S3 bucket, or
-from S3 to ADLS Gen 2 — without losing data or snapshot history.
+A catalog's [storage backend](storage-backends.md) is chosen at creation but is **not permanent**. An admin can move a
+catalog of either kind to a different backend — for example off the bundled object store onto a corporate S3 bucket,
+or from S3 to ADLS Gen 2 — without losing data or snapshot history.
 
 Iceberg references every file by **absolute** URI (metadata → manifest lists → manifests → data files), so a migration
 cannot be a plain object copy: DuckHaven copies each table's files to the new location, rewrites those absolute paths,
-and re-registers the tables in Polaris under a fresh shadow catalog. Once every table is copied and verified, the
-catalog is **atomically** re-pointed at the new backend — the user-facing slug never changes, so attached workspaces and
-existing SQL keep working.
+and re-registers the tables in Polaris under a fresh shadow catalog. DuckLake records paths relative to the catalog's
+`data_path`, so its migration copies the files and updates that one setting. Either way, once every table is copied and
+verified, the catalog is **atomically** re-pointed at the new backend — the user-facing slug never changes, so attached
+workspaces and existing SQL keep working.
 
 While a migration runs the catalog is **read-only**: reads continue against the old location, but writes are rejected
 until cutover. The old data is retained for a configurable window afterwards so a migration can be reversed if needed.

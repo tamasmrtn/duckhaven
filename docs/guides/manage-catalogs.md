@@ -1,8 +1,9 @@
 # Manage catalogs
 
 A [workspace](../concepts/workspaces.md) attaches one or more [catalogs](../concepts/catalogs.md) — decoupled data
-domains, each its own Apache Polaris catalog of schemas and Iceberg tables. You can manage catalogs and their contents
-from the catalog browser or with SQL — both are Polaris-backed.
+domains, each holding schemas and tables of one [kind](../concepts/catalogs.md#catalog-kinds): Iceberg tables in
+Apache Polaris, or DuckLake tables. You can manage catalogs and their contents from the catalog browser or with SQL;
+both change the same catalog.
 
 ## Browse
 
@@ -60,7 +61,9 @@ admin.
 ### Querying across catalogs
 
 A worksheet has an **active catalog** (the selector in the toolbar) used for unqualified table names. Every catalog
-bound to the workspace is attached when a query runs, so you can join across them with fully-qualified references:
+bound to the workspace is reachable from a query, so you can join across them with fully-qualified references. A query
+attaches only the catalogs it names (see
+[which catalogs a query attaches](../concepts/query-execution.md#which-catalogs-a-query-attaches)):
 
 ```sql
 SELECT * FROM raw.analytics.events e

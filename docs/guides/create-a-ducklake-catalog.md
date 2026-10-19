@@ -58,7 +58,7 @@ JOIN   curated.analytics.customers c ON c.id = o.id;
 
 ## Time travel
 
-DuckLake snapshots are catalog-wide, so a table's Snapshots tab lists the catalog snapshots in which that table
+DuckLake snapshots are catalog-wide, so a table's **History** tab lists the catalog snapshots in which that table
 changed. "Query at this snapshot" generates:
 
 ```sql
@@ -92,7 +92,7 @@ is no undo.
 ## Troubleshooting
 
 **"No compatible agent is connected"** — the agents you can use do not advertise the `ducklake` and `postgres_scanner`
-extensions. Check Admin → Compute; an older agent image needs updating.
+extensions. Check the agent's **Overview** tab on the **Compute** page; an older agent image needs updating.
 
 **A statement is rejected mentioning `__ducklake_metadata_`** — DuckLake's internal catalog tables are deliberately not
 queryable through DuckHaven. Writing them by hand bypasses the format's transaction protocol and corrupts the table.

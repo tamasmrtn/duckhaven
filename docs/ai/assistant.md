@@ -173,7 +173,7 @@ someone who does not have it.
 Every tool call the assistant makes is already recorded with its arguments and outcome, which is enough to find the
 questions it handled badly: searches that returned nothing, documentation it failed to open, turns that produced no
 answer, and product questions it answered without consulting anything. The
-[`assistant-mine-feedback.py`](../reference/operator-scripts.md#assistant-mine-feedbackpy-find-questions-the-assistant-answered-badly)
+[`assistant-mine-feedback.py`](../reference/operator-scripts.md#assistant-mine-feedbackpy)
 operator script collects those and drafts them as test cases for a person to review.
 
 It is deliberately a script an operator runs rather than an automatic loop. DuckHaven records what the assistant

@@ -287,7 +287,7 @@ pages:
 - path: reference/configuration.md
   title: Configuration
   section: Reference
-  summary: Every control-plane and agent environment variable.
+  summary: Every DuckHaven environment variable, with its default and what it changes.
 - path: reference/sql-support.md
   title: SQL support
   section: Reference
@@ -323,7 +323,8 @@ pages:
 - path: reference/operator-scripts.md
   title: Operator scripts
   section: Reference
-  summary: DuckHaven ships a few small helper scripts under scripts/ for operators.
+  summary: The helper scripts under scripts/ back up Postgres, check DuckLake catalogs, review the
+    assistant's answers and wait for the stack to start.
 aliases:
   access/access-levels.md: access/how-access-works.md
   access/permissions.md: access/how-access-works.md

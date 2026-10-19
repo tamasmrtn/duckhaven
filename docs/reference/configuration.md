@@ -1,8 +1,14 @@
+---
+type: reference
+---
+
 # Configuration reference
 
-Every DuckHaven environment variable, in one place. The control plane is configured through the Compose stack's `.env`
-file (all values are optional — the stack auto-generates persistent secrets on first boot). Agents are configured
-through their own environment.
+Every DuckHaven environment variable, with its default and what it changes.
+
+The control plane reads the Compose stack's `.env` file. Every value is optional: with no `.env` at all, the stack
+generates persistent secrets on first boot. Agents read their own environment. After changing `.env`, apply it with
+`docker compose up -d`.
 
 For task-oriented guidance see [Install](../deployment/install.md) and the
 [Operator runbook](../operations/runbook.md); for the canonical agent details see the
@@ -37,7 +43,7 @@ boot, so every variable below is optional.
 | `S3_REGION` | `us-east-1` | Region reported to DuckDB / Polaris. |
 | `S3_ENDPOINT` | `http://objectstore:9000` | The object-store URL Polaris vends to DuckDB. For agents on **other** hosts, set this to an address reachable from the agent host. |
 | `S3_ENDPOINT_INTERNAL` | `http://objectstore:9000` | The endpoint Polaris uses inside the Compose network, and that the agent's httpfs GET reaches for a presigned staging read; rarely needs changing. |
-| `S3_ENDPOINT_PUBLIC` | `http://localhost:9000` (compose); empty in code | Client-facing endpoint used to presign SQL-session staging **upload** (`PUT`) URLs. Empty falls back to `S3_ENDPOINT`. Only differs on the bundled single-host box, where the agent reaches the store at `objectstore:9000` but a dlt client on the host reaches it at `localhost:9000`. Set it to the box's reachable address when running dlt from another host. |
+| `S3_ENDPOINT_PUBLIC` | `http://localhost:9000` (compose); empty in code | Client-facing endpoint for presigned SQL-session staging **upload** (`PUT`) URLs. Empty falls back to `S3_ENDPOINT`. Only differs on the bundled single-host box, where the agent reaches the store at `objectstore:9000` but a dlt client on the host reaches it at `localhost:9000`. Set it to the box's reachable address when running dlt from another host. |
 | `S3_ACCESS_KEY` / `S3_SECRET_KEY` | `duckhaven` | Credentials the API uses to presign SQL-session staging URLs for the bundled `object_store` backend (default to `OBJECT_STORE_ACCESS_KEY`/`SECRET_KEY`). External `s3` backends assume their role instead, so these apply only to the bundled store. |
 | `polaris.features."SUPPORTED_CATALOG_STORAGE_TYPES"` | `["S3","AZURE"]` | Storage types Polaris will provision (set in `docker-compose.yml`). `S3` covers the bundled store and external AWS S3; `AZURE` enables external ADLS Gen2. |
 | `AZURE_TENANT_ID` / `AZURE_CLIENT_ID` / `AZURE_CLIENT_SECRET` | _(empty)_ | Service principal Polaris uses to mint ADLS Gen2 SAS tokens (Azure `DefaultAzureCredential`). Needs **Storage Blob Data Contributor** on the account. Empty disables ADLS vending; AWS S3 and the bundled store are unaffected. |
@@ -56,7 +62,7 @@ PostgreSQL login, created by the API and stored with the catalog.
 | Variable | Default | Description |
 |---|---|---|
 | `DUCKLAKE_ENABLED` | `true` | Whether DuckLake can be chosen when creating a catalog. Set `false` to remove it from the dialog. Iceberg + Polaris remains the default *kind* either way, and existing catalogs are unaffected. |
-| `DUCKLAKE_DATABASE_URL` | `postgresql+asyncpg://duckhaven:…@postgres:5432/ducklake` | How the **API** reaches the catalog database, as the owner. Used to create each catalog's metadata schema, grant on it, and read metadata back. Never given to agents. Its connection pool follows the same `DB_POOL_*` settings as the control-plane database, and it honours `DB_AUTH_MODE`. |
+| `DUCKLAKE_DATABASE_URL` | `postgresql+asyncpg://duckhaven:…@postgres:5432/ducklake` | How the **API** reaches the catalog database, as the owner. The API uses it to create each catalog's metadata schema, grant on it, and read metadata back. Never given to agents. Its connection pool follows the same `DB_POOL_*` settings as the control-plane database, and it honours `DB_AUTH_MODE`. |
 | `DUCKLAKE_AGENT_HOST` / `DUCKLAKE_AGENT_PORT` | `postgres` / `5432` | How **agents** reach the catalog database. Set the host to an address reachable from the agent host when agents run elsewhere. |
 | `DUCKLAKE_AGENT_DATABASE` | `ducklake` | Database holding the `ducklake_*` metadata schemas. |
 | `DUCKLAKE_DATA_INLINING_ROW_LIMIT` | `10` | Rows below which a write is stored in the catalog database instead of a Parquet file, avoiding a tiny Parquet object per small insert. Applied to every DuckLake catalog when an agent attaches it, and only written when the catalog's stored value differs. |
@@ -71,15 +77,15 @@ by default; local accounts always work. Secrets here must never be committed —
 | Variable | Default | Description |
 |---|---|---|
 | `OIDC_PROVIDERS` | `[]` | JSON list of OIDC providers, each a button on the login page. Per-entry keys: `id` (url-safe slug, used in `/api/auth/oidc/<id>/callback`), `label`, `server_metadata_url`, `client_id`, `client_secret`, `scopes` (default `openid email profile`), `groups_claim` (default `groups`), `group_role_map`. Takes precedence over the single-provider fields below. |
-| `OIDC_REDIRECT_BASE_URL` | derived | Public base URL (scheme+host) used to build the callback. Required behind a TLS proxy; must match the registered redirect URI's host. |
+| `OIDC_REDIRECT_BASE_URL` | derived | Public base URL (scheme+host) the callback URL is built from. Required behind a TLS proxy; must match the registered redirect URI's host. |
 | `OIDC_ENABLED` | `false` | Single-provider shorthand (back-compat): when `true` and `OIDC_PROVIDERS` is empty, the fields below synthesize one provider with id `sso`. |
-| `OIDC_LABEL` | `SSO` | Button label for the shorthand provider, e.g. `Okta` renders "Sign in with Okta". |
+| `OIDC_LABEL` | `SSO` | Button label for the shorthand provider: `Okta` renders "Sign in with Okta". |
 | `OIDC_SERVER_METADATA_URL` | — | Shorthand provider discovery document, ending in `/.well-known/openid-configuration`. |
 | `OIDC_CLIENT_ID` | — | Shorthand provider confidential client ID. |
 | `OIDC_CLIENT_SECRET` | — | Shorthand provider client secret. |
 | `OIDC_SCOPES` | `openid email profile groups` | Scopes for the shorthand provider. (Per-provider entries default to `openid email profile`; Entra rejects a `groups` scope.) |
 | `OIDC_GROUPS_CLAIM` | `groups` | Shorthand provider ID-token claim holding group memberships. |
-| `OIDC_GROUP_ROLE_MAP` | `{}` | Shorthand provider JSON map of group value → global role, e.g. `{"dh-admins": "admin"}`. |
+| `OIDC_GROUP_ROLE_MAP` | `{}` | Shorthand provider JSON map of group value → global role, such as `{"dh-admins": "admin"}`. |
 | `LDAP_ENABLED` | `false` | Master switch for LDAP/AD bind authentication. |
 | `LDAP_SERVER_URI` | — | `ldaps://host` (port 636) or `ldap://host` (use with `LDAP_USE_START_TLS`). |
 | `LDAP_USE_START_TLS` | `false` | Upgrade an `ldap://` connection to TLS via STARTTLS. |
@@ -105,7 +111,7 @@ or not.
 | `REPLICA_ID` | `api` | Identifier for this API replica, recorded as the owner of agents whose WebSocket it holds. The HA compose sets one per replica (`api-1`, `api-2`). Set to `auto` to use the platform's replica name, falling back to the hostname. |
 | `REPLICA_INTERNAL_URL` | `http://localhost:8000` | URL peer replicas use to forward agent-dispatch frames to this replica's private `/internal` endpoints. Set to `auto` on platforms that give every replica identical configuration (Azure Container Apps) to resolve this container's own address — a shared value there breaks forwarding silently, see [High availability](../deployment/high-availability.md#replicas-that-cannot-be-configured-individually). |
 | `INTERNAL_API_SECRET` | _(empty)_ | Shared secret guarding the `/internal` cross-replica dispatch endpoints. Must be identical on every replica. When empty, peer forwarding is disabled (single-replica mode). |
-| `AGENT_PRESENCE_TTL_S` | `90` | How recently an agent must have pinged for another replica to consider it connected; covers a replica that died without clearing its ownership. |
+| `AGENT_PRESENCE_TTL_S` | `90` | How long after its last ping an agent still counts as connected for other replicas; covers a replica that died without clearing its ownership. |
 | `DB_POOL_SIZE` | `5` | SQLAlchemy connection-pool size per replica. Keep `replicas × (DB_POOL_SIZE + DB_MAX_OVERFLOW)` under the Postgres `max_connections`. |
 | `DB_MAX_OVERFLOW` | `10` | Extra connections each replica may open above `DB_POOL_SIZE` under load. |
 | `DB_POOL_RECYCLE_S` | `1800` | Recycle pooled connections older than this (seconds). With `pool_pre_ping`, this is what makes Postgres failover transparent. |
@@ -206,7 +212,7 @@ every replica runs it safely.
 | `RESULT_CACHE_INLINE_TOTAL_MAX_BYTES` | `2147483648` (2 GiB) | The same ceiling across all workspaces. |
 | `RESULT_CACHE_TTL_HOURS` | `24` | An entry not hit for this long expires; every hit restarts the clock. |
 | `RESULT_CACHE_MAX_AGE_HOURS` | `168` (7 days) | No entry outlives this, however often it is hit. |
-| `RESULT_CACHE_MIN_LEASE_S` | `600` | An entry younger than this is never evicted for space: it has not yet had the chance to be hit. |
+| `RESULT_CACHE_MIN_LEASE_S` | `600` | An entry younger than this is never evicted for space: it has had no chance to be hit. |
 | `RESULT_CACHE_ASSUMED_TIMEZONE` | `UTC` | The time zone assumed for a run whose agent is not chosen yet (the elastic pool with nothing running). A wrong guess only costs a miss: entries record the zone they were computed in. |
 | `RESULT_CACHE_SWEEP_INTERVAL_S` | `300` | How often (seconds) the expiry loop removes expired entries and releases their agent files. |
 
@@ -293,8 +299,8 @@ supplied here or via the provider's own standard environment variable (`ANTHROPI
 
 | Variable | Default | Description |
 |---|---|---|
-| `ASSISTANT_ENABLED` | `false` | Master switch. When `false`, the assistant API returns 503 and no model or provider dependency is exercised. When `true`, the `assistant` service account is created on startup if it does not exist — with no workspace access, which you grant yourself. |
-| `ASSISTANT_MODEL` | `anthropic:claude-sonnet-5` | Pydantic AI model string, e.g. `openai:gpt-4o` or `mistral:mistral-large-latest`. For an OpenAI-compatible endpoint, use `openai:<model>` with the base URL below. |
+| `ASSISTANT_ENABLED` | `false` | Master switch. When `false`, the assistant API returns 503 and no model or provider dependency is exercised. When `true`, the `Assistant` service account is created on startup if it does not exist — with no workspace access, which you grant yourself. |
+| `ASSISTANT_MODEL` | `anthropic:claude-sonnet-5` | Pydantic AI model string, such as `openai:gpt-4o` or `mistral:mistral-large-latest`. For an OpenAI-compatible endpoint, use `openai:<model>` with the base URL below. |
 | `ASSISTANT_OPENAI_BASE_URL` | — | Base URL of an OpenAI-compatible endpoint (Ollama, vLLM, Azure). When set, the model routes through the OpenAI protocol against this endpoint. |
 | `ASSISTANT_API_KEY` | — | Explicit API key for the model. Optional: hosted providers fall back to their standard env var; keyless endpoints need nothing. **Rotate like any secret.** |
 | `ASSISTANT_PAT_TTL_S` | `3600` | Lifetime (seconds) of the short-lived PAT minted for each turn's loopback calls. Must exceed the longest plausible turn (bounded by `ASSISTANT_REQUEST_LIMIT` × per-query timeout), since one token is reused for the whole turn. |
@@ -411,4 +417,4 @@ Operator-set ceilings that per-query requests cannot exceed — see the
 | `SESSION_MAX_BUCKET_FRACTION` | `0.333` | Ceiling on what one statement may **require** at admission (not on what it may use — free budget is still offered on top). Bounds how few statements can run at once. |
 | `MAX_TIMEOUT_S` | `600` | Hard upper bound on a query's wall-clock timeout. |
 | `RESULT_RETENTION_HOURS` | `24` | How long materialized result Parquet files are kept before the retention sweep removes them. A file the [result cache](../querying/result-cache.md) serves rows from is kept past it, until its entry expires. |
-| `RESULT_CACHE_MAX_BYTES` | `10737418240` (10 GiB) | Ceiling on result files kept past `RESULT_RETENTION_HOURS` for the [result cache](../querying/result-cache.md). Past it, the files retained longest ago are deleted first and the cache simply misses for those queries. |
+| `RESULT_CACHE_MAX_BYTES` | `10737418240` (10 GiB) | Ceiling on result files kept past `RESULT_RETENTION_HOURS` for the [result cache](../querying/result-cache.md). Past it, the files retained longest ago are deleted first and the cache misses for those queries. |

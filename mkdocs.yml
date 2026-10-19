@@ -240,6 +240,7 @@ nav:
       - Codebase map: developer/codebase-map.md
       - Local development: developer/development.md
       - Contributing: developer/contributing.md
+      - Writing docs: developer/writing-docs.md
       - Testing: developer/testing.md
       - Releasing: developer/releasing.md
       - Design system: developer/design-system.md

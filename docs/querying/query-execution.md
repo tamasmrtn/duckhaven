@@ -1,13 +1,21 @@
+---
+type: concept
+---
+
 # Query execution
 
-This page explains what happens between pressing **Run** and seeing results — the path a query takes through the
-control plane and an [agent](../compute/agents.md).
+A query is checked by the API, sent to an agent, waits until the agent has memory to start it, runs, and is kept as a
+result file read a page at a time.
+
+This page follows that path from **Run** to results, through the control plane and an [agent](../compute/agents.md),
+and explains what decides how long each step takes.
 
 ## Lifecycle
 
 1. The browser submits SQL plus a chosen agent to the control plane.
-2. The API checks workspace membership, validates the SQL against the allowlist (parse-only), and confirms the agent is
-   connected and compatible with the workspace backend.
+2. The API checks workspace membership, checks the SQL against the [allowlist](../reference/sql-support.md) by parsing
+   it, checks [grants](../access/scoped-access.md) where a catalog is scoped, and confirms the agent is connected and
+   can serve the workspace's catalogs.
 3. The API dispatches the query over the agent's WebSocket.
 4. The agent **admits** the query (sizing memory, queueing if needed), executes it, materializes the result to Parquet,
    and reports back.
@@ -16,10 +24,10 @@ control plane and an [agent](../compute/agents.md).
 ## Which catalogs a query attaches
 
 A workspace can bind many [catalogs](../data/catalogs.md), but a query only attaches the ones it can use: the catalogs
-its SQL names, plus the active catalog for unqualified names. This matters because attaching is not free. Each DuckLake
-catalog costs about 60 ms and holds a Postgres connection open for as long as the query runs, so a workspace with 32
-DuckLake catalogs used to spend two seconds attaching them before even `SELECT 1` could start. Now a query's cost
-depends on the catalogs it reads, not on how many the workspace has.
+its SQL names, plus the active catalog for unqualified names. Attaching is not free: each DuckLake catalog costs about
+60 ms and holds a Postgres connection open while the query runs, so attaching all 32 DuckLake catalogs of a workspace
+would take two seconds before `SELECT 1` could start. Because a query attaches only what it uses, its cost depends on
+the catalogs it reads, not on how many the workspace has.
 
 How the control plane decides:
 
@@ -40,15 +48,8 @@ How the control plane decides:
     when a later one fails, so the script fails instead. Name the catalog somewhere in the script (a comment is
     enough), or run the statement on its own.
 
-[SQL sessions](sql-sessions.md#lifecycle) attach the same way, one statement at a time. Agents built before this
-behaviour advertise no support for it, so the control plane keeps attaching every catalog for them.
-
-## The SQL allowlist
-
-Only data statements (`SELECT`, `INSERT`, `UPDATE`, `DELETE`, `TRUNCATE`, `MERGE`), read-only introspection
-(`DESCRIBE`, `SHOW`, `SUMMARIZE`) and catalog DDL (`CREATE`, `ALTER`, `DROP`) reach an agent. Statements that could
-escape the sandbox, such as `ATTACH`, `COPY`, `LOAD`, `SET` and `EXPLAIN`, are rejected at the API boundary. See
-[SQL support](../reference/sql-support.md).
+[SQL sessions](sql-sessions.md#lifecycle) attach the same way, one statement at a time. An agent that does not
+advertise support for attaching on demand gets every catalog of the workspace attached.
 
 ## Admission control and concurrency
 
@@ -62,8 +63,9 @@ memory budget is cgroup-aware (it respects a container/pod limit). Capacity is s
 - **Static slot ladders** — a fixed weighted split (`single`, `equal_2`, `decaying_2`, `decaying_3`). Slots are fixed,
   so a session under a static profile holds its whole slot for its lifetime.
 
-The profile is switchable at runtime and applies per agent. See
-[Runbook §6](../operations/runbook.md#6-query-queueing-concurrency) and [Scaling compute](../compute/scaling.md).
+The profile applies per agent and can be changed while it runs, with a
+[control command](../reference/sql-support.md#concurrency-control-command). See
+[Scaling compute](../compute/scaling.md#tune-a-single-agent).
 
 ### What a query is actually given
 
@@ -118,7 +120,7 @@ memory — it also sizes the cache DuckDB keeps of the Parquet files it has read
 its operators alone has nowhere to keep that cache, so every scan goes back to the object store and re-decompresses
 data it has already read. Lending it the agent's idle memory removes that cost, and costs other tenants nothing:
 elastic memory is **revocable**, so the moment another query needs those bytes the agent takes them back (the lender
-simply loses some cache) rather than making the newcomer queue. A query never waits on memory that is only being used
+only loses some cache) rather than making the newcomer queue. A query never waits on memory that is only being used
 to cache with. Elastic memory belongs to `auto` alone — a static ladder's slot is a fixed contract, which is the reason
 to choose one, so it neither grows nor shrinks. On a static profile a query gets exactly its slot's share, and a small
 slot on a small agent may be too tight to cache with.
@@ -130,7 +132,7 @@ out, so it shrinks as sessions arrive and each holder gives the excess back when
 
 ### When the agent is full
 
-Sometimes there is simply not enough memory to go round — twenty concurrent scans over a large table do not fit in a
+Sometimes there is not enough memory to go round — twenty concurrent scans over a large table do not fit in a
 small agent under any allocation. A query that cannot reach a workable fraction of what it asked for **waits** for room
 rather than running in a size it cannot work in, because a query squeezed into the idle minimum spills to disk so hard
 that it hurts everything else running beside it. It stops waiting as soon as memory frees up, when its own timeout
@@ -144,10 +146,10 @@ then served **one at a time, in the order they arrived**, so whoever is at the f
 rather than every waiter getting a useless slice of it.
 
 Waiting is visible rather than mysterious: every query reports how long it spent waiting for memory in its
-[profile](query-profiles.md), so a query that was slow because the agent was busy is distinguishable from one
-that was slow because it was expensive, and `duckhaven_agent_growth_waiting` in
-[monitoring](../operations/monitoring.md) shows how many are waiting right now. `STATEMENT_ADMISSION_WAIT_S` bounds the
-wait; setting it to `0` restores the older behaviour of always running immediately at whatever size was available.
+[profile](query-profiles.md), so a query that was slow because the agent was busy is distinguishable from one that was
+slow because it was expensive, and `duckhaven_agent_growth_waiting` in [monitoring](../operations/monitoring.md) shows
+how many are waiting at any moment. `STATEMENT_ADMISSION_WAIT_S` bounds the wait; setting it to `0` makes every query
+run at once, at whatever size is free.
 
 **Threads** are separate from both, and work the same way under **every** profile: each statement is given the agent's
 full core count. Neither the `auto` estimator's buckets nor a static ladder's weights touch it — they divide memory. The
@@ -207,14 +209,15 @@ file's types rather than the query's.
 `HUGEINT`. Parquet has no 128-bit integer, and DuckDB's writer would otherwise round these values through `DOUBLE`,
 losing every digit past the sixteenth. The agent writes them as `DECIMAL(38,0)` instead, at any depth in a list, struct
 or map, so every value up to 38 digits arrives exact. A value with more digits than that cannot be stored exactly, so
-the query fails and says so rather than return a rounded number; cast that column to `VARCHAR` to get it as text. An
-agent from before this release still rounds, and the [result cache](result-cache.md) never mixes the two.
+the query fails and says so rather than return a rounded number; cast that column to `VARCHAR` to get it as text. The
+[result cache](result-cache.md) never serves a result from an agent that rounds these values in place of one that
+does not.
 
 !!! note "Exact values in JSON"
     Row values are JSON, so a `DECIMAL`, `BIGINT`, `UBIGINT`, `HUGEINT` or `UHUGEINT` value is sent as a string: a JSON
     number cannot hold them exactly. Read the column's `column_schema` type to convert it, as described in
     [Result values](../reference/rest-api.md#result-values). `column_schema` is `null` for
-    statements that produce no result grid (DDL and DML) and for queries run by an agent older than this feature.
+    statements that produce no result grid (DDL and DML), and when the agent did not report the types.
 
 ## Related
 

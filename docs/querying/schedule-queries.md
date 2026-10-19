@@ -1,124 +1,95 @@
+---
+type: how-to
+---
+
 # Schedule queries
 
-Run a [saved query](saved-queries.md) automatically on a schedule — for example
-"every night at 02:00" — without leaving a worksheet open or wiring up an external
-cron job. This is DuckHaven's first step into unattended, scheduled execution
-(think of it as a single-task *job*): one saved query,
-one cron schedule, with every execution recorded so you can see what ran and when.
+Run a saved query automatically on a cron schedule, such as every night at 02:00, with every run recorded.
+
+A schedule runs one [saved query](saved-queries.md) on one agent, without a worksheet open or an external cron job.
+
+## Before you begin
+
+- **You need:** workspace `writer` or `owner`, a [saved query](saved-queries.md) to run, and an agent you may use.
+- **Applies to:** every deployment.
 
 ## Add a schedule
 
-Open **Schedules** from the left nav. It has two tabs: **Schedules** (your
-schedules) and **Runs** (every scheduled run). On the **Schedules** tab click
-**New schedule** and set:
+1. Open **Schedules** in the left navigation. The **Schedules** tab lists the workspace's schedules, and **Runs** lists
+   every scheduled run.
+2. Click **New schedule** and fill in:
+    - **Saved query**: the query to run.
+    - **Cron expression**: five fields, `minute hour day-of-month month day-of-week`, evaluated in **UTC**. `0 2 * * *`
+      runs daily at 02:00; `*/15 * * * *` runs every fifteen minutes.
+    - **Enabled**: a schedule runs only while enabled. Turn it off to pause without losing it.
+    - **Agent**: where each run executes. It starts on the saved query's default agent, and lists only agents you may
+      use. A run never moves to a different agent.
+3. Save it. The row shows the cron, agent, status, and next and last run. Click a row to edit or remove it.
 
-- **Saved query** — the saved query this schedule runs. (Save a query first from a
-  worksheet if you don't have one yet.)
-- **Cron expression** — a standard five-field cron string,
-  `minute hour day-of-month month day-of-week`. For example `0 2 * * *` runs daily
-  at 02:00, and `*/15 * * * *` runs every fifteen minutes. Cron times are evaluated
-  in **UTC**.
-- **Enabled** — a schedule only runs while it is enabled. Disable it to pause runs
-  without losing the schedule.
-- **Agent** — the [agent](../compute/agents.md) that executes each run. It is
-  pre-filled from the saved query's default agent, and the list offers only agents
-  you are allowed to run on. A run never silently falls back to a different agent.
-  What happens when the chosen one is down depends on which kind it is — see below.
+## Check that it worked
 
-Each schedule row shows its cron, agent, status, and next/last run. Click a row to
-edit it (or **Remove** it).
+After the next scheduled time, the **Runs** tab lists the run with its status, agent, rows, duration and start time; a
+failed run shows its error. Scheduled runs also appear in [History](run-queries.md#find-an-earlier-run) with the
+origin **Scheduled**.
 
-## View run history
+## How runs behave
 
-The **Runs** tab lists every scheduled run in the workspace, newest first, with
-each run's status, agent, rows, duration, and start time. A failed run shows its
-error, so a misconfigured schedule (bad agent, query error) is visible rather than
-silent. The edit dialog for a single schedule also shows that schedule's recent
-runs. Scheduled runs additionally appear in the workspace
-[History](run-queries.md), tagged as *scheduled* to distinguish them from queries
-you ran by hand.
+A loop in the control plane checks every 60 seconds by default and starts the schedules that are due, through the same
+path as a worksheet run (see [Query execution](query-execution.md)). Across several API replicas exactly one starts each
+run. So the finest cadence is once a minute, and:
 
-## How it runs
+- **No overlap.** If the previous run is still going when the next is due, the next is skipped.
+- **No backfill.** Runs missed while the control plane was down are not replayed; the schedule runs at its next time.
+- **No retries.** A failed run waits for the next scheduled time.
+- **The same checks as a worksheet.** Each run's SQL is checked when it runs, because the saved query can change after
+  the schedule is made. A run the checks refuse fails with the reason, and a schedule for SQL that would be refused
+  cannot be created or enabled.
+- **The SQL as saved.** A schedule runs the saved query's SQL exactly, with no parameters. Saving over the query changes
+  what the schedule runs.
 
-A background loop in the control plane wakes on a fixed tick (60 seconds by
-default) and dispatches any schedules that are due, through the same execution path
-as an interactive run (see [Query execution](query-execution.md)). A
-few behaviors worth knowing:
+### When the agent is stopped
 
-- **No overlap.** If a schedule's previous run is still running when the next is
-  due, the new run is skipped — a slow run never piles up behind itself.
-- **No backfill.** If the control plane was down when a run was due, it does not
-  replay the missed runs; it simply runs at the next scheduled time.
-- **No retries.** A failed run waits for its next scheduled tick. There is no
-  separate retry or backoff.
-- **The same SQL checks as a worksheet.** Each run's SQL is checked when it runs,
-  exactly as if you had run it by hand, because a saved query can be edited after
-  it is scheduled. A run the checks refuse is recorded as failed with the reason,
-  and a schedule for such a query cannot be created or enabled in the first place.
+A stopped [elastic agent](../compute/elastic-compute.md), which is most of the time for a nightly schedule, is started
+for the run: the run waits `queued` until the agent connects, then executes. If the agent does not come up within the
+provisioning deadline, the run fails instead of blocking later runs.
 
-### If the chosen agent is down
+A regular agent that is offline, or an elastic agent that is running but disconnected, cannot be started by the control
+plane, so the run fails.
 
-[Elastic compute](../compute/elastic-compute.md) terminates itself once it goes
-idle — which, for a schedule that runs nightly, is *most of the time*. So a
-stopped elastic agent is **started again** for the run: the control plane
-re-provisions it, the run waits `queued` until it dials home, and it executes
-then. You can pick a stopped elastic agent when creating the schedule for exactly
-this reason. Billing starts when it comes up and stops at its idle timeout, as
-usual.
+### Whose access a run uses {#whose-data-grants-a-run-uses}
 
-If the agent never comes up within the provisioning deadline, the run is recorded
-as **failed** rather than waiting forever — otherwise the no-overlap rule would
-block every later run behind it.
+A schedule has no one behind it when it runs, so:
 
-A **regular** (operator-run) agent that is offline still records the run as
-failed. Nothing in the control plane can start one: it is a host someone else
-runs, and it only ever dials in. The same applies to an elastic agent that is
-merely disconnected while still running — there is no torn-down instance to
-re-provision.
+- **Agent access** is checked against the person who **created the schedule**, on every run.
+- **Data access**, in a [scoped catalog](../access/scoped-access.md), is checked against the person who **last changed
+  the saved query's SQL** or its default agent. That way, editing a colleague's saved query does not let your SQL run
+  with their grants.
 
-### If your agent access is revoked
+## If it goes wrong
 
-A schedule has no one sitting behind it at run time, so it runs as **the person who
-created it**. Access to the chosen [agent](../compute/agents.md#who-can-use-an-agent)
-is re-checked on **every** fire, against that person — not captured when the schedule
-was saved.
+### "Schedule owner no longer has access to the configured agent"
 
-So if the creator later loses access to that agent, its runs start failing with
-`Schedule owner no longer has access to the configured agent`, visible in the **Runs**
-tab and in History. Two things deliberately do *not* happen:
+The schedule's creator lost the `use` tier on its agent. The schedule stays enabled and is not moved to another agent.
+Restore the creator's access and the next run succeeds, or have someone with access create the schedule again, which
+then runs as them.
 
-- The schedule is **not disabled**. Restore the grant and the next run succeeds on its
-  own, with nothing to re-enable.
-- The run is **not re-routed** to some other agent the creator can still use. Choosing
-  an agent is an explicit decision about where work runs, and silently moving it
-  somewhere else would be a surprising reinterpretation of that choice.
+### Runs fail with a grant error after an edit
 
-If the schedule should outlive its creator's access, either grant the creator access
-again, or have someone who does hold access recreate the schedule — the new schedule
-runs as them.
+Someone with narrower grants changed the saved query's SQL, and runs use their grants. Have someone with the right
+grants save the query again.
 
-### Whose data grants a run uses
+### Runs fail because the agent is offline
 
-Access to the **agent** is checked against the schedule's creator, as above. Access to the **data** — which catalogs,
-schemas and tables the SQL may read or write, in a [scoped catalog](../access/how-access-works.md) — is checked against
-the person who **last changed the saved query's SQL** (or its default agent).
+The agent is a regular agent that is down, or an elastic agent that is disconnected. Bring it back, or edit the
+schedule to use another agent.
 
-That is deliberate. The grants that apply are those of whoever wrote the statement that runs, so a writer cannot edit
-someone else's saved query and have it run with that person's grants. When the SQL has only ever been edited by the
-person who saved it — including every saved query created before this rule — nothing changes. If a colleague with
-narrower grants edits the SQL, runs that need more than they may read start failing with a grant error in the **Runs**
-tab; have someone with the right grants save the query again.
+### A run is missing
 
-## Notes
-
-- The finest effective cadence is once per minute (the scheduler tick floor).
-- Scheduled queries run the saved SQL **verbatim** — there are no parameters or
-  templating. Saving over the query's SQL changes what the schedule runs.
-- Operators: the loop is leader-elected across replicas (no double-runs) and is
-  tuned by [configuration](../reference/configuration.md#scheduler). See
-  [High availability](../deployment/high-availability.md).
+The previous run was still going, so this one was skipped, or the control plane was down at the scheduled time. Check
+the previous run's duration in **Runs**.
 
 ## Related
 
-- [Saved queries](saved-queries.md) — create the query a schedule runs.
-- [Query execution](query-execution.md) — scheduled vs. interactive runs.
+- [Saved queries](saved-queries.md) — the query a schedule runs.
+- [Configuration → Scheduler](../reference/configuration.md#scheduler) — the loop's settings.
+- [High availability](../deployment/high-availability.md) — schedules across replicas.

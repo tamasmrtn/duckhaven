@@ -1,15 +1,30 @@
+---
+type: how-to
+---
+
 # Read query profiles
 
-After a query finishes, the executing [agent](../compute/agents.md) captures DuckDB's per-operator execution profile
-and ships it to the control plane. There are two ways to view it.
+Open a query's profile to see where its time and memory went, and whether it was slow because it waited or because it
+worked.
 
-## Where to find it
+After a query finishes, the [agent](../compute/agents.md) that ran it records DuckDB's per-operator execution profile
+and sends it to the control plane.
 
-- **Worksheet → Profile tab** — an inline summary and a collapsible operator tree for the query you just ran, with a
-  link to the full profile.
-- **Dedicated profile page** — reached by clicking any row in query history. It shows the full query SQL in a
-  capped-height panel below the header (with an expand button for statements that don't fit), and an interactive
-  operator **graph** (result on top, scans at the bottom; data flows up); click a node for its detail.
+## Before you begin
+
+- **You need:** the access to read the query's result. In a workspace with a
+  [scoped catalog](../access/scoped-access.md#opening-a-result-needs-the-same-grants-as-running-its-query), that means
+  grants on every table the query read.
+- **Applies to:** finished queries that return rows. DDL and DML have no profile.
+- **Enabled by:** `PROFILING_ENABLED` on the agent, on by default.
+
+## Open a profile
+
+- **In a worksheet**, open the **Profile** tab below the editor after a run: a summary and a collapsible operator tree,
+  with a link to the full profile.
+- **From History**, click a run. The profile page shows the full SQL and an operator **graph**, with the result at the
+  top and the scans at the bottom, since data flows up. Click a node for its detail. The page also ranks the most
+  expensive operators and lists what it detected in a **diagnostics** panel, each linking to its node.
 
 ## What it shows
 
@@ -71,12 +86,25 @@ For a selected scan the profile reports what DuckDB actually measured:
     same however few columns were projected and however selective the filter was, so a "rows read versus rows
     returned" ratio built on it would mislead for exactly the storage DuckHaven reads.
 
-## Notes
+## If it goes wrong
 
-Profiling is on by default and best-effort: a capture failure yields no profile rather than failing the query, and
-DDL/DML statements carry no profile. To disable it, set `PROFILING_ENABLED=false` on the agent (see the
-[Agent reference](../reference/agent-reference.md)).
+### There is no profile
+
+The statement was DDL or DML, profiling is off on the agent (`PROFILING_ENABLED=false`, see the
+[Agent reference](../reference/agent-reference.md)), or capturing it failed. Capture is best effort: a failure leaves
+the query without a profile rather than failing it.
+
+### "You don't have access to the data this query read, so its profile can't be shown."
+
+A [scoped catalog](../access/scoped-access.md) refuses the profile, as it would the result. Ask for a grant on the
+tables the query read.
+
+### The profile shows a long admission wait
+
+The agent was busy, not the query expensive. See [When the agent is full](query-execution.md#when-the-agent-is-full)
+and [Scaling compute](../compute/scaling.md).
 
 ## Related
 
-- [Query execution](query-execution.md) — how reservations are sized.
+- [Query execution](query-execution.md) — how memory is reserved for a query.
+- [Run queries](run-queries.md) — the worksheet and History.

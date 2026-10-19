@@ -1,232 +1,168 @@
+---
+type: how-to
+---
+
 # Run queries
 
-Worksheets are DuckHaven's primary surface — a browser SQL editor backed by the [agent](../compute/agents.md) you
-choose.
+Write SQL in a worksheet, run it on an agent you choose, read the result, and find earlier runs in History.
 
-## Worksheets and tabs
+A worksheet is DuckHaven's SQL editor in the browser. Each tab is a private draft, saved to the server as you type, with
+its own agent, catalog and last result.
 
-Every tab is a **worksheet**: a private draft that DuckHaven saves to the server as you type. There is no "save before
-you lose it" — close the browser, open DuckHaven on another machine, and your tabs, their SQL and their last results
-are where you left them. The status beside the Run button reads *Saving…*, *Saved*, or *Offline — retrying* when the
-connection drops (the edit is kept and sent once it returns).
+## Before you begin
 
-Each worksheet keeps its own **agent**, **catalog**, **timeout** and **results**, so a tab running a long query on one
-agent does not change what the tab beside it shows or runs on. New worksheets are named for when they were made;
-**double-click a tab to rename it**.
+- **You need:** membership of the workspace, with any role, and an agent you may use.
+- **Applies to:** every deployment. The [Quickstart](../getting-started/quickstart.md) walks through a first query on
+  a new install.
 
-Closing a tab does not delete the worksheet. The **Worksheets** view of the sidebar (switch it with the
-*Worksheets | Catalog* control at the left end of the tab row) lists every worksheet you have, open or closed, most
-recently edited first, alongside the workspace's shared [saved queries](saved-queries.md). Click one to open it as
-a tab. A blank, unnamed worksheet is simply discarded when you close it.
+## Open a worksheet
 
-!!! note "Two windows on the same worksheet"
-    If you edit a worksheet in two browser windows, the one that saves second is told the worksheet changed elsewhere
-    and autosave pauses there. Choose **Load latest** to take the other window's version, or **Keep mine** to save
-    over it.
+1. Open **Worksheets** in the left navigation. Your open tabs are where you left them, on any machine.
+2. Click **+** (*New worksheet*) for a new tab, or reopen an earlier worksheet from the **Worksheets** view of the
+   sidebar (switch with **Worksheets | Catalog** at the left of the tab row). It lists every worksheet you have, open or
+   closed, last edited first, and the workspace's [saved queries](saved-queries.md).
+3. Double-click a tab to rename it.
 
-Worksheets are private: other members of the workspace never see them. To share SQL, save it as a
-[saved query](saved-queries.md).
+The status beside **Run** reads *Saving…*, *Saved*, or *Offline — retrying*; an edit made offline is sent when the
+connection returns. Closing a tab keeps the worksheet, except a blank, unnamed one, which is discarded. Worksheets are
+private; to share SQL, [save it as a saved query](saved-queries.md).
 
-## Pick an agent
+## Pick an agent and a catalog
 
-The agent chip at the left of the toolbar says which [agent](../compute/agents.md) the next run goes to. Open it to
-choose another. Agents are listed by what a run can do with them:
+The agent chip at the left of the toolbar shows where the next run goes. Open it to choose another:
 
-- **Running** — connected and able to serve every catalog in the workspace; a run starts straight away.
-- **Stopped — starts on run** — an [elastic agent](../compute/elastic-compute.md) that is shut down. Pick it and the
-  Run button reads **Start & run**: DuckHaven starts the agent and runs your query once it is up.
-- **Can't serve this workspace** — up, but missing an extension a catalog or the
-  [storage backend](../data/storage-backends.md) needs, or not running a [runtime](../compute/runtimes.md)
-  DuckHaven sends work to. The reason is shown and the agent cannot be picked.
-- **Unavailable** — offline or failed. These are folded away behind **Show N unavailable** so a long-lived fleet does
-  not bury the agents that work; a search still finds them.
+| Shown as | Meaning |
+|---|---|
+| **Running** | Connected and able to serve every catalog in the workspace; a run starts at once |
+| **Stopped — starts on run** | A stopped [elastic agent](../compute/elastic-compute.md). **Run** becomes **Start & run**: DuckHaven starts it, then runs your query |
+| **Can't serve this workspace** | Up, but missing an extension a catalog needs, or on a [runtime](../compute/runtimes.md) DuckHaven does not send work to. The reason is shown |
+| **Unavailable** | Offline or failed, folded under **Show N unavailable** |
 
-Each row shows the agent's runtime and exact DuckDB version, for example *DuckDB 1.5 · v1.5.5*. An agent on a
-**Beta** runtime is marked as such.
+Each agent shows its runtime and DuckDB version, such as *DuckDB 1.5 · v1.5.5*, and a **Beta** mark on a beta runtime.
+With the `operate` tier on an elastic agent, its **⋯** menu can start or stop it.
 
-Search matches agent names and hosts. If you have the *operate* tier on an elastic agent, its **⋯** menu can **Start**
-it, or **Stop** it after asking for confirmation.
+A worksheet keeps the agent it last ran on. When that agent cannot take a run, DuckHaven picks one: the agent you last
+used in the workspace, else the first healthy agent that can serve it, else a stopped elastic agent it can start. It
+prefers the default runtime and never picks a beta one; you choose a beta agent yourself.
 
-Each worksheet remembers the agent it last ran on. When that agent can no longer take a run, DuckHaven picks for you:
-the agent you last used in this workspace, else the first healthy agent that can serve it, else a stopped elastic agent
-it can start. It never picks an offline agent just because it is first in the list. If a run fails because the agent
-dropped off, the error offers **Switch agent**. When it picks, it prefers the default runtime, and it never picks an
-agent on a beta runtime: a worksheet runs there only once you choose that agent yourself.
-
-Autocomplete lists the functions of the selected agent's DuckDB version, so a newer runtime's functions appear once you
-switch to an agent running it.
-
-The **catalog** chip beside it sets the catalog `USE`d for unqualified table names in this worksheet; it starts on the
-workspace default.
+The **catalog** chip beside it sets the catalog that names without a catalog resolve in. It starts on the workspace's
+default.
 
 ## Run a statement
 
-Press **Ctrl+Enter** (or the Run button) to execute the statement under the cursor — runs are statement-aware, not
-whole-buffer. While a query runs you can **Cancel** it; a wall-clock timeout also applies — ten minutes unless you
-change it for this worksheet under the toolbar's settings icon.
+1. Type SQL, or drag a table from the catalog tree into the editor to insert its full `catalog.schema.table` name.
+2. Put the cursor in the statement and press **Ctrl+Enter**, or click **Run**. Only the statement under the cursor
+   runs.
+3. To stop it, click **Cancel**. A run stops on its own after the worksheet's timeout, ten minutes unless you change it
+   under the toolbar's settings icon.
 
-## Autocomplete and IntelliSense
+What SQL you can run is in [SQL support](../reference/sql-support.md).
 
-As you type, the editor suggests completions based on where the cursor sits in the statement. Suggestions appear
-automatically; press **Ctrl+Space** (or **Cmd+Space**) to summon them on demand, and type a **`.`** after a name to
-drill into it.
+### Autocomplete
 
-What it offers depends on context:
+Suggestions appear as you type; press **Ctrl+Space** (**Cmd+Space** on a Mac) to show them, and type `.` after a name
+to look inside it.
 
-- after `FROM` / `JOIN` — the workspace's **catalogs**, **schemas**, and **tables**;
-- after `catalog.` or `catalog.schema.` — that catalog's **schemas** and **tables**, fetched on demand, so you can
-  reference another catalog attached to the workspace without switching your active one;
-- after `schema.` — the **tables** in that schema;
-- after a table or alias and a dot (e.g. `s.` for `FROM sales s`) — that table's **columns**, with their types. Aliases
-  are resolved from the statement's `FROM`/`JOIN`;
-- inside `SELECT`, `WHERE`, `GROUP BY`, `ORDER BY` and similar — **columns** from every table in scope, including each
-  table in a `JOIN`. When more than one table is joined, each column shows the table it came from so identically-named
-  columns can be told apart. Columns come first; DuckDB **functions** and **keywords** are held back until you start
-  typing, so they don't bury the column list;
-- after `CAST(… AS` or in a column definition — DuckDB **data types**.
+- After `FROM` or `JOIN`: catalogs, schemas and tables.
+- After `catalog.` or `catalog.schema.`: that catalog's schemas and tables, so you can use another catalog without
+  switching.
+- After a table or alias and a dot (`s.` for `FROM sales s`): that table's columns and types.
+- In `SELECT`, `WHERE`, `GROUP BY`, `ORDER BY` and similar: the columns of every table in scope, each marked with its
+  table when several are joined. Functions and keywords appear once you start typing.
+- After `CAST(… AS`, or in a column definition: DuckDB types.
 
-Functions show their signature and, where DuckDB provides one, a usage example; typing the opening parenthesis brings up
-**parameter hints**. Function, keyword, and type suggestions are read from the agent you've selected, so a connected
-agent makes them richer — but keyword completion still works before an agent connects. Columns are fetched on demand the
-first time you reference a table and appear as soon as they load. Running a `CREATE`, `ALTER`, or `DROP` refreshes the
-catalog automatically, so a newly created or altered object is available to complete against right away — no manual
-catalog refresh needed.
+Functions show their signature and an example, and typing `(` shows parameter hints. Functions, keywords and types come
+from the selected agent's DuckDB version, so a newer runtime's functions appear once you switch to it. Running a
+`CREATE`, `ALTER` or `DROP` refreshes the catalog, so a new object completes at once. The editor does not underline SQL
+errors.
 
-This release does autocomplete and signature help only; it does not flag SQL errors with red underlines.
+### Browse the catalog while you write
 
-## Browse the catalog while you write
+The catalog tree beside the editor only browses; clicking a table never changes your SQL. Hover a table for its row
+count, size and columns. Type two characters in its search box to search every catalog the workspace attaches, on the
+server, with each match opened out. See [Manage catalogs](../data/manage-catalogs.md#browse).
 
-The catalog tree beside the editor is read-only browsing — clicking a table never changes what's in your worksheet, so
-exploring the catalog never risks losing what you've typed. Hover a table for a preview card (row count, size,
-columns); to reference it in your query, **drag it onto the editor** — the fully-qualified `catalog.schema.table` name
-drops in wherever you release it, leaving the rest of your SQL untouched.
+## Read the result
 
-The tree starts collapsed and remembers what you expand, per workspace, in this browser; **Collapse all** (the
-double-chevron in its header) closes everything again. To find something, type at least two characters in the search
-box: the search runs on the server across every catalog attached to the workspace — including ones you have not
-expanded — and shows each match with its catalog and schema opened out. Clear the box to return to the tree as you left
-it. See [Manage catalogs](../data/manage-catalogs.md#browse).
+- The result appears below the editor, loaded a page at a time, with each column's type in its header.
+- Click a header to sort. Sorting reorders only the rows loaded so far; until all are loaded the count reads
+  **Sorted: N of M loaded**.
+- Each tab shows its own last result. After a reload it comes back for 24 hours, while the agent keeps it.
+- *From an earlier version of this query* means you have edited the SQL since it ran.
+- **Copy** and **Download CSV** take the rows loaded so far. For a whole large result, read it as Parquet or Arrow
+  through the [REST API](../reference/rest-api.md#whole-results-as-arrow-or-parquet).
+- The **Profile** tab shows how the query ran; see [Read query profiles](query-profiles.md).
+- A result answered from the [result cache](result-cache.md) shows a **Cached** badge and a **Re-run without cache**
+  action.
 
-## Read results
-
-- Results appear in a grid below the editor, paged on demand so large results never load whole. Rows are numbered and
-  numeric columns are right-aligned, so magnitudes line up.
-- Results belong to the worksheet that produced them: switching tabs shows each tab's own last run, and a new tab starts
-  empty. After a reload the last run's results come back for as long as the agent keeps them (24 hours); after that the
-  pane says they have expired and to run the query again.
-- In a workspace with a scoped catalog, reading a result needs the grants that running its query would (see
-  [Permissions](../access/scoped-access.md#opening-a-result-needs-the-same-grants-as-running-its-query)). Without
-  them, the results pane and the query profile say you don't have access to the data the query read.
-- When you edit the SQL after running it, a *From an earlier version of this query* marker appears beside the results.
-- Each column header shows its data type; hover a header for the full type when it's too long to fit.
-- Click a column header to sort by that column. Sorting only reorders the rows already loaded — if
-  not all rows have loaded yet, the row count switches to **Sorted: N of M loaded** as a reminder to
-  page through the rest before treating the order as final.
-- If a query fails, the full error message shows in the results pane in place of the grid.
-- Export the current result to **CSV**.
-- After a run, open the **Profile** tab to inspect performance — see [Read query profiles](query-profiles.md).
-
-## Allowed SQL
-
-Worksheets accept data statements (`SELECT`, `INSERT`, `UPDATE`, `DELETE`, `TRUNCATE`, `MERGE`), read-only
-introspection (`DESCRIBE`, `SHOW`, `SUMMARIZE`), and catalog DDL (`CREATE`, `ALTER`, `DROP`). Statements that could
-escape the sandbox, such as `ATTACH`, `COPY`, `LOAD`, `SET` and `EXPLAIN`, are rejected. See
-[SQL support](../reference/sql-support.md).
-
-## Inspect your tables
-
-Every catalog has a built-in, read-only `information_schema` you can query like any other table — list what's in a
-catalog, then `DESCRIBE` a table to see its columns:
+To list what a catalog holds, or a table's columns, query them:
 
 ```sql
 SELECT table_schema, table_name FROM information_schema.tables WHERE table_catalog = 'sales';
-DESCRIBE sales.analytics.events;
+DESCRIBE sales.analytics.orders;
 ```
 
-In the catalog tree it appears under each catalog as a lock-marked **`information_schema`** node badged *read-only*;
-expand it to browse the supported views. It is not a stored schema: it is computed when you query it and cannot be
-written to.
-
-In a workspace with a [scoped catalog](../access/scoped-access.md) these views are refused, because they
-cannot be filtered by grant; `DESCRIBE` still works for a table you can read. See
-[Inspecting metadata](../reference/sql-support.md#inspecting-metadata-information_schema) for the full surface.
+`information_schema` appears in the catalog tree under each catalog, marked *read-only*. In a workspace with a
+[scoped catalog](../access/scoped-access.md) it is refused, and `DESCRIBE` works for tables you can read; see
+[Inspecting metadata](../reference/sql-support.md#inspecting-metadata-information_schema).
 
 ## Save for later
 
-Worksheets are private drafts; a **saved query** is the named version the whole workspace can open and schedule. Press
-**Ctrl+S** (or **Save…**) to save the worksheet as one — with a name and an optional default agent. The worksheet stays
-linked to it: from then on **Ctrl+S** or **Save** updates that saved query in place, and a dot on the tab shows when
-the worksheet has changes the saved query does not. See [Saved queries](saved-queries.md). Every run is recorded in the
-workspace [history and audit log](../operations/monitoring.md).
+Press **Ctrl+S**, or **Save…**, to save the worksheet as a [saved query](saved-queries.md): a named query the whole
+workspace can open and [schedule](schedule-queries.md).
 
 ## Find an earlier run
 
-**History** lists the runs in your workspace. It opens on **your queries from the last 7 days** — where your attention
-usually is. The filters say so rather than leaving you to infer it: the user picker in the header shows your own name
-and the time control below it reads *Last 7 days*, and changing either widens the view. **Clear filters** returns
-everything to that default. If nothing matches, the empty state names the scope that is active, so an empty table is
-never ambiguous between "no history" and "narrow filter".
+**History**, in the left navigation, lists the runs in the workspace. It opens on **your runs from the last 7 days**;
+the user picker shows your name and the time control reads *Last 7 days*. Change either to widen the view, or click
+**Clear filters** to return to it. The list is paged: **Load more** adds the next page. There is no total count.
 
-A run that never reached its agent — because the agent had gone offline — is listed too, as failed with *Agent not
-connected*, so an error in a worksheet always has a matching entry here.
+Click a run to open its profile and full SQL. Every filter is kept in the URL, so you can bookmark a view or send it to
+a colleague; it opens on the first page.
 
-Runs sent by a tool rather than the web app say which tool. A **Client** column appears once such a run is in view,
-naming the tool and its version from its `User-Agent`: `dbt-duckhaven`, `dlt-duckhaven`, `duckhaven-cli`, or
-`duckhaven-assistant` and `duckhaven-mcp` for runs made by the [assistant](../ai/assistant.md) and the
-[MCP server](../ai/mcp-server.md). A tool can also attach **tags** to a run, free-form `key=value` labels such as
-the dbt model or dashboard it was for, shown beneath the SQL. The assistant tags each run with its conversation, and
-the MCP server with the agent that called it. Your own worksheet runs and scheduled runs carry neither.
-The Client column belongs to a workspace's history; the cross-workspace view an admin opens does not show it, though
-tags still appear there.
+| Filter | What it does |
+|---|---|
+| **Search** | Text anywhere in the SQL, ignoring case. `%` and `_` match themselves |
+| **Query ID** | A full id or its first characters, such as the short id the table shows |
+| **Time** | Last hour, 24 hours, 7 days, 30 days, all time, or a range. Presets roll from when you opened the page and show the date they start |
+| **Status**, **Statement type** | Several values at once |
+| **Slower than** | A number and a unit |
+| **Origin** | **Interactive**, **Scheduled** or **Connection** (a [SQL session](sql-sessions.md)) |
+| **Sort** | By *Started* or *Duration*, over every matching run |
 
-The list is paged. **Load more** appends the next page and the count tells you how many rows you are looking at —
-DuckHaven does not claim a total it has not counted, because counting every row behind a filtered page is a second
-pass over the whole table for a number that goes stale the moment somebody runs a query.
+- **Duration** is the time the agent spent running the statement. For a run that failed before the agent reported one,
+  it is the time from submission to failure, so a query that hung and died counts as slow. A run still going has no
+  duration, and sorts last.
+- **Statement type** is set when the run is recorded: `select`, `insert`, `create` and so on, or `other` for
+  statements like `USE`. A run whose SQL did not parse has no type, and is hidden only when you filter by type.
+- **Client** appears once a run from a tool is in view: `dbt-duckhaven`, `dlt-duckhaven`, `duckhaven-cli`, or
+  `duckhaven-assistant` and `duckhaven-mcp` for the [assistant](../ai/assistant.md) and the
+  [MCP server](../ai/mcp-server.md). **Tags** a tool attached appear beneath the SQL.
 
-### Narrowing the list
+Every member sees every member's runs in the workspace. Filtering to **another person's** runs, or reading **across
+workspaces**, needs `queries:admin`. Table previews, metadata lookups and the [maintenance](../data/maintenance.md)
+scanner's probes are never listed.
 
-- **Search** matches text anywhere in the statement, ignoring case. `%` and `_` match themselves; they are not
-  wildcards.
-- **Query ID** accepts a full id or just the start of one, so you can paste the shortened id the tables show. It only
-  ever finds runs you could already see — knowing an id is not a way into another workspace.
-- **Time** offers the last hour, 24 hours, 7 days, 30 days, all time, or a range you pick. Each preset names the date
-  it resolves to, so there is no guessing whether "last 7 days" means seven calendar days or a rolling week: it is
-  rolling, from the moment you opened the page.
-- **Status** and **Statement type** both take several values at once.
-- **Slower than** takes a number and a unit.
-- **Sorting** by *Started* or *Duration* runs on the server, over the whole result set — not just the page in front of
-  you.
+## If it goes wrong
 
-Every one of these lives in the URL, so a narrowed view can be bookmarked or pasted to a colleague and will come back
-the same. Your position within the list does not: a shared link opens on the first page.
+Messages are listed in [Troubleshoot queries](troubleshooting.md). The common ones:
 
-### What "duration" means here
+- **The query fails at once with a 422.** The statement is not allowed; the message names it. See
+  [SQL support](../reference/sql-support.md).
+- **"Agent not connected", with Switch agent.** The agent went offline. Click **Switch agent**, or pick another in the
+  agent chip. The run is still listed in History, as failed.
+- **"These results have expired: agents keep them for 24 hours. Run the query again."** Run it again.
+- **"The agent that ran this query is offline, so its results can't be read until it reconnects."** Wait for the agent,
+  or run the query on another.
+- **"You don't have access to the data this query read, so its results can't be shown."** A
+  [scoped catalog](../access/scoped-access.md#opening-a-result-needs-the-same-grants-as-running-its-query) refuses the
+  result to you; ask for a grant on the tables it read.
+- **The worksheet says it changed elsewhere.** You edited it in another window. Choose **Load latest** to take that
+  version, or **Keep mine** to save over it.
 
-For a run that finished normally it is the time the agent spent executing the statement.
+## Related
 
-For a run that **failed before the agent could report one**, it is the wall-clock time between submission and failure.
-This matters for the **Slower than** filter: a query that hung for two minutes and then died is exactly what you are
-looking for when you hunt slow queries, and filtering on execution time alone would hide every failure.
-
-A run that has not finished is excluded from the duration filter and sorts last under **Duration**. Its duration is
-not yet known, which is not the same as zero.
-
-### Statement types, and rows that have none
-
-Each run is classified when it is recorded — `select`, `insert`, `create`, and so on, plus `other` for statements like
-`USE` and `SET` that fit nothing more specific.
-
-Runs recorded before DuckHaven classified statements, and statements its parser could not read, have **no type at
-all**. That is deliberately different from `other`: `other` means "we understood it and nothing fits", no type means
-"we do not know". Such runs stay visible in the list and disappear only when you filter by type — a filter never
-claims a run is something it was never shown to be.
-
-### Who can see what
-
-Anyone in a workspace can narrow that workspace's history however they like, including to their own runs and to a time
-window. The list shows every member's runs in the workspace; filtering it to **another user's** runs, or reading
-**across workspaces**, needs the `queries:admin` permission.
-
-Internal machinery is never listed: table-preview queries, metadata lookups, and the
-[Lakehouse-health](../data/maintenance.md) scanner's per-table probes. Statements run inside a
-[SQL session](sql-sessions.md) — dbt and dlt work — are real user work and do appear.
+- [Saved queries](saved-queries.md) — share SQL with the workspace.
+- [Query execution](query-execution.md) — what happens after **Run**.
+- [Read query profiles](query-profiles.md) — why a query was slow.
+- [Troubleshoot queries](troubleshooting.md) — every message, and what to do.

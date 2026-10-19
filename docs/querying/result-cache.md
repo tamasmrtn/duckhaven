@@ -1,16 +1,24 @@
+---
+type: concept
+---
+
 # Result cache
 
-Analytical workloads repeat themselves. The same dashboard query, the same saved query on a schedule, the same question
-asked again by an AI assistant: across large warehouse fleets, most queries are exact repeats of one asked minutes
-earlier. When nothing the query reads has changed since, running it again only reproduces the answer DuckHaven already
-has.
+The result cache answers a repeated query from an earlier run's result when nothing it reads has changed, so it does
+not run again.
 
-The **result cache** answers such a query from the earlier run's result instead. Nothing is dispatched to an agent: the
-query is recorded as an ordinary run that finished at once, and its rows are read from the result that was kept. A
-cached answer is never stale, because the cache asks each table's catalog whether it changed — so it stays correct
-even when Spark, PyIceberg, dlt or any other engine writes to your tables behind DuckHaven's back.
+Analytical workloads repeat themselves: the same dashboard query, the same saved query on a schedule, the same question
+asked again by an AI assistant. When nothing the query reads has changed, running it again only reproduces an answer
+DuckHaven already has. A cached answer dispatches nothing to an agent: the query is recorded as an ordinary run that
+finished at once, and its rows are read from the kept result. It is never stale, because the cache asks each table's
+catalog whether it changed, so it stays correct even when Spark, PyIceberg, dlt or any other engine writes to your
+tables.
 
-The cache is **on by default**. It can be turned off for the whole deployment, per workspace, per SQL session, or for a
+!!! info "Availability"
+    On by default in every deployment and every catalog kind. The cache is shared by everyone in a workspace, and every
+    hit is checked against the caller's own access.
+
+It can be turned off for the whole deployment, per workspace, per SQL session, or for a
 single run — see [Turning it off](#turning-it-off).
 
 ## When a query is answered from the cache
@@ -22,9 +30,8 @@ A run is served from the cache when all of these hold:
 - **It would run in the same context**: the same catalog and schema for unqualified table names, the same catalogs
   attached for it (the ones it names; see [what a query attaches](query-execution.md#which-catalogs-a-query-attaches)),
   the same DuckDB [runtime](../compute/runtimes.md), the same time zone (which decides how `TIMESTAMPTZ` values read),
-  and an agent that writes results the same way (agents from before exact `HUGEINT` results round those values; see
-  [Column types](query-execution.md#column-types)). Binding a catalog the query never mentions to the workspace, or
-  removing one, leaves its result in the cache.
+  and an agent that writes results the same way (see [Column types](query-execution.md#column-types)). Binding a catalog
+  the query never mentions to the workspace, or removing one, leaves its result in the cache.
 - **Every table it reads is unchanged** since the run whose result is kept, or changed only by commits that rewrote
   files without changing the data (see [Compaction does not invalidate](#compaction-does-not-invalidate)).
 - **The caller may read those tables.** The cache is shared by everyone in the workspace, but the right to read a table
@@ -32,7 +39,7 @@ A run is served from the cache when all of these hold:
   run.
 - **The kept result is still there** (see [Where results are kept](#where-results-are-kept-and-for-how-long)).
 
-Otherwise the query simply runs, as it would without a cache. When a run that could be cached finishes, its result is
+Otherwise the query runs, as it would without a cache. When a run that could be cached finishes, its result is
 kept for the next time.
 
 ## Why a cached answer is never stale
@@ -98,8 +105,8 @@ change what a statement means. A session statement is served from the cache only
 - **The session has created nothing session-local.** A temporary table, view or macro can hide a catalog table of the
   same name, a `search_path` widens where names are found, and an `ATTACH` adds a catalog. After any of these the
   session stops using the cache for good (`session_state`).
-- **No other statement of the session is still running** (`session_busy`), because its effect on the session is not
-  known yet.
+- **No other statement of the session is still running** (`session_busy`), because its effect on the session is
+  unknown until it finishes.
 
 `USE` and `SET TimeZone` do *not* stop caching. After every statement the agent reports the catalog, schema and time
 zone the connection is in, and the next statement is keyed in that context — exactly like a one-shot query, so a
@@ -151,7 +158,7 @@ Turn it off when measuring query performance: a benchmark that repeats its queri
 !!! note "Not this"
     The cache reuses a result only for the *same* query. It does not answer one query from another's result (a
     narrower filter, a coarser grouping), reuse intermediate results, or wait for an identical query that is already
-    running. `AT (VERSION => …)` time travel and views are not cached yet.
+    running. `AT (VERSION => …)` time travel and views are not cached.
 
 ## Related
 

@@ -63,7 +63,7 @@ run for a while accumulates stopped agents; they stay listed, not deleted, but o
 seconds, minutes, hours or days.
 
 In a worksheet the agent picker groups agents the same way — see
-[Pick an agent](../querying/run-queries.md#pick-an-agent).
+[Pick an agent](../querying/run-queries.md#pick-an-agent-and-a-catalog).
 
 **Compute** sits in the main navigation rather than under Admin, because watching an agent is not an administrative
 act: anyone granted `use` on an agent is entitled to its status and monitoring page, and needs no global permission to

@@ -1,89 +1,99 @@
+---
+type: how-to
+---
+
 # Read the session audit trail
 
-When dbt or dlt runs against DuckHaven it opens a [SQL session](sql-sessions.md) and executes many
-statements through it. A single `dbt run` can be hundreds of statements. Read one at a time in the query history they
-are noise; read as one session they are a build you can follow, blame, and time.
+Use the **Connections** screen to see which SQL sessions are holding agents, what a dbt or dlt run did, and why a
+session ended.
 
-The **Connections** screen is where you do that. Open it from the left nav.
+When dbt or dlt runs against DuckHaven it opens a [SQL session](sql-sessions.md) and runs many statements through it;
+one `dbt run` can be hundreds. Read one at a time in History they are noise. Read as one session they are a build you
+can follow, time and attribute.
 
-!!! note "Connections must be enabled"
-    The whole session surface is off unless the operator sets `SQL_SESSIONS_ENABLED=true` on the API. If it is off,
-    Connections says so instead of showing an empty list.
+## Before you begin
 
-## Which sessions are running right now
+- **You need:** membership of the workspace. Force-closing another member's session needs the `queries:admin`
+  permission.
+- **Enabled by:** `SQL_SESSIONS_ENABLED=true`. Without it, the screen says "SQL connections are not enabled".
 
-The **Live** tab lists sessions that are still open. This is an operational view, not a historical one, and it exists
-because **an open session holds one of its agent's admission slots for its entire life** — not just while a statement
-is running. A forgotten dbt shell or a client that crashed without closing its connection quietly reduces how much
-interactive work that agent can accept. If queries are queueing on an agent that looks idle, this is the first place to
-look.
+## See which sessions are holding agents
 
-Each row shows who opened the session, which client did it, which agent is holding it, its active catalog, how many
-statements it has run, and when it was last active. A session with an old **Last active** and a low statement count is
-the classic leak.
+Open **Connections** in the left navigation. The **Live** tab lists sessions that are still open.
 
-The **Client** column is the tool itself — `dbt-duckhaven 0.1.0`, `dlt-duckhaven 0.2.0`. DuckHaven reads this from the
-connection's `User-Agent` when the session opens, so it is recorded whether or not the client thought to identify
-itself. Sessions opened by a connector older than `duckhaven-sql-connector` 0.3.0 show `duckhaven-sql-connector` here
-instead of the workload — those clients led their `User-Agent` with their own token, so historical audit rows are
-attributed to the connector rather than the dbt or dlt run that opened them.
+An open session holds memory on its agent for its whole life, not only while a statement runs. A forgotten dbt shell,
+or a client that crashed without closing, lowers how much work that agent accepts. If queries queue on an agent that
+looks idle, look here first.
 
-A session showing **pending** has no agent yet: [compute is starting](sql-sessions.md#cold-start) and it
-will bind to that agent when it registers. One or two during a cold start is normal. A pile of them means compute is
-slow to arrive or is not arriving at all — check the Compute page for an agent stuck `provisioning`.
+Each row shows the **Principal** who opened it, the **Client**, the **Agent** holding it, its **Catalog**, how many
+**Statements** it has run, and when it was **Last active**. An old **Last active** with few statements is the usual
+sign of a leaked session.
 
-### Force-closing a session
+**Client** is the tool, such as `dbt-duckhaven 0.5.0` or `dlt-duckhaven 0.6.0`, read from the connection's
+`User-Agent` when the session opened. Sessions from `duckhaven-sql-connector` before 0.3.0 show the connector instead
+of the tool that used it.
 
-If you hold the `queries:admin` permission, a **Force close** button appears on each live row. It tells the agent to
-drop its held connection and release the admission slot.
+A **pending** session has no agent: [compute is starting](sql-sessions.md#cold-start), and the session takes the
+agent when it registers. One or two during a cold start are normal. Many mean compute is slow to arrive or is not
+arriving; check **Compute** for an agent stuck `provisioning`.
 
-This is not a graceful pause. Anything the session still has in flight fails, and the client must open a new session to
-carry on — a mid-flight `dbt run` will report errors. Use it to reclaim capacity from a session whose client is
-genuinely gone, not to interrupt work someone is waiting on.
+### Force-close a session
 
-## What a session did
+With `queries:admin`, each live row has **Force close**. It tells the agent to drop the connection and release its
+memory. Anything in flight fails, and the client must open a new session, so a running `dbt run` reports errors. Use it
+for a session whose client is gone, not to interrupt work someone is waiting on.
 
-The **All** tab lists every session in the workspace, newest first. Click any row — live or finished — to open it.
+## Follow what a session did
 
-The header answers *who and where*: the principal, the client, the agent, the active catalog, the open/last-active/
-closed timestamps, and the staging prefix the session was allowed to load from.
+The **All** tab lists every session in the workspace, newest first. Click a row to open it.
 
-Below it is the **statement timeline**: every statement the session ran, numbered in **execution order** rather than
-newest-first, with its status, row count, duration, and error. Reading top to bottom shows the build as it actually
-happened — where it sped up, where it stalled, and which statement was the first to fail. Click any statement to open
-it in the usual [query profile](query-profiles.md) view.
+The header shows the principal, client, agent and catalog, when the session opened, was last active and closed, and its
+**Staging prefix**. Below it, the statement list shows every statement in the order it ran, with its status, rows,
+duration and error. Read it top to bottom to see where a build slowed down or which statement failed first. Click a
+statement to open its [profile](query-profiles.md).
 
-## Why a session ended
+## Find out why a session ended
 
-A finished session's status tells you it stopped; the **Ended because** column tells you why, which is usually the
-question you actually have. In particular, "expired" covers two different stories that the UI keeps apart:
+**Ended because** gives the reason:
 
-- **closed by client** — the client shut the session down cleanly. This is what a healthy `dbt run` looks like.
-- **reaped — idle** — nobody ran a statement for the configured idle timeout. The client crashed, was killed, or
-  forgot to close. Harmless once, worth investigating if it is routine.
-- **reaped — max lifetime** — the session outlived the maximum lifetime, however busy it was. Expected for genuinely
-  long jobs; if a normal build hits it, the cap is too low for your workload.
-- **agent disconnected** — the agent holding the connection dropped. Everything in flight died with it, and this
-  points at the agent, not the client.
-- **open timed out** / **failed to open** — the session never became usable. Usually an overloaded or misconfigured
-  agent; the session's **Error** field has the detail.
+| Shown as | What happened |
+|---|---|
+| closed by client | The client closed it. A healthy `dbt run` ends this way |
+| reaped — idle | No statement for the idle timeout: the client crashed, was killed or forgot to close. Look into it if it is routine |
+| reaped — max lifetime | The session outlived the maximum lifetime. Expected for long jobs; if a normal build hits it, raise `SQL_SESSION_MAX_LIFETIME_S` |
+| agent disconnected | The agent dropped; everything in flight failed. Look at the agent, not the client |
+| open timed out, failed to open | The session never became usable. The session's **Error** has the detail |
+| compute did not start in time, no compute became available | [Elastic compute](../compute/elastic-compute.md) did not start an agent in time, or at all |
+| reaped by agent | The agent expired a session the API had lost track of |
 
-## Finding a session from the history
+## Go from a statement to its session
 
-The [query history](query-execution.md) still lists every statement individually — sessions do not hide
-anything from it. Three additions connect the two views:
+History lists every session statement too. To connect the two:
 
-- The **origin filter** at the top of History narrows to **Interactive**, **Scheduled**, or **Connection** runs. Picking
-  **Connection** leaves only statements that ran inside a session.
-- Once session statements are in view, a **Connection** column appears. Clicking a statement's session id jumps to that
-  session, so you can go from "this one query looks wrong" to the whole build it came from in one click.
-- A **Client** column names the tool behind each statement. A statement takes its session's client, so it reads the same
-  as the session's Client on the Connections screen.
+1. In **History**, set the origin filter to **Connection** to keep only statements run in sessions.
+2. Click a statement's session id in the **Connection** column to open its session.
 
-## What this does not tell you yet
+The **Client** column names the tool for each statement, the same as its session's.
 
-Attribution stops at the tool unless the tool says more. DuckHaven records that `dbt-duckhaven 1.2.0` opened a session
-and what SQL it ran, and every statement carries the session's client. Which dbt model or invocation produced a given
-statement is known only if the client attaches it as a **tag** (`"tags": {"dbt.model": "orders"}` on the statement),
-which History shows beneath the SQL. `dbt-duckhaven` and `dlt-duckhaven` do not send tags yet, so for now the session
-boundary is the unit of attribution: one session is one client's run.
+## If it goes wrong
+
+### "SQL connections are not enabled"
+
+Sessions are off on this deployment. An operator sets `SQL_SESSIONS_ENABLED=true` in `.env` and runs
+`docker compose up -d`.
+
+### Force close is missing
+
+You do not hold `queries:admin`. Ask an admin, or ask the session's owner to stop their client.
+
+### The statements do not say which dbt model they belong to
+
+A client can attach **tags** to each statement, such as `"tags": {"dbt.model": "orders"}`, which History shows beneath
+the SQL. `dbt-duckhaven` and `dlt-duckhaven` do not send tags, so for their runs the session is the unit you can
+attribute: one session is one run of the tool.
+
+## Related
+
+- [SQL sessions](sql-sessions.md) — what a session is and what it holds.
+- [SQL sessions API](../reference/sql-sessions-api.md#close-reasons) — the close reasons as the API reports them.
+- [Run queries](run-queries.md#find-an-earlier-run) — History.

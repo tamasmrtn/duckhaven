@@ -32,28 +32,33 @@ pages:
 - path: querying/run-queries.md
   title: Run queries
   section: Querying
-  summary: Day-to-day querying in worksheets.
+  summary: Write SQL in a worksheet, run it on an agent you choose, read the result, and find earlier
+    runs in History.
 - path: querying/saved-queries.md
   title: Saved queries
   section: Querying
-  summary: Save a frequently used query so your team can recall and run it later.
+  summary: Save a worksheet's SQL under a name so everyone in the workspace can open it, run it and
+    schedule it.
 - path: querying/schedule-queries.md
   title: Schedule queries
   section: Querying
-  summary: Run a saved query on a cron schedule, and read its run history.
+  summary: Run a saved query automatically on a cron schedule, such as every night at 02:00, with
+    every run recorded.
 - path: querying/query-profiles.md
   title: Read query profiles
   section: Querying
-  summary: Inspect operator graphs, timing, and spills.
+  summary: Open a query's profile to see where its time and memory went, and whether it was slow because
+    it waited or because it worked.
 - path: querying/query-execution.md
   title: Query execution
   section: Querying
-  summary: Queueing, memory estimation and concurrency, and the column types and exact values a result
-    carries.
+  summary: A query is checked by the API, sent to an agent, waits until the agent has memory to start
+    it, runs, and is kept as a result file read a page at a time.
 - path: querying/result-cache.md
   title: Result cache
   section: Querying
-  summary: Answering a repeated query from an earlier run's result while nothing it reads has changed.
+  summary: The result cache answers a repeated query from an earlier run's result when nothing it
+    reads has changed, so it does not run again.
 - path: querying/sql-sessions.md
   title: SQL sessions
   section: Querying
@@ -62,7 +67,8 @@ pages:
 - path: querying/session-audit.md
   title: Read the session audit trail
   section: Querying
-  summary: Trace what a dbt or dlt run did, on the Connections screen.
+  summary: Use the Connections screen to see which SQL sessions are holding agents, what a dbt or
+    dlt run did, and why a session ended.
 - path: data/catalogs.md
   title: Catalogs
   section: Data & storage

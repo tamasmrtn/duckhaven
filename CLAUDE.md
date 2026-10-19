@@ -158,11 +158,11 @@ If only one layer changed, scope the test command:
 
 ## 7. Documentation
 
-**Every new feature, new concept, or change to an existing capability ships with a docs update — in the same PR as the
-code.**
+**A change a user, operator, or contributor can observe ships with a docs update in the same PR.** The docs site
+(`docs/`, MkDocs Material) has two kinds of reader: people, who mostly arrive with one question and scan, and the
+in-product assistant and MCP server, which search these pages and quote them at runtime.
 
-The documentation website lives in `docs/` (MkDocs Material). When behavior that a user, operator, or contributor can
-observe changes, update the page that describes it. Map the change to the right place:
+Put the change on the page for its subject:
 
 - Querying, worksheets, SQL sessions, results, history → `docs/querying/`
 - Catalogs, tables, DuckLake, storage, maintenance → `docs/data/`
@@ -170,27 +170,27 @@ observe changes, update the page that describes it. Map the change to the right 
 - AI assistant, MCP → `docs/ai/`
 - Identity, roles, grants, tokens → `docs/access/`
 - Agents, elastic compute, runtimes → `docs/compute/`
-- Deploy and day-2 behavior → `docs/deployment/` or `docs/operations/`
-- Config, SQL, API, or operator-script reference → `docs/reference/`
-- New first-run flow → `docs/getting-started/`
+- Install, upgrade, host setup → `docs/deployment/`; observing and troubleshooting the deployment → `docs/operations/`
+- Tables that span subjects (configuration, SQL, API, errors, permissions) → `docs/reference/`
+- First-run flow → `docs/getting-started/`
 
-How to write it:
+The writing rules are in `.claude/rules/docs.md`, which loads when you edit `docs/`, and the templates are in
+`docs/developer/writing-docs.md`. The essentials:
 
-- **Surgical (§3).** Touch only the page(s) the change affects; match the existing structure, tone, and cross-links.
-  Don't restructure or rewrite unrelated docs.
-- **For humans, not the compiler.** These pages are read by people who don't know the code. Explain in plain prose
-  *what* the feature does and *why* it matters — enough to understand it without reading the source — not a terse
-  changelog line.
-- **Honest about scope (§2).** If something is partial, experimental, or not yet shipped, say so (an admonition works
-  well). Never document behavior that does not exist.
+- **Edit the page that owns the fact, in place.** Describe current behavior as if it had always worked this way;
+  history belongs in the release notes.
+- **One page type per page** (tutorial, how-to, concept, reference, troubleshooting), following its template.
+- **When a change alters a fact** — a default, a limit, an allowed statement, a role — search `docs/` for the old
+  fact and fix every page that states it.
+- **Moving or renaming a page** needs a `redirect_maps` entry in `mkdocs.yml` and `make docs-index`. Never hand-edit
+  `docs/reference/cli.md`; it is generated in duckhaven-clients.
+- **Be honest about scope.** Say plainly what is partial or unsupported; never document behavior that does not exist.
 
 **Every plan that changes observable behavior must include a documentation step:**
 
 ```
-N. Update docs/<section>/<page>.md for the new behavior → verify: mkdocs build --strict
+N. Update docs/<subject>/<page>.md → verify: make docs-check && make docs-index
 ```
-
-`mkdocs build --strict` must pass — no broken internal links or anchors.
 
 ---
 

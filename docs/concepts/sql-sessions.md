@@ -455,9 +455,11 @@ the same visibility the query history has always had, and it is deliberate: sess
 consume shared agent capacity, so "who is running what right now" is workspace-level information. If you need SQL that
 one member cannot read, it belongs in a different workspace.
 
-Two capabilities are narrower. Filtering sessions by principal, agent, or time requires the `queries:admin` permission,
-matching the query history's audit filters. Force-closing someone else's session — which drops its connection and fails
-whatever it had in flight — is likewise admin-only.
+Using a session is narrower than seeing it. Only the member who opened a session can run statements in it or stage
+files for it: each statement runs, is checked and is recorded as that member, so no one else may act through it.
+Filtering sessions by principal, agent, or time requires the `queries:admin` permission, matching the query history's
+audit filters. Force-closing someone else's session — which drops its connection and fails whatever it had in flight —
+is likewise admin-only.
 
 Sessions and their statements are kept for as long as the rows are: there is **no** retention sweep for them today, so
 plan for the table to grow with your session volume.

@@ -39,7 +39,7 @@ touch any data you must be a **member** of the workspace, with one role:
 |---|---|
 | `reader` | Browse schemas and tables; run queries; view history |
 | `writer` | Everything a reader can, plus create/modify/drop tables and run DDL |
-| `owner` | Everything a writer can, plus manage workspace membership |
+| `owner` | Everything a writer can, plus manage membership, the workspace's settings and its catalogs (attach, detach, access mode and scoped grants), publish semantic models, and purge imported lineage |
 
 By default, this role is your access to **every** schema and table in **every** catalog
 the workspace attaches. For most teams, layers 1 and 2 are all they ever configure —
@@ -94,7 +94,7 @@ requires a grant, which you give to a person **or to a whole workspace**.
 | Tier | Grants |
 |---|---|
 | `use` | Target the agent for queries, sessions, and schedules; see its status and monitoring page |
-| `operate` | Everything `use` can, plus restart, terminate, and force disconnect it |
+| `operate` | Everything `use` can, plus restart, terminate, force disconnect, and revoke its credential |
 | `admin` | Everything `operate` can, plus delete it and manage its access |
 
 A restricted agent you hold no grant on is **invisible**: it never appears in the
@@ -170,4 +170,4 @@ is only a reader, and `finance` is invisible to her entirely.
 - [Identity & permissions](../concepts/permissions.md) — the full authorization model,
   including how grants resolve and what is out of scope.
 - [Service accounts & tokens](service-accounts.md) — non-human principals get the same
-  three layers.
+  four layers.

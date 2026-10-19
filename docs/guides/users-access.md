@@ -1,8 +1,9 @@
 # Manage users & access
 
-This guide is the **how-to** for the first two of DuckHaven's [three access layers](access-levels.md): a user's
+This guide is the **how-to** for the first two of DuckHaven's [four access layers](access-levels.md): a user's
 **global role** (what they can administer) and their **workspace membership** (which workspaces they can enter). The
-third layer — fine-grained data grants inside a *scoped* catalog — is managed from the catalog view; see
+third layer — fine-grained data grants inside a *scoped* catalog — is managed from the catalog view, and the fourth —
+access to a restricted agent — from the agent's **Access** tab on the **Compute** page; see
 [How access works](access-levels.md) for the model and [Identity & permissions](../concepts/permissions.md) for the
 full reference.
 
@@ -42,7 +43,7 @@ Access to a workspace's data starts with adding a user to it with a role:
 |---|---|
 | `reader` | Browse schemas and tables; run queries; view history |
 | `writer` | Reader, plus create/modify/drop tables and run DDL |
-| `owner` | Writer, plus manage workspace membership |
+| `owner` | Writer, plus manage membership, the workspace's settings and catalogs, publish semantic models, and purge imported lineage |
 
 There are two ways to manage membership:
 

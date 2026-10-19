@@ -186,8 +186,9 @@ Query result rows (`/queries/{query_id}/rows`) use a different envelope again �
 because a result grid is not a resource collection.
 
 !!! note "Private by design"
-    DuckHaven has no public ingress; the API is reachable only on your private network (Tailscale recommended). The
-    agent control channel is a separate WebSocket at `/agents/connect`, not part of this REST surface.
+    DuckHaven is designed to be reached over a private network (Tailscale recommended), not exposed to the public
+    internet; see [Install](../deployment/install.md). The agent control channel is a separate WebSocket at
+    `/agents/connect`, not part of this REST surface.
 
 ## Migrating to `api_version` 3
 
@@ -531,7 +532,7 @@ and are excluded only when `statement_type` is supplied.
 ### Permissions
 
 Any workspace member may use every filter above against their own workspace, including `since`/`until` and their own
-`user_id`. A `user_id` other than the caller's own, and `all_workspaces`, require the query-admin permission and are
+`user_id`. A `user_id` other than the caller's own, and `all_workspaces`, require the `queries:admin` permission and are
 otherwise `403`.
 
 Runs whose `origin` is `sample`, `metadata` or `maintenance` are never returned.
@@ -704,7 +705,7 @@ The provider name `execution` is reserved for lineage DuckHaven derives from SQL
 ## Catalog storage migrations
 
 Move a catalog to a different [storage backend](../concepts/storage-backends.md). All endpoints require the catalog's
-creator or an admin with the catalogs permission. See
+creator or an admin with the `catalogs:admin` permission. See
 [Migrate a catalog's storage](../guides/migrate-catalog-storage.md).
 
 | Method & path | Purpose |
@@ -727,7 +728,7 @@ agent — `use` < `operate` < `admin` — rather than by the global `agents:mana
 
 | Tier required | Endpoints |
 |---|---|
-| `use` | `GET /api/admin/agents/{agent_id}`, `GET /api/admin/agents/{agent_id}/monitoring`, `GET /api/admin/agents/{agent_id}/queries` (which also needs the cross-workspace query permission) |
+| `use` | `GET /api/admin/agents/{agent_id}`, `GET /api/admin/agents/{agent_id}/monitoring`, `GET /api/admin/agents/{agent_id}/queries` (which also needs the `queries:admin` permission) |
 | `operate` | `POST …/{id}/restart`, `POST …/{id}/terminate`, `POST …/{id}/disconnect`, `DELETE …/{id}/credential` |
 | `admin` | `DELETE /api/admin/agents/{agent_id}`, and the access endpoints below |
 
@@ -758,7 +759,7 @@ The two endpoints behind an agent's [Monitoring tab](../operations/agent-monitor
 | Method & path | Purpose |
 |---|---|
 | `GET /api/admin/agents/{agent_id}/monitoring` | Every series for one range on a shared bucket grid: flat `buckets`, lifecycle `spans` and a `summary`. Takes `window` (`1h`, `3h`, `8h`, `12h`, `24h`, `3d`, `7d`; default `8h`, ending now) **or** `start` and `end` (a zoomed range, at least 5 minutes, clamped to now and to retention). **422** for both at once, an unknown window, only one of `start`/`end`, or too narrow a range. |
-| `GET /api/admin/agents/{agent_id}/queries` | The runs that were running or waiting during `start`–`end` (both required), as a paged collection. `sort` is `started_at`, `duration`, `wait`, `peak_memory`, `cpu_time`, `spill` or `bytes_read`, with `dir`; runs without a value sort last either way. Optional `status`, `cursor`, `limit` (≤ 200). Needs the `use` tier **and** the cross-workspace query permission, since it lists other workspaces' SQL. |
+| `GET /api/admin/agents/{agent_id}/queries` | The runs that were running or waiting during `start`–`end` (both required), as a paged collection. `sort` is `started_at`, `duration`, `wait`, `peak_memory`, `cpu_time`, `spill` or `bytes_read`, with `dir`; runs without a value sort last either way. Optional `status`, `cursor`, `limit` (≤ 200). Needs the `use` tier **and** the `queries:admin` permission, since it lists other workspaces' SQL. |
 
 ## Waiting for compute
 

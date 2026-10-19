@@ -62,7 +62,7 @@ measured, never a measured zero.
 The table under the charts lists every query that was running or waiting during the range — or the clicked bucket —
 with how long it waited, how long it ran, and what it cost as DuckDB reported it: **peak memory**, **CPU time**,
 **spill** to disk, and data read. Sort it by any of these to find the query behind a spike. Hover a duration to split it
-into wait and run time. Listing spans workspaces, so it needs the same cross-workspace query permission as the global
+into wait and run time. Listing spans workspaces, so it needs the same `queries:admin` permission as the global
 History view.
 
 ## How each number is measured
@@ -102,8 +102,8 @@ timeline shows it as not running rather than up. The minute rollup and the lifec
 an agent that has been connected for longer than that still has a timeline.
 
 This is deliberately DuckHaven's own storage rather than the [Prometheus](monitoring.md#prometheus-metrics) or
-[tracing](tracing.md) pipelines below. Both of those are export-only and off by default; a built-in product page that
-renders blank unless you deployed a collector would be the wrong default.
+[tracing](tracing.md) pipelines below. Both of those only export: they need a Prometheus or a trace backend to read
+them, and a built-in product page that renders blank unless you deployed one would be the wrong default.
 
 !!! note "Growth"
     The `queries` table that backs the query figures and the audit log is **not** currently pruned — it grows for the

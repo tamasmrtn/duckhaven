@@ -7,7 +7,8 @@ the ones DuckHaven [observes for itself](../concepts/lineage.md).
 ## What you need
 
 The `target/manifest.json` your project writes, and a token with **writer** access to the workspace — see
-[Service accounts](service-accounts.md).
+[Service accounts](service-accounts.md). Where a target table's catalog is attached `scoped`, the token also needs
+`writer` on that catalog.
 
 ## Publishing the manifest
 

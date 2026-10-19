@@ -54,7 +54,7 @@ Independently of the global role, each member of a [workspace](workspaces.md) ha
 |---|---|
 | `reader` | List and browse schemas and tables; run queries; view history |
 | `writer` | Everything a reader can, plus create/modify/drop tables and run DDL |
-| `owner` | Everything a writer can, plus manage workspace membership |
+| `owner` | Everything a writer can, plus manage membership, settings, catalogs and grants |
 
 By default this role applies uniformly to every schema and table in every catalog
 the workspace attaches. To scope access more finely, see **scoped access** below.
@@ -161,8 +161,8 @@ the API, which can.
 
 #### The rejection is workspace-wide, not per catalog
 
-That same mechanic has a consequence worth knowing before you scope anything. A worksheet does not attach only the
-catalog you are working in — it attaches **every** catalog the workspace binds, and
+That same mechanic has a consequence worth knowing before you scope anything. A worksheet can reach **every** catalog
+the workspace binds, not only the one you are working in, and
 [these views span all of them](../reference/sql-support.md#inspecting-metadata-information_schema) at once. There is
 therefore no such thing as enumerating "just the open catalog": the rows come back for the scoped one too.
 

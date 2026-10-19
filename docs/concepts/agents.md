@@ -37,8 +37,9 @@ catalog layers already decide what data a query may touch.
 
 That default is per agent, not per deployment. Set an agent to **restricted** (Compute → *an agent* → Access)
 and using it requires an explicit grant, which you give to a person or to a whole workspace. The grant also carries a
-level: `use` runs work on it, `operate` adds restarting and terminating it, `admin` adds deleting it and managing its
-access. A restricted agent is simply invisible to anyone without a grant — it never appears in the engine picker.
+level: `use` runs work on it, `operate` adds restarting, terminating, disconnecting and revoking it, `admin` adds
+deleting it and managing its access. A restricted agent is simply invisible to anyone without a grant — it never
+appears in the engine picker.
 
 When you provision [elastic compute](elastic-compute.md), the **New compute** dialog asks who can use it before it is
 created — choose *Only people I grant access* for an agent meant to be reserved, rather than restricting it after the

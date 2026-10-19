@@ -5,7 +5,7 @@ browse the catalog, run SQL, and explain what it found. This guide covers using 
 and what it can and cannot do, see the [AI data assistant](../concepts/assistant.md) concept page.
 
 !!! note "Availability"
-    The assistant is only present when an administrator has enabled it and bound it to a service account. If you don't
+    The assistant is only present when an administrator has enabled it and added it to your workspace. If you don't
     see it, ask your operator — the setup steps are in [Enable the assistant](#enable-the-assistant-operators) below.
 
 ## Have a conversation
@@ -111,15 +111,14 @@ Nothing that changes data runs without your approval.
 
 ## Enable the assistant (operators)
 
-The assistant acts as a service account you control. To turn it on:
+The assistant acts as a service account named **Assistant** (slug `assistant`), which DuckHaven creates on startup
+once the assistant is enabled. No token is needed — the assistant mints its own short-lived tokens. To turn it on:
 
-1. Create a service account and note its slug (see [Service accounts & tokens](service-accounts.md)). No token is
-   needed — the assistant mints its own short-lived tokens.
-2. Add the service account to each workspace where the assistant should be usable, and grant it the access you want it
-   to have (`metadata`/`reader` for browse-and-read, `writer` to allow approved writes). See
+1. Configure the model with the `ASSISTANT_*` settings in
+   [Configuration](../reference/configuration.md#ai-assistant), set `ASSISTANT_ENABLED=true`, and restart the API.
+2. Add the **Assistant** service account to each workspace where the assistant should be usable, and grant it the
+   access you want it to have (`metadata`/`reader` for browse-and-read, `writer` to allow approved writes). See
    [How access works](access-levels.md).
-3. Configure the model and point DuckHaven at the service account via the `ASSISTANT_*` settings in
-   [Configuration](../reference/configuration.md#ai-assistant), then set `ASSISTANT_ENABLED=true`.
 
 Because access is per workspace, you can safely enable one assistant across many workspaces and let each workspace's
 grants decide what it can reach.

@@ -18,14 +18,14 @@ dh auth login --host https://duckhaven.example.com
 dh auth tokens               # confirms which token is in play
 ```
 
-Otherwise, in the web app, open your profile and issue a token, or ask an administrator for a
-[service-account token](service-accounts.md) if this is for an unattended job rather than for you personally. Either
-way you get a `dh_pat_…` string, shown exactly once.
+The web app has no screen for issuing your own token, so without the CLI, ask an administrator for a
+[service-account token](service-accounts.md); that is also the right choice for an unattended job rather than for you
+personally. Either way you get a `dh_pat_…` string, shown exactly once.
 
 !!! warning "Treat it like a password"
     The token is sent on every request the agent makes and grants everything your account can do. Put it in your
     client's secret store rather than in a file you commit, prefer a bounded expiry, and revoke it (`dh auth revoke
-    <id>`, or **Manage tokens → Revoke**) the moment a laptop goes missing.
+    <id>`; for a service-account token, **⋯ → Manage tokens → Revoke**) the moment a laptop goes missing.
 
 ## 2. Find the endpoint
 

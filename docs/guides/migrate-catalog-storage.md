@@ -24,8 +24,8 @@ phases, same progress, same cancel — a shorter road to the same place.
 
 ## Who can migrate
 
-Starting a migration requires the catalog's **creator** or an admin with the **catalogs** permission — the same gate as
-dropping a catalog.
+Starting a migration requires the catalog's **creator** or an admin with the `catalogs:admin` permission — the same
+gate as dropping a catalog.
 
 ## What happens during a migration
 

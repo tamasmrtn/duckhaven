@@ -34,7 +34,8 @@ administration.
 !!! note "Sessions are server-side"
     A DuckHaven session is an opaque, server-stored token, so deactivation and `Revoke sessions` take effect on the
     account's next request rather than whenever a signed token would have expired. Session lifetime is bounded by
-    `SESSION_MAX_AGE_SECONDS` (see the [configuration reference](../reference/configuration.md#identity-sso)).
+    `SESSION_MAX_AGE_SECONDS` (see the
+    [configuration reference](../reference/configuration.md#control-plane-compose-env)).
     Personal access tokens are opaque and server-stored too, but `Revoke sessions` does not touch them — see above.
 
 ## Break-glass: signing in when the IdP is down

@@ -142,7 +142,8 @@ Restricted nodes are shown rather than removed on purpose. Dropping them would s
 graph indistinguishable from a complete one — you would have no way to tell "nothing upstream" from "something upstream
 you cannot see".
 
-Importing lineage requires `writer` on the target's catalog, and imported names are redacted on the way out just like
+Importing lineage requires workspace `writer`, plus `writer` on the target's catalog where that catalog is attached
+`scoped`, and imported names are redacted on the way out just like
 any other, so importing a graph is not a way to learn names you could not otherwise see.
 
 ### When the graph is incomplete

@@ -26,7 +26,7 @@ Invite teammates and assign each a role:
 
 - `reader` — browse and query
 - `writer` — also create and modify tables
-- `owner` — also manage membership
+- `owner` — also manage membership, the workspace's settings and its catalogs
 
 See [Manage users & access](../guides/users-access.md) and [Permissions](../concepts/permissions.md).
 

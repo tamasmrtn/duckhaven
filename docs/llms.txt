@@ -28,7 +28,7 @@
 - [Agents](https://tamasmrtn.github.io/duckhaven/concepts/agents/): DuckDB compute agents you pick per query.
 - [Elastic compute](https://tamasmrtn.github.io/duckhaven/concepts/elastic-compute/): Provisioning agents on demand and terminating them when they go idle.
 - [Runtimes](https://tamasmrtn.github.io/duckhaven/concepts/runtimes/): A runtime is the DuckDB an agent runs, together with the extensions baked into its image.
-- [Storage backends](https://tamasmrtn.github.io/duckhaven/concepts/storage-backends/): Where Iceberg data physically lives, and how credentials reach an agent.
+- [Storage backends](https://tamasmrtn.github.io/duckhaven/concepts/storage-backends/): Where catalog data physically lives, and how credentials reach an agent.
 - [Query execution](https://tamasmrtn.github.io/duckhaven/concepts/query-execution/): Queueing, memory estimation and concurrency, and the column types and exact values a result carries.
 - [Result cache](https://tamasmrtn.github.io/duckhaven/concepts/result-cache/): Answering a repeated query from an earlier run's result while nothing it reads has changed.
 - [SQL sessions](https://tamasmrtn.github.io/duckhaven/concepts/sql-sessions/): Persistent connections for dbt, dlt and other Python DB-API clients, brokered through the API.
@@ -47,7 +47,7 @@
 - [Elastic compute on a single Docker host](https://tamasmrtn.github.io/duckhaven/deployment/homelab-elastic-setup/): Enable elastic compute with the Docker backend, provisioning agents as containers on a single host.
 - [Elastic compute on Azure](https://tamasmrtn.github.io/duckhaven/deployment/azure-elastic-setup/): Enable elastic compute with the Azure Container Instances backend, provisioning agents in the cloud.
 - [Configure storage](https://tamasmrtn.github.io/duckhaven/deployment/storage/): Point DuckHaven at your object storage backend.
-- [Enable DuckLake](https://tamasmrtn.github.io/duckhaven/deployment/ducklake/): DuckLake is a second catalog kind, off by default.
+- [Enable DuckLake](https://tamasmrtn.github.io/duckhaven/deployment/ducklake/): DuckLake is a second catalog kind, available by default.
 - [Reverse proxy & TLS](https://tamasmrtn.github.io/duckhaven/deployment/reverse-proxy-tls/): Front the stack with a reverse proxy and TLS.
 - [High availability](https://tamasmrtn.github.io/duckhaven/deployment/high-availability/): Run the control plane with HA Postgres and multiple API replicas.
 - [Azure with Terraform](https://tamasmrtn.github.io/duckhaven/deployment/azure-terraform/): Deploy the whole stack to Azure as managed infrastructure, with Terraform.
@@ -70,7 +70,7 @@
 - [Import semantics from dbt](https://tamasmrtn.github.io/duckhaven/guides/import-dbt-semantics/): Import metric definitions from dbt's semantic layer.
 - [Use the AI assistant](https://tamasmrtn.github.io/duckhaven/guides/using-the-assistant/): Browse the catalog, run SQL, and propose worksheet edits with the assistant.
 - [Connect an MCP client](https://tamasmrtn.github.io/duckhaven/guides/connect-mcp-client/): Point Claude Code, Claude Desktop or Cursor at DuckHaven over MCP.
-- [How access works](https://tamasmrtn.github.io/duckhaven/guides/access-levels/): The three access layers, including fine-grained catalog/schema/table grants.
+- [How access works](https://tamasmrtn.github.io/duckhaven/guides/access-levels/): The four access layers, including fine-grained catalog/schema/table grants.
 - [Manage users & access](https://tamasmrtn.github.io/duckhaven/guides/users-access/): Administer users and permissions.
 - [Service accounts & tokens](https://tamasmrtn.github.io/duckhaven/guides/service-accounts/): Machine auth via service accounts and Personal Access Tokens.
 - [Connect an IdP (SSO)](https://tamasmrtn.github.io/duckhaven/guides/connect-idp/): Delegate sign-in to an OIDC provider, and map its groups to roles.

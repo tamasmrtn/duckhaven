@@ -5,7 +5,8 @@ Docker and Postgres. For everything that goes through the API, use the [`dh` CLI
 
 ## `pg-backup.sh` — back up Postgres
 
-Dumps the DuckHaven database (app state plus the Polaris metastore) to a timestamped, gzipped file.
+Dumps the `duckhaven` (app state) and `polaris` (Iceberg metastore) databases, and the `ducklake` database when it
+exists, each to a timestamped, gzipped file.
 
 ```bash
 DUCKHAVEN_BACKUP_DIR=/mnt/nas/duckhaven ./scripts/pg-backup.sh

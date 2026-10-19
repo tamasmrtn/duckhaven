@@ -26,7 +26,7 @@ Each agent is created as a **subnet-injected container group with a private addr
 DNS name**. Nothing about an agent is reachable from the internet; the control plane reaches its
 result server over the virtual network.
 
-Two consequences are worth understanding before you configure this:
+Three consequences are worth understanding before you configure this:
 
 - **The subnet needs its own outbound route.** An agent dials the control plane at whatever
   `ELASTIC_CONTROL_PLANE_URL` points at, and Azure has retired default outbound access for new

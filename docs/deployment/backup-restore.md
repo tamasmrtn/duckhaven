@@ -2,7 +2,8 @@
 
 DuckHaven's only durable state is the Postgres volume (`postgres_data`),
 which holds users, workspaces, saved queries, audit log, agent registrations,
-and the Polaris metastore (in the dedicated `polaris` database). The `api_data` volume holds the generated
+the Polaris metastore (in the dedicated `polaris` database), and DuckLake catalog
+metadata (in the `ducklake` database). The `api_data` volume holds the generated
 `SECRET_KEY` (under `/var/duckhaven/secrets`); you need both volumes to restore a working install. Losing
 `SECRET_KEY` invalidates every session and access token, so back it up with the database, not after it.
 
@@ -13,15 +14,20 @@ ADLS) — back those up via their own tooling.
 
 ### Postgres
 
-Both databases live in the same Postgres instance and are both required to
+Three databases live in the same Postgres instance, and all three are required to
 restore a working install: `duckhaven` (users, workspaces, saved queries,
-audit log, agent registrations) and `polaris` (the Iceberg metastore). Dump
+audit log, agent registrations), `polaris` (the Iceberg metastore) and `ducklake`
+(the only copy of every DuckLake table's schema, snapshots and file list). Dump
 each from inside the running stack:
 
 ```bash
 docker compose exec postgres pg_dump -U duckhaven duckhaven | gzip > duckhaven-$(date +%F).sql.gz
 docker compose exec postgres pg_dump -U duckhaven polaris | gzip > polaris-$(date +%F).sql.gz
+docker compose exec postgres pg_dump -U duckhaven ducklake | gzip > ducklake-$(date +%F).sql.gz
 ```
+
+`scripts/pg-backup.sh` does the same and finds the `ducklake` database on its own; see
+[Operator scripts](../reference/operator-scripts.md).
 
 ### Secrets
 
@@ -40,14 +46,20 @@ volume — naming one creates an empty volume and archives nothing.)
 
 ### Postgres (restore)
 
-Bring the stack up empty, then load both dumps:
+Bring the stack up empty, then load the three dumps:
 
 ```bash
 docker compose up -d postgres
 gunzip -c duckhaven-2026-03-05.sql.gz | docker compose exec -T postgres psql -U duckhaven duckhaven
 gunzip -c polaris-2026-03-05.sql.gz | docker compose exec -T postgres psql -U duckhaven polaris
+gunzip -c ducklake-2026-03-05.sql.gz | docker compose exec -T postgres psql -U duckhaven ducklake
 docker compose up -d
 ```
+
+Restore object storage before the `ducklake` database, from a storage snapshot no older than the dump; see
+[Restoring a deployment with DuckLake catalogs](../operations/runbook.md#restoring-a-deployment-with-ducklake-catalogs).
+Each DuckLake catalog's login role (`dl_<catalog>`) is recreated when the catalog is next used, or for all catalogs at
+once with the `reconcile-roles` call in [Enable DuckLake](ducklake.md).
 
 ### Secrets (restore)
 
@@ -96,12 +108,13 @@ docker compose up -d
 Same idea, run against the Patroni cluster:
 
 ```bash
-# 1. Back up both databases via HAProxy (the current Patroni leader).
-docker compose -f deploy/docker-compose.ha.yml exec pg-haproxy \
-    sh -c 'PGPASSWORD=$DUCKHAVEN_DB_PASSWORD pg_dump -h 127.0.0.1 -U duckhaven duckhaven' \
+# 1. Back up both databases through HAProxy (which routes to the current Patroni
+#    leader). The HAProxy image has no Postgres client, so run it from a Patroni node.
+docker compose -f deploy/docker-compose.ha.yml exec patroni-1 \
+    sh -c 'PGPASSWORD=$DUCKHAVEN_DB_PASSWORD pg_dump -h pg-haproxy -U duckhaven duckhaven' \
     | gzip > duckhaven-preupgrade.sql.gz
-docker compose -f deploy/docker-compose.ha.yml exec pg-haproxy \
-    sh -c 'PGPASSWORD=$DUCKHAVEN_DB_PASSWORD pg_dump -h 127.0.0.1 -U duckhaven polaris' \
+docker compose -f deploy/docker-compose.ha.yml exec patroni-1 \
+    sh -c 'PGPASSWORD=$DUCKHAVEN_DB_PASSWORD pg_dump -h pg-haproxy -U duckhaven polaris' \
     | gzip > polaris-preupgrade.sql.gz
 
 # 2. Stop the Patroni cluster and drop both node volumes.
@@ -117,10 +130,10 @@ docker compose -f deploy/docker-compose.ha.yml up -d etcd patroni-1 patroni-2 pg
 docker compose -f deploy/docker-compose.ha.yml exec patroni-1 patronictl list
 
 # 5. Restore both databases through HAProxy (routes to the current leader).
-gunzip -c duckhaven-preupgrade.sql.gz | docker compose -f deploy/docker-compose.ha.yml exec -T pg-haproxy \
-    sh -c 'PGPASSWORD=$DUCKHAVEN_DB_PASSWORD psql -h 127.0.0.1 -U duckhaven duckhaven'
-gunzip -c polaris-preupgrade.sql.gz | docker compose -f deploy/docker-compose.ha.yml exec -T pg-haproxy \
-    sh -c 'PGPASSWORD=$DUCKHAVEN_DB_PASSWORD psql -h 127.0.0.1 -U duckhaven polaris'
+gunzip -c duckhaven-preupgrade.sql.gz | docker compose -f deploy/docker-compose.ha.yml exec -T patroni-1 \
+    sh -c 'PGPASSWORD=$DUCKHAVEN_DB_PASSWORD psql -h pg-haproxy -U duckhaven duckhaven'
+gunzip -c polaris-preupgrade.sql.gz | docker compose -f deploy/docker-compose.ha.yml exec -T patroni-1 \
+    sh -c 'PGPASSWORD=$DUCKHAVEN_DB_PASSWORD psql -h pg-haproxy -U duckhaven polaris'
 
 # 6. Bring up the rest of the stack.
 docker compose -f deploy/docker-compose.ha.yml up -d

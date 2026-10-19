@@ -1,8 +1,9 @@
 # Install DuckHaven
 
-DuckHaven runs as one `docker compose` stack — Postgres, Apache Polaris, and the
-DuckHaven API (which serves both the REST API and the web UI on port 8000). No
-`git clone` is required.
+DuckHaven runs as one `docker compose` stack — Postgres, Apache Polaris, the bundled
+object store, the DuckHaven API (which serves both the REST API and the web UI on
+port 8000), a bundled DuckDB agent, and the tracing services. No `git clone` is
+required.
 
 ## Prerequisites
 

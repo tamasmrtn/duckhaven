@@ -101,7 +101,7 @@ reproduces the static agent's sandbox in every provisioned container:
 - all Linux capabilities dropped
 - a pids cap, and a concrete memory limit for the agent's cgroup-aware sizing to read
 
-This matters because the API's [statement policy](../concepts/query-execution.md), not a hard SQL
+This matters because the API's [statement policy](../concepts/sql-sessions.md#statement-policy), not a hard SQL
 allowlist, governs what reaches DuckDB — so the agent is contained at the OS layer instead. Anything
 less on the elastic path would be a downgrade disguised as a feature.
 

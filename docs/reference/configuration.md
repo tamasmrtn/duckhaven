@@ -15,14 +15,16 @@ boot, so every variable below is optional.
 
 | Variable | Default | Description |
 |---|---|---|
-| `DUCKHAVEN_IMAGE_TAG` | `latest` | Pin a specific image tag (e.g. `v1.2.3`) instead of riding `:latest`. |
+| `DUCKHAVEN_IMAGE_TAG` | `latest` | Pin a specific image tag (for example `1.2.3`; image tags carry no `v`) instead of riding `:latest`. |
 | `SECRET_KEY` | generated | App secret. Captured to the secrets dir on first boot by the API entrypoint and reused thereafter. |
 | `SETUP_TOKEN` | generated | One-time token gating first-admin creation. The entrypoint writes one to the data directory on first boot; set this instead where that filesystem is ephemeral, so the token survives a replica being replaced. |
 | `DATABASE_URL` | built from `POSTGRES_*` | Full SQLAlchemy URL. Set it to override the `POSTGRES_*` variables entirely — required for a connection they cannot express, such as passwordless Microsoft Entra authentication, where there is no password to interpolate. |
 | `DB_AUTH_MODE` | `password` | `password` takes the credential from `DATABASE_URL`. `entra` leaves it out and has the driver present a Microsoft Entra access token instead, minted per connection from the ambient managed identity. Requires the server to have Entra authentication enabled and a login role for that identity. |
 | `DB_ENTRA_SCOPE` | `https://ossrdbms-aad.database.windows.net/.default` | Token audience for `DB_AUTH_MODE=entra`. Change only for a sovereign cloud. |
 | `POSTGRES_PASSWORD` | `duckhaven` | Internal Postgres password. Postgres publishes no port; shared with the `polaris` and `api` services via Compose interpolation. |
+| `POSTGRES_USER` / `POSTGRES_HOST` / `POSTGRES_PORT` / `POSTGRES_DB` | `duckhaven` / `postgres` / `5432` / `duckhaven` | The rest of the address the API builds `DATABASE_URL` from when that is unset. The [HA stack](../deployment/high-availability.md) points `POSTGRES_HOST` at `pg-haproxy`. |
 | `POLARIS_IMAGE_TAG` | `1.7.0` | Apache Polaris image tag. Already pinned — override only to test a different Polaris release. |
+| `POLARIS_BASE_URL` | `http://polaris:8181` | Where the API reaches Polaris. The bundled Compose file fixes it to the in-stack service; it matters when the API runs outside Compose. |
 | `POLARIS_REALM` | `POLARIS` | Polaris realm name. |
 | `POLARIS_CLIENT_ID` | `root` | Polaris OAuth2 client id used by the API. |
 | `POLARIS_CLIENT_SECRET` | `s3cr3t` | Polaris OAuth2 client secret. Override in production. |
@@ -41,6 +43,7 @@ boot, so every variable below is optional.
 | `AZURE_TENANT_ID` / `AZURE_CLIENT_ID` / `AZURE_CLIENT_SECRET` | _(empty)_ | Service principal Polaris uses to mint ADLS Gen2 SAS tokens (Azure `DefaultAzureCredential`). Needs **Storage Blob Data Contributor** on the account. Empty disables ADLS vending; AWS S3 and the bundled store are unaffected. |
 | `AWS_ENDPOINT_URL_STS` | _(empty)_ | Override the STS endpoint Polaris uses to assume external `s3` roles. Empty = real AWS STS. Set to a private/emulated STS (LocalStack, a VPC STS endpoint, GovCloud) for testing or non-public deployments. |
 | `COOKIE_SECURE` | `false` | Set `true` only when the API is served over HTTPS (a TLS terminator in front), so session cookies are `Secure`-flagged. |
+| `CORS_ORIGINS` | `["http://localhost:5173"]` | JSON list of browser origins allowed to call the API from another origin. The web app is served by the API itself and needs no entry; a separately hosted front end (such as `make dev-web`) does. The [MCP server](../concepts/mcp-server.md) also refuses a request whose `Origin` is not on this list. |
 | `SESSION_MAX_AGE_SECONDS` | `604800` (7 days) | Session lifetime — drives both the server-side credential expiry and the cookie max-age. Lower it to shorten how long a sign-in lasts. |
 | `AGENT_BOOTSTRAP_TOKEN` | `dh_boot_localdev_seed` | Single-use token the API seeds on startup so the bundled in-stack agent auto-registers. Override in production. |
 
@@ -231,7 +234,7 @@ Postgres advisory lock, like the scheduler, so leave it enabled on every replica
 | Variable | Default | Description |
 |---|---|---|
 | `ELASTIC_COMPUTE_ENABLED` | `false` | Master switch. When `false`, the admin *New compute* action and elastic-pool query dispatch return 422 and no reaper runs. |
-| `ELASTIC_PROVIDER` | `null` | Compute backend: `null` is a no-op used in tests, `azure_aci` provisions Azure Container Instances. |
+| `ELASTIC_PROVIDER` | `null` | Compute backend: `null` is a no-op used in tests, `docker` starts agents as containers on the API's own Docker host (see [Elastic compute on a single Docker host](../deployment/homelab-elastic-setup.md)), `azure_aci` provisions Azure Container Instances. |
 | `ELASTIC_CONTROL_PLANE_URL` | — | The `wss://…/agents/connect` URL a provisioned agent dials home to. Required: unlike the interactive add-agent flow there is no HTTP request to derive it from. |
 | `ELASTIC_AGENT_POLARIS_BASE_URL` | `POLARIS_BASE_URL` | Catalog endpoint provisioned agents attach against, when it differs from the control plane's own (a remote agent usually cannot use an in-cluster address). |
 | `ELASTIC_IDLE_TIMEOUT_S` | `900` | Terminate an agent after this long with no work dispatched — and only when it has no in-flight queries or open SQL sessions. |
@@ -281,8 +284,9 @@ you start by hand.
 
 ### AI assistant
 
-Configures the governed [AI data assistant](../concepts/assistant.md). Disabled by default; enable it by pointing it at
-a service account you created (see [Service accounts & tokens](../guides/service-accounts.md)) and configuring a model.
+Configures the governed [AI data assistant](../concepts/assistant.md). Disabled by default; enable it by configuring a
+model and setting `ASSISTANT_ENABLED=true`. Startup then creates the `Assistant` service account it acts as; add that
+account to the workspaces it should serve (see [Use the AI assistant](../guides/using-the-assistant.md)).
 The provider is not fixed — use any of the bundled providers or an OpenAI-compatible endpoint. Provider API keys may be
 supplied here or via the provider's own standard environment variable (`ANTHROPIC_API_KEY` / `OPENAI_API_KEY` /
 `MISTRAL_API_KEY`); a self-hosted OpenAI-compatible endpoint (Ollama, vLLM) can run keyless.
@@ -301,7 +305,7 @@ supplied here or via the provider's own standard environment variable (`ANTHROPI
 | `ASSISTANT_RESULT_ROW_CAP` | `100` | Max rows of a query result fed into model context (the full result is still available in the UI). |
 | `ASSISTANT_RESULT_BYTE_CAP` | `32768` | Max bytes of a result sample fed into model context. |
 | `ASSISTANT_TRACE_INCLUDE_CONTENT` | `true` | When [tracing](../operations/tracing.md#the-ai-assistant) is enabled, record the turn's content (prompt, generated SQL, tool arguments, result samples) on spans. Set `false` to keep only structure — roles, token usage, tool names, timing, status — out of the trace backend. No effect when tracing is off. |
-| `ASSISTANT_DOCS_ENABLED` | `true` | Whether the assistant knows what DuckHaven is — the curated [product-knowledge section](../concepts/assistant.md#product-knowledge) and page index in its instructions, plus the `read_doc_page` tool. Set `false` to restore exactly the instructions and tool set it had before, at the cost of an assistant that answers product questions from general knowledge of other platforms. Despite the name this is deployment-wide: it also withholds the documentation tools from the [MCP server](../concepts/mcp-server.md#documentation-lookup). |
+| `ASSISTANT_DOCS_ENABLED` | `true` | Whether the assistant knows what DuckHaven is — the curated [product-knowledge section](../concepts/assistant.md#product-knowledge) and page index in its instructions, plus the `search_docs` and `read_doc_page` tools. Set `false` to restore exactly the instructions and tool set it had before, at the cost of an assistant that answers product questions from general knowledge of other platforms. Despite the name this is deployment-wide: it also withholds the documentation tools from the [MCP server](../concepts/mcp-server.md#documentation-lookup). |
 | `ASSISTANT_DOCS_DIR` | `/app/docs` | Where the documentation pages live. The image copies `docs/` here; point it at the repository's `docs/` when running from a source checkout (`make dev-api` does). If the directory is absent, the page list is left out of the assistant's instructions and the documentation tools are withheld — it behaves as a deployment without the feature rather than offering pages it cannot open. |
 | `ASSISTANT_DOCS_MAX_PAGE_CHARS` | `20000` | Largest page the assistant reads in one call (~5k tokens). The longest few pages exceed it and come back cut off, with a marker stating how much was withheld and a link to the full page, so the assistant does not report a truncated page as silence. |
 | `ASSISTANT_DOCS_SEARCH_LIMIT` | `5` | Default number of pages `search_docs` returns. The assistant may ask for between 1 and 10; anything outside that is clamped. |

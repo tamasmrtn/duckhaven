@@ -52,8 +52,8 @@ generates a per-page Open Graph / Twitter card image at build time; it also emit
   `SoftwareApplication` entity on the homepage).
 - `docs/robots.txt` allows AI answer/search bots, disallows AI training crawlers, and points
   to the sitemap. The directives are advisory — only well-behaved crawlers honor them.
-- `docs/llms.txt` is a hand-curated index of the most useful pages for LLM crawlers. Keep it
-  in sync when flagship pages are added, renamed, or removed.
+- `docs/llms.txt` is the index of pages for LLM crawlers. It is generated, together with the assistant's page index,
+  by `make docs-index`; pre-commit and CI fail when it is stale.
 
 ## Releases
 

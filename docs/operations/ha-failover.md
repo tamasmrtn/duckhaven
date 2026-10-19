@@ -49,13 +49,14 @@ reconnect to another replica, and queries keep working.
 2. Identify which replica owns the agent socket by reading the `owner_url` column:
 
    ```bash
-   docker compose -f deploy/docker-compose.ha.yml exec pg-haproxy \
-     sh -c 'PGPASSWORD=$DUCKHAVEN_DB_PASSWORD psql -h 127.0.0.1 -U duckhaven duckhaven \
+   docker compose -f deploy/docker-compose.ha.yml exec patroni-1 \
+     sh -c 'PGPASSWORD=$DUCKHAVEN_DB_PASSWORD psql -h pg-haproxy -U duckhaven duckhaven \
      -c "SELECT name, status, owner_url FROM agents;"'
    ```
 
-   (`psql` is not in the HAProxy image; alternatively connect with any client to
-   `pg-haproxy:5432`, database `duckhaven`, user `duckhaven`.)
+   (The HAProxy image has no `psql`, so this runs it from a Patroni node, connecting
+   through HAProxy. Any other client works too: `pg-haproxy:5432`, database
+   `duckhaven`, user `duckhaven`.)
 3. Kill one replica:
 
    ```bash

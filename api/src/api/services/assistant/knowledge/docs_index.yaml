@@ -69,7 +69,7 @@ pages:
 - path: concepts/storage-backends.md
   title: Storage backends
   section: Concepts
-  summary: Where Iceberg data physically lives, and how credentials reach an agent.
+  summary: Where catalog data physically lives, and how credentials reach an agent.
 - path: concepts/query-execution.md
   title: Query execution
   section: Concepts
@@ -137,7 +137,7 @@ pages:
 - path: deployment/ducklake.md
   title: Enable DuckLake
   section: Deployment
-  summary: DuckLake is a second catalog kind, off by default.
+  summary: DuckLake is a second catalog kind, available by default.
 - path: deployment/reverse-proxy-tls.md
   title: Reverse proxy & TLS
   section: Deployment
@@ -217,7 +217,7 @@ pages:
 - path: guides/access-levels.md
   title: How access works
   section: Guides
-  summary: The three access layers, including fine-grained catalog/schema/table grants.
+  summary: The four access layers, including fine-grained catalog/schema/table grants.
 - path: guides/users-access.md
   title: Manage users & access
   section: Guides

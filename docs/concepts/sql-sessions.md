@@ -208,9 +208,12 @@ estimates the statement from its `EXPLAIN` plan, grows the session's reservation
 back to the baseline. A heavy query gets the memory it needs without a one-off heavy query pinning that memory for the
 rest of the session's life.
 
-Growth is bounded by what the agent can actually spare at that moment. If the budget is tight the statement gets
-whatever is free and runs at that size — slower, possibly spilling to disk, but never blocked and never at the expense
-of another session's memory. `SESSION_MAX_BUCKET_FRACTION` caps how much of the agent one statement may take.
+Growth is bounded by what the agent can actually spare at that moment, and never comes at the expense of another
+session's memory. If the budget is tight but the statement can get at least half of what it asked for
+(`STATEMENT_ADMISSION_FLOOR_FRACTION`), it runs at that size — slower, possibly spilling to disk. Below that it waits
+for memory to free up, for at most `STATEMENT_ADMISSION_WAIT_S`, then runs with whatever it can get (see
+[when the agent is full](query-execution.md#when-the-agent-is-full)). `SESSION_MAX_BUCKET_FRACTION` caps how much of
+the agent one statement may take.
 
 On top of that required size, a statement is lent whatever memory the agent has idle, which DuckDB spends on caching
 the Parquet files it reads — the **elastic memory** described under

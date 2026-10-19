@@ -36,9 +36,9 @@ scrapers carry no session cookie, and DuckHaven already assumes no public ingres
 the internal network. Set `METRICS_ENABLED=false` (see the
 [configuration reference](../reference/configuration.md#observability)) to remove it entirely.
 
-DuckHaven does **not** ship a bundled Grafana container — deploying the dashboard stack is left
-to you. The metric reference, scrape config, and a starter dashboard below are everything you
-need to wire it into an existing Prometheus + Grafana.
+The bundled Grafana is wired to Tempo for [traces](tracing.md) only; DuckHaven does **not**
+ship a Prometheus. The metric reference, scrape config, and a starter dashboard below are
+everything you need to wire the metrics into your own Prometheus + Grafana.
 
 ### Scrape configuration
 
@@ -123,10 +123,9 @@ would hide:
   also show up under `duckhaven_queries_total{status="failed"}`; this counter is the specific
   breakdown.)
 - **Catalog dependency health** — `duckhaven_polaris_requests_total` and `duckhaven_ducklake_queries_total`,
-  each with its `_duration_seconds` companion. Watch whichever kinds are deployed.
-  surface the Iceberg catalog's error rate and latency. Alert on a non-zero rate of
-  `status="error"` (or 5xx) here to catch catalog-layer degradation before it manifests as
-  mysterious query failures.
+  each with its `_duration_seconds` companion, surface each catalog kind's error rate and latency; watch whichever
+  kinds are deployed. Alert on a non-zero rate of `status="error"` (or 5xx) here to catch catalog-layer degradation
+  before it manifests as mysterious query failures.
 - **Elastic supply** — `duckhaven_agent_provisions_total{outcome="failure"}` and
   `duckhaven_agents_reaped_total{reason="provisioning_timeout"}` both mean users are waiting for
   compute that never arrives, which surfaces to them as a query that simply never starts.

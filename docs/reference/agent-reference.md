@@ -88,14 +88,14 @@ Example: two agents on one host with Docker Compose:
 ```yaml
 services:
   agent-a:
-    image: duckhaven-agent:latest
+    image: ghcr.io/tamasmrtn/duckhaven-agent:latest-duckdb1.5
     env_file: agent-a.env
     volumes:
       - /var/duckhaven-agent-a:/var/duckhaven-agent/results
       - /mnt/data:/mnt/data:ro
 
   agent-b:
-    image: duckhaven-agent:latest
+    image: ghcr.io/tamasmrtn/duckhaven-agent:latest-duckdb1.5
     env_file: agent-b.env
     volumes:
       - /var/duckhaven-agent-b:/var/duckhaven-agent/results
@@ -114,7 +114,7 @@ services:
 ### Queries fail with extension errors
 
 - Rebuild the agent image to ensure extensions are pre-installed.
-- Check the agent's advertised extensions in the admin UI drawer.
+- Check the agent's advertised extensions on its **Overview** tab (**Compute** → the agent).
 - Pick a different agent that has the required extension.
 
 ### Result rows fail to load
@@ -133,8 +133,8 @@ services:
 
 To remove an agent:
 
-1. In the admin UI, go to **Compute**.
-2. Click the agent row to open the drawer.
-3. Click **Revoke Credential**.
+1. Go to **Compute**.
+2. Click the agent to open its page.
+3. Click **Revoke credential**.
 
 The agent will be disconnected and marked `unavailable`. Its results directory can be cleaned up manually.

@@ -127,9 +127,10 @@ older than the trail has no recorded history, which is a weaker claim than knowi
 An agent that vanished without a clean disconnect is closed out at its last heartbeat
 (`presence_lost`), and one whose replica shut down is recorded as `replica_shutdown`.
 
-The `reason` values are the same strings the reaper counts by in
+The reasons the reaper itself tears an agent down for — `idle`, `max_lifetime`,
+`provisioning_timeout`, `orphan`, `dead_row` — are the same strings it counts by in
 `duckhaven_agents_reaped_total`, so a Prometheus alert and the UI cannot tell different stories
-about why an agent went away.
+about why the reaper removed an agent. The trail's other reasons record events it did not cause.
 
 ## Reliability
 

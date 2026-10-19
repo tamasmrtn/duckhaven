@@ -22,13 +22,13 @@ of ten services: `postgres`, `objectstore`, `objectstore-bootstrap`,
    release tag):
 
    ```sh
-   DUCKHAVEN_IMAGE_TAG=v1.2.3
+   DUCKHAVEN_IMAGE_TAG=1.2.3
    ```
 
    Images are published to `ghcr.io/tamasmrtn/duckhaven-{api,agent}` by
-   `.github/workflows/build.yml`: `:latest` on every main push, `:v1.2.3` /
-   `:v1.2` / `:v1` on git tags. Built for `linux/amd64` and `linux/arm64`.
-2. Start the stack: `make compose-up`. Migrations apply automatically.
+   `.github/workflows/build.yml`: `:latest` on every main push, `:1.2.3` /
+   `:1.2` / `:1` on git tags (no `v`). Built for `linux/amd64` and `linux/arm64`.
+2. Start the stack: `docker compose -f deploy/docker-compose.yml up -d`. Migrations apply automatically.
 3. Read the one-shot setup token:
    `docker compose -f deploy/docker-compose.yml cp api:/var/duckhaven/setup_token ./setup_token && cat ./setup_token`.
 4. Open `http://<host>:8000` and create the first admin from the setup
@@ -62,17 +62,17 @@ For **each** agent host:
 3. Start the agent (`python -m agent.main`). It exchanges the bootstrap token
    for a long-lived `agent_session` credential, advertises its capabilities,
    and holds the WebSocket open.
-4. Confirm both agents show **green** with fresh "last ping" in **Admin →
-   Agents** (capabilities re-advertise on every heartbeat).
+4. Confirm both agents show **green** with fresh "last ping" on the **Compute**
+   page (capabilities re-advertise on every heartbeat).
 
-Repeat so at least two agents are registered (e.g. one S3-capable, one local).
+Repeat so at least two agents are registered (for example on two different hosts).
 
 ---
 
 ## 3. Exercise the engine selector under load (manual)
 
-1. Open the worksheet; the engine picker lists both agents with their backend
-   compatibility tags (✓ / ✗).
+1. Open the worksheet; the engine picker lists both agents, grouped by whether
+   they can serve the workspace.
 2. Run several queries, switching the selected agent per worksheet. Confirm:
    - Each query is dispatched to the chosen agent (Compute shows query
      counts per agent; **History** records agent/user/duration/rows).
@@ -106,9 +106,12 @@ systemctl list-timers duckhaven-backup.timer   # verify next run
 
 ### Restore
 
+`pg-backup.sh` writes one file per database (`duckhaven_…`, `polaris_…`, and `ducklake_…` when DuckLake is in use).
+Restore each into the database of the same name:
+
 ```sh
 gunzip -c <backup>.sql.gz | docker compose -f deploy/docker-compose.yml \
-    exec -T postgres psql -U duckhaven duckhaven
+    exec -T postgres psql -U duckhaven <database>
 ```
 
 ### Restoring a deployment with DuckLake catalogs
@@ -179,7 +182,8 @@ slice of that budget:
   cheap queries reserve a small slice and pack in while heavy ones reserve more
   and queue when the agent is busy. Unestimable queries (DDL/DML, multi-statement,
   or an `EXPLAIN` failure/timeout) fall back to a default bucket. Estimation is
-  best-effort under a short timeout and never delays or drops a query.
+  best-effort under a short timeout; a query whose plan takes too long is sized from
+  the default bucket instead of waiting for it.
 - **Static slot ladders** — the budget is divided into a fixed **weighted slot
   ladder**; a new query takes the largest free slot, so the first running query
   gets the most memory and later ones get less.
@@ -201,11 +205,12 @@ Default is `auto` (`MAX_CONCURRENCY_PROFILE`); the static ladders remain
 selectable as fallbacks. The queue holds up to `MAX_QUEUE_DEPTH` (default 100)
 queries; beyond that a query fails with `queue full`. `QUEUED_TIMEOUT_S`
 (default 0 = off) fails a query that waits too long with `queued timeout`.
-Whatever the mode, the agent enforces `Σ running memory_limit ≤ budget`, so it
-never oversubscribes (DuckDB fixes a session's memory at start and cannot resize
-a running query). Under a static ladder a lone query uses its slot's share, not
-the whole box (only `single` gives one query the full budget); under `auto` a
-query reserves the bucket its estimate maps to, up to the full budget.
+Whatever the mode, the agent keeps the sum of every running query's *required*
+memory inside the budget, so it never oversubscribes. Under a static ladder a lone
+query uses its slot's share, not the whole box (only `single` gives one query the
+full budget); under `auto` a query reserves the bucket its estimate maps to, capped
+at `SESSION_MAX_BUCKET_FRACTION` (a third of the budget by default), and is lent
+idle memory on top (see [Query execution](../concepts/query-execution.md)).
 
 #### Tuning the `auto` estimator
 
@@ -264,11 +269,11 @@ Both surface:
 - a summary strip — latency, CPU time, rows returned, result size, **peak
   memory**, the **reserved memory + CPU** the query ran under, **spill to disk**,
   and bytes read/written (so a spill is read against what was reserved);
-- per-operator metrics — rows scanned → produced, bytes, a time-share bar, and
+- per-operator metrics — rows read → produced, bytes, a time-share bar, and
   the operator's `EXTRA_INFO` (join conditions, filters, group keys);
 - **inefficiency highlights** computed from the profile — spilled queries
   (worth a larger reservation or less intermediate data), scan blow-ups (a scan
-  reading far more rows than the query returns), bad cardinality estimates
+  reading far more rows than it emits), bad cardinality estimates
   (actual far from the optimizer's `EXPLAIN` estimate), and time hotspots. The
   dedicated page also ranks the **most expensive operators** and lists the
   detected issues in a **diagnostics** panel, each linking to the offending node.

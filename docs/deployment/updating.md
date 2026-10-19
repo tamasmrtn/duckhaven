@@ -19,7 +19,7 @@ agent host.
 For predictable upgrades, pin to a release tag. Add to `.env`:
 
 ```sh
-DUCKHAVEN_IMAGE_TAG=v1.2.3
+DUCKHAVEN_IMAGE_TAG=1.2.3
 ```
 
 Then:

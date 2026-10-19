@@ -18,14 +18,17 @@
 
 ## Querying
 
+- [Query execution](https://tamasmrtn.github.io/duckhaven/querying/query-execution/): A query is checked by the API, sent to an agent, waits until the agent has memory to start it, runs, and is kept as a result file read a page at a time.
 - [Run queries](https://tamasmrtn.github.io/duckhaven/querying/run-queries/): Write SQL in a worksheet, run it on an agent you choose, read the result, and find earlier runs in History.
 - [Saved queries](https://tamasmrtn.github.io/duckhaven/querying/saved-queries/): Save a worksheet's SQL under a name so everyone in the workspace can open it, run it and schedule it.
 - [Schedule queries](https://tamasmrtn.github.io/duckhaven/querying/schedule-queries/): Run a saved query automatically on a cron schedule, such as every night at 02:00, with every run recorded.
 - [Read query profiles](https://tamasmrtn.github.io/duckhaven/querying/query-profiles/): Open a query's profile to see where its time and memory went, and whether it was slow because it waited or because it worked.
-- [Query execution](https://tamasmrtn.github.io/duckhaven/querying/query-execution/): A query is checked by the API, sent to an agent, waits until the agent has memory to start it, runs, and is kept as a result file read a page at a time.
 - [Result cache](https://tamasmrtn.github.io/duckhaven/querying/result-cache/): The result cache answers a repeated query from an earlier run's result when nothing it reads has changed, so it does not run again.
 - [SQL sessions](https://tamasmrtn.github.io/duckhaven/querying/sql-sessions/): A SQL session is a database connection that DuckHaven holds open on one agent, so a tool can run many statements that share state.
+- [Connect dbt](https://tamasmrtn.github.io/duckhaven/querying/connect-dbt/): Run a dbt project on DuckHaven with the dbt-duckhaven adapter, so models build in your catalogs on DuckHaven's agents.
+- [Load data with dlt](https://tamasmrtn.github.io/duckhaven/querying/load-data-with-dlt/): Load data from any dlt source into DuckHaven tables with the dlt-duckhaven destination.
 - [Read the session audit trail](https://tamasmrtn.github.io/duckhaven/querying/session-audit/): Use the Connections screen to see which SQL sessions are holding agents, what a dbt or dlt run did, and why a session ended.
+- [Troubleshoot queries](https://tamasmrtn.github.io/duckhaven/querying/troubleshooting/): Find the message you see in the results pane, in History, or in a tool's error, then follow what to do.
 
 ## Data & storage
 

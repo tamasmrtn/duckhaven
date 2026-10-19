@@ -164,14 +164,17 @@ nav:
       - How DuckHaven works: getting-started/how-duckhaven-works.md
   - Use:
       - Querying:
+          - Query execution: querying/query-execution.md
           - Run queries: querying/run-queries.md
           - Saved queries: querying/saved-queries.md
           - Schedule queries: querying/schedule-queries.md
           - Read query profiles: querying/query-profiles.md
-          - Query execution: querying/query-execution.md
           - Result cache: querying/result-cache.md
           - SQL sessions: querying/sql-sessions.md
+          - Connect dbt: querying/connect-dbt.md
+          - Load data with dlt: querying/load-data-with-dlt.md
           - Read the session audit trail: querying/session-audit.md
+          - Troubleshoot queries: querying/troubleshooting.md
       - Data & storage:
           - Catalogs: data/catalogs.md
           - Manage catalogs: data/manage-catalogs.md

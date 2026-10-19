@@ -29,6 +29,11 @@ pages:
   section: Get started
   summary: DuckHaven splits into a control plane that decides what may run and agents that run it,
     with your tables on object storage you own.
+- path: querying/query-execution.md
+  title: Query execution
+  section: Querying
+  summary: A query is checked by the API, sent to an agent, waits until the agent has memory to start
+    it, runs, and is kept as a result file read a page at a time.
 - path: querying/run-queries.md
   title: Run queries
   section: Querying
@@ -49,11 +54,6 @@ pages:
   section: Querying
   summary: Open a query's profile to see where its time and memory went, and whether it was slow because
     it waited or because it worked.
-- path: querying/query-execution.md
-  title: Query execution
-  section: Querying
-  summary: A query is checked by the API, sent to an agent, waits until the agent has memory to start
-    it, runs, and is kept as a result file read a page at a time.
 - path: querying/result-cache.md
   title: Result cache
   section: Querying
@@ -64,11 +64,25 @@ pages:
   section: Querying
   summary: A SQL session is a database connection that DuckHaven holds open on one agent, so a tool
     can run many statements that share state.
+- path: querying/connect-dbt.md
+  title: Connect dbt
+  section: Querying
+  summary: Run a dbt project on DuckHaven with the dbt-duckhaven adapter, so models build in your
+    catalogs on DuckHaven's agents.
+- path: querying/load-data-with-dlt.md
+  title: Load data with dlt
+  section: Querying
+  summary: Load data from any dlt source into DuckHaven tables with the dlt-duckhaven destination.
 - path: querying/session-audit.md
   title: Read the session audit trail
   section: Querying
   summary: Use the Connections screen to see which SQL sessions are holding agents, what a dbt or
     dlt run did, and why a session ended.
+- path: querying/troubleshooting.md
+  title: Troubleshoot queries
+  section: Querying
+  summary: Find the message you see in the results pane, in History, or in a tool's error, then follow
+    what to do.
 - path: data/catalogs.md
   title: Catalogs
   section: Data & storage

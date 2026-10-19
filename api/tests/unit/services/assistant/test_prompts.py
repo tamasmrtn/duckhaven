@@ -241,8 +241,10 @@ def test_each_resident_block_is_within_budget():
     # drawing an ASCII bar chart, with growth percentages, for a product whose
     # own concept page says it has no chart generation.
     assert len(PRODUCT_PROMPT) <= 3_900
-    # ~50 chars per page, so this allows roughly eight more before a bump.
-    assert len(DOCS_INDEX_PROMPT.format(index=load_index().prompt_block)) <= 3_800
+    # ~50 chars per page, so this allows roughly six more before a bump. Raised
+    # from 3,800 for the querying rewrite's pages: Connect dbt, Load data with dlt,
+    # Troubleshoot queries and the SQL sessions API reference.
+    assert len(DOCS_INDEX_PROMPT.format(index=load_index().prompt_block)) <= 4_100
 
 
 def test_the_ducklake_block_is_injected_only_where_ducklake_exists():
@@ -282,7 +284,7 @@ def test_the_assembled_instructions_are_within_budget():
 
     Measured with every conditional block on, the DuckLake block included.
     """
-    assert len(build_instructions(ctx())) <= 10_000
+    assert len(build_instructions(ctx())) <= 10_300
 
     everything = build_instructions(
         ctx(
@@ -296,8 +298,8 @@ def test_the_assembled_instructions_are_within_budget():
 
     # Every docs page adds one resident `path — title` line to the index; the
     # Agent monitoring page (split out of Monitoring, which had reached the
-    # read_doc_page cap) is one of them.
-    assert len(everything) <= 15_800
+    # read_doc_page cap) is one of them, and the querying rewrite added four.
+    assert len(everything) <= 16_100
 
 
 def test_the_product_block_names_the_v1_scope_limits():

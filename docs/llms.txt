@@ -102,7 +102,7 @@
 ## Reference
 
 - [Configuration](https://tamasmrtn.github.io/duckhaven/reference/configuration/): Every DuckHaven environment variable, with its default and what it changes.
-- [SQL support](https://tamasmrtn.github.io/duckhaven/reference/sql-support/): Supported SQL surface and DuckDB features, and binding typed query parameters.
+- [SQL support](https://tamasmrtn.github.io/duckhaven/reference/sql-support/): DuckHaven runs DuckDB SQL, checked against an allowlist before an agent runs it; statements such as ATTACH, INSTALL and SET are rejected.
 - [Permissions](https://tamasmrtn.github.io/duckhaven/reference/permissions/): Every global permission, workspace role, data-grant tier and agent tier in DuckHaven, and what each one allows.
 - [Agent reference](https://tamasmrtn.github.io/duckhaven/reference/agent-reference/): Agent configuration and behavior.
 - [CLI reference](https://tamasmrtn.github.io/duckhaven/reference/cli/): Every dh command, its summary and its flags.

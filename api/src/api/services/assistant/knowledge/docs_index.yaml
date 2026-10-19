@@ -291,7 +291,8 @@ pages:
 - path: reference/sql-support.md
   title: SQL support
   section: Reference
-  summary: Supported SQL surface and DuckDB features, and binding typed query parameters.
+  summary: DuckHaven runs DuckDB SQL, checked against an allowlist before an agent runs it; statements
+    such as ATTACH, INSTALL and SET are rejected.
 - path: reference/permissions.md
   title: Permissions
   section: Reference

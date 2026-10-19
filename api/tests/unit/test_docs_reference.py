@@ -8,11 +8,15 @@ documents.
 
 import re
 
+import pytest
+
 from api.openapi import _DERIVED_ERROR_CODES
 from api.services.agent_access import AGENT_TIER_ORDER
 from api.services.assistant.knowledge import generate
 from api.services.grants import TIER_SCALE
 from api.services.permissions import Permission
+from api.services.sql_guard import SQLNotAllowed, assert_allowed
+from api.services.statement_policy import StatementNotAllowed, assert_statement_allowed
 from api.services.workspace import ROLE_ORDER
 
 DOCS_DIR = generate._repo_root() / "docs"
@@ -73,3 +77,44 @@ def test_every_documented_error_code_exists_in_the_api():
     source = _api_source()
 
     assert {c for c in _documented_error_codes() if f'"{c}"' not in source} == set()
+
+
+_STAGING = "s3://bucket/staging/session-1"
+
+
+def _statement_rows() -> list[tuple[str, bool, bool]]:
+    """(example SQL, allowed on queries, allowed in sessions) from the SQL support tables."""
+    text = (DOCS_DIR / "reference/sql-support.md").read_text(encoding="utf-8")
+    rows = []
+    for heading in ("Allowed statements", "Rejected statements"):
+        section = text.split(f"## {heading}\n", 1)[1].split("\n## ", 1)[0]
+        for sql, queries, sessions in re.findall(
+            r"^\|[^|]*\| `([^`]+)` \| (Yes|No) \| (Yes|No) \|$", section, flags=re.MULTILINE
+        ):
+            sql = sql.replace("⟨staging prefix⟩", _STAGING)
+            rows.append((sql, queries == "Yes", sessions == "Yes"))
+    return rows
+
+
+def test_every_statement_row_is_read():
+    """A row the parser skips would be a row nothing checks."""
+    text = (DOCS_DIR / "reference/sql-support.md").read_text(encoding="utf-8")
+    verdict_rows = re.findall(r"\| (?:Yes|No) \| (?:Yes|No) \|$", text, flags=re.MULTILINE)
+
+    assert len(_statement_rows()) == len(verdict_rows)
+
+
+@pytest.mark.parametrize(("sql", "queries", "sessions"), _statement_rows())
+def test_each_documented_statement_meets_both_gates(sql, queries, sessions):
+    try:
+        assert_allowed(sql)
+        allowed_on_queries = True
+    except SQLNotAllowed:
+        allowed_on_queries = False
+    try:
+        assert_statement_allowed(sql, staging_prefixes=[_STAGING + "/"], managed_catalogs={"sales"})
+        allowed_in_sessions = True
+    except StatementNotAllowed:
+        allowed_in_sessions = False
+
+    assert (allowed_on_queries, allowed_in_sessions) == (queries, sessions)

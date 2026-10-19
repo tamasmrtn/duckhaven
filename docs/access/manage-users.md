@@ -9,8 +9,8 @@ full reference.
 
 ## Users
 
-The first admin is created during [installation](../getting-started/installation.md) from a one-shot setup token.
-Admins manage everyone else from **Admin → Users**.
+The first admin is created during [installation](../getting-started/quickstart.md#2-create-the-first-admin) from a
+one-shot setup token. Admins manage everyone else from **Admin → Users**.
 
 ### Add a local user
 

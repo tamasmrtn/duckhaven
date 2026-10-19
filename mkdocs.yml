@@ -66,6 +66,9 @@ plugins:
   # chains); `make docs-index` turns it into the assistant's path aliases.
   - redirects:
       redirect_maps:
+        getting-started/installation.md: getting-started/quickstart.md
+        getting-started/first-workspace.md: getting-started/quickstart.md#3-create-a-workspace
+        getting-started/first-query.md: getting-started/quickstart.md#5-create-a-table-and-query-it
         concepts/what-is-duckhaven.md: getting-started/what-is-duckhaven.md
         concepts/architecture.md: getting-started/how-duckhaven-works.md
         concepts/workspaces.md: access/workspaces.md
@@ -154,9 +157,6 @@ nav:
   - Get started:
       - What is DuckHaven?: getting-started/what-is-duckhaven.md
       - Quickstart: getting-started/quickstart.md
-      - Installation: getting-started/installation.md
-      - Your first workspace: getting-started/first-workspace.md
-      - Your first query: getting-started/first-query.md
       - Command line (dh): getting-started/cli-quickstart.md
       - How DuckHaven works: getting-started/how-duckhaven-works.md
   - Use:
@@ -237,6 +237,7 @@ nav:
       - API conventions: reference/api-conventions.md
       - Operator scripts: reference/operator-scripts.md
   - Developer:
+      - Architecture: developer/architecture.md
       - Codebase map: developer/codebase-map.md
       - Local development: developer/development.md
       - Contributing: developer/contributing.md

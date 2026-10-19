@@ -11,13 +11,10 @@
 
 ## Get started
 
-- [What is DuckHaven?](https://tamasmrtn.github.io/duckhaven/getting-started/what-is-duckhaven/): Overview of the product and who it is for.
-- [Quickstart](https://tamasmrtn.github.io/duckhaven/getting-started/quickstart/): Stand up the full stack with one `docker compose` command and run your first query.
-- [Installation](https://tamasmrtn.github.io/duckhaven/getting-started/installation/): Prerequisites and how to install the stack.
-- [Your first workspace](https://tamasmrtn.github.io/duckhaven/getting-started/first-workspace/): Create a workspace and invite collaborators.
-- [Your first query](https://tamasmrtn.github.io/duckhaven/getting-started/first-query/): Write and run a query in a browser worksheet.
-- [Command line (dh)](https://tamasmrtn.github.io/duckhaven/getting-started/cli-quickstart/): dh is DuckHaven's command-line interface.
-- [How DuckHaven works](https://tamasmrtn.github.io/duckhaven/getting-started/how-duckhaven-works/): The control-plane / compute split and data flow — the defining idea behind DuckHaven.
+- [What is DuckHaven?](https://tamasmrtn.github.io/duckhaven/getting-started/what-is-duckhaven/): DuckHaven is a self-hosted data lakehouse.
+- [Quickstart](https://tamasmrtn.github.io/duckhaven/getting-started/quickstart/): Install DuckHaven with Docker Compose, create the first admin, and query a table you created yourself in about fifteen minutes.
+- [Command line (dh)](https://tamasmrtn.github.io/duckhaven/getting-started/cli-quickstart/): Install dh, DuckHaven's command-line interface, sign in, and run queries and catalog commands from a terminal or a script.
+- [How DuckHaven works](https://tamasmrtn.github.io/duckhaven/getting-started/how-duckhaven-works/): DuckHaven splits into a control plane that decides what may run and agents that run it, with your tables on object storage you own.
 
 ## Querying
 

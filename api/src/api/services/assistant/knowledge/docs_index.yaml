@@ -13,31 +13,22 @@ pages:
 - path: getting-started/what-is-duckhaven.md
   title: What is DuckHaven?
   section: Get started
-  summary: Overview of the product and who it is for.
+  summary: DuckHaven is a self-hosted data lakehouse.
 - path: getting-started/quickstart.md
   title: Quickstart
   section: Get started
-  summary: Stand up the full stack with one `docker compose` command and run your first query.
-- path: getting-started/installation.md
-  title: Installation
-  section: Get started
-  summary: Prerequisites and how to install the stack.
-- path: getting-started/first-workspace.md
-  title: Your first workspace
-  section: Get started
-  summary: Create a workspace and invite collaborators.
-- path: getting-started/first-query.md
-  title: Your first query
-  section: Get started
-  summary: Write and run a query in a browser worksheet.
+  summary: Install DuckHaven with Docker Compose, create the first admin, and query a table you created
+    yourself in about fifteen minutes.
 - path: getting-started/cli-quickstart.md
   title: Command line (dh)
   section: Get started
-  summary: dh is DuckHaven's command-line interface.
+  summary: Install dh, DuckHaven's command-line interface, sign in, and run queries and catalog commands
+    from a terminal or a script.
 - path: getting-started/how-duckhaven-works.md
   title: How DuckHaven works
   section: Get started
-  summary: The control-plane / compute split and data flow — the defining idea behind DuckHaven.
+  summary: DuckHaven splits into a control plane that decides what may run and agents that run it,
+    with your tables on object storage you own.
 - path: querying/run-queries.md
   title: Run queries
   section: Querying
@@ -331,6 +322,9 @@ aliases:
   deployment/azure-elastic-setup.md: compute/elastic-azure.md
   deployment/homelab-elastic-setup.md: compute/elastic-docker.md
   deployment/storage.md: data/configure-storage.md
+  getting-started/first-query.md: getting-started/quickstart.md
+  getting-started/first-workspace.md: getting-started/quickstart.md
+  getting-started/installation.md: getting-started/quickstart.md
   guides/access-levels.md: access/access-levels.md
   guides/connect-idp.md: access/connect-idp.md
   guides/connect-ldap.md: access/connect-ldap.md

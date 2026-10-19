@@ -31,10 +31,11 @@ Give it `admin` only if it really administers DuckHaven.
 ## Give it access to a workspace
 
 1. Open the account's **⋯** → **Manage workspaces**.
-2. Choose a role in each workspace it needs — `reader` to run queries, `writer` to change tables. The change saves
-   immediately.
+2. Choose a role in each workspace it needs. The change saves immediately.
 
-In a [scoped catalog](scoped-access.md), it also needs a grant on the tables it reads, like any member.
+In an open catalog, any role lets it read and write tables. In a [scoped catalog](scoped-access.md) it needs a grant
+on the tables it uses, like any member, and its role caps that grant: a `reader` cannot write. Give it `writer` if it
+loads data or runs dbt, so it keeps working when a catalog is scoped.
 
 ## Issue a token
 

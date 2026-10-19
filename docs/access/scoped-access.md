@@ -7,10 +7,11 @@ type: concept
 A scoped catalog shows each workspace member only the schemas and tables a grant gives them, down to a single table,
 instead of applying their workspace role to everything.
 
-A workspace role is coarse: it grants the same access to every object in every attached catalog. Scoping a catalog is
-how you say "this analyst sees the `marketing` schema but not `finance`", or "this coding agent may discover a table
-but never read its rows". It is opt-in per catalog attachment, so nothing changes for teams that do not need it. How
-scoping fits with the other access layers is in [How access works](how-access-works.md).
+In an open catalog, membership is all it takes: every member, `reader` included, can read and write every table. Scoping
+a catalog is how you say "this analyst sees the `marketing` schema but not `finance`", "only these people may change
+this table", or "this coding agent may discover a table but never read its rows". It is opt-in per catalog attachment,
+so nothing changes for teams that do not need it. How scoping fits with the other access layers is in [How access
+works](how-access-works.md).
 
 !!! info "Availability"
     Every catalog kind and every deployment. Switching a catalog's access mode, and granting on it, needs the workspace
@@ -20,7 +21,7 @@ scoping fits with the other access layers is in [How access works](how-access-wo
 
 Each catalog attachment has an **access mode**:
 
-- **`open`** (the default) — the workspace role governs every object in the catalog.
+- **`open`** (the default) — every member of the workspace can read and write every object, whatever their role.
 - **`scoped`** — the workspace role alone is not enough; a member sees only what a **grant** gives them.
 
 Choose the mode when you create the catalog — the **New catalog** dialog asks **Who can see its data** — or switch an

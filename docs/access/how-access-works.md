@@ -54,11 +54,14 @@ demoting someone is a change in the directory.
 ## Layer 2 — Workspace role: your access to a workspace's data
 
 A [workspace](workspaces.md) groups the catalogs a team works with. To touch any data you must be a member, with one
-role: `reader` browses and queries, `writer` also changes tables, and `owner` also manages members, catalogs and
-grants. The [permissions reference](../reference/permissions.md#workspace-roles) lists exactly what each role allows.
+role: `reader` browses and queries, `writer` also saves and schedules queries and authors semantic models, and `owner`
+also manages members, catalogs and grants. The [permissions reference](../reference/permissions.md#workspace-roles)
+lists exactly what each role allows.
 
-By default your role applies to **every** schema and table in **every** catalog the workspace attaches. Most teams
-configure nothing beyond layers 1 and 2: add people to a workspace, pick a role. See
+Membership is what opens a workspace's catalogs. In an **open** catalog, the default, every member can read **and
+write** every schema and table: DuckHaven does not check the role on SQL there, so a `reader` can run `INSERT` or
+`CREATE TABLE` too. To control who may change data, scope the catalog (layer 3); there the role caps every grant.
+Most teams configure nothing beyond layers 1 and 2: add people to a workspace, pick a role. See
 [Manage users & access](manage-users.md).
 
 ## Layer 3 — Data grants: narrower access to a catalog
@@ -114,7 +117,7 @@ Dana is a data analyst:
 | Action | Allowed? | Which layer decided it |
 |---|---|---|
 | Open **Admin → Users** | No | Layer 1 — she is a `user`, not an `admin` |
-| Query any table in `marketing` | Yes, as a writer | Layer 2 — `marketing` is open, so her `writer` role applies |
+| Query or change any table in `marketing` | Yes | Layer 2 — `marketing` is open, so membership is enough |
 | Query `sales.analytics.orders` | Yes, read-only | Layer 3 — her `reader` grant |
 | `INSERT` into `sales.analytics.orders` | No | Layer 3 — the `reader` grant caps her below her `writer` role |
 | See `sales.finance.*` at all | No — it is not listed | Layer 3 — no grant, so the tree hides it |

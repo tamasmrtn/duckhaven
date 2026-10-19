@@ -33,8 +33,8 @@ credentials.
   Iceberg namespace.
 - Tables are [Apache Iceberg](tables.md) and catalog-managed (Polaris arbitrates every commit), or
   [DuckLake](ducklake.md), depending on the catalog's kind.
-- Each attachment has an **access mode**. By default (`open`) the workspace role governs the whole catalog; switching an
-  attachment to `scoped` narrows access down to the catalog, schema, or table per principal — see
+- Each attachment has an **access mode**. By default (`open`) every workspace member can read and write the whole
+  catalog; switching an attachment to `scoped` narrows access down to the catalog, schema, or table per principal — see
   [scoped access](../access/scoped-access.md).
 
 ## Querying across catalogs

@@ -27,8 +27,9 @@ SELECT * FROM analytics.events;
 
 ## What SQL is allowed
 
-Worksheets accept data statements (`SELECT`, `INSERT`, `UPDATE`, `DELETE`, `MERGE`) and catalog DDL (`CREATE`, `ALTER`,
-`DROP`). Sandbox escapes such as `ATTACH`, `COPY`, `LOAD`, and `SET` are rejected. See
+Worksheets accept data statements (`SELECT`, `INSERT`, `UPDATE`, `DELETE`, `TRUNCATE`, `MERGE`), read-only
+introspection (`DESCRIBE`, `SHOW`, `SUMMARIZE`), and catalog DDL (`CREATE`, `ALTER`, `DROP`). Statements that could
+escape the sandbox, such as `ATTACH`, `COPY`, `LOAD`, `SET` and `EXPLAIN`, are rejected. See
 [SQL support](../reference/sql-support.md).
 
 ## Inspect the profile

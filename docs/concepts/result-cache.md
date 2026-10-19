@@ -77,7 +77,7 @@ The run records why in `cache_detail`:
 | `volatile_function` | A function whose result depends on when, where or by whom it runs: `now()`, `current_date`, `random()`, `uuid()`, `current_user`, `getvariable()`, `current_setting()`, … DuckDB's own function metadata is not trusted for this: it labels some of these as stable. |
 | `unknown_function` | A function DuckHaven cannot vouch for: a user-defined or catalog-qualified one. |
 | `table_function` | A table function that reads outside the catalog (`read_parquet`, `iceberg_scan`) or reports engine state (`duckdb_tables()`). `range`, `generate_series` and `unnest` are fine. |
-| `system_catalog` | DuckHaven's [system catalog](metadata.md) or `info_schema`, whose content changes without any table version. |
+| `system_catalog` | DuckDB's built-in `system` and `temp` catalogs, the reserved `duckhaven` catalog, or `information_schema` / `info_schema`, whose content changes without any table version. |
 | `not_a_table` | A view, or a name that is not a table. |
 | `sample`, `time_travel`, `parameter` | `USING SAMPLE` / `TABLESAMPLE`, `AT (VERSION => …)`, and a placeholder sent without a value. [Query parameters](../reference/sql-support.md#query-parameters) are written into the SQL first, so a parameterized query is cached like any other. |
 | `ambiguous_name` | A two-part name `a.b` where `a` is both a catalog and a schema name. |

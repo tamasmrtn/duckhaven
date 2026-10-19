@@ -57,9 +57,10 @@ regenerated on subsequent boots.
 4. Inspect the results grid. After the query finishes, open the **Profile** tab to see the per-operator execution
    profile.
 
-The allowed SQL surface is data statements (`SELECT`/`INSERT`/`UPDATE`/`DELETE`/`MERGE`) and catalog DDL
-(`CREATE`/`ALTER`/`DROP`), executed on the agent against the Polaris catalog. Sandbox escapes such as `ATTACH`, `COPY`,
-`LOAD`, and `SET` are rejected at the API boundary.
+Worksheets accept data statements (`SELECT`, `INSERT`, `UPDATE`, `DELETE`, `TRUNCATE`, `MERGE`), read-only
+introspection (`DESCRIBE`, `SHOW`, `SUMMARIZE`), and catalog DDL (`CREATE`, `ALTER`, `DROP`). Statements that could
+escape the sandbox, such as `ATTACH`, `COPY`, `LOAD`, `SET` and `EXPLAIN`, are rejected. See
+[SQL support](../reference/sql-support.md).
 
 ## Next steps
 

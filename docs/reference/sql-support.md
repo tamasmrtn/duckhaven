@@ -10,8 +10,8 @@ executes user SQL) before dispatching it to an [agent](../concepts/agents.md).
 | Data | `SELECT`, `INSERT`, `UPDATE`, `DELETE`, `TRUNCATE`, `MERGE` |
 | Catalog DDL | `CREATE`, `ALTER`, `DROP` (schemas and tables) |
 
-These run on the agent against the workspace's attached Polaris REST catalogs. A single `SELECT` is materialized to
-Parquet and returned as a result grid; other statements run and report status without a grid.
+These run on the agent against the workspace's attached catalogs, Iceberg or DuckLake. A single `SELECT` is
+materialized to Parquet and returned as a result grid; other statements run and report status without a grid.
 
 `TRUNCATE` is DuckDB's spelling of `DELETE FROM` without a `WHERE` clause — the two compile to exactly the same plan.
 That is worth knowing on Iceberg, where it is **not** the cheap metadata-only operation the name suggests elsewhere:
@@ -22,7 +22,7 @@ target in a [scoped catalog](../concepts/permissions.md).
 DuckDB also classifies its read-only introspection statements — `DESCRIBE`, `SHOW`, `SUMMARIZE`, and the `PRAGMA`s that
 return rows (`PRAGMA version`, `PRAGMA table_info(…)`, `PRAGMA database_list`, `PRAGMA show_tables`) — as queries. They
 are allowed on the same footing as a `SELECT` and return a result grid too. They read no files and change nothing. This
-holds on both execution paths: a single query and a [SQL session](../concepts/query-execution.md) statement. `SUMMARIZE`
+holds on both execution paths: a single query and a [SQL session](../concepts/sql-sessions.md) statement. `SUMMARIZE`
 is the one that is not merely introspection — it scans the table to compute its statistics, so it needs read access to
 the data, not just to the schema.
 
@@ -53,12 +53,12 @@ per query (never cached). Scope it to one catalog with `table_catalog`:
 -- Tables and views in a catalog
 SELECT table_schema, table_name, table_type
 FROM information_schema.tables
-WHERE table_catalog = 'analytics';
+WHERE table_catalog = 'sales';
 
 -- Namespaces (schemas) in a catalog
 SELECT schema_name
 FROM information_schema.schemata
-WHERE catalog_name = 'analytics';
+WHERE catalog_name = 'sales';
 ```
 
 !!! warning "Not available in a workspace with a scoped catalog"
@@ -79,8 +79,8 @@ it works on any attached catalog, and — unlike the `information_schema` views 
 tools can filter and project it:
 
 ```sql
-DESCRIBE analytics.analytics.events;
-SELECT column_name, column_type FROM (DESCRIBE analytics.analytics.events);
+DESCRIBE sales.analytics.events;
+SELECT column_name, column_type FROM (DESCRIBE sales.analytics.events);
 ```
 
 It reports DuckDB type names, which is what a `SELECT` on the same table returns —
@@ -92,15 +92,15 @@ The same spelling is what a query result reports in its `column_schema`
 (see [Column types](../concepts/query-execution.md#column-types)), so the type you read from `DESCRIBE` and the type you
 get back with your rows are the same string.
 
-#### Types whose *values* are degraded in results
+#### Types whose values arrive in a different shape
 
 Result rows travel as Parquet from the agent and then as JSON to the client. `column_schema` always reports the query's
-real type, but for a few types the values you receive are not exact:
+real type; for these types the JSON value is a string or another encoding rather than the type itself:
 
 | Type | What you receive |
 |---|---|
-| `HUGEINT`, `UHUGEINT` | A JSON number — **precision is lost**; the value passes through `DOUBLE` in the Parquet file |
-| `DECIMAL(p, s)` | A JSON number — **precision is lost** beyond what a float64 holds (`1.5`, not `"1.5000000000"`) |
+| `BIGINT`, `UBIGINT`, `HUGEINT`, `UHUGEINT` | A JSON string holding the exact value (`"9007199254740993"`), because a JSON number cannot hold every value exactly. A `HUGEINT` with more than 38 digits fails the query instead; cast it to `VARCHAR` to get it as text |
+| `DECIMAL(p, s)` | A JSON string holding the exact value (`"1.5000000000"`) |
 | `BLOB` | Lowercase hex text (`"616263"`) |
 | `BIT` | Bit-string text (`"0101"`) |
 | `ENUM(…)` | The label text (`"e"`) |
@@ -111,9 +111,8 @@ real type, but for a few types the values you receive are not exact:
 Nested types (`LIST`, `STRUCT`, `MAP`, `ARRAY`) come back as JSON arrays and objects with the same per-element rules
 applied. A fixed-size `INTEGER[2]` is *reported* as `INTEGER[2]` but arrives as an ordinary JSON array.
 
-The two precision-losing rows are the ones to watch: `column_schema` will correctly tell you a column is
-`DECIMAL(38,10)`, but the number you get alongside it has already been through a float. Exact decimal round-tripping is
-not yet available.
+Read the column's `column_schema` type to convert a string value back to a number; see
+[Migrating to `api_version` 3](rest-api.md#migrating-to-api_version-3).
 
 !!! warning "`information_schema.columns` does not work for Iceberg tables"
     DuckDB cannot introspect the columns of an attached Iceberg REST table through `information_schema.columns`,
@@ -129,7 +128,7 @@ not write tooling against it.
 
 Worse than being empty, the view is *inconsistent*. Once something in the same connection has touched a table, that
 table's columns appear correctly while every other table still shows the placeholder. A single query opens a fresh
-connection, so there you always get placeholders; a [SQL session](../concepts/query-execution.md) holds its connection
+connection, so there you always get placeholders; a [SQL session](../concepts/sql-sessions.md) holds its connection
 across statements, so there you can get a result that is correct for the tables you happen to have queried already and
 wrong for the rest — which is the more dangerous failure, because it looks like it works.
 
@@ -139,8 +138,8 @@ enforced primary or foreign keys.
 For Iceberg-native facts — snapshot history, file and manifest details — use the `iceberg` table functions:
 
 ```sql
-SELECT * FROM iceberg_snapshots('analytics.analytics.events');
-SELECT * FROM iceberg_metadata('analytics.analytics.events');
+SELECT * FROM iceberg_snapshots('sales.analytics.events');
+SELECT * FROM iceberg_metadata('sales.analytics.events');
 ```
 
 See [Snapshots & time travel](../guides/snapshots-time-travel.md) for more on snapshot history. These functions name

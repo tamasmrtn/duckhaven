@@ -24,8 +24,8 @@ depends on the catalogs it reads, not on how many the workspace has.
 How the control plane decides:
 
 - **Any catalog name in the SQL counts.** The control plane looks for each catalog's name anywhere in the statement,
-  including inside strings and quoted identifiers, so `USE sales`, `CALL lake.merge_adjacent_files()` and
-  `ducklake_snapshots('lake')` all attach the catalog they mention. A word that
+  including inside strings and quoted identifiers, so `USE sales`, `SELECT * FROM lake.snapshots()` and
+  `iceberg_snapshots('raw.analytics.events')` all attach the catalog they mention. A word that
   only happens to match a catalog's name attaches it needlessly; that costs time, never correctness.
 - **Listing statements attach everything.** `information_schema`, `pg_catalog`, the `duckdb_*()` functions, `SHOW` and
   the listing `PRAGMA`s describe every attached catalog, so they still attach the whole workspace and list all of it.
@@ -45,8 +45,9 @@ behaviour advertise no support for it, so the control plane keeps attaching ever
 
 ## The SQL allowlist
 
-Only data statements (`SELECT`, `INSERT`, `UPDATE`, `DELETE`, `MERGE`) and catalog DDL (`CREATE`, `ALTER`, `DROP`) reach
-an agent. Sandbox escapes such as `ATTACH`, `COPY`, `LOAD`, `SET`, and `PRAGMA` are rejected at the API boundary. See
+Only data statements (`SELECT`, `INSERT`, `UPDATE`, `DELETE`, `TRUNCATE`, `MERGE`), read-only introspection
+(`DESCRIBE`, `SHOW`, `SUMMARIZE`) and catalog DDL (`CREATE`, `ALTER`, `DROP`) reach an agent. Statements that could
+escape the sandbox, such as `ATTACH`, `COPY`, `LOAD`, `SET` and `EXPLAIN`, are rejected at the API boundary. See
 [SQL support](../reference/sql-support.md).
 
 ## Admission control and concurrency

@@ -128,8 +128,10 @@ it. See [Manage catalogs](manage-catalogs.md#browse).
 
 ## Allowed SQL
 
-Worksheets accept `SELECT`, `INSERT`, `UPDATE`, `DELETE`, `MERGE` and catalog DDL (`CREATE`, `ALTER`, `DROP`). Sandbox
-escapes (`ATTACH`, `COPY`, `LOAD`, `SET`, `PRAGMA`, …) are rejected. See [SQL support](../reference/sql-support.md).
+Worksheets accept data statements (`SELECT`, `INSERT`, `UPDATE`, `DELETE`, `TRUNCATE`, `MERGE`), read-only
+introspection (`DESCRIBE`, `SHOW`, `SUMMARIZE`), and catalog DDL (`CREATE`, `ALTER`, `DROP`). Statements that could
+escape the sandbox, such as `ATTACH`, `COPY`, `LOAD`, `SET` and `EXPLAIN`, are rejected. See
+[SQL support](../reference/sql-support.md).
 
 ## Inspect your tables
 
@@ -137,15 +139,17 @@ Every catalog has a built-in, read-only `information_schema` you can query like 
 catalog, then `DESCRIBE` a table to see its columns:
 
 ```sql
-SELECT table_schema, table_name FROM information_schema.tables WHERE table_catalog = 'analytics';
-DESCRIBE analytics.analytics.events;
+SELECT table_schema, table_name FROM information_schema.tables WHERE table_catalog = 'sales';
+DESCRIBE sales.analytics.events;
 ```
 
 In the catalog tree it appears under each catalog as a lock-marked **`information_schema`** node badged *read-only*;
-expand it to browse the supported views. It is not a stored schema — it never appears in Polaris and cannot be
+expand it to browse the supported views. It is not a stored schema: it is computed when you query it and cannot be
 written to.
 
-See [Inspecting metadata](../reference/sql-support.md#inspecting-metadata-information_schema) for the full surface.
+In a workspace with a [scoped catalog](../concepts/permissions.md#scoped-access) these views are refused, because they
+cannot be filtered by grant; `DESCRIBE` still works for a table you can read. See
+[Inspecting metadata](../reference/sql-support.md#inspecting-metadata-information_schema) for the full surface.
 
 ## Save for later
 
@@ -220,7 +224,8 @@ claims a run is something it was never shown to be.
 ### Who can see what
 
 Anyone in a workspace can narrow that workspace's history however they like, including to their own runs and to a time
-window. Reading **another user's** runs, or **across workspaces**, needs the query-admin permission.
+window. The list shows every member's runs in the workspace; filtering it to **another user's** runs, or reading
+**across workspaces**, needs the `queries:admin` permission.
 
 Internal machinery is never listed: table-preview queries, metadata lookups, and the
 [Lakehouse-health](../concepts/maintenance.md) scanner's per-table probes. Statements run inside a

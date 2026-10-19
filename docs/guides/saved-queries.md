@@ -48,8 +48,8 @@ Deleting a saved query leaves the worksheets linked to it as ordinary drafts, SQ
 - There is no version history: replacing or saving over a query overwrites its SQL.
 - A [scheduled run](schedule-queries.md#whose-data-grants-a-run-uses) uses the data grants of whoever **last changed
   the SQL**, not whoever first saved it.
-- Saved queries store SQL only; results are produced fresh on each run (see
-  [Query execution](../concepts/query-execution.md)).
+- Saved queries store SQL only, not results. Each run executes the SQL, unless the
+  [result cache](../concepts/result-cache.md) can answer it because nothing the query reads has changed.
 
 ## Related
 

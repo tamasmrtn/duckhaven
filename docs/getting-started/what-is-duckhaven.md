@@ -1,3 +1,7 @@
+---
+type: concept
+---
+
 # What is DuckHaven?
 
 DuckHaven is a self-hosted data lakehouse. Your data, your hardware, your bill.

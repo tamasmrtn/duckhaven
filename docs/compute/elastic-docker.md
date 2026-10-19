@@ -1,9 +1,14 @@
+---
+type: how-to
+---
+
 # Elastic compute on a single Docker host
 
-This page enables [elastic compute](elastic-compute.md) with the **Docker** backend,
-provisioning agents as containers on the machine already running your stack. It is the homelab
-counterpart to [Elastic compute on Azure](elastic-azure.md): same auto-terminating model, one
-box, no cloud account.
+Turn on elastic compute with the Docker backend, so DuckHaven starts agent containers on the host running your stack
+when work arrives and removes them when idle.
+
+It is the single-host counterpart to [Elastic compute on Azure](elastic-azure.md): the same auto-terminating model, on
+one machine, with no cloud account.
 
 Everything is in one override file, `deploy/docker-compose.elastic.yml`:
 
@@ -16,7 +21,9 @@ That points the API at the Docker backend, adds a socket proxy between the two, 
 always-on `agent` service — because scaling to zero is the point. Run a query against the elastic
 pool and an agent appears; leave it idle and it goes away.
 
-## Read this before you enable it
+## Before you begin
+
+You need shell access to the Docker host and the `agents:manage` permission to create compute by hand.
 
 Provisioning containers means giving the control plane a path to the Docker daemon, and **creating a
 container is close to being root on the host**. A container can ask for a bind mount of `/` and for
@@ -32,7 +39,7 @@ does and does not buy you:**
 | **Does** | Denies `/exec`, so the control plane cannot run commands inside other containers |
 | | Denies `/secrets`, `/configs`, `/swarm`, `/nodes` |
 | | Denies `/volumes`, so it cannot enumerate storage the deployment does not own |
-| | Keeps the socket off the API container's filesystem, so a file-read bug in the API no longer hands over the daemon |
+| | Keeps the socket off the API container's filesystem, so a file-read bug in the API cannot hand over the daemon |
 | **Does not** | Inspect request bodies. It filters paths and methods only |
 | | Prevent a `POST /containers/create` carrying `Binds: ["/:/host"]` and `Privileged: true` — that request is indistinguishable from a legitimate agent create |
 
@@ -127,7 +134,7 @@ size.
 
 If the daemon cannot be reached — or `INFO` is not granted on the proxy — the range falls back to
 a conservative 1–4 vCPU / 1–16 GiB rather than guessing high, since a size the platform then
-refuses surfaces as a provisioning failure minutes later instead of a narrower slider now.
+refuses surfaces as a provisioning failure minutes later instead of as a narrower slider.
 
 ## Cost
 
@@ -166,7 +173,7 @@ The lifecycle knobs — `ELASTIC_IDLE_TIMEOUT_S`, `ELASTIC_MAX_LIFETIME_S`,
 `ELASTIC_MAX_AGENTS_PER_POOL` and the rest — are provider-independent and documented in the
 [configuration reference](../reference/configuration.md).
 
-## Verifying it
+## Check that it worked
 
 Check the proxy is reachable from the API and from nowhere else:
 
@@ -188,6 +195,29 @@ docker ps --filter label=duckhaven-managed=true
 Leave it idle past `ELASTIC_IDLE_TIMEOUT_S` and the reaper terminates it. A container carrying that
 label with no live agent row is treated as a leak and removed on the next reaper cycle — which is
 why nothing else should ever wear it.
+
+## If it goes wrong
+
+### "Elastic compute is not enabled."
+
+The API was started without the override, so `ELASTIC_COMPUTE_ENABLED` and `ELASTIC_PROVIDER` are unset. Bring the
+stack up with both compose files, as above.
+
+### No agent container appears
+
+Check that the API reaches the proxy (the first `curl` above), and read the API's logs for the provisioning error. The
+first start pulls the agent image, which takes longer on a slow connection; a start that does not finish within
+`ELASTIC_PROVISIONING_DEADLINE_S` is marked `failed`.
+
+### The size slider offers only 1–4 vCPU and 1–16 GiB
+
+The API could not read the host's size through the proxy, so it offers a conservative range. Check that the proxy
+allows `INFO`, as the override sets.
+
+### A container you started is removed
+
+Containers labelled `duckhaven-managed=true` with no agent record are treated as leaks and removed. Do not put that
+label on anything else.
 
 ## Related
 

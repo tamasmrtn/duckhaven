@@ -77,11 +77,12 @@
 - [Agents](https://tamasmrtn.github.io/duckhaven/compute/agents/): An agent is a process running DuckDB on its own host that connects out to the control plane and runs the queries it is sent.
 - [Add an agent](https://tamasmrtn.github.io/duckhaven/compute/add-agent/): Run a static agent on another host: generate a bootstrap snippet, start it with Docker Compose, and watch it register.
 - [Runtimes](https://tamasmrtn.github.io/duckhaven/compute/runtimes/): A runtime is the DuckDB an agent runs, together with the extensions baked into its image.
-- [Elastic compute](https://tamasmrtn.github.io/duckhaven/compute/elastic-compute/): Provisioning agents on demand and terminating them when they go idle.
-- [Elastic compute on a single Docker host](https://tamasmrtn.github.io/duckhaven/compute/elastic-docker/): Enable elastic compute with the Docker backend, provisioning agents as containers on a single host.
-- [Elastic compute on Azure](https://tamasmrtn.github.io/duckhaven/compute/elastic-azure/): Enable elastic compute with the Azure Container Instances backend, provisioning agents in the cloud.
+- [Elastic compute](https://tamasmrtn.github.io/duckhaven/compute/elastic-compute/): Elastic compute starts agents when work arrives and none is running, and stops them after they sit idle, so nothing runs, or is billed, between queries.
+- [Elastic compute on a single Docker host](https://tamasmrtn.github.io/duckhaven/compute/elastic-docker/): Turn on elastic compute with the Docker backend, so DuckHaven starts agent containers on the host running your stack when work arrives and removes them when idle.
+- [Elastic compute on Azure](https://tamasmrtn.github.io/duckhaven/compute/elastic-azure/): Turn on elastic compute with the Azure Container Instances backend, so DuckHaven starts agents in your Azure subscription when work arrives and stops them when idle.
 - [Scaling compute](https://tamasmrtn.github.io/duckhaven/compute/scaling/): Add agents for more capacity, give an agent more memory for heavier queries, or change how one agent shares its memory between queries.
-- [Agent monitoring](https://tamasmrtn.github.io/duckhaven/compute/agent-monitoring/): An agent's Monitoring tab — live load, where its time went, the queries it ran and what they cost, CPU and memory — and exactly how each number is measured.
+- [Agent monitoring](https://tamasmrtn.github.io/duckhaven/compute/agent-monitoring/): An agent's Monitoring tab shows whether it was saturated, how its memory and CPU behaved, and which queries it ran, over up to a week.
+- [Troubleshoot compute](https://tamasmrtn.github.io/duckhaven/compute/troubleshooting/): Find the message you see in an agent's log, on the Compute page, or in a query's error, then follow what to do.
 
 ## Deploy
 

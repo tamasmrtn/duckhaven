@@ -1,14 +1,16 @@
+---
+type: how-to
+---
+
 # Elastic compute on Azure
 
-This page enables [elastic compute](elastic-compute.md) with the **Azure Container
-Instances (ACI)** backend, provisioning agents into **your own Azure subscription**.
+Turn on elastic compute with the Azure Container Instances backend, so DuckHaven starts agents in your Azure
+subscription when work arrives and stops them when idle.
 
-!!! note "Scope"
-    This is the first-party setup: DuckHaven provisions agent container groups into a resource group
-    you own, using an identity you control. Bring-your-own-cloud (provisioning into a *customer's*
-    resource group via delegated permissions) is planned but not yet shipped.
+DuckHaven creates agent container groups in a resource group you own, with an identity you control. It cannot
+provision into another tenant's resource group.
 
-## Prerequisites
+## Before you begin
 
 - An Azure subscription and a resource group dedicated to elastic agents.
 - The control plane running with an Azure identity available to
@@ -158,7 +160,7 @@ them for your region or negotiated pricing:
 | `ELASTIC_AZURE_PRICE_MEMORY_GB_HOUR` | `0.0054` | Per-GiB hourly rate. |
 | `ELASTIC_AZURE_PRICE_CURRENCY` | `USD` | The currency the two rates above are quoted in. |
 
-## 3. Verify
+## 3. Check that it worked
 
 1. Open **Compute → New compute**, pick a size (its hourly cost is shown), and create it — a
    container group should appear in the resource group and register within ~tens of seconds. Or, run
@@ -176,6 +178,24 @@ them for your region or negotiated pricing:
   instance has vanished is failed. A stuck run is bounded by the provisioning deadline.
 - **Cost.** The per-pool cap and the idle/max-lifetime timeouts bound spend. Alert on the
   provisioning-error rate.
+
+## If it goes wrong
+
+### "Elastic compute is not enabled."
+
+`ELASTIC_COMPUTE_ENABLED` or `ELASTIC_PROVIDER` is not set on the API. Set them as in step 2 and run
+`docker compose up -d`.
+
+### "Failed to provision the agent."
+
+Azure refused to create the container group. The API's logs carry Azure's reason; the usual causes are the identity
+missing its role on the resource group or the subnet, or a size the region does not offer.
+
+### The container group starts but the agent never registers
+
+The agent cannot reach the control plane. Check the address it dials home to, and that the delegated subnet has a
+route to it; see [Agent networking](#agent-networking). A start that does not register within
+`ELASTIC_PROVISIONING_DEADLINE_S` is marked `failed`, and any run waiting on it fails too.
 
 ## Related
 

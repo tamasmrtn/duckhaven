@@ -1,3 +1,7 @@
+---
+type: concept
+---
+
 # Runtimes
 
 A **runtime** is the DuckDB an agent runs, together with the extensions baked into its image. Each runtime is one
@@ -15,9 +19,9 @@ The runtime is a property of an agent, not of a workspace or a query. It is chos
 with it:
 
 - **Elastic compute** runs the runtime it was created with. An admin picks it in **Compute → New compute**; a beta
-  runtime has to be acknowledged before the agent is created. A restart keeps
-  it, but picks up this release's newest build of that runtime, the way a maintenance update would. An agent never
-  moves to a different DuckDB line on its own.
+  runtime has to be acknowledged before the agent is created. A restart keeps it, but picks up the newest build of that
+  runtime that the control plane ships, the way a maintenance update would. An agent never moves to a different DuckDB
+  line on its own.
 - **A static agent** is whatever image its operator runs. The *Add an agent* snippet names the runtime's image
   (`duckhaven-agent:<tag>-duckdb<runtime>`). Changing it later means re-running the agent from another image.
 - **The default runtime** (`DEFAULT_RUNTIME`) is what compute runs when nobody chose. The elastic pool provisions
@@ -49,7 +53,7 @@ DuckDB never changes where anyone else's queries run.
 | **Retired** | No | No | Refused, and can't be restarted |
 
 A runtime is deprecated some time after upstream DuckDB stops supporting its line. It is retired one DuckHaven
-release later, once it is no longer built. Its entry stays in that last release so that an agent still running it is
+release later, when it stops being built. Its entry stays in that last release so that an agent still running it is
 refused with a clear reason rather than an unknown one.
 
 ## Which agents are trusted with work
@@ -57,7 +61,7 @@ refused with a clear reason rather than an unknown one.
 Every agent reports its runtime and its exact DuckDB version when it connects, and work is routed on that report. An
 agent is refused work, with the reason shown, when:
 
-- it reports a runtime this release of DuckHaven doesn't know, or a DuckDB version its runtime doesn't have
+- it reports a runtime the control plane doesn't know, or a DuckDB version its runtime doesn't have
   (`runtime_unsupported`);
 - it is elastic compute running something other than the runtime it was started as (also `runtime_unsupported`).
   In the elastic pool such an agent is terminated at once, since it would otherwise hold the pool's slot while

@@ -221,6 +221,7 @@ nav:
           - Elastic compute on Azure: compute/elastic-azure.md
           - Scaling compute: compute/scaling.md
           - Agent monitoring: compute/agent-monitoring.md
+          - Troubleshoot compute: compute/troubleshooting.md
   - Deploy & operate:
       - Deploy:
           - Docker Compose: deployment/install.md

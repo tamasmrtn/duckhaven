@@ -240,17 +240,18 @@ pages:
 - path: compute/elastic-compute.md
   title: Elastic compute
   section: Compute
-  summary: Provisioning agents on demand and terminating them when they go idle.
+  summary: Elastic compute starts agents when work arrives and none is running, and stops them after
+    they sit idle, so nothing runs, or is billed, between queries.
 - path: compute/elastic-docker.md
   title: Elastic compute on a single Docker host
   section: Compute
-  summary: Enable elastic compute with the Docker backend, provisioning agents as containers on a
-    single host.
+  summary: Turn on elastic compute with the Docker backend, so DuckHaven starts agent containers on
+    the host running your stack when work arrives and removes them when idle.
 - path: compute/elastic-azure.md
   title: Elastic compute on Azure
   section: Compute
-  summary: Enable elastic compute with the Azure Container Instances backend, provisioning agents
-    in the cloud.
+  summary: Turn on elastic compute with the Azure Container Instances backend, so DuckHaven starts
+    agents in your Azure subscription when work arrives and stops them when idle.
 - path: compute/scaling.md
   title: Scaling compute
   section: Compute
@@ -259,8 +260,13 @@ pages:
 - path: compute/agent-monitoring.md
   title: Agent monitoring
   section: Compute
-  summary: An agent's Monitoring tab — live load, where its time went, the queries it ran and what
-    they cost, CPU and memory — and exactly how each number is measured.
+  summary: An agent's Monitoring tab shows whether it was saturated, how its memory and CPU behaved,
+    and which queries it ran, over up to a week.
+- path: compute/troubleshooting.md
+  title: Troubleshoot compute
+  section: Compute
+  summary: Find the message you see in an agent's log, on the Compute page, or in a query's error,
+    then follow what to do.
 - path: deployment/install.md
   title: Docker Compose
   section: Deploy

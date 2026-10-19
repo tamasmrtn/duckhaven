@@ -1,16 +1,22 @@
+---
+type: reference
+---
+
 # Agent monitoring
 
-Open **Compute** and click an agent to reach its detail page. The **Monitoring** tab answers the questions an operator
-brings to it — *was it saturated? did memory spike? how much of the time it was up was it actually working?* — and
-leads from each answer to the queries behind it. It reads top to bottom: what the agent is doing now, what the chosen
-range added up to, every series on one time axis, and then the queries themselves.
+An agent's **Monitoring** tab shows whether it was saturated, how its memory and CPU behaved, and which queries it ran,
+over up to a week.
 
-## Live now
+Open **Compute** and click an agent. The tab reads top to bottom: what the agent is doing at this moment, what the
+chosen range added up to, every series on one time axis, and the queries behind them. Anyone with the `use` tier on
+the agent can open it.
+
+## Live status
 
 A row of tiles shows the present moment, from the agent's own 2-second samples:
 
 - **Status**, with how long ago the last sample arrived.
-- **Executing** — statements running right now. An open SQL session with nothing running (a dbt or BI connection
+- **Executing** — statements running at this moment. An open SQL session with nothing running (a dbt or BI connection
   waiting for its next statement) holds an admission slot but is idle, so it appears as *+N idle connections* beside
   the count, never in it.
 - **Queued** — work waiting for an admission slot, plus any statement waiting for memory to grow into.

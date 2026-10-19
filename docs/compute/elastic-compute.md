@@ -1,20 +1,21 @@
+---
+type: concept
+---
+
 # Elastic compute
 
-By default, [agents](agents.md) are **static**: an operator starts an agent host and it stays
-running until it is stopped. **Elastic compute** lets the control plane instead *provision agents on
-demand* and *terminate them when idle* — the "auto-terminating cluster" model. Work arriving for a
-workspace with no available agent brings compute up; a stretch of inactivity takes it back down, so
-nothing runs (and nothing is billed) while no queries are in flight.
+Elastic compute starts agents when work arrives and none is running, and stops them after they sit idle, so nothing
+runs, or is billed, between queries.
 
-!!! note "Opt-in and additive"
-    Elastic compute is **off by default** (`ELASTIC_COMPUTE_ENABLED=false`) and does not change how
-    static agents behave. Static and elastic agents coexist; a static agent has no lifecycle fields,
-    an elastic one carries a provisioning lifecycle alongside its normal presence.
+By default, [agents](agents.md) are **static**: an operator starts an agent host and it runs until it is stopped. With
+elastic compute the control plane creates agent containers itself, on demand, and removes them when idle, like an
+auto-terminating cluster. Static and elastic agents work side by side.
 
-!!! note "Two backends"
-    **Azure Container Instances**, provisioning into your own Azure subscription, and **Docker**,
-    provisioning containers on the single host already running your stack. Bring-your-own-cloud
-    (customer resource groups) and additional clouds are planned but **not yet shipped**.
+!!! info "Availability"
+    Off until an operator sets `ELASTIC_COMPUTE_ENABLED=true`. Two backends:
+    [Docker](elastic-docker.md), which starts containers on the host running your stack, and
+    [Azure Container Instances](elastic-azure.md), which starts them in your Azure subscription. Creating compute by
+    hand needs `agents:manage`.
 
 ## How it works
 
@@ -81,7 +82,7 @@ so refusing the next run would make an idle-terminated agent permanently unusabl
 for a [schedule](../querying/schedule-queries.md) bound to one, every run would fail on the
 consequence of the previous one succeeding.
 
-It comes back on the runtime it was created with, running this release's newest build of that runtime.
+It comes back on the runtime it was created with, running the newest build of that runtime the control plane ships.
 If that runtime has since been retired, the run is refused (`runtime_retired`) instead of parked, since the agent
 can never start again.
 
@@ -90,7 +91,7 @@ Restarting an agent deliberately, with no work to justify it, still needs `opera
 [Per-agent access](../access/agent-access.md).
 
 **A [SQL session](../querying/sql-sessions.md)** — how dbt, dlt and other Python DB-API clients connect — is the one
-case that cannot simply park and answer, because a session open is *synchronous*: it has to hand back something the
+case that cannot park and answer, because a session open is *synchronous*: it has to hand back something the
 caller can immediately run statements on. It therefore blocks while compute starts, and the caller chooses how that wait
 ends — see [Cold start](../querying/sql-sessions.md#cold-start).
 
@@ -108,13 +109,13 @@ disconnect without being torn down):
 
 | State | Meaning |
 |---|---|
-| `provisioning` | The container is being created; the agent has not dialed home yet. |
+| `provisioning` | The container is being created; the agent has not dialed home. |
 | `running` | The agent has registered and is serving work. |
 | `terminating` → `terminated` | The reaper is tearing the agent down (idle or max-lifetime). |
 | `failed` | Provisioning never completed within the deadline, or the instance vanished. |
 
 Because that column is mutated in place — a restart reuses the same agent row — it only ever
-describes the agent *now*. Every transition is therefore also appended to a separate lifecycle
+describes the agent as it is. Every transition is therefore also appended to a separate lifecycle
 trail, together with the reason it happened (`idle`, `max_lifetime`, `provisioning_timeout`,
 `restart`, `orphan`, `dead_row`). That trail is what the **Timeline** on the agent's
 [monitoring page](agent-monitoring.md#the-charts) is drawn from, and it is the

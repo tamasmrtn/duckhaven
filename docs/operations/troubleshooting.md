@@ -1,7 +1,7 @@
 # Troubleshooting
 
 Common issues and where to look. For agent-specific depth, see the
-[Agent reference](../reference/agent-reference.md#troubleshooting).
+[Agent reference](../compute/troubleshooting.md).
 
 ## An agent shows "unavailable"
 

@@ -87,7 +87,7 @@ not have to create it: enabling the assistant creates it on startup if it is not
 Creating it grants nothing. It arrives with no workspace membership and no catalog grants, so until you give it some,
 every question comes back denied — and the assistant panel says exactly that instead of letting you spend a turn finding
 out. You govern its data access per workspace with [workspace membership](../access/workspaces.md) and
-[catalog grants](../access/permissions.md), exactly as you would for any principal:
+[catalog grants](../access/how-access-works.md), exactly as you would for any principal:
 
 - Give it `reader` or a `metadata`-tier grant for a browse-and-read assistant.
 - Add `writer` where you want it to be able to propose writes (still gated by approval).
@@ -202,5 +202,5 @@ how often the agreed definitions get worked around is a number you can look at r
 
 - [MCP server](mcp-server.md) — the same governance, for an AI agent you already use.
 - [Semantic layer](../metadata/semantic-layer.md) — the definitions the assistant answers metric questions from.
-- [Permissions](../access/permissions.md) — the grants that bound what it can reach.
+- [Permissions](../access/how-access-works.md) — the grants that bound what it can reach.
 - [Use the AI assistant](use-the-assistant.md) — turning it on and working with it.

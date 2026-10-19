@@ -382,7 +382,7 @@ Notes that matter for changes:
 - **`workspace_catalogs.access_mode`** is `open` (today's default — the
   workspace role applies uniformly) or `scoped` (per-principal
   `catalog_grants` narrow access below the workspace role; see
-  [Permissions](../access/permissions.md)).
+  [Permissions](../access/how-access-works.md)).
 - **`catalog_migrations`** tracks a storage-backend migration's state machine
   (`pending → copying → verifying → cutover → completed`) plus per-table and
   event-log detail tables (checkpointed so a crash resumes from the last

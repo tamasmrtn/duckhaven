@@ -188,9 +188,9 @@ be sure first.
 
 Everything DuckHaven enforces, it enforces the same way for both kinds, because none of it depends on the table format:
 
-- [Workspace roles and scoped grants](../access/permissions.md) are checked at the API before a query is dispatched.
-  DuckLake itself has no access control of its own, which does not matter here — DuckHaven was never delegating
-  authorization to the catalog.
+- [Workspace roles and scoped grants](../access/how-access-works.md) are checked at the API before a query is
+  dispatched. DuckLake itself has no access control of its own, which does not matter here — DuckHaven was never
+  delegating authorization to the catalog.
 - **Catalogs are isolated from each other in PostgreSQL, not just in SQL.** Each DuckLake catalog has its own database
   login, granted on its own metadata schema and nothing else, so an agent serving one catalog holds no credential that
   reaches another's metadata. See [Enable DuckLake](../deployment/ducklake.md#why-the-isolation-matters).

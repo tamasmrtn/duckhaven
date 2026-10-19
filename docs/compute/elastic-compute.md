@@ -50,7 +50,7 @@ trusted with work. A pool agent that reports the wrong runtime is terminated rat
 
 Note that the pool key describes *capability*, not tenancy: it is what an agent can attach, not who
 may use it. Access is the separate, explicit mechanism described in
-[Per-agent access](../access/permissions.md#per-agent-access). Auto-provisioned pool agents start **open**, so
+[Per-agent access](../access/agent-access.md). Auto-provisioned pool agents start **open**, so
 scale-out serves whoever triggered it; restrict an agent only when you want it reserved.
 
 ### Creating compute manually
@@ -63,7 +63,7 @@ control plane (`GET /api/admin/agents/compute-options`), so cost is shown from o
 
 The same dialog chooses **who can use it** — anyone signed in, or only the people you grant access
 to. Deciding that at creation rather than on the Access tab afterwards matters; see
-[Per-agent access](../access/permissions.md#per-agent-access).
+[Per-agent access](../access/agent-access.md).
 
 It also chooses the **[runtime](runtimes.md)**, meaning the DuckDB version and extensions the agent runs. The default
 runtime is preselected. A beta runtime needs an explicit opt-in, and deprecated or retired runtimes aren't offered.
@@ -87,7 +87,7 @@ can never start again.
 
 This needs only the `use` tier: sending work is dispatch, not a lifecycle operation.
 Restarting an agent deliberately, with no work to justify it, still needs `operate`; see
-[Per-agent access](../access/permissions.md#per-agent-access).
+[Per-agent access](../access/agent-access.md).
 
 **A [SQL session](../querying/sql-sessions.md)** — how dbt, dlt and other Python DB-API clients connect — is the one
 case that cannot simply park and answer, because a session open is *synchronous*: it has to hand back something the

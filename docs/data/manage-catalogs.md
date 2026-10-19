@@ -30,8 +30,8 @@ shows **Inlined** rather than a misleading 0 B.
 **Search** the tree by typing at least two characters in the box above it. The search runs on the server across every
 attached catalog — including catalogs and schemas you have not expanded — matching catalog, schema and table names, and
 shows each match with its path opened out and the matching text highlighted. It respects
-[grants](../access/permissions.md): an object you could not open is never listed. Clear the box to return to the tree
-as you left it.
+[grants](../access/how-access-works.md): an object you could not open is never listed. Clear the box to return to the
+tree as you left it.
 
 The buttons at the top of the tree: **collapse all**; **refresh**, which reloads the tree and re-counts table rows —
 use it after a worksheet `CREATE SCHEMA`/`CREATE TABLE` so the new objects appear; **link**, which attaches an existing
@@ -113,4 +113,4 @@ extension version on the executing agent.
 ## Roles
 
 Browsing requires `reader`; creating/altering/dropping schemas and tables requires `writer` or `owner`; managing
-catalogs (create/attach/detach/drop) requires `owner`. See [Permissions](../access/permissions.md).
+catalogs (create/attach/detach/drop) requires `owner`. See [Permissions](../access/how-access-works.md).

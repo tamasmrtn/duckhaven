@@ -63,7 +63,7 @@ The API accepts two credentials, both resolving to the same authorization checks
 - **Bearer token** — for machine clients. Send a [service-account PAT](../access/service-accounts.md) on the
   `Authorization: Bearer <token>` header. This is the supported path for unattended callers (CI, schedulers, tooling).
 
-See [Permissions](../access/permissions.md) for the underlying model. Both are declared in the OpenAPI schema as
+See [Permissions](../access/how-access-works.md) for the underlying model. Both are declared in the OpenAPI schema as
 security schemes (`cookieAuth`, `bearerAuth`), so a generated client configures credentials once rather than passing
 them on every call.
 
@@ -420,7 +420,7 @@ checked like running its SQL, for every caller including the one who ran it. See
 [Reading results in Permissions][reading-results].
 Workspaces with no scoped catalog behave as before: any member can read any result in the workspace.
 
-[reading-results]: ../access/permissions.md#reading-a-result-needs-the-same-grants-as-running-its-query
+[reading-results]: ../access/scoped-access.md#opening-a-result-needs-the-same-grants-as-running-its-query
 
 ## Whole results as Arrow or Parquet
 
@@ -724,7 +724,7 @@ attached are rejected with **409** (`{"error": "catalog_read_only"}`); reads are
 Every agent endpoint below `/api/admin/agents/{agent_id}` is authorized by the caller's **tier** on that specific
 agent — `use` < `operate` < `admin` — rather than by the global `agents:manage` permission alone. Holding
 `agents:manage` confers `admin` on every agent. See
-[Per-agent access](../access/permissions.md#per-agent-access) for the model.
+[Per-agent access](../access/agent-access.md) for the model.
 
 | Tier required | Endpoints |
 |---|---|

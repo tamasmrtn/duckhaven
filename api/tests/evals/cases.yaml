@@ -505,7 +505,7 @@ cases:
       category: unanswerable
       provenance: hand
       negative: true
-      expected_sources: [access/permissions.md]
+      expected_sources: [access/how-access-works.md]
       expect_refusal: true
       note: >-
         Grants are per catalog and per table, never per row. The permissions page

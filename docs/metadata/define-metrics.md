@@ -306,4 +306,4 @@ being used.
 
 - [Semantic layer](semantic-layer.md)
 - [Use the AI assistant](../ai/use-the-assistant.md)
-- [How access works](../access/access-levels.md)
+- [How access works](../access/how-access-works.md)

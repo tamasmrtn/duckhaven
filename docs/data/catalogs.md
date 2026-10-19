@@ -35,7 +35,7 @@ credentials.
   [DuckLake](ducklake.md), depending on the catalog's kind.
 - Each attachment has an **access mode**. By default (`open`) the workspace role governs the whole catalog; switching an
   attachment to `scoped` narrows access down to the catalog, schema, or table per principal — see
-  [scoped access](../access/permissions.md#scoped-access).
+  [scoped access](../access/scoped-access.md).
 
 ## Querying across catalogs
 

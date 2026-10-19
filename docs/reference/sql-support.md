@@ -17,7 +17,7 @@ materialized to Parquet and returned as a result grid; other statements run and 
 That is worth knowing on Iceberg, where it is **not** the cheap metadata-only operation the name suggests elsewhere:
 emptying a table writes positional delete files proportional to its size, just as the equivalent `DELETE` would. To
 discard a large table cheaply, drop and recreate it instead. Like any write, `TRUNCATE` requires `writer` access on its
-target in a [scoped catalog](../access/permissions.md).
+target in a [scoped catalog](../access/how-access-works.md).
 
 DuckDB also classifies its read-only introspection statements — `DESCRIBE`, `SHOW`, `SUMMARIZE`, and the `PRAGMA`s that
 return rows (`PRAGMA version`, `PRAGMA table_info(…)`, `PRAGMA database_list`, `PRAGMA show_tables`) — as queries. They
@@ -70,7 +70,7 @@ WHERE catalog_name = 'sales';
     `PRAGMA show_tables` / `show_tables_expanded` / `database_list` / `table_info`. Functions that name their table
     only as a text string (`pragma_table_info()`, `iceberg_snapshots()` and the like), DuckLake's catalog methods
     (`lake.snapshots()`), and direct file reads are rejected there too. See
-    [Discovering objects in a scoped catalog](../access/permissions.md#discovering-objects-in-a-scoped-catalog).
+    [Discovering objects in a scoped catalog](../access/scoped-access.md#finding-objects-in-a-scoped-catalog).
 
 ### Columns and types: use `DESCRIBE`
 
@@ -144,7 +144,7 @@ SELECT * FROM iceberg_metadata('sales.analytics.events');
 
 See [Snapshots & time travel](../data/snapshots-time-travel.md) for more on snapshot history. These functions name
 their table only as a string, which a grant cannot be checked against, so they are rejected in a workspace with a
-[scoped catalog](../access/permissions.md#discovering-objects-in-a-scoped-catalog); the catalog browser's
+[scoped catalog](../access/scoped-access.md#finding-objects-in-a-scoped-catalog); the catalog browser's
 **History** tab shows the same snapshot list there.
 
 ## Query parameters

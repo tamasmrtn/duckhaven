@@ -125,6 +125,6 @@ A healthy server answers with its tool definitions — fourteen, or twelve where
 | `401` with a `WWW-Authenticate` header | No token, or one that is expired, revoked, or belongs to a deactivated account. Issue a fresh one. |
 | `403` | The request carried an `Origin` header that is not in `CORS_ORIGINS`. Expected from a browser-based client; ordinary MCP clients send none. |
 | `503`, "The MCP server is not enabled" | `MCP_ENABLED=false` on this deployment. See [Configuration](../reference/configuration.md#mcp-server). |
-| A tool reports "Access denied" or "Not found" | Your token is working; your grants do not cover that object. Ask for [workspace membership](../access/manage-users.md#workspace-membership-and-roles) or a [grant](../access/access-levels.md). |
+| A tool reports "Access denied" or "Not found" | Your token is working; your grants do not cover that object. Ask for [workspace membership](../access/manage-users.md#give-someone-access-to-a-workspace) or a [grant](../access/how-access-works.md). |
 | "This MCP server is read-only" | Expected. Writes are off unless an operator sets `MCP_ALLOW_WRITES=true`; see [Read-only by default](mcp-server.md#read-only-by-default). |
 | The client cannot connect at all | Check the host and port, and that nothing between you and DuckHaven strips the `Authorization` header. Both `/mcp` and `/mcp/` are served, so a trailing slash is not the cause. |

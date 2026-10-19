@@ -32,7 +32,7 @@ How the control plane decides:
 - **Views and macros are attached when DuckDB finds them.** A view in one catalog can read another catalog that the
   query never names. When that happens, the agent asks the control plane for the missing catalog, attaches it, and runs
   the statement again. The control plane only hands over a catalog bound to the query's workspace. For a catalog in
-  [scoped](../access/permissions.md#scoped-access) mode, it also requires that whoever runs the query can read **the
+  [scoped](../access/scoped-access.md) mode, it also requires that whoever runs the query can read **the
   whole catalog**, because the agent cannot say which table the view reads.
 
 !!! note "Scripts must name the catalogs their views read"

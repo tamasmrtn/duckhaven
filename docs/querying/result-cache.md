@@ -28,7 +28,8 @@ A run is served from the cache when all of these hold:
 - **Every table it reads is unchanged** since the run whose result is kept, or changed only by commits that rewrote
   files without changing the data (see [Compaction does not invalidate](#compaction-does-not-invalidate)).
 - **The caller may read those tables.** The cache is shared by everyone in the workspace, but the right to read a table
-  is not: the caller's [grants](../access/permissions.md) are checked on every hit exactly as they would be for a run.
+  is not: the caller's [grants](../access/how-access-works.md) are checked on every hit exactly as they would be for a
+  run.
 - **The kept result is still there** (see [Where results are kept](#where-results-are-kept-and-for-how-long)).
 
 Otherwise the query simply runs, as it would without a cache. When a run that could be cached finishes, its result is
@@ -156,5 +157,5 @@ Turn it off when measuring query performance: a benchmark that repeats its queri
 
 - [Query execution](query-execution.md) — what happens when a query is not answered from the cache.
 - [SQL sessions](sql-sessions.md) — the persistent-connection path.
-- [Permissions](../access/permissions.md) — the grants every hit is checked against.
+- [Permissions](../access/how-access-works.md) — the grants every hit is checked against.
 - [Configuration](../reference/configuration.md#result-cache) — every setting named here.

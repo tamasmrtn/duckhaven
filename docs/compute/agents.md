@@ -47,7 +47,7 @@ fact.
 
 This is what makes a shared elastic fleet workable: an expensive agent, or one sitting close to sensitive data, can be
 reserved for the team that owns it while the rest of the fleet stays open. Deployment-wide `agents:manage` holders keep
-full access to everything regardless. See [Per-agent access](../access/permissions.md#per-agent-access).
+full access to everything regardless. See [Per-agent access](../access/agent-access.md).
 
 ## Live utilization and history
 

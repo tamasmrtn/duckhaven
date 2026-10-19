@@ -115,7 +115,7 @@ it. See [Manage catalogs](../data/manage-catalogs.md#browse).
   empty. After a reload the last run's results come back for as long as the agent keeps them (24 hours); after that the
   pane says they have expired and to run the query again.
 - In a workspace with a scoped catalog, reading a result needs the grants that running its query would (see
-  [Permissions](../access/permissions.md#reading-a-result-needs-the-same-grants-as-running-its-query)). Without
+  [Permissions](../access/scoped-access.md#opening-a-result-needs-the-same-grants-as-running-its-query)). Without
   them, the results pane and the query profile say you don't have access to the data the query read.
 - When you edit the SQL after running it, a *From an earlier version of this query* marker appears beside the results.
 - Each column header shows its data type; hover a header for the full type when it's too long to fit.
@@ -147,7 +147,7 @@ In the catalog tree it appears under each catalog as a lock-marked **`informatio
 expand it to browse the supported views. It is not a stored schema: it is computed when you query it and cannot be
 written to.
 
-In a workspace with a [scoped catalog](../access/permissions.md#scoped-access) these views are refused, because they
+In a workspace with a [scoped catalog](../access/scoped-access.md) these views are refused, because they
 cannot be filtered by grant; `DESCRIBE` still works for a table you can read. See
 [Inspecting metadata](../reference/sql-support.md#inspecting-metadata-information_schema) for the full surface.
 

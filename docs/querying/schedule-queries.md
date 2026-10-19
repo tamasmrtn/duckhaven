@@ -100,7 +100,7 @@ runs as them.
 ### Whose data grants a run uses
 
 Access to the **agent** is checked against the schedule's creator, as above. Access to the **data** — which catalogs,
-schemas and tables the SQL may read or write, in a [scoped catalog](../access/permissions.md) — is checked against
+schemas and tables the SQL may read or write, in a [scoped catalog](../access/how-access-works.md) — is checked against
 the person who **last changed the saved query's SQL** (or its default agent).
 
 That is deliberate. The grants that apply are those of whoever wrote the statement that runs, so a writer cannot edit

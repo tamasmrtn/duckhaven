@@ -148,14 +148,21 @@ pages:
   title: Connect an MCP client
   section: AI assistant & MCP
   summary: Point Claude Code, Claude Desktop or Cursor at DuckHaven over MCP.
-- path: access/access-levels.md
+- path: access/how-access-works.md
   title: How access works
   section: Access
-  summary: The four access layers, including fine-grained catalog/schema/table grants.
-- path: access/permissions.md
-  title: Permissions
+  summary: DuckHaven decides what you can do in four independent layers, and a request is allowed
+    only if it clears every layer that applies to it.
+- path: access/scoped-access.md
+  title: Scoped access
   section: Access
-  summary: Per-workspace access control and audit trail.
+  summary: A scoped catalog shows each workspace member only the schemas and tables a grant gives
+    them, down to a single table, instead of applying their workspace role to everything.
+- path: access/agent-access.md
+  title: Agent access
+  section: Access
+  summary: Agent access decides who may run work on an agent and who may restart or administer it,
+    so a team can reserve compute while the rest of the fleet stays open.
 - path: access/workspaces.md
   title: Workspaces
   section: Access
@@ -303,6 +310,8 @@ pages:
   section: Reference
   summary: DuckHaven ships a few small helper scripts under scripts/ for operators.
 aliases:
+  access/access-levels.md: access/how-access-works.md
+  access/permissions.md: access/how-access-works.md
   concepts/agents.md: compute/agents.md
   concepts/architecture.md: getting-started/how-duckhaven-works.md
   concepts/assistant.md: ai/assistant.md
@@ -313,7 +322,7 @@ aliases:
   concepts/maintenance.md: data/maintenance.md
   concepts/mcp-server.md: ai/mcp-server.md
   concepts/metadata.md: metadata/table-metadata.md
-  concepts/permissions.md: access/permissions.md
+  concepts/permissions.md: access/how-access-works.md
   concepts/query-execution.md: querying/query-execution.md
   concepts/result-cache.md: querying/result-cache.md
   concepts/runtimes.md: compute/runtimes.md
@@ -330,7 +339,7 @@ aliases:
   getting-started/first-query.md: getting-started/quickstart.md
   getting-started/first-workspace.md: getting-started/quickstart.md
   getting-started/installation.md: getting-started/quickstart.md
-  guides/access-levels.md: access/access-levels.md
+  guides/access-levels.md: access/how-access-works.md
   guides/connect-idp.md: access/connect-idp.md
   guides/connect-ldap.md: access/connect-ldap.md
   guides/connect-mcp-client.md: ai/connect-mcp-client.md

@@ -100,7 +100,7 @@ scoped to that catalog: from Polaris for an Iceberg catalog, from the API for a 
   by a [storage migration](../data/catalogs.md#storage-migration). A workspace reaches storage through the catalogs it
   attaches.
 - **The API is the gate.** Every permission check happens in the API before a query reaches an agent, including
-  [scoped grants](../access/permissions.md#scoped-access) down to a table.
+  [scoped grants](../access/scoped-access.md) down to a table.
 
 ## Boundaries
 

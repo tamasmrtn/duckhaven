@@ -29,8 +29,8 @@ This page names the settings that shape a session's behaviour but not their valu
    and [elastic compute](../compute/elastic-compute.md) is enabled, the open starts one first — see [Cold
    start](#cold-start).
 2. **Run statements** — `POST /api/sql/sessions/{session_id}/statements`. Each statement is checked against the
-   [statement policy](#statement-policy) and the caller's [permissions](../access/permissions.md), then dispatched to
-   the held connection. A statement is recorded as an ordinary query row — `queued`, then `running` once the agent
+   [statement policy](#statement-policy) and the caller's [permissions](../access/how-access-works.md), then dispatched
+   to the held connection. A statement is recorded as an ordinary query row — `queued`, then `running` once the agent
    acknowledges receipt, then a terminal `done`/`failed` — so you poll and fetch it through the same `GET
    /api/queries/{query_id}` and `/rows` endpoints as any query, and it appears in the audit history tagged to its
    session. Most statements never need that poll, because the call [waits for them to finish](#waiting-for-a-statement)
@@ -281,7 +281,7 @@ and every rejection is counted for monitoring.
 
 ### Grants follow the session's context
 
-In a workspace with a [scoped catalog](../access/permissions.md#scoped-access), each statement's table names are checked
+In a workspace with a [scoped catalog](../access/scoped-access.md), each statement's table names are checked
 against your grants. An unqualified name like `events` is checked in the catalog and schema the session will actually
 resolve it in. That is where the session opened until a statement moves it: `USE sales.raw` means a later `SELECT * FROM
 events` is checked as `sales.raw.events`. Within one script, a `USE catalog.schema` moves the check for the statements

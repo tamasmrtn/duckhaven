@@ -118,7 +118,7 @@ once the assistant is enabled. No token is needed — the assistant mints its ow
    [Configuration](../reference/configuration.md#ai-assistant), set `ASSISTANT_ENABLED=true`, and restart the API.
 2. Add the **Assistant** service account to each workspace where the assistant should be usable, and grant it the
    access you want it to have (`metadata`/`reader` for browse-and-read, `writer` to allow approved writes). See
-   [How access works](../access/access-levels.md).
+   [How access works](../access/how-access-works.md).
 
 Because access is per workspace, you can safely enable one assistant across many workspaces and let each workspace's
 grants decide what it can reach.

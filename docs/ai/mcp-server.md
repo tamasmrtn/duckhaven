@@ -24,8 +24,8 @@ account by an administrator. Every tool call the agent makes is then performed *
 DuckHaven's own REST API, exactly as if that person had clicked through the web app.
 
 So the agent sees the workspaces you are a member of and no others; reads the catalogs, schemas and tables your
-[grants](../access/permissions.md) allow and no others; and its queries appear in the query history attributed to you,
-with `duckhaven-mcp` as their client. Each call runs the [same chain of checks, in the same
+[grants](../access/how-access-works.md) allow and no others; and its queries appear in the query history attributed to
+you, with `duckhaven-mcp` as their client. Each call runs the [same chain of checks, in the same
 order](assistant.md#how-governance-works), as every other DuckHaven client.
 
 None of that enforcement lives in the MCP server. It holds no credentials of its own, and it never reads your data
@@ -190,4 +190,4 @@ Two things follow from being reachable over the network:
 - [Connect an MCP client](connect-mcp-client.md) — the setup walkthrough.
 - [AI assistant](assistant.md) — the same governance, pointed inward.
 - [Service accounts & tokens](../access/service-accounts.md) — issuing the token a client authenticates with.
-- [Permissions](../access/permissions.md) — what a token can reach.
+- [Permissions](../access/how-access-works.md) — what a token can reach.

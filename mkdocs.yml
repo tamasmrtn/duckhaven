@@ -66,13 +66,15 @@ plugins:
   # chains); `make docs-index` turns it into the assistant's path aliases.
   - redirects:
       redirect_maps:
+        access/access-levels.md: access/how-access-works.md
+        access/permissions.md: access/how-access-works.md
         getting-started/installation.md: getting-started/quickstart.md
         getting-started/first-workspace.md: getting-started/quickstart.md#3-create-a-workspace
         getting-started/first-query.md: getting-started/quickstart.md#5-create-a-table-and-query-it
         concepts/what-is-duckhaven.md: getting-started/what-is-duckhaven.md
         concepts/architecture.md: getting-started/how-duckhaven-works.md
         concepts/workspaces.md: access/workspaces.md
-        concepts/permissions.md: access/permissions.md
+        concepts/permissions.md: access/how-access-works.md
         concepts/catalogs.md: data/catalogs.md
         concepts/tables.md: data/tables.md
         concepts/ducklake.md: data/ducklake.md
@@ -107,7 +109,7 @@ plugins:
         guides/import-dbt-semantics.md: metadata/import-dbt-semantics.md
         guides/using-the-assistant.md: ai/use-the-assistant.md
         guides/connect-mcp-client.md: ai/connect-mcp-client.md
-        guides/access-levels.md: access/access-levels.md
+        guides/access-levels.md: access/how-access-works.md
         guides/users-access.md: access/manage-users.md
         guides/service-accounts.md: access/service-accounts.md
         guides/connect-idp.md: access/connect-idp.md
@@ -195,8 +197,9 @@ nav:
           - Connect an MCP client: ai/connect-mcp-client.md
   - Administer:
       - Access:
-          - How access works: access/access-levels.md
-          - Permissions: access/permissions.md
+          - How access works: access/how-access-works.md
+          - Scoped access: access/scoped-access.md
+          - Agent access: access/agent-access.md
           - Workspaces: access/workspaces.md
           - Manage users & access: access/manage-users.md
           - Service accounts & tokens: access/service-accounts.md

@@ -135,7 +135,7 @@ Lineage follows the same access rules as the rest of the catalog, with one wrink
 tables, and a table name can reveal more than its rows do.
 
 - Tables in catalogs your workspace does not attach are **not in the graph at all**.
-- In a catalog attached in [scoped](../access/permissions.md) mode, a table you hold no grant on appears as a
+- In a catalog attached in [scoped](../access/how-access-works.md) mode, a table you hold no grant on appears as a
   **restricted node**: it keeps its position and its connections, but carries no catalog, schema, or table name.
 
 Restricted nodes are shown rather than removed on purpose. Dropping them would silently shorten paths, making a partial
@@ -269,5 +269,5 @@ Other limits worth knowing:
 - [Import lineage from dbt](import-dbt-lineage.md) — the first importer.
 - [Metadata](table-metadata.md) — what else DuckHaven records about a table.
 - [Semantic layer](semantic-layer.md) — which business definitions depend on a table, which lineage alone cannot say.
-- [Permissions](../access/permissions.md) — the grant tiers redaction is based on.
+- [Permissions](../access/how-access-works.md) — the grant tiers redaction is based on.
 - [Query execution](../querying/query-execution.md) — where execution-derived lineage comes from.

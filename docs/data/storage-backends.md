@@ -1,69 +1,97 @@
+---
+type: concept
+---
+
 # Storage backends
 
-A **storage backend** is a physical location where table data lives. Backends are registered once by an admin and
-referenced by [catalogs](catalogs.md) — one backend per catalog. A catalog's backend is chosen at creation, but it is no
-longer permanent: an admin can move a catalog to a different backend with a [storage
-migration](catalogs.md#storage-migration). A [workspace](../access/workspaces.md) reaches storage through the catalogs
-it attaches.
+A storage backend is an object-storage location, such as a bucket and prefix, where the tables of one or more catalogs
+live.
 
-A backend is independent of a catalog's [kind](catalogs.md#catalog-kinds): Iceberg and [DuckLake](ducklake.md)
-catalogs both bind to one the same way, and a workspace can reach both through the catalogs it attaches.
+An admin registers a backend once, and each [catalog](catalogs.md) uses exactly one, chosen when the catalog is
+created. A [workspace](../access/workspaces.md) reaches storage only through the catalogs it attaches. A catalog can
+move to another backend later with a [storage migration](migrate-catalog-storage.md). The backend is independent of the
+catalog's [kind](catalogs.md#catalog-kinds): Iceberg and [DuckLake](ducklake.md) catalogs use backends the same way.
 
-## S3-compatible object storage only
-
-Every backend is object storage: S3-compatible (the bundled store, AWS S3) or ADLS Gen 2. This is forced by DuckHaven's
-control-plane / compute split: DuckDB can only read and write Iceberg tables through the REST catalog when
-[Polaris](catalogs.md) can vend scoped credentials the remote [agent](../compute/agents.md) uses, which rules out
-local-file storage across the container boundary.
+!!! info "Availability"
+    The bundled object store works with no setup. External S3 and ADLS Gen2 backends need the `storage:manage`
+    permission to register; see [Configure storage](configure-storage.md).
 
 ## Backend kinds
 
-| Kind | Physical location | Required extension |
+| Kind | Where the data lives | Extension the agent needs |
 |---|---|---|
-| `object_store` | Bundled object-store bucket, under the prefix the backend was registered with | `httpfs` |
-| `s3` | External, operator-owned S3 bucket | `httpfs` |
-| `adls_gen2` | Azure Data Lake Storage Gen 2 | `azure` |
+| `object_store` | The bundled object store, under the prefix the backend was registered with | `httpfs` |
+| `s3` | An AWS S3 bucket you own | `httpfs` |
+| `adls_gen2` | Azure Data Lake Storage Gen2 | `azure` |
 
-An agent must have the required DuckDB extension loaded to serve a workspace on a given backend; see the
-[Agent reference](../reference/agent-reference.md).
+Every backend is object storage. Agents run in their own containers, often on other hosts, and read tables over the
+network with credentials vended for each query, which rules out local files. An agent serves a catalog only if it has
+the extension its backend needs; see the [Agent reference](../reference/agent-reference.md).
 
-## Credential model
+## Credentials
 
-External backends carry **no static keys**. Each backend stores only identifiers — for `s3` an IAM **role ARN** (plus
-an optional external id and region), for `adls_gen2` an Entra **tenant id** (plus an optional app name and consent
-URL). Trust is established on the cloud side:
+External backends store **no keys**. A backend records only identifiers: an IAM **role ARN** (with an optional external
+id and region) for `s3`, an Entra **tenant id** (with an optional app name and consent URL) for `adls_gen2`. Trust is
+set up in your cloud account:
 
-- **AWS S3** — Polaris assumes the registered role via STS (`AssumeRole`), optionally guarded by an external id.
-- **Azure ADLS Gen2** — Polaris vends a scoped SAS token through a consented Entra application in the tenant.
+- **AWS S3:** Polaris assumes the registered role with STS `AssumeRole`, optionally guarded by an external id.
+- **Azure ADLS Gen2:** Polaris issues a scoped SAS token through a consented Entra application.
 
-## Credential vending
+When an agent attaches a catalog for a query, it receives short-lived credentials scoped to that catalog, which live
+only as long as the query's connection. Polaris vends them for an Iceberg catalog; the API mints them for a DuckLake
+catalog. No long-lived storage key is written to an agent, with one exception: a DuckLake catalog on the bundled
+object store receives the store's key, limited to the catalog's prefix (see
+[Enable DuckLake](../deployment/ducklake.md)).
 
-When an agent attaches a workspace catalog, Polaris vends short-lived, connection-scoped credentials applied as a
-DuckDB `SECRET` that dies with the per-query connection. No long-lived storage secrets are stored on agents — the role
-assumption / SAS minting happens server-side in Polaris, and only the resulting scoped, expiring credential ever
-reaches DuckDB.
+Nothing needs rotating by hand. To revoke DuckHaven's access, remove the role's trust (S3) or the role assignment or
+consent (ADLS) in your cloud account: the next vend fails, and the backend's **Test access** check turns red.
+
+## Security baseline
+
+DuckHaven cannot enforce what lives in your cloud account. Set these up there:
+
+| Control | AWS S3 | Azure ADLS Gen2 |
+|---|---|---|
+| Identity | IAM role assumed with STS (`roleArn` + `externalId`) | Entra app and managed identity (`tenantId`, consent) |
+| Least privilege | A role policy scoped to the bucket and prefix | `Storage Blob Data Contributor` on the account or container |
+| Confused-deputy guard | `externalId` and an `aws:SourceArn` condition | Single-tenant consent |
+| Encryption at rest | SSE-KMS, with the key scoped in the role policy | Account encryption (default); customer-managed keys optional |
+| Network | Block public access, a TLS-only policy, a VPC endpoint | Private endpoints, firewall rules |
+
+## Data layout and isolation
+
+Each catalog has its own prefix under its backend's root: its Polaris name for an Iceberg catalog, its slug for a
+DuckLake one. Catalogs on one backend therefore never collide. Choose the boundary that matches how far a mistake or a
+leaked credential may reach:
+
+- **One backend, many prefixes** (the default): one bucket or container holds many catalogs. Simple, and enough when
+  one role may reach the whole bucket.
+- **One backend per team**: register a separate `s3` or `adls_gen2` backend, with its own bucket or container and its
+  own role, for each team that must be isolated. DuckHaven does not create buckets for you.
+
+Set lifecycle and retention rules on the bucket or container for cost, and keep data in the region the agents run in,
+to avoid cross-region transfer cost and latency.
+
+## Backups
+
+DuckHaven's [backups](../deployment/backup-restore.md) cover its Postgres databases, not object data. Protect the data
+with your cloud's own tools, such as S3 versioning and cross-region replication, or ADLS soft delete and redundancy.
 
 ## Connection reuse
 
-An agent reads table data straight from object storage over HTTP, and a single scan of a
-large table touches hundreds of objects — one Iceberg table at TPC-H SF10 is around 500
-Parquet and metadata files. DuckDB's HTTP layer does **not** reuse connections by default,
-so each of those objects would cost its own TCP connection, and each finished connection
-would sit in the kernel's `TIME_WAIT` state for a minute afterwards.
+An agent reads table data from object storage over HTTP, and one scan of a large table touches hundreds of objects; a
+single Iceberg table at TPC-H scale factor 10 has about 500 Parquet and metadata files. Without connection reuse, each
+object costs its own TCP connection, which then waits in the kernel's `TIME_WAIT` state for a minute. A few concurrent
+readers can use up the container's roughly 28,000 outbound ports in seconds, after which every connection fails until
+they drain.
 
-That is fast enough to run a container out of outbound ports. The Linux default range is
-about 28,000, and a handful of concurrent readers can burn through all of them in seconds;
-every connection after that fails until the backlog drains. The agent therefore turns
-`httpfs_connection_caching` on for every connection it opens, which keeps the count of
-sockets in the hundreds rather than the tens of thousands.
-
-!!! note "Why it is worth stating"
-    Before this was enabled, a burst of concurrent readers looked like a *storage* outage —
-    DuckDB reports the exhausted-port error as `Could not connect to server`, naming the
-    object store, which is the one component that was working fine. If you see that error
-    on a self-built agent image, check this setting before you check your storage.
+Agents therefore turn on `httpfs_connection_caching` for every connection, which keeps the socket count in the
+hundreds. If a self-built agent image shows bursts of `Could not connect to server` errors naming a store that is
+working, check this setting before you check your storage.
 
 ## Related
 
-- [Configure storage](configure-storage.md) — register and bind a backend.
-- [Catalogs & Polaris](catalogs.md) — how a catalog binds to a backend, and how a workspace reaches it.
+- [Configure storage](configure-storage.md) — register a backend and test it.
+- [Catalogs](catalogs.md) — how a catalog uses a backend.
+- [Migrate a catalog's storage](migrate-catalog-storage.md) — move a catalog to another backend.
+- [Lakehouse maintenance](maintenance.md) — keeping tables healthy on any backend.

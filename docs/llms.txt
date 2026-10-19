@@ -38,11 +38,10 @@
 - [Snapshots & time travel](https://tamasmrtn.github.io/duckhaven/data/snapshots-time-travel/): Query tables at a past snapshot.
 - [DuckLake](https://tamasmrtn.github.io/duckhaven/data/ducklake/): DuckLake is the second kind of catalog DuckHaven can create.
 - [Create a DuckLake catalog](https://tamasmrtn.github.io/duckhaven/data/create-a-ducklake-catalog/): A walkthrough of creating, using and dropping a DuckLake catalog.
-- [Storage backends](https://tamasmrtn.github.io/duckhaven/data/storage-backends/): Where catalog data physically lives, and how credentials reach an agent.
+- [Storage backends](https://tamasmrtn.github.io/duckhaven/data/storage-backends/): A storage backend is an object-storage location, such as a bucket and prefix, where the tables of one or more catalogs live.
 - [Configure storage](https://tamasmrtn.github.io/duckhaven/data/configure-storage/): Point DuckHaven at your object storage backend.
 - [Migrate a catalog's storage](https://tamasmrtn.github.io/duckhaven/data/migrate-catalog-storage/): Move a catalog to a different storage backend without losing data.
-- [Lakehouse maintenance](https://tamasmrtn.github.io/duckhaven/data/maintenance/): The advisor that scores table health and recommends compaction and cleanup.
-- [Storage security & maintenance](https://tamasmrtn.github.io/duckhaven/data/storage-maintenance/): Day-2 practice for external S3 and ADLS Gen2 backends: securing access, rotating trust, and routine upkeep.
+- [Lakehouse maintenance](https://tamasmrtn.github.io/duckhaven/data/maintenance/): The maintenance advisor scans every table, scores its health, and recommends compaction, snapshot expiry and cleanup; for DuckLake tables it can also run them.
 
 ## Metadata & lineage
 

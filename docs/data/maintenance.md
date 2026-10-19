@@ -1,19 +1,26 @@
+---
+type: concept
+---
+
 # Lakehouse maintenance
 
-The **maintenance advisor** is the DuckHaven service that periodically scans every table in every catalog — both
-[catalog kinds](catalogs.md#catalog-kinds) — computes a health score, and raises recommendations for the maintenance
-each table needs — compaction, snapshot expiration, manifest
-rewrites, and orphan cleanup. It runs as a background loop in the control plane and is configured in
-**Admin → Maintenance**; the loop itself is gated by an
-[environment flag](../reference/configuration.md#maintenance-advisor).
+The maintenance advisor scans every table, scores its health, and recommends compaction, snapshot expiry and cleanup;
+for DuckLake tables it can also run them.
+
+Tables accumulate snapshots, small files and orphaned data as they are written. The advisor is a background loop in
+the control plane that scans every table in every catalog of both [kinds](catalogs.md#catalog-kinds), configured in
+**Admin → Maintenance** and switched on by an [environment flag](../reference/configuration.md#maintenance-advisor).
+
+!!! info "Availability"
+    Every deployment. Any member sees a workspace's **Lakehouse Health**; changing the policy needs
+    `maintenance:manage`, and applying a recommendation also needs workspace `writer`.
 
 !!! note "What it can run depends on the catalog kind"
     The advisor detects, scores, and recommends for both kinds. Whether it can also *act* is the extension's answer,
     not a policy: DuckDB's `ducklake` extension performs compaction, snapshot expiry and cleanup, so those
     recommendations carry an [Apply](#applying-maintenance) button. Its `iceberg` extension is read-only for
     maintenance — it cannot expire snapshots, rewrite data files or remove orphans — so an Iceberg recommendation
-    carries the equivalent command for an external engine instead. Adding a second write engine (Spark, PyIceberg) to
-    the stack for that is a bigger change than the advisor.
+    carries the equivalent command for an external engine instead.
 
 ## What it can recommend, per catalog kind
 
@@ -55,11 +62,11 @@ older snapshots still reference and that [time travel](tables.md) is still entit
 A successful apply does **not** mark the recommendation resolved. The table is re-probed, and the next scan resolves
 it only if the condition actually cleared: a verb that ran is not the same as a problem that went away. The
 recommendation carries the outcome in the meantime, and the query that ran it appears in
-[History](../operations/monitoring.md#query-history-and-audit-log) under your name.
+[History](../querying/run-queries.md#find-an-earlier-run) under your name.
 
-!!! note "Manual, in this release"
-    There is no scheduled or automatic apply. Unattended file deletion needs a maintenance-window concept — when it
-    may run, what it locks, how it backs off — that this release does not have.
+!!! note "Applying is manual"
+    Nothing applies maintenance on a schedule. Unattended file deletion would need a maintenance window, deciding when
+    it may run, what it locks and how it backs off, which DuckHaven does not have.
 
 ## Health score
 
@@ -161,8 +168,19 @@ variables.
   replicas the loop coordinates through a Postgres advisory lock (leader election), so it is safe to leave
   `MAINTENANCE_SCANNER_ENABLED` on every replica — exactly one wins each tick. See
   [High availability](../deployment/high-availability.md).
-- **No per-table policies.** Thresholds are deployment-wide. Per-table and per-namespace overrides are not yet
-  supported.
+- **No per-table policies.** Thresholds are deployment-wide; there are no per-table or per-namespace overrides.
+
+## A maintenance routine
+
+A workable cadence for a mid-sized deployment:
+
+- **Weekly:** review the **Lakehouse Health** recommendations. Expire snapshots past your retention target and compact
+  tables flagged for small files: from DuckHaven for a DuckLake table, with Spark or PyIceberg against the same catalog
+  for an Iceberg one.
+- **Monthly:** clean up orphaned files on tables that change often, and confirm the bucket's lifecycle rules remove
+  expired data.
+- **Quarterly:** after any IAM or RBAC change in your cloud account, run **Test access** on each external
+  [storage backend](storage-backends.md), and review that its role is still least-privilege.
 
 ## Where to find it
 

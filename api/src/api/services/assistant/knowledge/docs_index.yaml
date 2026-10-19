@@ -110,7 +110,8 @@ pages:
 - path: data/storage-backends.md
   title: Storage backends
   section: Data & storage
-  summary: Where catalog data physically lives, and how credentials reach an agent.
+  summary: A storage backend is an object-storage location, such as a bucket and prefix, where the
+    tables of one or more catalogs live.
 - path: data/configure-storage.md
   title: Configure storage
   section: Data & storage
@@ -122,12 +123,8 @@ pages:
 - path: data/maintenance.md
   title: Lakehouse maintenance
   section: Data & storage
-  summary: The advisor that scores table health and recommends compaction and cleanup.
-- path: data/storage-maintenance.md
-  title: Storage security & maintenance
-  section: Data & storage
-  summary: 'Day-2 practice for external S3 and ADLS Gen2 backends: securing access, rotating trust,
-    and routine upkeep.'
+  summary: The maintenance advisor scans every table, scores its health, and recommends compaction,
+    snapshot expiry and cleanup; for DuckLake tables it can also run them.
 - path: metadata/table-metadata.md
   title: Metadata
   section: Metadata & lineage
@@ -374,6 +371,7 @@ aliases:
   concepts/tables.md: data/tables.md
   concepts/what-is-duckhaven.md: getting-started/what-is-duckhaven.md
   concepts/workspaces.md: access/workspaces.md
+  data/storage-maintenance.md: data/storage-backends.md
   deployment/add-agent.md: compute/add-agent.md
   deployment/azure-elastic-setup.md: compute/elastic-azure.md
   deployment/homelab-elastic-setup.md: compute/elastic-docker.md
@@ -403,4 +401,4 @@ aliases:
   operations/agent-monitoring.md: compute/agent-monitoring.md
   operations/offboarding.md: access/offboarding.md
   operations/scaling.md: compute/scaling.md
-  operations/storage-maintenance.md: data/storage-maintenance.md
+  operations/storage-maintenance.md: data/storage-backends.md

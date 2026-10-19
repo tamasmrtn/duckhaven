@@ -117,7 +117,8 @@ plugins:
         operations/agent-monitoring.md: compute/agent-monitoring.md
         operations/scaling.md: compute/scaling.md
         operations/offboarding.md: access/offboarding.md
-        operations/storage-maintenance.md: data/storage-maintenance.md
+        operations/storage-maintenance.md: data/storage-backends.md
+        data/storage-maintenance.md: data/storage-backends.md
         reference/api-conventions.md: developer/api-conventions.md
   - social:
       cards_layout_options:
@@ -186,7 +187,6 @@ nav:
           - Configure storage: data/configure-storage.md
           - Migrate a catalog's storage: data/migrate-catalog-storage.md
           - Lakehouse maintenance: data/maintenance.md
-          - Storage security & maintenance: data/storage-maintenance.md
       - Metadata & lineage:
           - Metadata: metadata/table-metadata.md
           - Lineage: metadata/lineage.md

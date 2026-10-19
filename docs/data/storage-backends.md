@@ -26,7 +26,7 @@ catalog's [kind](catalogs.md#catalog-kinds): Iceberg and [DuckLake](ducklake.md)
 
 Every backend is object storage. Agents run in their own containers, often on other hosts, and read tables over the
 network with credentials vended for each query, which rules out local files. An agent serves a catalog only if it has
-the extension its backend needs; see the [Agent reference](../reference/agent-reference.md).
+the extension its backend needs; see the [Agent reference](../compute/agents.md#extensions).
 
 ## Credentials
 

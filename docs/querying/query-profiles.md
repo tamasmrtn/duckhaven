@@ -90,8 +90,8 @@ For a selected scan the profile reports what DuckDB actually measured:
 
 ### There is no profile
 
-The statement was DDL or DML, profiling is off on the agent (`PROFILING_ENABLED=false`, see the
-[Agent reference](../reference/agent-reference.md)), or capturing it failed. Capture is best effort: a failure leaves
+The statement was DDL or DML, profiling is off on the agent (`PROFILING_ENABLED=false`, see the [Agent
+configuration](../reference/agent-configuration.md)), or capturing it failed. Capture is best effort: a failure leaves
 the query without a profile rather than failing it.
 
 ### "You don't have access to the data this query read, so its profile can't be shown."

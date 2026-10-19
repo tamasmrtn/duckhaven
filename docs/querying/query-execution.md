@@ -65,7 +65,7 @@ memory budget is cgroup-aware (it respects a container/pod limit). Capacity is s
 
 The profile applies per agent and can be changed while it runs, with a
 [control command](../reference/sql-support.md#concurrency-control-command). See
-[Scaling compute](../compute/scaling.md#tune-a-single-agent).
+[Scaling compute](../compute/scaling.md#how-one-agent-shares-its-memory).
 
 ### What a query is actually given
 

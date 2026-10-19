@@ -10,9 +10,8 @@ The control plane reads the Compose stack's `.env` file. Every value is optional
 generates persistent secrets on first boot. Agents read their own environment. After changing `.env`, apply it with
 `docker compose up -d`.
 
-For task-oriented guidance see [Install](../deployment/install.md) and the
-[Operator runbook](../operations/runbook.md); for the canonical agent details see the
-[Agent reference](agent-reference.md).
+For task-oriented guidance see [Install](../deployment/install.md). An agent's own settings are in
+[Agent configuration](agent-configuration.md).
 
 ## Control plane (Compose `.env`)
 
@@ -360,61 +359,5 @@ Grafana dashboard, and [Distributed tracing](../operations/tracing.md) for the t
 
 ## Agent
 
-Source of truth: the [Agent reference](agent-reference.md). An agent needs only `CONTROL_PLANE_URL` and a
-`BOOTSTRAP_TOKEN`; everything else has a working default.
-
-| Variable | Required | Default | Description |
-|---|---|---|---|
-| `CONTROL_PLANE_URL` | Yes | — | WebSocket URL to the control plane's agent endpoint. |
-| `BOOTSTRAP_TOKEN` | Yes | — | One-time bootstrap token from the admin UI. |
-| `RESULTS_DIR` | No | `/var/duckhaven-agent/results` | Directory for materialized query results. |
-| `RESULTS_HTTP_PORT` | No | `8001` | Port for the local HTTP result server. |
-| `MEMORY_HEADROOM_FRACTION` | No | `0.10` | Fraction of the agent's budget held back from query reservations. The budget itself is read from the container's cgroup (`memory.max`), falling back to host RAM — there is no setting for it, so size the container and the agent follows. |
-| `MAX_CONCURRENCY_PROFILE` | No | `auto` | Reservation sizing: `auto` (EXPLAIN-estimated per query) or a static slot ladder (`single`/`equal_2`/`decaying_2`/`decaying_3`). See [Runbook §6](../operations/runbook.md#6-query-queueing-concurrency). |
-| `PROFILING_ENABLED` | No | `true` | Capture DuckDB's post-execution query profile and return it on `query_done`. Set `false` to disable. The per-query peak memory, CPU time and spill on the [monitoring page](../compute/agent-monitoring.md#the-queries) come from it. |
-| `METRICS_MEMORY_POLL_INTERVAL_S` | No | `0.25` | How often, between its 2-second samples, the agent re-reads its memory level to catch a spike that starts and ends inside one sample. `0` disables the poll, leaving the kernel's `memory.peak` and the level at each sample. |
-| `SESSION_BASELINE_BYTES` | No | `67108864` (64 MB) | What a held [SQL session](../querying/sql-sessions.md) reserves while idle. Under `auto` each statement grows the reservation to its own estimate and shrinks back here afterwards, so this is a floor, not what the session's queries get. Keeping it small is what leaves headroom to grow into. Clamped to the agent's budget. |
-| `SESSION_MAX_BUCKET_FRACTION` | No | `0.333` | Ceiling on the reservation one session statement may **require** at admission. This is not a ceiling on what it uses — a statement is still offered whatever budget is free on top, so an idle agent hands a heavy statement the whole agent either way. What it bounds is how few statements can run at once: at `1.0` one over-estimate could require the entire budget and serialize everything behind it, where `1/3` guarantees at least three fit. Raise it to favour a single statement's guaranteed memory, lower it to favour concurrency. |
-| `SANDBOX_DISABLED_FILESYSTEMS` | No | — | DuckDB `disabled_filesystems` applied to every connection (comma/space separated; unknown names are logged and skipped). Off by default because the agent reads [staged files](../querying/sql-sessions.md#staging-files) over presigned HTTP(S) URLs, which `HTTPFileSystem` serves — set `HTTPFileSystem` only on a deployment that does not use staging. It does **not** break the bundled Polaris/object store: the Iceberg REST client and the S3 filesystem are independent of the generic HTTP one. |
-| `SANDBOX_LOCK_CONFIGURATION` | No | `true` | Lock DuckDB's configuration once the agent has finished setting a connection up, so a session statement cannot re-widen the sandbox with `SET` (`disabled_filesystems`, `enable_external_access`, `secret_directory`, `extension_directory`, `home_directory`, `custom_extension_repository`, `allow_unsigned_extensions`, and the lock itself). The agent's own per-statement settings stay writable. Set `false` only to diagnose a suspected interaction. See [Sandboxing](../querying/sql-sessions.md#sandboxing). |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | No | — | OTLP (http/protobuf) endpoint to export traces to; the compose files default it to the bundled collector. Unset/empty disables tracing entirely. See [Distributed tracing](../operations/tracing.md). |
-| `OTEL_SERVICE_NAME` | No | `duckhaven-agent` | Service name reported on spans. |
-
-### `auto` estimator knobs
-
-Best-effort knobs that only apply under the `auto` profile. See
-[Runbook §6](../operations/runbook.md#6-query-queueing-concurrency).
-
-| Variable | Default | Description |
-|---|---|---|
-| `ESTIMATE_SAFETY_MULTIPLIER` | `1.5` | Multiplies the raw EXPLAIN estimate to absorb under-estimation. |
-| `ESTIMATE_FLOOR_BYTES` | `64 MiB` | Minimum reservation, so a tiny estimate still gets a usable slice. |
-| `ESTIMATE_CEILING_FRACTION` | `1.0` | Caps a reservation at this fraction of the budget. |
-| `EXPLAIN_TIMEOUT_S` | `2.0` | Time budget for the pre-run `EXPLAIN`; on timeout the query uses the fallback bucket. |
-| `ESTIMATE_FALLBACK_BUCKET` | `M` | Bucket used when a query is unestimable (DDL/DML, multi-statement, EXPLAIN error/timeout). |
-| `GRANT_FEEDBACK_ENABLED` | `true` | Once a query has run, size the next one of the same shape from the memory it actually used rather than from its plan. The plan-based estimate overshoots real peaks by 5-11x, and since the estimate picks the bucket, that overshoot costs every other query concurrency. Only queries returning a result set are measured, so DDL/DML keeps `ESTIMATE_FALLBACK_BUCKET`; any write drops what has been learned. Set `false` to size purely from the plan. See [Learning from what a query actually used](../querying/query-execution.md#learning-from-what-a-query-actually-used). |
-| `GRANT_FEEDBACK_SAFETY_MULTIPLIER` | `1.5` | Margin on the largest remembered peak. A measurement still needs headroom: data grows between runs, and a shape covers every query with the same text rather than the same data. Measurements share `ESTIMATE_CACHE_TTL_S` and `ESTIMATE_CACHE_MAX_ENTRIES`. |
-| `ELASTIC_CEILING_FRACTION` | `0.85` | How far the agent's *idle* memory may top a statement up beyond its required reservation, so DuckDB can cache the Parquet it reads from object storage. Revocable: reclaimed as soon as another query needs the bytes. Additionally bounded by an even share of the budget between open sessions, so one session cannot take it all. Below `1.0` because DuckDB's limit bounds its own allocations, not the whole process. |
-| `STATEMENT_ADMISSION_WAIT_S` | `300.0` | How long a statement may wait for memory to free up before running at whatever it could get. Long on purpose — waiting is what keeps a saturated agent stable instead of letting every query spill at once. Also bounded by the statement's own timeout. `0` never waits. |
-| `STATEMENT_ADMISSION_FLOOR_FRACTION` | `0.5` | Wait only while the granted reservation is below this fraction of what the statement asked for. `1.0` waits for the full estimate; `0` never waits. |
-
-### Queueing knobs
-
-| Variable | Default | Description |
-|---|---|---|
-| `MEMORY_HEADROOM_FRACTION` | `0.10` | Fraction of the effective memory budget held back as headroom. |
-| `MAX_QUEUE_DEPTH` | `100` | Maximum queued queries; beyond this a query fails with `queue full`. |
-| `QUEUED_TIMEOUT_S` | `0` (off) | Fails a query that waits longer than this with `queued timeout`. |
-| `SESSION_QUEUED_TIMEOUT_S` | `30` | Same, for a [session](../querying/sql-sessions.md) open rather than a query. Separate because the control plane fails a session at `SQL_SESSION_OPENING_DEADLINE_S` anyway: waiting past that can only turn a prompt error into a long hang. Keep it below that deadline; `0` restores the wait-forever behaviour. |
-
-### Operator ceilings
-
-Operator-set ceilings that per-query requests cannot exceed — see the
-[Operator runbook](../operations/runbook.md#2-register-additional-agents).
-
-| Variable | Example | Description |
-|---|---|---|
-| `SESSION_MAX_BUCKET_FRACTION` | `0.333` | Ceiling on what one statement may **require** at admission (not on what it may use — free budget is still offered on top). Bounds how few statements can run at once. |
-| `MAX_TIMEOUT_S` | `600` | Hard upper bound on a query's wall-clock timeout. |
-| `RESULT_RETENTION_HOURS` | `24` | How long materialized result Parquet files are kept before the retention sweep removes them. A file the [result cache](../querying/result-cache.md) serves rows from is kept past it, until its entry expires. |
-| `RESULT_CACHE_MAX_BYTES` | `10737418240` (10 GiB) | Ceiling on result files kept past `RESULT_RETENTION_HOURS` for the [result cache](../querying/result-cache.md). Past it, the files retained longest ago are deleted first and the cache misses for those queries. |
+Agents read their own environment, not the control plane's `.env`. Every agent setting is in
+[Agent configuration](agent-configuration.md).

@@ -6,6 +6,7 @@ no page. These tests compare each table's first column with the definition it
 documents.
 """
 
+import ast
 import re
 
 import pytest
@@ -118,3 +119,24 @@ def test_each_documented_statement_meets_both_gates(sql, queries, sessions):
         allowed_in_sessions = False
 
     assert (allowed_on_queries, allowed_in_sessions) == (queries, sessions)
+
+
+def _agent_settings() -> set[str]:
+    """The agent's settings, as environment variable names, read without importing it
+    (the API's test environment does not install the agent package)."""
+    tree = ast.parse((generate._repo_root() / "agent/src/agent/config.py").read_text())
+    settings = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "Settings")
+    return {
+        node.target.id.upper()
+        for node in settings.body
+        if isinstance(node, ast.AnnAssign)
+        and isinstance(node.target, ast.Name)
+        and node.target.id != "model_config"
+    }
+
+
+def test_every_agent_setting_is_documented():
+    text = (DOCS_DIR / "reference/agent-configuration.md").read_text(encoding="utf-8")
+    documented = set(re.findall(r"^\| `([A-Z][A-Z0-9_]+)` \|", text, flags=re.MULTILINE))
+
+    assert documented == _agent_settings()

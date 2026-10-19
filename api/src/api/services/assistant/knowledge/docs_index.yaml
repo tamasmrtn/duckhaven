@@ -226,11 +226,13 @@ pages:
 - path: compute/agents.md
   title: Agents
   section: Compute
-  summary: DuckDB compute agents you pick per query.
+  summary: An agent is a process running DuckDB on its own host that connects out to the control plane
+    and runs the queries it is sent.
 - path: compute/add-agent.md
   title: Add an agent
   section: Compute
-  summary: Scale compute by adding DuckDB agents.
+  summary: 'Run a static agent on another host: generate a bootstrap snippet, start it with Docker
+    Compose, and watch it register.'
 - path: compute/runtimes.md
   title: Runtimes
   section: Compute
@@ -252,8 +254,8 @@ pages:
 - path: compute/scaling.md
   title: Scaling compute
   section: Compute
-  summary: 'DuckHaven scales compute horizontally: the control plane stays small (one box) while you
-    add agents at the edge.'
+  summary: Add agents for more capacity, give an agent more memory for heavier queries, or change
+    how one agent shares its memory between queries.
 - path: compute/agent-monitoring.md
   title: Agent monitoring
   section: Compute
@@ -323,10 +325,10 @@ pages:
   section: Reference
   summary: Every global permission, workspace role, data-grant tier and agent tier in DuckHaven, and
     what each one allows.
-- path: reference/agent-reference.md
-  title: Agent reference
+- path: reference/agent-configuration.md
+  title: Agent configuration
   section: Reference
-  summary: Agent configuration and behavior.
+  summary: Every environment variable an agent reads; an agent needs only CONTROL_PLANE_URL and BOOTSTRAP_TOKEN.
 - path: reference/cli.md
   title: CLI reference
   section: Reference
@@ -410,3 +412,4 @@ aliases:
   operations/offboarding.md: access/offboarding.md
   operations/scaling.md: compute/scaling.md
   operations/storage-maintenance.md: data/storage-backends.md
+  reference/agent-reference.md: reference/agent-configuration.md

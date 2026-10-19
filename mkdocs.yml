@@ -120,6 +120,7 @@ plugins:
         operations/storage-maintenance.md: data/storage-backends.md
         data/storage-maintenance.md: data/storage-backends.md
         reference/api-conventions.md: developer/api-conventions.md
+        reference/agent-reference.md: reference/agent-configuration.md
   - social:
       cards_layout_options:
         background_color: "#0b0f19"
@@ -240,7 +241,7 @@ nav:
       - Configuration: reference/configuration.md
       - SQL support: reference/sql-support.md
       - Permissions: reference/permissions.md
-      - Agent reference: reference/agent-reference.md
+      - Agent configuration: reference/agent-configuration.md
       - CLI reference: reference/cli.md
       - REST API: reference/rest-api.md
       - SQL sessions API: reference/sql-sessions-api.md

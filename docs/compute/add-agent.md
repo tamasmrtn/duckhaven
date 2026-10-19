@@ -1,26 +1,30 @@
+---
+type: how-to
+---
+
 # Add an agent
 
-Agents run DuckDB and execute queries dispatched by the control plane. One
-agent per host/VM; agents always dial the control plane (so the control plane
-needs no inbound connectivity to them).
+Run a static agent on another host: generate a bootstrap snippet, start it with Docker Compose, and watch it register.
 
-## Prerequisites
+An agent always connects out to the control plane, so the control plane needs no inbound route to the agent's host.
+For agents that DuckHaven starts and stops itself, see [Elastic compute](elastic-compute.md).
 
-- Linux host with Docker Engine 24+
-- 8 GB RAM (DuckDB's working set)
-- Network path to the control plane (Tailscale or direct)
+## Before you begin
 
-## Generate a snippet from the admin UI
+- **You need:** the `agents:manage` permission, which the `admin` role holds.
+- **The host:** Linux with Docker Engine 24 or later, about 8 GB of memory for DuckDB, and a network path to the
+  control plane, such as Tailscale or a direct route.
 
-1. Sign in as an admin on the control plane.
-2. **Compute → Generate bootstrap**. If the control plane offers more than one
-   [runtime](runtimes.md), choose it here. The default runtime is preselected.
-3. Copy the rendered `docker-compose.yml` snippet. Example shape:
+## 1. Generate a snippet
+
+1. Open **Compute** and click **Generate bootstrap**.
+2. If the control plane offers more than one [runtime](runtimes.md), choose one; the default is preselected.
+3. Copy the `docker-compose.yml` snippet. It has this shape:
 
 ```yaml
 services:
   duckhaven-agent:
-    image: ghcr.io/tamasmrtn/duckhaven-agent:1.4.0-duckdb1.5
+    image: ghcr.io/tamasmrtn/duckhaven-agent:0.8.0-duckdb1.5
     restart: unless-stopped
     environment:
       CONTROL_PLANE_URL: wss://duckhaven.example.com/agents/connect
@@ -32,42 +36,79 @@ volumes:
   agent_results:
 ```
 
-The token is one-shot and expires in 24 hours. The control-plane URL is
-derived from the request headers, so a TLS-fronted deploy gets `wss://`
-automatically.
+- The token works once and expires after **24 hours**.
+- The control-plane address comes from your browser's request, so a deployment behind TLS gets `wss://`.
+- The image is the runtime's, at the control plane's own version: `-duckdb1.5` is the DuckDB 1.5 runtime. An agent on
+  a runtime the control plane does not know is refused work, so upgrade the control plane before introducing a new
+  runtime.
 
-The image is the chosen [runtime](runtimes.md)'s, at the control plane's own
-version: `-duckdb1.5` is the DuckDB 1.5 runtime. The default runtime is used unless you pick
-another. An agent reports its runtime when it connects, and DuckHaven only sends work to
-runtimes it knows. So introduce a new runtime only after upgrading the control plane to a
-release that ships it.
+Other settings go in the same `environment:` block; see [Agent configuration](../reference/agent-configuration.md).
 
-## Run on the new host
+## 2. Start it on the host
 
-Save the snippet as `docker-compose.yml` on the new host and:
+Save the snippet as `docker-compose.yml` on the new host and run:
 
 ```bash
 docker compose up -d
 ```
 
-The agent dials home, exchanges the bootstrap token for a long-lived session
-credential, and registers itself. Within ~10 s it should appear as `healthy`
-in **Compute** on the control plane.
+The agent connects, exchanges the bootstrap token for a long-lived credential it keeps in its results volume, and
+registers. Restarts reuse that credential; the bootstrap token is not needed again.
 
-## Revoke
+## Check that it worked
 
-If a host is decommissioned: **Compute → click the agent → Revoke
-credential**. The agent immediately drops to `unavailable`; the container can
-then be stopped.
+Within about ten seconds the agent appears in **Compute** as `healthy`, and its **Overview** tab lists its runtime,
+DuckDB version and extensions. It then appears in the worksheet's agent picker for anyone who may use it.
 
-## Multiple agents on one host
+## Run more than one agent on a host
 
-You can run more than one agent container on the same host — give each a
-distinct compose project (`docker compose -p agent-b ...`) and a unique
-results volume name.
+Give each agent its own compose project and results volume, and its own bootstrap token, since each token works once:
 
-## Troubleshooting
+```bash
+docker compose -p agent-b up -d
+```
 
-See [the agent reference](../reference/agent-reference.md#troubleshooting) for capability detection,
-extension errors, NAT / MTU pitfalls, and the result-server reachability
-check.
+Each agent sizes itself from its container's memory limit, so give each container the memory you want its queries to
+use, plus room for the operating system.
+
+## Run an agent without Docker
+
+From a checkout of the repository:
+
+```bash
+cd agent
+uv sync
+export CONTROL_PLANE_URL=wss://duckhaven.example.com/agents/connect
+export BOOTSTRAP_TOKEN=dh_boot_…
+uv run python -m agent.main
+```
+
+It runs the DuckDB version in `uv.lock`, the default runtime's line. The extensions in
+[Agents](agents.md#extensions) must be installed in `~/.duckdb`, for example with `make build-agent` or an `INSTALL`
+for each.
+
+## Remove an agent
+
+Open **Compute**, click the agent, and click **Revoke credential**. The agent is disconnected at once and shows as
+`unavailable`; stop its container and delete its results volume once you are done with them.
+
+## If it goes wrong
+
+The agent's own log says why it cannot connect:
+
+```bash
+docker compose logs duckhaven-agent
+```
+
+- **The token expired or was used.** Generate a new snippet. An agent that registered once keeps working without it.
+- **The agent cannot reach the control plane.** From the host, `curl -I https://duckhaven.example.com` must answer,
+  and nothing between them may block the WebSocket at `/agents/connect`.
+- **It registers but cannot run work.** Its runtime or extensions do not fit the workspace's catalogs.
+
+These and other cases are in [Troubleshoot compute](troubleshooting.md).
+
+## Related
+
+- [Agents](agents.md) — what an agent reports and who may use it.
+- [Scaling compute](scaling.md) — when to add agents.
+- [Agent configuration](../reference/agent-configuration.md) — every setting.

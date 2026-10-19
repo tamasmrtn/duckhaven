@@ -74,13 +74,13 @@
 
 ## Compute
 
-- [Agents](https://tamasmrtn.github.io/duckhaven/compute/agents/): DuckDB compute agents you pick per query.
-- [Add an agent](https://tamasmrtn.github.io/duckhaven/compute/add-agent/): Scale compute by adding DuckDB agents.
+- [Agents](https://tamasmrtn.github.io/duckhaven/compute/agents/): An agent is a process running DuckDB on its own host that connects out to the control plane and runs the queries it is sent.
+- [Add an agent](https://tamasmrtn.github.io/duckhaven/compute/add-agent/): Run a static agent on another host: generate a bootstrap snippet, start it with Docker Compose, and watch it register.
 - [Runtimes](https://tamasmrtn.github.io/duckhaven/compute/runtimes/): A runtime is the DuckDB an agent runs, together with the extensions baked into its image.
 - [Elastic compute](https://tamasmrtn.github.io/duckhaven/compute/elastic-compute/): Provisioning agents on demand and terminating them when they go idle.
 - [Elastic compute on a single Docker host](https://tamasmrtn.github.io/duckhaven/compute/elastic-docker/): Enable elastic compute with the Docker backend, provisioning agents as containers on a single host.
 - [Elastic compute on Azure](https://tamasmrtn.github.io/duckhaven/compute/elastic-azure/): Enable elastic compute with the Azure Container Instances backend, provisioning agents in the cloud.
-- [Scaling compute](https://tamasmrtn.github.io/duckhaven/compute/scaling/): DuckHaven scales compute horizontally: the control plane stays small (one box) while you add agents at the edge.
+- [Scaling compute](https://tamasmrtn.github.io/duckhaven/compute/scaling/): Add agents for more capacity, give an agent more memory for heavier queries, or change how one agent shares its memory between queries.
 - [Agent monitoring](https://tamasmrtn.github.io/duckhaven/compute/agent-monitoring/): An agent's Monitoring tab — live load, where its time went, the queries it ran and what they cost, CPU and memory — and exactly how each number is measured.
 
 ## Deploy
@@ -106,7 +106,7 @@
 - [Configuration](https://tamasmrtn.github.io/duckhaven/reference/configuration/): Every DuckHaven environment variable, with its default and what it changes.
 - [SQL support](https://tamasmrtn.github.io/duckhaven/reference/sql-support/): DuckHaven runs DuckDB SQL, checked against an allowlist before an agent runs it; statements such as ATTACH, INSTALL and SET are rejected.
 - [Permissions](https://tamasmrtn.github.io/duckhaven/reference/permissions/): Every global permission, workspace role, data-grant tier and agent tier in DuckHaven, and what each one allows.
-- [Agent reference](https://tamasmrtn.github.io/duckhaven/reference/agent-reference/): Agent configuration and behavior.
+- [Agent configuration](https://tamasmrtn.github.io/duckhaven/reference/agent-configuration/): Every environment variable an agent reads; an agent needs only CONTROL_PLANE_URL and BOOTSTRAP_TOKEN.
 - [CLI reference](https://tamasmrtn.github.io/duckhaven/reference/cli/): Every dh command, its summary and its flags.
 - [REST API](https://tamasmrtn.github.io/duckhaven/reference/rest-api/): DuckHaven's REST API, under /api, does everything the web UI does, so any task can be scripted with a token.
 - [SQL sessions API](https://tamasmrtn.github.io/duckhaven/reference/sql-sessions-api/): The endpoints a driver uses to open a SQL session, run statements in it, stage files and close it.

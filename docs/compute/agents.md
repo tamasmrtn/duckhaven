@@ -1,7 +1,14 @@
+---
+type: concept
+---
+
 # Agents
 
-An **agent** is DuckHaven's unit of compute: a Python process that embeds a DuckDB engine, runs on its own host, and
-*dials home* to the control plane over a WebSocket. Agents are the only component that executes user SQL.
+An agent is a process running DuckDB on its own host that connects out to the control plane and runs the queries it is
+sent.
+
+Agents are DuckHaven's unit of compute and the only component that executes user SQL. Each one dials home over a
+WebSocket, so the control plane needs no inbound route to it.
 
 ## Transparent compute
 
@@ -28,7 +35,23 @@ An agent's **Overview** tab (Compute → *an agent*) lists what it reported, wit
 An agent also reports its **[runtime](runtimes.md)**: the DuckDB line and extension set its image was built as.
 Work goes only to agents on a runtime DuckHaven trusts. When nobody names an agent, the server prefers the default
 runtime and never picks a beta one. Nothing is routed on an agent's report until it has made one on the current
-connection, so an agent that comes back re-imaged is judged by what it runs now.
+connection, so an agent that comes back re-imaged is judged by what it runs after the change.
+
+## Extensions
+
+Each agent image is built for one [runtime](runtimes.md), with its DuckDB extensions installed in the image. The agent
+has no internet access, so it can use only those. The `1.5` runtime includes:
+
+| Extension | Needed for |
+|---|---|
+| `httpfs` | S3 and the bundled object store |
+| `azure` | ADLS Gen2 |
+| `iceberg` | Iceberg tables and the Polaris catalog (brings in `avro`) |
+| `ducklake` | DuckLake catalogs |
+| `postgres` | A DuckLake catalog's metadata database (reported as `postgres_scanner`) |
+
+An agent missing an extension a workspace's catalogs need is shown as **Can't serve this workspace** in the agent
+picker, and is never sent that work.
 
 ## Who can use an agent
 
@@ -38,7 +61,7 @@ catalog layers already decide what data a query may touch.
 That default is per agent, not per deployment. Set an agent to **restricted** (Compute → *an agent* → Access)
 and using it requires an explicit grant, which you give to a person or to a whole workspace. The grant also carries a
 level: `use` runs work on it, `operate` adds restarting, terminating, disconnecting and revoking it, `admin` adds
-deleting it and managing its access. A restricted agent is simply invisible to anyone without a grant — it never
+deleting it and managing its access. A restricted agent is invisible to anyone without a grant — it never
 appears in the engine picker.
 
 When you provision [elastic compute](elastic-compute.md), the **New compute** dialog asks who can use it before it is
@@ -74,5 +97,6 @@ see them. The list shows only the agents you can see, and the fleet-level action
 
 - [Add an agent](add-agent.md) — register a new agent.
 - [Runtimes](runtimes.md) — which DuckDB and extensions an agent runs.
-- [Agent reference](../reference/agent-reference.md) — configuration, extensions, and troubleshooting.
+- [Agent configuration](../reference/agent-configuration.md) — every agent setting.
+- [Troubleshoot compute](troubleshooting.md) — agents that will not connect or run work.
 - [Query execution](../querying/query-execution.md) — how an agent admits and runs a query.

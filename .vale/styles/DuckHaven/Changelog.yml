@@ -7,7 +7,8 @@ message: "'%s' describes a change over time. Describe current behavior; history 
 level: warning
 ignorecase: true
 tokens:
-  - now
+  # Not the Lakehouse page's **Scan now** button.
+  - (?<!scan )now
   - no longer
   - previously
   - as before

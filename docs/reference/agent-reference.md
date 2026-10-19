@@ -1,7 +1,7 @@
 # Agent reference
 
 > **Installing an agent?** See
-> [Add an agent](../deployment/add-agent.md) for the
+> [Add an agent](../compute/add-agent.md) for the
 > task-oriented walkthrough (generate snippet → paste → `docker compose up -d`).
 > This page is the technical reference: configuration, extensions,
 > multi-agent layouts, and troubleshooting.

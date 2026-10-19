@@ -66,8 +66,8 @@ escape the sandbox, such as `ATTACH`, `COPY`, `LOAD`, `SET` and `EXPLAIN`, are r
 
 - [Your first workspace](first-workspace.md) — create a workspace and catalog.
 - [Your first query](first-query.md) — the full worksheet walkthrough.
-- [Add an agent](../deployment/add-agent.md) — scale compute by registering more DuckDB agents.
+- [Add an agent](../compute/add-agent.md) — scale compute by registering more DuckDB agents.
 - [Reverse proxy + TLS](../deployment/reverse-proxy-tls.md) — front the stack with Caddy or Nginx Proxy Manager.
 - [Backup and restore](../deployment/backup-restore.md) — protect Postgres and the secrets volume.
 - [Configuration reference](../reference/configuration.md) — every environment variable, in one place.
-- [Architecture](../concepts/architecture.md) — how the control plane and agents fit together.
+- [Architecture](how-duckhaven-works.md) — how the control plane and agents fit together.

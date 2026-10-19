@@ -77,7 +77,7 @@ hide:
 
     The control-plane / compute split, invariants, and data flow — the defining idea behind DuckHaven.
 
-    [:octicons-arrow-right-24: Understand the design](concepts/architecture.md)
+    [:octicons-arrow-right-24: Understand the design](getting-started/how-duckhaven-works.md)
 
 -   :material-server:{ .lg .middle } __Deployment__
 

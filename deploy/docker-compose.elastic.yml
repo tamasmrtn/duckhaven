@@ -39,7 +39,7 @@
 # The real bound on blast radius is the daemon, not the proxy: run Docker
 # rootless, or enable userns-remap, so a container created through this path
 # cannot map to host root regardless of what it asks for. See
-# docs/deployment/homelab-elastic-setup.md.
+# docs/compute/elastic-docker.md.
 #
 # Usage:
 #   docker compose -f deploy/docker-compose.yml \

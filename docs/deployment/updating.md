@@ -30,7 +30,7 @@ docker compose up -d
 ```
 
 Tags published per release: `:X.Y.Z`, `:X.Y`, `:X` (without the Git tag's `v`). Agent images are
-also published per [runtime](../concepts/runtimes.md), as `:X.Y.Z-duckdb<runtime>`, and the
+also published per [runtime](../compute/runtimes.md), as `:X.Y.Z-duckdb<runtime>`, and the
 bundled agent runs the default runtime's.
 
 ## One-time: updating past the Chainguard base image migration
@@ -89,5 +89,5 @@ compute run. To move it, for example from a runtime that is being deprecated:
    recreated on the new image, and the API starts provisioning pool compute on it.
 2. Existing elastic agents keep their runtime. Pool agents on the old one idle out; recreate compute
    you created by hand if it should move.
-3. Check [DuckLake catalog formats](../concepts/runtimes.md#mixing-runtimes-on-the-same-data) first:
+3. Check [DuckLake catalog formats](../compute/runtimes.md#mixing-runtimes-on-the-same-data) first:
    an agent on a runtime whose DuckLake format differs from a catalog's is refused on that catalog.

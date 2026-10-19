@@ -164,10 +164,14 @@ code.**
 The documentation website lives in `docs/` (MkDocs Material). When behavior that a user, operator, or contributor can
 observe changes, update the page that describes it. Map the change to the right place:
 
-- New or changed **concept** (workspaces, catalogs, agents, storage, query execution, permissions, …) → `docs/concepts/`
-- New or changed **user task** → `docs/guides/`
-- New or changed **deploy or day-2 behavior** → `docs/deployment/` or `docs/operations/`
-- New or changed **config, SQL, API, or operator script** → `docs/reference/`
+- Querying, worksheets, SQL sessions, results, history → `docs/querying/`
+- Catalogs, tables, DuckLake, storage, maintenance → `docs/data/`
+- Metadata, lineage, semantic layer → `docs/metadata/`
+- AI assistant, MCP → `docs/ai/`
+- Identity, roles, grants, tokens → `docs/access/`
+- Agents, elastic compute, runtimes → `docs/compute/`
+- Deploy and day-2 behavior → `docs/deployment/` or `docs/operations/`
+- Config, SQL, API, or operator-script reference → `docs/reference/`
 - New first-run flow → `docs/getting-started/`
 
 How to write it:

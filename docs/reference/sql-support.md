@@ -1,7 +1,7 @@
 # SQL support
 
 DuckHaven validates every statement against an allowlist at the API boundary (parse-only — the control plane never
-executes user SQL) before dispatching it to an [agent](../concepts/agents.md).
+executes user SQL) before dispatching it to an [agent](../compute/agents.md).
 
 ## Allowed statements
 
@@ -17,19 +17,19 @@ materialized to Parquet and returned as a result grid; other statements run and 
 That is worth knowing on Iceberg, where it is **not** the cheap metadata-only operation the name suggests elsewhere:
 emptying a table writes positional delete files proportional to its size, just as the equivalent `DELETE` would. To
 discard a large table cheaply, drop and recreate it instead. Like any write, `TRUNCATE` requires `writer` access on its
-target in a [scoped catalog](../concepts/permissions.md).
+target in a [scoped catalog](../access/permissions.md).
 
 DuckDB also classifies its read-only introspection statements — `DESCRIBE`, `SHOW`, `SUMMARIZE`, and the `PRAGMA`s that
 return rows (`PRAGMA version`, `PRAGMA table_info(…)`, `PRAGMA database_list`, `PRAGMA show_tables`) — as queries. They
 are allowed on the same footing as a `SELECT` and return a result grid too. They read no files and change nothing. This
-holds on both execution paths: a single query and a [SQL session](../concepts/sql-sessions.md) statement. `SUMMARIZE`
+holds on both execution paths: a single query and a [SQL session](../querying/sql-sessions.md) statement. `SUMMARIZE`
 is the one that is not merely introspection — it scans the table to compute its statistics, so it needs read access to
 the data, not just to the schema.
 
 ### Addressing catalogs
 
 Every catalog attached to the workspace is available in a query, and only the ones a query names are attached for it
-(see [which catalogs a query attaches](../concepts/query-execution.md#which-catalogs-a-query-attaches)). Unqualified
+(see [which catalogs a query attaches](../querying/query-execution.md#which-catalogs-a-query-attaches)). Unqualified
 names (`schema.table`) resolve against the
 worksheet's **active catalog**; reference another catalog — or join across catalogs — with a fully-qualified
 `catalog.schema.table`:
@@ -70,7 +70,7 @@ WHERE catalog_name = 'sales';
     `PRAGMA show_tables` / `show_tables_expanded` / `database_list` / `table_info`. Functions that name their table
     only as a text string (`pragma_table_info()`, `iceberg_snapshots()` and the like), DuckLake's catalog methods
     (`lake.snapshots()`), and direct file reads are rejected there too. See
-    [Discovering objects in a scoped catalog](../concepts/permissions.md#discovering-objects-in-a-scoped-catalog).
+    [Discovering objects in a scoped catalog](../access/permissions.md#discovering-objects-in-a-scoped-catalog).
 
 ### Columns and types: use `DESCRIBE`
 
@@ -89,7 +89,7 @@ table_info('catalog.schema.table')` returns the same information in a different 
 into a larger query, so prefer it.
 
 The same spelling is what a query result reports in its `column_schema`
-(see [Column types](../concepts/query-execution.md#column-types)), so the type you read from `DESCRIBE` and the type you
+(see [Column types](../querying/query-execution.md#column-types)), so the type you read from `DESCRIBE` and the type you
 get back with your rows are the same string.
 
 #### Types whose values arrive in a different shape
@@ -128,7 +128,7 @@ not write tooling against it.
 
 Worse than being empty, the view is *inconsistent*. Once something in the same connection has touched a table, that
 table's columns appear correctly while every other table still shows the placeholder. A single query opens a fresh
-connection, so there you always get placeholders; a [SQL session](../concepts/sql-sessions.md) holds its connection
+connection, so there you always get placeholders; a [SQL session](../querying/sql-sessions.md) holds its connection
 across statements, so there you can get a result that is correct for the tables you happen to have queried already and
 wrong for the rest — which is the more dangerous failure, because it looks like it works.
 
@@ -142,9 +142,9 @@ SELECT * FROM iceberg_snapshots('sales.analytics.events');
 SELECT * FROM iceberg_metadata('sales.analytics.events');
 ```
 
-See [Snapshots & time travel](../guides/snapshots-time-travel.md) for more on snapshot history. These functions name
+See [Snapshots & time travel](../data/snapshots-time-travel.md) for more on snapshot history. These functions name
 their table only as a string, which a grant cannot be checked against, so they are rejected in a workspace with a
-[scoped catalog](../concepts/permissions.md#discovering-objects-in-a-scoped-catalog); the catalog browser's
+[scoped catalog](../access/permissions.md#discovering-objects-in-a-scoped-catalog); the catalog browser's
 **History** tab shows the same snapshot list there.
 
 ## Query parameters
@@ -175,7 +175,7 @@ digit), `DATE`, `TIME`, `TIMESTAMP`, `TIMESTAMPTZ`, `INTERVAL`, `UUID`, `JSON`, 
 as `BIGINT[]` with a JSON array as its value.
 
 The values are written into the SQL before anything checks it. The statement allowlist, your grants and the
-[result cache](../concepts/result-cache.md) all see the statement exactly as it runs, so a parameter cannot reach
+[result cache](../querying/result-cache.md) all see the statement exactly as it runs, so a parameter cannot reach
 anything the same SQL with literals could not, and a repeated query with the same values is answered from the cache. The
 SQL recorded in History is this rendered statement.
 
@@ -211,7 +211,7 @@ Some functions are rejected in every workspace, inside any statement, on workshe
 ## Time-travel syntax
 
 Query an Iceberg table as of a past snapshot using DuckDB's `AT` clause (see
-[Snapshots & time travel](../guides/snapshots-time-travel.md)):
+[Snapshots & time travel](../data/snapshots-time-travel.md)):
 
 ```sql
 SELECT * FROM analytics.events AT (VERSION => 7287998166701990000);
@@ -220,7 +220,7 @@ SELECT * FROM analytics.events AT (TIMESTAMP => '2026-05-01 00:00:00');
 
 ## Concurrency control command
 
-A worksheet can change an agent's [concurrency profile](../concepts/query-execution.md) with a DuckHaven control
+A worksheet can change an agent's [concurrency profile](../querying/query-execution.md) with a DuckHaven control
 command (its own statement):
 
 ```sql

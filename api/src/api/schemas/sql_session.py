@@ -35,7 +35,7 @@ class SqlSessionCreate(BaseModel):
     on_wait_timeout: Literal["cancel", "continue"] = "cancel"
     # Whether this session's statements may be answered from the result cache. Only
     # autocommit reads in a session that has created no temporary objects ever are;
-    # see docs/concepts/result-cache.md.
+    # see docs/querying/result-cache.md.
     use_cache: bool = True
 
     @model_validator(mode="after")

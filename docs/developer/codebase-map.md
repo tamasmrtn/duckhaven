@@ -4,10 +4,10 @@ Where everything lives and where to make a change. Written to be read in one
 sitting by a new contributor — or a coding agent — before touching the code.
 
 It describes *stable structure*, not progress: for what the system is and why,
-see [Architecture](../concepts/architecture.md); for roadmap and milestone
+see [Architecture](../getting-started/how-duckhaven-works.md); for roadmap and milestone
 status see the [README](https://github.com/tamasmrtn/duckhaven#roadmap) and the
 issue tracker. Invariant references below (I1, I2, …) are numbered as in
-[Architectural invariants](../concepts/architecture.md#7-architectural-invariants).
+[Architectural invariants](../getting-started/how-duckhaven-works.md#7-architectural-invariants).
 
 ---
 
@@ -382,7 +382,7 @@ Notes that matter for changes:
 - **`workspace_catalogs.access_mode`** is `open` (today's default — the
   workspace role applies uniformly) or `scoped` (per-principal
   `catalog_grants` narrow access below the workspace role; see
-  [Permissions](../concepts/permissions.md)).
+  [Permissions](../access/permissions.md)).
 - **`catalog_migrations`** tracks a storage-backend migration's state machine
   (`pending → copying → verifying → cutover → completed`) plus per-table and
   event-log detail tables (checkpointed so a crash resumes from the last
@@ -399,7 +399,7 @@ Notes that matter for changes:
   internal rows (`origin = "sample"`, used by the table-sample preview). It is
   workspace-scoped for members; an admin may pass `all_workspaces` (and the
   `user_id`/`agent_id`/`since`/`until` filters) for the cross-workspace audit view.
-- **`sql_sessions` is the state-of-record for the [SQL session layer](../concepts/sql-sessions.md)**
+- **`sql_sessions` is the state-of-record for the [SQL session layer](../querying/sql-sessions.md)**
   (I9) — the agent's held connection is ephemeral socket state. A row pins one
   `agent_id` (every statement routes there), records the requesting `user_id` for
   per-statement authorization, the scoped `staging_uri`, and the timestamps the

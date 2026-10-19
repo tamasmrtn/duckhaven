@@ -24,8 +24,8 @@ excerpts, and the tool's promise that an empty result means "the documentation
 does not cover this" would be worthless.
 
 **Ranking normalises by document length** (``ts_rank_cd``'s flag 2). Without it
-the longest pages win everything an OR-query touches — ``concepts/architecture.md``
-outranked ``concepts/storage-backends.md`` for the query "storage backends".
+the longest pages win everything an OR-query touches — ``getting-started/how-duckhaven-works.md``
+outranked ``data/storage-backends.md`` for the query "storage backends".
 
 The honest limitation: Postgres full-text has no IDF, so a term that appears in
 most of the corpus ("table", "catalog") pulls in noise, and a handful of cases

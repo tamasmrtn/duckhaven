@@ -91,7 +91,7 @@ describe("AssistantPanel", () => {
     const link = screen.getByRole("link", { name: "Snapshots & time travel" });
     expect(link).toHaveAttribute(
       "href",
-      "https://tamasmrtn.github.io/duckhaven/guides/snapshots-time-travel/",
+      "https://tamasmrtn.github.io/duckhaven/data/snapshots-time-travel/",
     );
     expect(
       screen.getByRole("link", { name: "SQL support" }),

@@ -10,272 +10,272 @@ intro: |-
   identities, and governed AI access — all on your own infrastructure, in one Docker
   Compose deploy. No cloud warehouse lock-in, no Kubernetes, no platform team required.
 pages:
-- path: getting-started/installation.md
-  title: Installation
-  section: Getting started
-  summary: Prerequisites and how to install the stack.
+- path: getting-started/what-is-duckhaven.md
+  title: What is DuckHaven?
+  section: Get started
+  summary: Overview of the product and who it is for.
 - path: getting-started/quickstart.md
   title: Quickstart
-  section: Getting started
+  section: Get started
   summary: Stand up the full stack with one `docker compose` command and run your first query.
+- path: getting-started/installation.md
+  title: Installation
+  section: Get started
+  summary: Prerequisites and how to install the stack.
 - path: getting-started/first-workspace.md
   title: Your first workspace
-  section: Getting started
+  section: Get started
   summary: Create a workspace and invite collaborators.
 - path: getting-started/first-query.md
   title: Your first query
-  section: Getting started
+  section: Get started
   summary: Write and run a query in a browser worksheet.
 - path: getting-started/cli-quickstart.md
   title: Command line (dh)
-  section: Getting started
+  section: Get started
   summary: dh is DuckHaven's command-line interface.
-- path: concepts/what-is-duckhaven.md
-  title: What is DuckHaven?
-  section: Concepts
-  summary: Overview of the product and who it is for.
-- path: concepts/architecture.md
-  title: Architecture
-  section: Concepts
+- path: getting-started/how-duckhaven-works.md
+  title: How DuckHaven works
+  section: Get started
   summary: The control-plane / compute split and data flow — the defining idea behind DuckHaven.
-- path: concepts/workspaces.md
-  title: Workspaces
-  section: Concepts
-  summary: How workspaces isolate queries, permissions, and history.
-- path: concepts/catalogs.md
-  title: Catalogs
-  section: Concepts
-  summary: Catalogs of either kind, how they bind to workspaces, and what a kind decides.
-- path: concepts/tables.md
-  title: Tables & Iceberg
-  section: Concepts
-  summary: Iceberg-native tables, snapshots, and time travel.
-- path: concepts/ducklake.md
-  title: DuckLake
-  section: Concepts
-  summary: DuckLake is the second kind of catalog DuckHaven can create.
-- path: concepts/agents.md
-  title: Agents
-  section: Concepts
-  summary: DuckDB compute agents you pick per query.
-- path: concepts/elastic-compute.md
-  title: Elastic compute
-  section: Concepts
-  summary: Provisioning agents on demand and terminating them when they go idle.
-- path: concepts/runtimes.md
-  title: Runtimes
-  section: Concepts
-  summary: A runtime is the DuckDB an agent runs, together with the extensions baked into its image.
-- path: concepts/storage-backends.md
-  title: Storage backends
-  section: Concepts
-  summary: Where catalog data physically lives, and how credentials reach an agent.
-- path: concepts/query-execution.md
+- path: querying/run-queries.md
+  title: Run queries
+  section: Querying
+  summary: Day-to-day querying in worksheets.
+- path: querying/saved-queries.md
+  title: Saved queries
+  section: Querying
+  summary: Save a frequently used query so your team can recall and run it later.
+- path: querying/schedule-queries.md
+  title: Schedule queries
+  section: Querying
+  summary: Run a saved query on a cron schedule, and read its run history.
+- path: querying/query-profiles.md
+  title: Read query profiles
+  section: Querying
+  summary: Inspect operator graphs, timing, and spills.
+- path: querying/query-execution.md
   title: Query execution
-  section: Concepts
+  section: Querying
   summary: Queueing, memory estimation and concurrency, and the column types and exact values a result
     carries.
-- path: concepts/result-cache.md
+- path: querying/result-cache.md
   title: Result cache
-  section: Concepts
+  section: Querying
   summary: Answering a repeated query from an earlier run's result while nothing it reads has changed.
-- path: concepts/sql-sessions.md
+- path: querying/sql-sessions.md
   title: SQL sessions
-  section: Concepts
+  section: Querying
   summary: Persistent connections for dbt, dlt and other Python DB-API clients, brokered through the
     API.
-- path: concepts/permissions.md
-  title: Permissions
-  section: Concepts
-  summary: Per-workspace access control and audit trail.
-- path: concepts/assistant.md
-  title: AI assistant
-  section: Concepts
-  summary: The governed AI data assistant and how it enforces access.
-- path: concepts/mcp-server.md
-  title: MCP server
-  section: Concepts
-  summary: Connecting an AI agent you already use — Claude Code, Cursor — to your data.
-- path: concepts/metadata.md
-  title: Metadata
-  section: Concepts
-  summary: What Polaris owns, what Postgres owns, and the table-metadata sidecar.
-- path: concepts/lineage.md
-  title: Lineage
-  section: Concepts
-  summary: Where a table's data came from, and what breaks if you change it.
-- path: concepts/semantic-layer.md
-  title: Semantic layer
-  section: Concepts
-  summary: Recording what a business term means so a metric is computed one agreed way.
-- path: concepts/maintenance.md
+- path: querying/session-audit.md
+  title: Read the session audit trail
+  section: Querying
+  summary: Trace what a dbt or dlt run did, on the Connections screen.
+- path: data/catalogs.md
+  title: Catalogs
+  section: Data & storage
+  summary: Catalogs of either kind, how they bind to workspaces, and what a kind decides.
+- path: data/manage-catalogs.md
+  title: Manage catalogs
+  section: Data & storage
+  summary: Create and govern catalogs.
+- path: data/tables.md
+  title: Tables & Iceberg
+  section: Data & storage
+  summary: Iceberg-native tables, snapshots, and time travel.
+- path: data/snapshots-time-travel.md
+  title: Snapshots & time travel
+  section: Data & storage
+  summary: Query tables at a past snapshot.
+- path: data/ducklake.md
+  title: DuckLake
+  section: Data & storage
+  summary: DuckLake is the second kind of catalog DuckHaven can create.
+- path: data/create-a-ducklake-catalog.md
+  title: Create a DuckLake catalog
+  section: Data & storage
+  summary: A walkthrough of creating, using and dropping a DuckLake catalog.
+- path: data/storage-backends.md
+  title: Storage backends
+  section: Data & storage
+  summary: Where catalog data physically lives, and how credentials reach an agent.
+- path: data/configure-storage.md
+  title: Configure storage
+  section: Data & storage
+  summary: Point DuckHaven at your object storage backend.
+- path: data/migrate-catalog-storage.md
+  title: Migrate a catalog's storage
+  section: Data & storage
+  summary: Move a catalog to a different storage backend without losing data.
+- path: data/maintenance.md
   title: Lakehouse maintenance
-  section: Concepts
+  section: Data & storage
   summary: The advisor that scores table health and recommends compaction and cleanup.
-- path: deployment/install.md
-  title: Docker Compose
-  section: Deployment
-  summary: Deploy the full stack with Docker Compose.
-- path: deployment/add-agent.md
+- path: data/storage-maintenance.md
+  title: Storage security & maintenance
+  section: Data & storage
+  summary: 'Day-2 practice for external S3 and ADLS Gen2 backends: securing access, rotating trust,
+    and routine upkeep.'
+- path: metadata/table-metadata.md
+  title: Metadata
+  section: Metadata & lineage
+  summary: What Polaris owns, what Postgres owns, and the table-metadata sidecar.
+- path: metadata/lineage.md
+  title: Lineage
+  section: Metadata & lineage
+  summary: Where a table's data came from, and what breaks if you change it.
+- path: metadata/import-dbt-lineage.md
+  title: Import lineage from dbt
+  section: Metadata & lineage
+  summary: Publish a dbt project's DAG into DuckHaven's lineage graph.
+- path: metadata/semantic-layer.md
+  title: Semantic layer
+  section: Metadata & lineage
+  summary: Recording what a business term means so a metric is computed one agreed way.
+- path: metadata/define-metrics.md
+  title: Define metrics
+  section: Metadata & lineage
+  summary: Author a semantic model and publish it so the assistant will use it.
+- path: metadata/import-dbt-semantics.md
+  title: Import semantics from dbt
+  section: Metadata & lineage
+  summary: Import metric definitions from dbt's semantic layer.
+- path: ai/assistant.md
+  title: AI assistant
+  section: AI assistant & MCP
+  summary: The governed AI data assistant and how it enforces access.
+- path: ai/use-the-assistant.md
+  title: Use the AI assistant
+  section: AI assistant & MCP
+  summary: Browse the catalog, run SQL, and propose worksheet edits with the assistant.
+- path: ai/mcp-server.md
+  title: MCP server
+  section: AI assistant & MCP
+  summary: Connecting an AI agent you already use — Claude Code, Cursor — to your data.
+- path: ai/connect-mcp-client.md
+  title: Connect an MCP client
+  section: AI assistant & MCP
+  summary: Point Claude Code, Claude Desktop or Cursor at DuckHaven over MCP.
+- path: access/access-levels.md
+  title: How access works
+  section: Access
+  summary: The four access layers, including fine-grained catalog/schema/table grants.
+- path: access/permissions.md
+  title: Permissions
+  section: Access
+  summary: Per-workspace access control and audit trail.
+- path: access/workspaces.md
+  title: Workspaces
+  section: Access
+  summary: How workspaces isolate queries, permissions, and history.
+- path: access/manage-users.md
+  title: Manage users & access
+  section: Access
+  summary: Administer users and permissions.
+- path: access/service-accounts.md
+  title: Service accounts & tokens
+  section: Access
+  summary: Machine auth via service accounts and Personal Access Tokens.
+- path: access/connect-idp.md
+  title: Connect an IdP (SSO)
+  section: Access
+  summary: Delegate sign-in to an OIDC provider, and map its groups to roles.
+- path: access/connect-ldap.md
+  title: Connect LDAP / AD
+  section: Access
+  summary: As a secondary federated path, DuckHaven can authenticate users against an LDAP directory
+    or Active Directory.
+- path: access/offboarding.md
+  title: Offboarding & break-glass
+  section: Access
+  summary: How to remove someone's access cleanly, and how to stay in control when your identity provider
+    is down.
+- path: compute/agents.md
+  title: Agents
+  section: Compute
+  summary: DuckDB compute agents you pick per query.
+- path: compute/add-agent.md
   title: Add an agent
-  section: Deployment
+  section: Compute
   summary: Scale compute by adding DuckDB agents.
-- path: deployment/homelab-elastic-setup.md
+- path: compute/runtimes.md
+  title: Runtimes
+  section: Compute
+  summary: A runtime is the DuckDB an agent runs, together with the extensions baked into its image.
+- path: compute/elastic-compute.md
+  title: Elastic compute
+  section: Compute
+  summary: Provisioning agents on demand and terminating them when they go idle.
+- path: compute/elastic-docker.md
   title: Elastic compute on a single Docker host
-  section: Deployment
+  section: Compute
   summary: Enable elastic compute with the Docker backend, provisioning agents as containers on a
     single host.
-- path: deployment/azure-elastic-setup.md
+- path: compute/elastic-azure.md
   title: Elastic compute on Azure
-  section: Deployment
+  section: Compute
   summary: Enable elastic compute with the Azure Container Instances backend, provisioning agents
     in the cloud.
-- path: deployment/storage.md
-  title: Configure storage
-  section: Deployment
-  summary: Point DuckHaven at your object storage backend.
-- path: deployment/ducklake.md
-  title: Enable DuckLake
-  section: Deployment
-  summary: DuckLake is a second catalog kind, available by default.
+- path: compute/scaling.md
+  title: Scaling compute
+  section: Compute
+  summary: 'DuckHaven scales compute horizontally: the control plane stays small (one box) while you
+    add agents at the edge.'
+- path: compute/agent-monitoring.md
+  title: Agent monitoring
+  section: Compute
+  summary: An agent's Monitoring tab — live load, where its time went, the queries it ran and what
+    they cost, CPU and memory — and exactly how each number is measured.
+- path: deployment/install.md
+  title: Docker Compose
+  section: Deploy
+  summary: Deploy the full stack with Docker Compose.
 - path: deployment/reverse-proxy-tls.md
   title: Reverse proxy & TLS
-  section: Deployment
+  section: Deploy
   summary: Front the stack with a reverse proxy and TLS.
+- path: deployment/ducklake.md
+  title: Enable DuckLake
+  section: Deploy
+  summary: DuckLake is a second catalog kind, available by default.
 - path: deployment/high-availability.md
   title: High availability
-  section: Deployment
+  section: Deploy
   summary: Run the control plane with HA Postgres and multiple API replicas.
 - path: deployment/azure-terraform.md
   title: Azure with Terraform
-  section: Deployment
+  section: Deploy
   summary: Deploy the whole stack to Azure as managed infrastructure, with Terraform.
 - path: deployment/updating.md
   title: Updating
-  section: Deployment
+  section: Deploy
   summary: Updates pull a new image and restart the stack.
 - path: deployment/backup-restore.md
   title: Backup & restore
-  section: Deployment
+  section: Deploy
   summary: Back up and restore DuckHaven data.
-- path: guides/run-queries.md
-  title: Run queries
-  section: Guides
-  summary: Day-to-day querying in worksheets.
-- path: guides/manage-catalogs.md
-  title: Manage catalogs
-  section: Guides
-  summary: Create and govern catalogs.
-- path: guides/create-a-ducklake-catalog.md
-  title: Create a DuckLake catalog
-  section: Guides
-  summary: A walkthrough of creating, using and dropping a DuckLake catalog.
-- path: guides/migrate-catalog-storage.md
-  title: Migrate a catalog's storage
-  section: Guides
-  summary: Move a catalog to a different storage backend without losing data.
-- path: guides/snapshots-time-travel.md
-  title: Snapshots & time travel
-  section: Guides
-  summary: Query tables at a past snapshot.
-- path: guides/query-profiles.md
-  title: Read query profiles
-  section: Guides
-  summary: Inspect operator graphs, timing, and spills.
-- path: guides/saved-queries.md
-  title: Saved queries
-  section: Guides
-  summary: Save a frequently used query so your team can recall and run it later.
-- path: guides/schedule-queries.md
-  title: Schedule queries
-  section: Guides
-  summary: Run a saved query on a cron schedule, and read its run history.
-- path: guides/session-audit.md
-  title: Read the session audit trail
-  section: Guides
-  summary: Trace what a dbt or dlt run did, on the Connections screen.
-- path: guides/import-dbt-lineage.md
-  title: Import lineage from dbt
-  section: Guides
-  summary: Publish a dbt project's DAG into DuckHaven's lineage graph.
-- path: guides/define-metrics.md
-  title: Define metrics
-  section: Guides
-  summary: Author a semantic model and publish it so the assistant will use it.
-- path: guides/import-dbt-semantics.md
-  title: Import semantics from dbt
-  section: Guides
-  summary: Import metric definitions from dbt's semantic layer.
-- path: guides/using-the-assistant.md
-  title: Use the AI assistant
-  section: Guides
-  summary: Browse the catalog, run SQL, and propose worksheet edits with the assistant.
-- path: guides/connect-mcp-client.md
-  title: Connect an MCP client
-  section: Guides
-  summary: Point Claude Code, Claude Desktop or Cursor at DuckHaven over MCP.
-- path: guides/access-levels.md
-  title: How access works
-  section: Guides
-  summary: The four access layers, including fine-grained catalog/schema/table grants.
-- path: guides/users-access.md
-  title: Manage users & access
-  section: Guides
-  summary: Administer users and permissions.
-- path: guides/service-accounts.md
-  title: Service accounts & tokens
-  section: Guides
-  summary: Machine auth via service accounts and Personal Access Tokens.
-- path: guides/connect-idp.md
-  title: Connect an IdP (SSO)
-  section: Guides
-  summary: Delegate sign-in to an OIDC provider, and map its groups to roles.
-- path: guides/connect-ldap.md
-  title: Connect LDAP / AD
-  section: Guides
-  summary: As a secondary federated path, DuckHaven can authenticate users against an LDAP directory
-    or Active Directory.
 - path: operations/runbook.md
   title: Operator runbook
-  section: Operations
+  section: Operate
   summary: Operational procedures for the single control-plane box plus its agents.
-- path: operations/storage-maintenance.md
-  title: Storage security & maintenance
-  section: Operations
-  summary: 'Day-2 practice for external S3 and ADLS Gen2 backends: securing access, rotating trust,
-    and routine upkeep.'
 - path: operations/monitoring.md
   title: Monitoring
-  section: Operations
+  section: Operate
   summary: The query history and audit log, Prometheus metrics, starter alert rules and a Grafana
     dashboard.
-- path: operations/agent-monitoring.md
-  title: Agent monitoring
-  section: Operations
-  summary: An agent's Monitoring tab — live load, where its time went, the queries it ran and what
-    they cost, CPU and memory — and exactly how each number is measured.
 - path: operations/tracing.md
   title: Distributed tracing
-  section: Operations
+  section: Operate
   summary: DuckHaven emits OpenTelemetry traces alongside the Prometheus metrics.
-- path: operations/scaling.md
-  title: Scaling compute
-  section: Operations
-  summary: 'DuckHaven scales compute horizontally: the control plane stays small (one box) while you
-    add agents at the edge.'
 - path: operations/ha-failover.md
   title: HA failover runbook
-  section: Operations
+  section: Operate
   summary: Drills that prove the highly-available control plane survives the failures it is designed
     for.
-- path: operations/offboarding.md
-  title: Offboarding & break-glass
-  section: Operations
-  summary: How to remove someone's access cleanly, and how to stay in control when your identity provider
-    is down.
 - path: operations/troubleshooting.md
   title: Troubleshooting
-  section: Operations
+  section: Operate
   summary: Common issues and where to look.
 - path: reference/configuration.md
   title: Configuration
@@ -306,3 +306,51 @@ pages:
   title: Operator scripts
   section: Reference
   summary: DuckHaven ships a few small helper scripts under scripts/ for operators.
+aliases:
+  concepts/agents.md: compute/agents.md
+  concepts/architecture.md: getting-started/how-duckhaven-works.md
+  concepts/assistant.md: ai/assistant.md
+  concepts/catalogs.md: data/catalogs.md
+  concepts/ducklake.md: data/ducklake.md
+  concepts/elastic-compute.md: compute/elastic-compute.md
+  concepts/lineage.md: metadata/lineage.md
+  concepts/maintenance.md: data/maintenance.md
+  concepts/mcp-server.md: ai/mcp-server.md
+  concepts/metadata.md: metadata/table-metadata.md
+  concepts/permissions.md: access/permissions.md
+  concepts/query-execution.md: querying/query-execution.md
+  concepts/result-cache.md: querying/result-cache.md
+  concepts/runtimes.md: compute/runtimes.md
+  concepts/semantic-layer.md: metadata/semantic-layer.md
+  concepts/sql-sessions.md: querying/sql-sessions.md
+  concepts/storage-backends.md: data/storage-backends.md
+  concepts/tables.md: data/tables.md
+  concepts/what-is-duckhaven.md: getting-started/what-is-duckhaven.md
+  concepts/workspaces.md: access/workspaces.md
+  deployment/add-agent.md: compute/add-agent.md
+  deployment/azure-elastic-setup.md: compute/elastic-azure.md
+  deployment/homelab-elastic-setup.md: compute/elastic-docker.md
+  deployment/storage.md: data/configure-storage.md
+  guides/access-levels.md: access/access-levels.md
+  guides/connect-idp.md: access/connect-idp.md
+  guides/connect-ldap.md: access/connect-ldap.md
+  guides/connect-mcp-client.md: ai/connect-mcp-client.md
+  guides/create-a-ducklake-catalog.md: data/create-a-ducklake-catalog.md
+  guides/define-metrics.md: metadata/define-metrics.md
+  guides/import-dbt-lineage.md: metadata/import-dbt-lineage.md
+  guides/import-dbt-semantics.md: metadata/import-dbt-semantics.md
+  guides/manage-catalogs.md: data/manage-catalogs.md
+  guides/migrate-catalog-storage.md: data/migrate-catalog-storage.md
+  guides/query-profiles.md: querying/query-profiles.md
+  guides/run-queries.md: querying/run-queries.md
+  guides/saved-queries.md: querying/saved-queries.md
+  guides/schedule-queries.md: querying/schedule-queries.md
+  guides/service-accounts.md: access/service-accounts.md
+  guides/session-audit.md: querying/session-audit.md
+  guides/snapshots-time-travel.md: data/snapshots-time-travel.md
+  guides/users-access.md: access/manage-users.md
+  guides/using-the-assistant.md: ai/use-the-assistant.md
+  operations/agent-monitoring.md: compute/agent-monitoring.md
+  operations/offboarding.md: access/offboarding.md
+  operations/scaling.md: compute/scaling.md
+  operations/storage-maintenance.md: data/storage-maintenance.md

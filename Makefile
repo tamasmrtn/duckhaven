@@ -136,7 +136,7 @@ polaris-dev-down:
 # IAM role to vend creds) can only be exercised against LocalStack or real AWS.
 # This brings up LocalStack and seeds a role + bucket; point `make polaris-dev` at it by
 # setting POLARIS_S3_ENDPOINT(_INTERNAL) to the LocalStack URL, then run the
-# tests with the printed DH_TEST_S3_* env. See docs/operations/storage-maintenance.md.
+# tests with the printed DH_TEST_S3_* env. See docs/data/storage-maintenance.md.
 # Azure ADLS has no offline emulator for Entra credential vending (Azurite
 # emulates Blob/SAS but not Entra), so the ADLS assume-identity path is
 # validated against a real Azure account — the agent/api tests skip without it.

@@ -61,7 +61,7 @@ by default.
 | httpx (automatic) | A client span for every request to Apache Polaris and for cross-replica dispatch forwards, as children of the request that caused them. |
 | SQLAlchemy (automatic) | A span per database statement, with the SQL as an attribute. |
 | `dispatch_query` (manual, api) | Wraps handing a query to an agent over the WebSocket control channel. Its W3C trace context rides inside the `DISPATCH_QUERY` frame so the agent's span below continues the same trace instead of starting a new one. Carries `duckhaven.origin` (`interactive` for a user's query, or the schedule/maintenance origin) so automated runs are distinguishable from clicks. |
-| `provision_agent` (manual, api) | Wraps asking a compute backend to create an [elastic agent](../concepts/elastic-compute.md). Carries `duckhaven.agent_id`, `duckhaven.compute_provider`, and the requested vCPU/memory. Without it a cold start is an unexplained gap in the trace: the query's own `dispatch_query` span cannot begin until an agent exists, so the wait belongs to no span at all. Failures set the span to an error status. |
+| `provision_agent` (manual, api) | Wraps asking a compute backend to create an [elastic agent](../compute/elastic-compute.md). Carries `duckhaven.agent_id`, `duckhaven.compute_provider`, and the requested vCPU/memory. Without it a cold start is an unexplained gap in the trace: the query's own `dispatch_query` span cannot begin until an agent exists, so the wait belongs to no span at all. Failures set the span to an error status. |
 | `handle_dispatch` (manual, agent) | The agent's per-query span: admission queueing, running the query, and sending the result back. Continues the api's trace when the frame carried one; starts a fresh trace otherwise (e.g. an older peer without tracing). Failures set the span to an error status. |
 | `duckdb.execute` (manual, agent) | Wraps the actual DuckDB execution (offloaded to a worker thread), so per-query execution time is visible directly in the trace rather than only in the aggregate `duckhaven_query_duration_seconds` histogram. Also where the agent hands its active span to DuckDB's own Polaris calls — see [Apache Polaris](#apache-polaris). |
 | `assistant.turn` (manual, api) | One span per AI-assistant turn, carrying `duckhaven.conversation_id`, `duckhaven.workspace_id`, and the model name. Pydantic AI's own instrumentation nests under it — an agent-run span, a model-request span per LLM call (with `gen_ai.usage.*` token counts), and a span per tool call — and the assistant's loopback SQL chains on down through `dispatch_query` into the agent. Failures set the span to an error status. See [The AI assistant](#the-ai-assistant). |
@@ -95,7 +95,7 @@ on the `polaris` service in the compose file.
 
 ## The AI assistant
 
-When the [AI assistant](../concepts/assistant.md) is enabled, each turn is traced as an `assistant.turn` span with
+When the [AI assistant](../ai/assistant.md) is enabled, each turn is traced as an `assistant.turn` span with
 [Pydantic AI's OpenTelemetry instrumentation](https://ai.pydantic.dev/logfire/) nested underneath, following the
 OpenTelemetry [GenAI semantic conventions](https://opentelemetry.io/docs/specs/semconv/gen-ai/). You get the model
 request timeline, per-tool-call spans, and `gen_ai.usage.*` token counts for the turn, and — because the assistant runs

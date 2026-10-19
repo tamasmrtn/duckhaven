@@ -17,7 +17,7 @@ timer wrapping this script ships under `deploy/systemd/` — see [Backup & resto
 
 ## `assistant-mine-feedback.py` — find questions the assistant answered badly
 
-Reads the [assistant's](../concepts/assistant.md) own audit trail and reports the turns worth a person's attention,
+Reads the [assistant's](../ai/assistant.md) own audit trail and reports the turns worth a person's attention,
 then drafts them as candidate cases for the [eval set](../developer/testing.md). Read-only — it opens a read-only
 transaction and writes nothing to the database.
 
@@ -57,7 +57,7 @@ DATABASE_URL=... DUCKLAKE_DATABASE_URL=... ./scripts/ducklake-check.py
 ```
 
 An Iceberg table cannot disagree with its own metadata, because the metadata sits beside the data in object storage.
-A [DuckLake](../concepts/ducklake.md) catalog keeps its metadata in PostgreSQL and its data in object storage, so a
+A [DuckLake](../data/ducklake.md) catalog keeps its metadata in PostgreSQL and its data in object storage, so a
 restore can put the two at different moments. This reports both directions, per catalog:
 
 - **missing** — the catalog references a file storage does not have. Queries on that table fail. This is the direction

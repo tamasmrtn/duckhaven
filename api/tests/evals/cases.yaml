@@ -30,7 +30,7 @@ cases:
       category: product_knowledge
       provenance: hand
       negative: false
-      expected_sources: [guides/snapshots-time-travel.md, reference/sql-support.md]
+      expected_sources: [data/snapshots-time-travel.md, reference/sql-support.md]
       expected_tools_any: [search_docs, read_doc_page]
       must_contain: ["AT (TIMESTAMP"]
 
@@ -55,7 +55,7 @@ cases:
       category: product_knowledge
       provenance: auto
       negative: false
-      expected_sources: [concepts/storage-backends.md]
+      expected_sources: [data/storage-backends.md]
       expected_tools_any: [search_docs, read_doc_page]
       must_contain: ["s3", "adls_gen2"]
 
@@ -76,7 +76,7 @@ cases:
       category: product_knowledge
       provenance: hand
       negative: false
-      expected_sources: [concepts/query-execution.md, concepts/elastic-compute.md]
+      expected_sources: [querying/query-execution.md, compute/elastic-compute.md]
       expected_tools_any: [search_docs, read_doc_page]
 
   - name: decimal_precision_in_results
@@ -96,7 +96,7 @@ cases:
       category: product_knowledge
       provenance: auto
       negative: false
-      expected_sources: [guides/schedule-queries.md]
+      expected_sources: [querying/schedule-queries.md]
       expected_tools_any: [search_docs, read_doc_page]
 
   - name: service_account_tokens
@@ -106,7 +106,7 @@ cases:
       category: product_knowledge
       provenance: auto
       negative: false
-      expected_sources: [guides/service-accounts.md]
+      expected_sources: [access/service-accounts.md]
       expected_tools_any: [search_docs, read_doc_page]
 
   - name: truncate_on_iceberg
@@ -140,7 +140,7 @@ cases:
       category: product_knowledge
       provenance: auto
       negative: false
-      expected_sources: [guides/connect-idp.md]
+      expected_sources: [access/connect-idp.md]
       expected_tools_any: [search_docs, read_doc_page]
 
   - name: backup_the_control_plane
@@ -161,7 +161,7 @@ cases:
       category: product_knowledge
       provenance: hand
       negative: true
-      expected_sources: [guides/snapshots-time-travel.md]
+      expected_sources: [data/snapshots-time-travel.md]
       expect_refusal: true
       note: >-
         Every comparable lakehouse has retention policies. DuckHaven does not
@@ -175,7 +175,7 @@ cases:
       category: product_knowledge
       provenance: hand
       negative: true
-      expected_sources: [concepts/assistant.md]
+      expected_sources: [ai/assistant.md]
       expect_refusal: true
       note: The assistant has no chart generation; its own concept page says so.
 
@@ -505,7 +505,7 @@ cases:
       category: unanswerable
       provenance: hand
       negative: true
-      expected_sources: [concepts/permissions.md]
+      expected_sources: [access/permissions.md]
       expect_refusal: true
       note: >-
         Grants are per catalog and per table, never per row. The permissions page
@@ -596,7 +596,7 @@ cases:
       category: product_knowledge
       provenance: hand
       negative: false
-      expected_sources: [concepts/ducklake.md]
+      expected_sources: [data/ducklake.md]
       expect_refusal: false
       must_contain: [export]
       note: >-
@@ -620,7 +620,7 @@ cases:
       category: product_knowledge
       provenance: hand
       negative: false
-      expected_sources: [concepts/ducklake.md, guides/snapshots-time-travel.md]
+      expected_sources: [data/ducklake.md, data/snapshots-time-travel.md]
       expected_tools_any: [search_docs, read_doc_page]
       must_contain: ["snapshots()"]
       note: >-
@@ -636,7 +636,7 @@ cases:
       category: product_knowledge
       provenance: hand
       negative: false
-      expected_sources: [concepts/ducklake.md]
+      expected_sources: [data/ducklake.md]
       expected_tools_any: [search_docs, read_doc_page]
       must_contain: ["catalog"]
       note: >-
@@ -652,7 +652,7 @@ cases:
       category: governance
       provenance: hand
       negative: true
-      expected_sources: [concepts/maintenance.md, reference/sql-support.md]
+      expected_sources: [data/maintenance.md, reference/sql-support.md]
       expect_refusal: true
       note: >-
         Every ducklake_*() function is still refused by the statement guard,
@@ -671,7 +671,7 @@ cases:
       category: product_knowledge
       provenance: hand
       negative: false
-      expected_sources: [concepts/catalogs.md, concepts/ducklake.md]
+      expected_sources: [data/catalogs.md, data/ducklake.md]
       expected_tools_any: [search_docs, read_doc_page]
       must_contain: ["Iceberg", "DuckLake"]
       note: >-
@@ -686,7 +686,7 @@ cases:
       category: product_knowledge
       provenance: hand
       negative: false
-      expected_sources: [guides/migrate-catalog-storage.md, concepts/ducklake.md]
+      expected_sources: [data/migrate-catalog-storage.md, data/ducklake.md]
       expect_refusal: false
       must_contain: [Migrations]
       note: >-

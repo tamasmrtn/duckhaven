@@ -301,7 +301,7 @@ def test_the_assembled_instructions_are_within_budget():
 
 
 def test_the_product_block_names_the_v1_scope_limits():
-    """`concepts/assistant.md` lists these; without them in the instructions the
+    """`ai/assistant.md` lists these; without them in the instructions the
     assistant approximates instead of declining. A judged run caught it drawing
     an ASCII bar chart, with growth percentages, on a case whose whole point is
     that DuckHaven has no chart generation."""

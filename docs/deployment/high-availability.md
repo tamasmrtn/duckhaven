@@ -8,7 +8,7 @@ container goes down, everyone is down until it comes back.
 This page describes the **opt-in highly-available topology**: HA Postgres plus
 multiple API replicas behind a load balancer, so the control plane survives the
 loss of a database node or an API container. It runs entirely on Docker Compose
-(no Kubernetes). Compute [agents](../concepts/agents.md) already scale
+(no Kubernetes). Compute [agents](../compute/agents.md) already scale
 horizontally and are unaffected.
 
 !!! note "This is opt-in"
@@ -222,8 +222,8 @@ single-node stack: a read-only root filesystem, dropped capabilities,
 `duckhaven_internal` network only — so it can reach Caddy, Polaris, the object store, and the
 collector, and nothing else. Opting out (for external cloud storage) works the
 same way as on the single-node stack; see
-[Install](./install.md#agent-network-egress) and
-[Sandboxing](../concepts/sql-sessions.md#sandboxing).
+[Install](install.md#agent-network-egress) and
+[Sandboxing](../querying/sql-sessions.md#sandboxing).
 
 ## Limitations
 

@@ -239,7 +239,7 @@ async def test_a_documentation_page_comes_back_over_the_wire(mcp_client: AsyncCl
     They read public content, so there is no grant to check — but they sit
     behind the same front door, and an anonymous caller must not reach them.
     """
-    headers, body = call_tool("read_doc_page", {"path": "concepts/mcp-server.md"})
+    headers, body = call_tool("read_doc_page", {"path": "ai/mcp-server.md"})
     resp = await mcp_client.post(MCP_PATH, headers={**headers, **auth}, json=body)
 
     assert resp.status_code == 200, resp.text

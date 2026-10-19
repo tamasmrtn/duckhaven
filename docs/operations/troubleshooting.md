@@ -12,7 +12,7 @@ Common issues and where to look. For agent-specific depth, see the
 
 ## Queries fail with extension errors
 
-The chosen agent is missing the DuckDB extension the workspace's [storage backend](../concepts/storage-backends.md)
+The chosen agent is missing the DuckDB extension the workspace's [storage backend](../data/storage-backends.md)
 requires. Pick a compatible agent (incompatible ones are shown disabled) or rebuild the agent image with the extension.
 
 ## Result rows fail to load

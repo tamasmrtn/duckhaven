@@ -1,7 +1,7 @@
 # Your first workspace
 
-A [workspace](../concepts/workspaces.md) is where your team collaborates. It attaches one or more
-[catalogs](../concepts/catalogs.md) — the data domains you query. This page creates your first workspace and catalog.
+A [workspace](../access/workspaces.md) is where your team collaborates. It attaches one or more
+[catalogs](../data/catalogs.md) — the data domains you query. This page creates your first workspace and catalog.
 
 ## Create a workspace
 
@@ -16,9 +16,9 @@ required. The first catalog you attach becomes the workspace's default (used for
 
 !!! tip "Using external storage"
     To back a catalog with your own S3 bucket or Azure Data Lake instead of the bundled object store, pick or register
-    that [storage backend](../deployment/storage.md) in the create-catalog dialog's **Storage backend** selector. A
+    that [storage backend](../data/configure-storage.md) in the create-catalog dialog's **Storage backend** selector. A
     catalog's backend is chosen here, but an admin can change it later with a
-    [storage migration](../guides/migrate-catalog-storage.md).
+    [storage migration](../data/migrate-catalog-storage.md).
 
 ## Add members
 
@@ -28,9 +28,9 @@ Invite teammates and assign each a role:
 - `writer` — also create and modify tables
 - `owner` — also manage membership, the workspace's settings and its catalogs
 
-See [Manage users & access](../guides/users-access.md) and [Permissions](../concepts/permissions.md).
+See [Manage users & access](../access/manage-users.md) and [Permissions](../access/permissions.md).
 
 ## Next steps
 
 - [Run your first query](first-query.md).
-- [Manage catalogs](../guides/manage-catalogs.md) — create schemas and tables.
+- [Manage catalogs](../data/manage-catalogs.md) — create schemas and tables.

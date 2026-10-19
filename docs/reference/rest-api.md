@@ -45,8 +45,8 @@ A server old enough to lack this endpoint returns **404**; treat that as the old
 | `queries` | Submit queries, page result rows, profiles, saved queries, history |
 | `worksheets` | Your private, autosaved [worksheets](#worksheets) (the editor's tabs) |
 | `search` | Find catalogs, schemas, tables and saved queries by name ([search](#search-endpoint)) |
-| `lineage` | Read a table's [lineage](../concepts/lineage.md) graph; import and retire external lineage |
-| `semantic` | Define, validate, publish and query [semantic models](../concepts/semantic-layer.md) |
+| `lineage` | Read a table's [lineage](../metadata/lineage.md) graph; import and retire external lineage |
+| `semantic` | Define, validate, publish and query [semantic models](../metadata/semantic-layer.md) |
 | `agents` | List the agents you may use, with their capabilities |
 | `admin-agents` | Agent detail, monitoring, lifecycle, bootstrap/revoke, [access](#per-agent-access) |
 | `admin-users` | User accounts and their workspace roles |
@@ -60,10 +60,10 @@ The API accepts two credentials, both resolving to the same authorization checks
 
 - **Session cookie** — for browser clients. Authenticate as you would in the UI and send the session cookie with each
   request.
-- **Bearer token** — for machine clients. Send a [service-account PAT](../guides/service-accounts.md) on the
+- **Bearer token** — for machine clients. Send a [service-account PAT](../access/service-accounts.md) on the
   `Authorization: Bearer <token>` header. This is the supported path for unattended callers (CI, schedulers, tooling).
 
-See [Permissions](../concepts/permissions.md) for the underlying model. Both are declared in the OpenAPI schema as
+See [Permissions](../access/permissions.md) for the underlying model. Both are declared in the OpenAPI schema as
 security schemes (`cookieAuth`, `bearerAuth`), so a generated client configures credentials once rather than passing
 them on every call.
 
@@ -100,7 +100,7 @@ A principal may hold **25 live tokens**; issuing a 26th returns **409 `too_many_
 permission, so a ceiling is what keeps the collection bounded — revoke one you no longer use to make room.
 
 Unattended callers do not use this endpoint. CI, schedulers and tooling authenticate with a
-[service-account PAT](../guides/service-accounts.md), issued by an admin at
+[service-account PAT](../access/service-accounts.md), issued by an admin at
 `POST /api/admin/service-accounts/{service_account_id}/pats`. A service account presenting its own token here gets
 **403 `service_account_tokens_are_managed`**: its tokens are deliberately issued by an administrator at different
 trust levels, and one of them must not be able to revoke another.
@@ -109,7 +109,7 @@ trust levels, and one of them must not be able to revoke another.
     Issuing requires a session cookie, and the only client that mints one is `dh auth login`, which signs in with a
     password. On a deployment that authenticates solely through an identity provider there is no way for a person to
     issue themselves a token — the SPA has no interface for it — so ask an administrator for a
-    [service-account token](../guides/service-accounts.md) instead.
+    [service-account token](../access/service-accounts.md) instead.
 
 ### Managing your own tokens
 
@@ -352,7 +352,7 @@ placeholders the statement uses.
 - `DESCRIBE`, `SHOW`, `SUMMARIZE` and `PRAGMA` statements, several statements, and a `PIVOT` without an `IN` list
   (which DuckDB plans as two statements) answer **422 `not_describable`**. So does a statement that does not bind, with
   the engine's reason.
-- With no agent connected and [elastic compute](../concepts/elastic-compute.md) on, compute is started and the call
+- With no agent connected and [elastic compute](../compute/elastic-compute.md) on, compute is started and the call
   waits up to `wait_timeout_s` (default `SQL_SESSION_WAIT_TIMEOUT_S`). If compute is not up by then it answers
   **503 `compute_starting`** with `Retry-After`; retrying lands on the agent that is starting.
 - Describes do not appear in History and record no lineage.
@@ -404,7 +404,7 @@ result's columns:
 `type` is DuckDB's own logical-type spelling — the same string `DESCRIBE` prints, and the same one you can cast back to
 (`SELECT NULL::DECIMAL(38,10)`). It is complete on its own: precision, scale and nested field types are inside the
 string, so there are no separate `precision`/`scale` fields. See
-[Column types](../concepts/query-execution.md#column-types) for how the types are captured and why.
+[Column types](../querying/query-execution.md#column-types) for how the types are captured and why.
 
 The field is **additive** — `columns` still carries the names-only list it always has — and is `null` in two cases:
 
@@ -420,7 +420,7 @@ checked like running its SQL, for every caller including the one who ran it. See
 [Reading results in Permissions][reading-results].
 Workspaces with no scoped catalog behave as before: any member can read any result in the workspace.
 
-[reading-results]: ../concepts/permissions.md#reading-a-result-needs-the-same-grants-as-running-its-query
+[reading-results]: ../access/permissions.md#reading-a-result-needs-the-same-grants-as-running-its-query
 
 ## Whole results as Arrow or Parquet
 
@@ -459,7 +459,7 @@ an Arrow type.
 
 ## Result cache fields
 
-A read can be answered from the [result cache](../concepts/result-cache.md) instead of running. Requests opt out with
+A read can be answered from the [result cache](../querying/result-cache.md) instead of running. Requests opt out with
 `use_cache: false` on `POST /api/workspaces/{workspace}/queries`, on a session statement, or (for a whole session) on
 `POST /api/workspaces/{workspace}/sql/sessions`. `PATCH /api/workspaces/{workspace}` takes `result_cache_enabled`
 (owner only).
@@ -594,7 +594,7 @@ case**. What happens when the name is taken is up to `on_conflict`:
 `PATCH .../saved-queries/{saved_query_id}` renames or edits one; renaming onto a taken name is a **409** as well.
 
 Saved queries carry `updated_at` and `updated_by` alongside `created_by`. Changing the SQL or the default agent makes
-the caller `updated_by` — and a [scheduled run](../guides/schedule-queries.md#whose-data-grants-a-run-uses) is checked
+the caller `updated_by` — and a [scheduled run](../querying/schedule-queries.md#whose-data-grants-a-run-uses) is checked
 against `updated_by`'s data grants, not the creator's.
 
 ## Search endpoint
@@ -610,7 +610,7 @@ others would need: asking for catalogs and schemas only never lists tables. The 
 ## Semantic layer
 
 Define what business terms mean, and compile questions into SQL from those definitions. See
-[Semantic layer](../concepts/semantic-layer.md).
+[Semantic layer](../metadata/semantic-layer.md).
 
 | Method & path | Purpose |
 |---|---|
@@ -649,7 +649,7 @@ pipeline: a 5xx reads as "retry me", and a wrong file will never import no matte
 
 ## Lineage
 
-Read the [lineage](../concepts/lineage.md) graph around a table, and import lineage produced elsewhere.
+Read the [lineage](../metadata/lineage.md) graph around a table, and import lineage produced elsewhere.
 
 | Method & path | Purpose |
 |---|---|
@@ -704,9 +704,9 @@ The provider name `execution` is reserved for lineage DuckHaven derives from SQL
 
 ## Catalog storage migrations
 
-Move a catalog to a different [storage backend](../concepts/storage-backends.md). All endpoints require the catalog's
+Move a catalog to a different [storage backend](../data/storage-backends.md). All endpoints require the catalog's
 creator or an admin with the `catalogs:admin` permission. See
-[Migrate a catalog's storage](../guides/migrate-catalog-storage.md).
+[Migrate a catalog's storage](../data/migrate-catalog-storage.md).
 
 | Method & path | Purpose |
 |---|---|
@@ -724,7 +724,7 @@ attached are rejected with **409** (`{"error": "catalog_read_only"}`); reads are
 Every agent endpoint below `/api/admin/agents/{agent_id}` is authorized by the caller's **tier** on that specific
 agent — `use` < `operate` < `admin` — rather than by the global `agents:manage` permission alone. Holding
 `agents:manage` confers `admin` on every agent. See
-[Per-agent access](../concepts/permissions.md#per-agent-access) for the model.
+[Per-agent access](../access/permissions.md#per-agent-access) for the model.
 
 | Tier required | Endpoints |
 |---|---|
@@ -754,7 +754,7 @@ Every agent object carries `access_tier` (the requesting caller's tier) and `acc
 
 ### Agent monitoring
 
-The two endpoints behind an agent's [Monitoring tab](../operations/agent-monitoring.md):
+The two endpoints behind an agent's [Monitoring tab](../compute/agent-monitoring.md):
 
 | Method & path | Purpose |
 |---|---|
@@ -763,7 +763,7 @@ The two endpoints behind an agent's [Monitoring tab](../operations/agent-monitor
 
 ## Waiting for compute
 
-When [elastic compute](../concepts/elastic-compute.md) is enabled, a request can arrive with the pool
+When [elastic compute](../compute/elastic-compute.md) is enabled, a request can arrive with the pool
 scaled to zero. Submitting a **query** is unaffected: it is already asynchronous, so the run is
 recorded `queued` with a null `agent_id` and dispatches once compute registers — you poll
 `GET /api/queries/{query_id}` exactly as you would for a busy agent. That now also covers a query naming an

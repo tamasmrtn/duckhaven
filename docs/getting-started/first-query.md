@@ -5,7 +5,7 @@ With a [workspace](first-workspace.md) in place, open a worksheet and run some S
 ## Pick an agent and run
 
 1. Open a **Worksheet**.
-2. Choose an [agent](../concepts/agents.md) from the engine picker. The picker shows each agent's DuckDB version, memory
+2. Choose an [agent](../compute/agents.md) from the engine picker. The picker shows each agent's DuckDB version, memory
    ceiling, and which storage backends it can serve; agents missing the workspace's required extension are disabled.
 3. Type a statement and press **Ctrl+Enter** (or the Run button) to run the statement under the cursor:
 
@@ -35,9 +35,9 @@ escape the sandbox, such as `ATTACH`, `COPY`, `LOAD`, `SET` and `EXPLAIN`, are r
 ## Inspect the profile
 
 After a query finishes, open the **Profile** tab to see a per-operator execution profile — rows, bytes, and timing per
-step, plus flags for spills and bad estimates. See [Read query profiles](../guides/query-profiles.md).
+step, plus flags for spills and bad estimates. See [Read query profiles](../querying/query-profiles.md).
 
 ## Next steps
 
-- [Run queries](../guides/run-queries.md) — the full worksheet guide.
-- [Snapshots & time travel](../guides/snapshots-time-travel.md) — query a table as of a past snapshot.
+- [Run queries](../querying/run-queries.md) — the full worksheet guide.
+- [Snapshots & time travel](../data/snapshots-time-travel.md) — query a table as of a past snapshot.

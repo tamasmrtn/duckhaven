@@ -1,7 +1,7 @@
 # DuckHaven — Operator Runbook
 
 Operational procedures for the single control-plane box plus its agents. For
-how the pieces fit together, see [Architecture](../concepts/architecture.md).
+how the pieces fit together, see [Architecture](../getting-started/how-duckhaven-works.md).
 
 ---
 
@@ -116,8 +116,8 @@ gunzip -c <backup>.sql.gz | docker compose -f deploy/docker-compose.yml \
 
 ### Restoring a deployment with DuckLake catalogs
 
-An [Iceberg](../concepts/tables.md) table cannot get out of step with its own metadata: the metadata lives beside the
-data in object storage, so restoring the bucket restores both together. A [DuckLake](../concepts/ducklake.md) catalog
+An [Iceberg](../data/tables.md) table cannot get out of step with its own metadata: the metadata lives beside the
+data in object storage, so restoring the bucket restores both together. A [DuckLake](../data/ducklake.md) catalog
 is different. Its metadata is in the `ducklake` database and its data is in object storage, and those are two systems
 that can be restored to two different moments.
 
@@ -210,7 +210,7 @@ memory inside the budget, so it never oversubscribes. Under a static ladder a lo
 query uses its slot's share, not the whole box (only `single` gives one query the
 full budget); under `auto` a query reserves the bucket its estimate maps to, capped
 at `SESSION_MAX_BUCKET_FRACTION` (a third of the budget by default), and is lent
-idle memory on top (see [Query execution](../concepts/query-execution.md)).
+idle memory on top (see [Query execution](../querying/query-execution.md)).
 
 #### Tuning the `auto` estimator
 
@@ -247,7 +247,7 @@ persistent **waiting to run** layer means the agent is saturated: raise the slot
 count (e.g. switch to `decaying_3`) only if per-query memory still suffices, or
 add another agent. The **Queries** chart on the same page separates saturation
 (`queue_full`, `queued_timeout`) from per-query problems like `out_of_memory`,
-and from mistakes in the SQL itself. See [Agent monitoring](agent-monitoring.md).
+and from mistakes in the SQL itself. See [Agent monitoring](../compute/agent-monitoring.md).
 
 ---
 
@@ -284,7 +284,7 @@ is shown). Set `PROFILING_ENABLED=false` on the agent to disable it.
 
 ## 8. Recover a stuck or failed catalog storage migration
 
-A [catalog storage migration](../guides/migrate-catalog-storage.md) is driven by the leader-elected migration runner;
+A [catalog storage migration](../data/migrate-catalog-storage.md) is driven by the leader-elected migration runner;
 all its state lives in Postgres (`catalog_migrations`, `catalog_migration_tables`, `catalog_migration_events`), so a
 restart resumes an in-flight migration from its last completed table.
 
@@ -362,7 +362,7 @@ A `TIME_WAIT` count at or near the width of the port range (the default 32768–
 28,232) is the diagnosis: every port is spent and `connect()` is returning EADDRNOTAVAIL.
 
 **Fix.** Agents reuse object-store connections (`httpfs_connection_caching`) — see
-[Connection reuse](../concepts/storage-backends.md#connection-reuse) — which holds the
+[Connection reuse](../data/storage-backends.md#connection-reuse) — which holds the
 socket count in the hundreds. If you hit this, you are running an agent image built before
 that landed, or a custom image that opens its own DuckDB connections without it. Rebuild or
 enable the setting; widening the port range only moves the cliff.

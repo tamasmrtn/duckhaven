@@ -113,7 +113,7 @@ migrations don't race.
    SELECT last_scan_at, scan_cursor FROM maintenance_policy;
    ```
 
-3. **Scheduler:** the query [scheduler](../guides/schedule-queries.md) uses the same
+3. **Scheduler:** the query [scheduler](../querying/schedule-queries.md) uses the same
    leader-election pattern (a distinct advisory lock). With an enabled schedule due,
    confirm only one replica logs a dispatch for a given tick:
 

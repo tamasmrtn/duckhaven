@@ -1,13 +1,13 @@
 # Monitoring
 
-DuckHaven gives every [agent](../concepts/agents.md) its own [monitoring page](agent-monitoring.md), records a full
-query audit trail on the **History** page, and exports Prometheus metrics for alerting.
+DuckHaven gives every [agent](../compute/agents.md) its own [monitoring page](../compute/agent-monitoring.md), records a
+full query audit trail on the **History** page, and exports Prometheus metrics for alerting.
 
 ## Per-agent monitoring
 
 Every agent has its own **Monitoring** tab (**Compute** → *an agent*): what it is doing now, where its time went, the
 queries it ran and what each cost, and its CPU and memory, over up to a week. See
-[Agent monitoring](agent-monitoring.md) for what each chart shows and exactly how each number is measured.
+[Agent monitoring](../compute/agent-monitoring.md) for what each chart shows and exactly how each number is measured.
 
 ## Query history and audit log
 
@@ -20,7 +20,7 @@ Administrators get an extra **This workspace / All workspaces** toggle on the sa
 workspaces** turns History into the global audit log: every query across every workspace, with a Workspace column.
 Administrators also get a filter by **user**, which — unlike the agent filter — works within the current workspace
 view as well as the cross-workspace one, since it reveals who ran a query and stays admin-only either way. Each
-record captures the **user** who ran it (the human or [service account](../guides/service-accounts.md) — shown in the
+record captures the **user** who ran it (the human or [service account](../access/service-accounts.md) — shown in the
 **User** column), the SQL, status, row count, duration, result size, and any error. There is no separate audit table;
 the audit log is the query record itself.
 
@@ -71,7 +71,7 @@ the conventional `_total` suffix in the exposition (e.g. `duckhaven_queries_tota
 | `duckhaven_query_result_bytes` | histogram | `replica_id` | Result size of completed (`done`) user queries. |
 | `duckhaven_query_queue_wait_seconds` | histogram | `replica_id` | Time a user query waited in the agent admission queue before running. |
 | `duckhaven_query_queue_rejected_total` | counter | `replica_id`, `reason` | User queries rejected by agent admission control (`reason`: `queue_full`/`queued_timeout`). |
-| `duckhaven_result_cache_lookups_total` | counter | `replica_id`, `outcome`, `reason` | [Result cache](../concepts/result-cache.md) lookups by `outcome` and the run's `cache_detail`; hits are not in `duckhaven_queries_total`. |
+| `duckhaven_result_cache_lookups_total` | counter | `replica_id`, `outcome`, `reason` | [Result cache](../querying/result-cache.md) lookups by `outcome` and the run's `cache_detail`; hits are not in `duckhaven_queries_total`. |
 | `duckhaven_result_cache_lookup_seconds` | histogram | `replica_id` | Time to decide whether a query is a hit. |
 | `duckhaven_result_cache_admissions_total` | counter | `replica_id`, `outcome`, `reason` | Finished runs `admitted` (`inline`/`agent`) or `refused` with a reason. |
 | `duckhaven_result_cache_revalidations_total` | counter | `replica_id`, `catalog_kind` | Hits served after compaction-only commits. |
@@ -139,7 +139,7 @@ about why an agent went away.
 
 ### Blocked sandbox escapes
 
-A [SQL session](../concepts/sql-sessions.md) statement that tries to leave its sandbox is
+A [SQL session](../querying/sql-sessions.md) statement that tries to leave its sandbox is
 rejected at one of two layers, and each is observable:
 
 - **At the API** — `duckhaven_statement_policy_rejections_total{rule}` counts statements the
@@ -155,7 +155,7 @@ rejected at one of two layers, and each is observable:
 
 Note that the **network egress** restriction has no metric of its own: a blocked connection
 surfaces as an ordinary statement failure with a connection error. It is verified by the
-runtime check in [Sandboxing](../concepts/sql-sessions.md#sandboxing), not by a counter.
+runtime check in [Sandboxing](../querying/sql-sessions.md#sandboxing), not by a counter.
 
 ### Behavior under high availability
 
@@ -309,6 +309,6 @@ out-of-memory kills, and open maintenance recommendations — extend it from the
 ## Related
 
 - [Distributed tracing](tracing.md) — per-request OpenTelemetry traces, the other half of observability.
-- [Query execution](../concepts/query-execution.md) — what the counters reflect.
+- [Query execution](../querying/query-execution.md) — what the counters reflect.
 - [Operator runbook](runbook.md) — procedures for running the cluster.
 - [Configuration reference](../reference/configuration.md#observability) — the `METRICS_ENABLED` knob.

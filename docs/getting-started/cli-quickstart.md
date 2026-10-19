@@ -34,7 +34,7 @@ exists for the three requests it takes to issue the token, then is discarded.
 
 !!! note "Single sign-on deployments"
     If your DuckHaven authenticates only through an identity provider, there is no password for `dh`
-    to collect. Ask an administrator for a [service-account token](../guides/service-accounts.md) and
+    to collect. Ask an administrator for a [service-account token](../access/service-accounts.md) and
     run `dh auth login --host https://... --token dh_pat_...` instead.
 
 Confirm it worked, and see which credential is in play:
@@ -184,12 +184,12 @@ dh sql -q "select 1"
 
 !!! warning "Do not use your personal token for CI"
     `dh auth login` mints a token tied to **you**: it expires, and it stops working the day you
-    leave. Have an administrator create a [service account](../guides/service-accounts.md) and issue
+    leave. Have an administrator create a [service account](../access/service-accounts.md) and issue
     a token for that instead.
 
 ## Where to go next
 
 - [CLI reference](../reference/cli.md) — every command and flag
-- [Import lineage from dbt](../guides/import-dbt-lineage.md) — publishing from CI
-- [Import semantics from dbt](../guides/import-dbt-semantics.md)
-- [Service accounts & tokens](../guides/service-accounts.md) — credentials for automation
+- [Import lineage from dbt](../metadata/import-dbt-lineage.md) — publishing from CI
+- [Import semantics from dbt](../metadata/import-dbt-semantics.md)
+- [Service accounts & tokens](../access/service-accounts.md) — credentials for automation

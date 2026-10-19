@@ -220,7 +220,7 @@ async def test_a_product_question_that_did_open_docs_is_not_flagged(db_session, 
         records={
             "c1": ToolCallRecord(
                 tool="read_doc_page",
-                args={"path": "guides/snapshots-time-travel.md"},
+                args={"path": "data/snapshots-time-travel.md"},
                 status="ok",
             )
         },
@@ -299,7 +299,7 @@ async def test_one_cited_turn_does_not_vouch_for_its_neighbours(db_session, conv
         records={
             "c1": ToolCallRecord(
                 tool="read_doc_page",
-                args={"path": "guides/snapshots-time-travel.md"},
+                args={"path": "data/snapshots-time-travel.md"},
                 status="ok",
             )
         },

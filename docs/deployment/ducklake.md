@@ -1,11 +1,11 @@
 # Enable DuckLake
 
-[DuckLake](../concepts/ducklake.md) is a second [catalog](../concepts/catalogs.md) kind, available by default. It adds
+[DuckLake](../data/ducklake.md) is a second [catalog](../data/catalogs.md) kind, available by default. It adds
 nothing to the stack: it uses the PostgreSQL and object storage DuckHaven already runs.
 
-Read [the trade-off](../concepts/ducklake.md#the-trade-off-stated-plainly) before choosing it. A DuckLake table is read
+Read [the trade-off](../data/ducklake.md#the-trade-off-stated-plainly) before choosing it. A DuckLake table is read
 by DuckDB and nothing else, though the catalog can be
-[exported to Iceberg](../concepts/ducklake.md#exporting-to-iceberg) later.
+[exported to Iceberg](../data/ducklake.md#exporting-to-iceberg) later.
 
 Everything on this page is about the PostgreSQL side, which a new install sets up for itself. An install that predates
 DuckLake needs one command — see [On an existing install](#on-an-existing-install).
@@ -138,6 +138,6 @@ first if you want the data gone — dropping a catalog purges its object-storage
 
 ## Related
 
-- [DuckLake](../concepts/ducklake.md) — what it is and what it trades away.
-- [Create a DuckLake catalog](../guides/create-a-ducklake-catalog.md) — the walkthrough.
-- [Configure storage](storage.md) — the orthogonal axis.
+- [DuckLake](../data/ducklake.md) — what it is and what it trades away.
+- [Create a DuckLake catalog](../data/create-a-ducklake-catalog.md) — the walkthrough.
+- [Configure storage](../data/configure-storage.md) — the orthogonal axis.

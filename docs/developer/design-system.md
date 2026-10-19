@@ -737,7 +737,7 @@ The same way `ARCHITECTURE.md §2` declares non-goals, this doc declares
 
 - No AI/Copilot/Assistant panel.
 - No data-quality dashboards. (Lineage shipped after M1, as a table-detail tab —
-  see [Lineage](../concepts/lineage.md).)
+  see [Lineage](../metadata/lineage.md).)
 - No marketing pages — `/` redirects to `/worksheets` after login.
 - No notification center. Toasts only.
 - No customizable themes beyond light/dark. Brand stays brand.

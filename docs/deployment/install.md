@@ -58,14 +58,14 @@ docker compose down -v
 
 ## Add agents
 
-Agents are deployed to separate hosts. See [add-agent.md](./add-agent.md).
+Agents are deployed to separate hosts. See [add-agent.md](../compute/add-agent.md).
 
 ## Agent network egress
 
 The bundled agent is attached to an **isolated Docker network with no route off the host**. It can reach the API,
 Polaris, the object store, and the trace collector — and nothing else. Because agents run a broad SQL surface governed
 by a statement policy rather than a hard allowlist, this is the layer that contains a statement trying to read from or
-write to an arbitrary address. See [Sandboxing](../concepts/sql-sessions.md#sandboxing).
+write to an arbitrary address. See [Sandboxing](../querying/sql-sessions.md#sandboxing).
 
 ### When you must opt out
 
@@ -144,6 +144,6 @@ spec:
 
 ## Next steps
 
-- [Update](./updating.md) — pull a new release.
-- [Reverse proxy + TLS](./reverse-proxy-tls.md) — front the stack with Caddy.
-- [Backup and restore](./backup-restore.md) — protecting Postgres.
+- [Update](updating.md) — pull a new release.
+- [Reverse proxy + TLS](reverse-proxy-tls.md) — front the stack with Caddy.
+- [Backup and restore](backup-restore.md) — protecting Postgres.

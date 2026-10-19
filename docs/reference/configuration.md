@@ -43,7 +43,7 @@ boot, so every variable below is optional.
 | `AZURE_TENANT_ID` / `AZURE_CLIENT_ID` / `AZURE_CLIENT_SECRET` | _(empty)_ | Service principal Polaris uses to mint ADLS Gen2 SAS tokens (Azure `DefaultAzureCredential`). Needs **Storage Blob Data Contributor** on the account. Empty disables ADLS vending; AWS S3 and the bundled store are unaffected. |
 | `AWS_ENDPOINT_URL_STS` | _(empty)_ | Override the STS endpoint Polaris uses to assume external `s3` roles. Empty = real AWS STS. Set to a private/emulated STS (LocalStack, a VPC STS endpoint, GovCloud) for testing or non-public deployments. |
 | `COOKIE_SECURE` | `false` | Set `true` only when the API is served over HTTPS (a TLS terminator in front), so session cookies are `Secure`-flagged. |
-| `CORS_ORIGINS` | `["http://localhost:5173"]` | JSON list of browser origins allowed to call the API from another origin. The web app is served by the API itself and needs no entry; a separately hosted front end (such as `make dev-web`) does. The [MCP server](../concepts/mcp-server.md) also refuses a request whose `Origin` is not on this list. |
+| `CORS_ORIGINS` | `["http://localhost:5173"]` | JSON list of browser origins allowed to call the API from another origin. The web app is served by the API itself and needs no entry; a separately hosted front end (such as `make dev-web`) does. The [MCP server](../ai/mcp-server.md) also refuses a request whose `Origin` is not on this list. |
 | `SESSION_MAX_AGE_SECONDS` | `604800` (7 days) | Session lifetime — drives both the server-side credential expiry and the cookie max-age. Lower it to shorten how long a sign-in lasts. |
 | `AGENT_BOOTSTRAP_TOKEN` | `dh_boot_localdev_seed` | Single-use token the API seeds on startup so the bundled in-stack agent auto-registers. Override in production. |
 
@@ -64,7 +64,7 @@ PostgreSQL login, created by the API and stored with the catalog.
 
 ### Identity & SSO
 
-Federated sign-in for [OIDC](../guides/connect-idp.md) and [LDAP/AD](../guides/connect-ldap.md). All optional and off
+Federated sign-in for [OIDC](../access/connect-idp.md) and [LDAP/AD](../access/connect-ldap.md). All optional and off
 by default; local accounts always work. Secrets here must never be committed — keep them in your `.env` / secret store.
 `SECRET_KEY` (above) also signs the short-lived cookie that holds the transient OIDC handshake state.
 
@@ -112,7 +112,7 @@ or not.
 
 ### Maintenance advisor
 
-Gates and tunes the background [maintenance advisor](../concepts/maintenance.md) scanner that runs inside the API
+Gates and tunes the background [maintenance advisor](../data/maintenance.md) scanner that runs inside the API
 process. The runtime cadence (off/hourly/daily) and profile are set at runtime in **Admin → Maintenance**, not here —
 these variables only control the loop itself. Across multiple API replicas the scanner is leader-elected via a Postgres
 advisory lock, so only one cycle runs at a time — leave it enabled everywhere (see
@@ -127,7 +127,7 @@ advisory lock, so only one cycle runs at a time — leave it enabled everywhere 
 ### Scheduler
 
 Gates and tunes the background scheduler that runs saved queries on their cron
-[schedules](../guides/schedule-queries.md). Cron expressions are stored per
+[schedules](../querying/schedule-queries.md). Cron expressions are stored per
 schedule (set in the UI), not here. Like the maintenance scanner the loop is
 leader-elected via a Postgres advisory lock, so only one replica dispatches a given
 due schedule — leave it enabled everywhere (see
@@ -140,7 +140,7 @@ due schedule — leave it enabled everywhere (see
 
 ### Lineage
 
-Tunes how [lineage](../concepts/lineage.md) ages.
+Tunes how [lineage](../metadata/lineage.md) ages.
 
 | Variable | Default | Description |
 |---|---|---|
@@ -149,7 +149,7 @@ Tunes how [lineage](../concepts/lineage.md) ages.
 ### Catalog storage migration
 
 Gates and tunes the background runner that performs
-[catalog storage migrations](../guides/migrate-catalog-storage.md). Like the scheduler it is leader-elected via a
+[catalog storage migrations](../data/migrate-catalog-storage.md). Like the scheduler it is leader-elected via a
 Postgres advisory lock, so only one replica advances a given migration — leave it enabled everywhere.
 
 | Variable | Default | Description |
@@ -160,7 +160,7 @@ Postgres advisory lock, so only one replica advances a given migration — leave
 
 ### SQL sessions
 
-Gates and tunes the [SQL session layer](../concepts/sql-sessions.md) (persistent agent-held connections for external
+Gates and tunes the [SQL session layer](../querying/sql-sessions.md) (persistent agent-held connections for external
 warehouse-style clients). Disabled by default — enable it **only after** deploying the hardened agent, because turning
 sessions on also enables the broader per-statement policy. The idle/max-lifetime reaper is leader-elected via a Postgres
 advisory lock, like the scheduler, so leave it enabled everywhere.
@@ -172,17 +172,17 @@ advisory lock, like the scheduler, so leave it enabled everywhere.
 | `SQL_SESSION_MAX_LIFETIME_S` | `14400` | Hard cap on a session's total lifetime, regardless of activity. Must exceed your longest single session's run. |
 | `SQL_SESSION_REAPER_TICK_S` | `30` | How often (seconds) the reaper wakes to close idle/expired sessions. |
 | `SQL_SESSION_OPEN_TIMEOUT_S` | `30` | How long the open endpoint waits for the agent to acknowledge the new session before returning a timeout. |
-| `SQL_SESSION_WAIT_TIMEOUT_S` | `45` | How long the open endpoint blocks when compute has to start first, cold start included. Deliberately one number for every compute backend — nothing a client sees may depend on whether the deployment provisions Docker containers or Azure container groups — so tune it for your clients' patience, not for a provider. See [Cold start](../concepts/sql-sessions.md#cold-start). |
+| `SQL_SESSION_WAIT_TIMEOUT_S` | `45` | How long the open endpoint blocks when compute has to start first, cold start included. Deliberately one number for every compute backend — nothing a client sees may depend on whether the deployment provisions Docker containers or Azure container groups — so tune it for your clients' patience, not for a provider. See [Cold start](../querying/sql-sessions.md#cold-start). |
 | `SQL_SESSION_MAX_WAIT_TIMEOUT_S` | `120` | Ceiling on what a client may request via `wait_timeout_s` on the open call. |
 | `SQL_SESSION_OPENING_DEADLINE_S` | `120` | Fail a session still stuck `opening` after this many seconds — the agent never acknowledged it — and tell that agent to drop whatever it reserved. Must exceed `SQL_SESSION_OPEN_TIMEOUT_S`. Measured from when an agent was told to open the session, so a cold start doesn't eat the budget. |
 | `SQL_SESSION_STAGING_PREFIX_SEGMENT` | `_staging` | Object-storage path segment for a session's scoped staging area (`<catalog root>/<segment>/<session_id>/`); the statement policy confines `COPY`/`read_*` to this prefix. |
 | `SQL_SESSION_STAGING_URL_TTL_S` | `900` | Lifetime (seconds) of the presigned `PUT`/`GET` staging URLs handed out by `POST /sql/sessions/{id}/staging-files`. Long enough to upload a load's files and run the `read_parquet` that consumes them. |
-| `SQL_STATEMENT_ACK_DEADLINE_S` | `15` | Fail a session statement that stays `queued` past this many seconds — its dispatch frame never reached the agent. Only applied to agents that advertise ack support; see [SQL sessions](../concepts/sql-sessions.md#statement-delivery-and-deadlines). |
+| `SQL_STATEMENT_ACK_DEADLINE_S` | `15` | Fail a session statement that stays `queued` past this many seconds — its dispatch frame never reached the agent. Only applied to agents that advertise ack support; see [SQL sessions](../querying/sql-sessions.md#statement-delivery-and-deadlines). |
 | `SQL_STATEMENT_TIMEOUT_GRACE_S` | `30` | Extra seconds beyond a statement's own `timeout_s` before the reaper fails a `running` statement whose agent reply never arrived. |
 | `SQL_STATEMENT_DEFAULT_TIMEOUT_S` | `600` | Fallback timeout budget used by the reaper for statement rows with no recorded `timeout_s` (written before that column existed). |
-| `SQL_STATEMENT_WAIT_TIMEOUT_S` | `10` | How long the statement endpoint holds its response waiting for the statement to finish, so a client is told when it happens rather than on its next poll. Much shorter than `SQL_SESSION_WAIT_TIMEOUT_S` because it waits on a statement, not a container start, and it sits inside the 60s idle default of nginx and most load balancers. `0` disables the wait. **Set it above your typical statement duration or not at all** — a budget most statements outlive is worse than no wait, because the call is held for the whole budget and the client then polls anyway (measured: 48-way concurrency ran 27% slower at a 1s budget than at `0`). See [Waiting for a statement](../concepts/sql-sessions.md#waiting-for-a-statement). |
-| `SQL_STATEMENT_FIRST_PAGE_LIMIT` | `200` | Result rows returned on the statement response itself, sparing a client the second call to `GET /queries/{id}/rows` — which is otherwise unavoidable, since the column names arrive with the rows. `0` disables it deployment-wide; a request may ask for its own number or opt out. Bounded because a statement response is not a bulk transport: a larger result pages from the first page as usual. See [Getting the rows with the answer](../concepts/sql-sessions.md#getting-the-rows-with-the-answer). |
-| `SQL_STATEMENT_INLINE_ARROW_MAX_BYTES` | `262144` | Largest result, in bytes, a statement response carries whole as Arrow when the client asks for `inline_format: "arrow"`, measured both as the result file and as the Arrow stream. A larger result is read from `GET /queries/{id}/result`. Raising it saves that call for bigger results but sends them base64-encoded, a third larger; `duckhaven_statement_inline_results_total{outcome}` shows how often results fit. See [Getting the rows with the answer](../concepts/sql-sessions.md#getting-the-rows-with-the-answer). |
+| `SQL_STATEMENT_WAIT_TIMEOUT_S` | `10` | How long the statement endpoint holds its response waiting for the statement to finish, so a client is told when it happens rather than on its next poll. Much shorter than `SQL_SESSION_WAIT_TIMEOUT_S` because it waits on a statement, not a container start, and it sits inside the 60s idle default of nginx and most load balancers. `0` disables the wait. **Set it above your typical statement duration or not at all** — a budget most statements outlive is worse than no wait, because the call is held for the whole budget and the client then polls anyway (measured: 48-way concurrency ran 27% slower at a 1s budget than at `0`). See [Waiting for a statement](../querying/sql-sessions.md#waiting-for-a-statement). |
+| `SQL_STATEMENT_FIRST_PAGE_LIMIT` | `200` | Result rows returned on the statement response itself, sparing a client the second call to `GET /queries/{id}/rows` — which is otherwise unavoidable, since the column names arrive with the rows. `0` disables it deployment-wide; a request may ask for its own number or opt out. Bounded because a statement response is not a bulk transport: a larger result pages from the first page as usual. See [Getting the rows with the answer](../querying/sql-sessions.md#getting-the-rows-with-the-answer). |
+| `SQL_STATEMENT_INLINE_ARROW_MAX_BYTES` | `262144` | Largest result, in bytes, a statement response carries whole as Arrow when the client asks for `inline_format: "arrow"`, measured both as the result file and as the Arrow stream. A larger result is read from `GET /queries/{id}/result`. Raising it saves that call for bigger results but sends them base64-encoded, a third larger; `duckhaven_statement_inline_results_total{outcome}` shows how often results fit. See [Getting the rows with the answer](../querying/sql-sessions.md#getting-the-rows-with-the-answer). |
 | `SQL_STATEMENT_MAX_WAIT_TIMEOUT_S` | `60` | Ceiling on what a client may request via `wait_timeout_s`, on the statement call and on `GET /queries/{id}`. Bounds how long a caller can make the API hold a request open. |
 
 ### Workspace metadata
@@ -193,7 +193,7 @@ advisory lock, like the scheduler, so leave it enabled everywhere.
 
 ### Result cache
 
-Tunes the [result cache](../concepts/result-cache.md), which answers a repeated read from an earlier run's result while
+Tunes the [result cache](../querying/result-cache.md), which answers a repeated read from an earlier run's result while
 nothing it reads has changed. Its expiry loop is leader-elected via a Postgres advisory lock, like the scheduler, so
 every replica runs it safely.
 
@@ -212,7 +212,7 @@ every replica runs it safely.
 
 ### Agent images and runtimes
 
-Which agent image runs where. Every [runtime](../concepts/runtimes.md) is its own image,
+Which agent image runs where. Every [runtime](../compute/runtimes.md) is its own image,
 `<AGENT_IMAGE_REPOSITORY>:<AGENT_IMAGE_TAG>-duckdb<runtime>`. The API uses it to start elastic compute and to fill in
 the *Add an agent* snippet, and the bundled compose agent runs the default runtime's image.
 
@@ -225,16 +225,16 @@ the *Add an agent* snippet, and the bundled compose agent runs the default runti
 
 ### Elastic compute
 
-Lets the control plane provision [agents](../concepts/agents.md) on demand instead of requiring them to be run by an
-operator — see [Elastic compute](../concepts/elastic-compute.md) for the concept and
-[Elastic compute on Azure](../deployment/azure-elastic-setup.md) for the cloud setup. Off by default and purely
+Lets the control plane provision [agents](../compute/agents.md) on demand instead of requiring them to be run by an
+operator — see [Elastic compute](../compute/elastic-compute.md) for the concept and
+[Elastic compute on Azure](../compute/elastic-azure.md) for the cloud setup. Off by default and purely
 additive: static agents behave the same whether or not this is enabled. The scale-in reaper is leader-elected via a
 Postgres advisory lock, like the scheduler, so leave it enabled on every replica.
 
 | Variable | Default | Description |
 |---|---|---|
 | `ELASTIC_COMPUTE_ENABLED` | `false` | Master switch. When `false`, the admin *New compute* action and elastic-pool query dispatch return 422 and no reaper runs. |
-| `ELASTIC_PROVIDER` | `null` | Compute backend: `null` is a no-op used in tests, `docker` starts agents as containers on the API's own Docker host (see [Elastic compute on a single Docker host](../deployment/homelab-elastic-setup.md)), `azure_aci` provisions Azure Container Instances. |
+| `ELASTIC_PROVIDER` | `null` | Compute backend: `null` is a no-op used in tests, `docker` starts agents as containers on the API's own Docker host (see [Elastic compute on a single Docker host](../compute/elastic-docker.md)), `azure_aci` provisions Azure Container Instances. |
 | `ELASTIC_CONTROL_PLANE_URL` | — | The `wss://…/agents/connect` URL a provisioned agent dials home to. Required: unlike the interactive add-agent flow there is no HTTP request to derive it from. |
 | `ELASTIC_AGENT_POLARIS_BASE_URL` | `POLARIS_BASE_URL` | Catalog endpoint provisioned agents attach against, when it differs from the control plane's own (a remote agent usually cannot use an in-cluster address). |
 | `ELASTIC_IDLE_TIMEOUT_S` | `900` | Terminate an agent after this long with no work dispatched — and only when it has no in-flight queries or open SQL sessions. |
@@ -267,7 +267,7 @@ Used when `ELASTIC_PROVIDER=azure_aci`. Credentials come from the ambient identi
 
 Used when `ELASTIC_PROVIDER=docker`, which provisions agents as containers on the single host
 already running the stack. Enable it with `deploy/docker-compose.elastic.yml` and read
-[Elastic compute on a single Docker host](../deployment/homelab-elastic-setup.md) first — giving the
+[Elastic compute on a single Docker host](../compute/elastic-docker.md) first — giving the
 control plane a path to the Docker daemon is the most privileged grant in the stack, and the socket
 proxy narrows it without making container creation unprivileged.
 
@@ -284,9 +284,9 @@ you start by hand.
 
 ### AI assistant
 
-Configures the governed [AI data assistant](../concepts/assistant.md). Disabled by default; enable it by configuring a
+Configures the governed [AI data assistant](../ai/assistant.md). Disabled by default; enable it by configuring a
 model and setting `ASSISTANT_ENABLED=true`. Startup then creates the `Assistant` service account it acts as; add that
-account to the workspaces it should serve (see [Use the AI assistant](../guides/using-the-assistant.md)).
+account to the workspaces it should serve (see [Use the AI assistant](../ai/use-the-assistant.md)).
 The provider is not fixed — use any of the bundled providers or an OpenAI-compatible endpoint. Provider API keys may be
 supplied here or via the provider's own standard environment variable (`ANTHROPIC_API_KEY` / `OPENAI_API_KEY` /
 `MISTRAL_API_KEY`); a self-hosted OpenAI-compatible endpoint (Ollama, vLLM) can run keyless.
@@ -305,7 +305,7 @@ supplied here or via the provider's own standard environment variable (`ANTHROPI
 | `ASSISTANT_RESULT_ROW_CAP` | `100` | Max rows of a query result fed into model context (the full result is still available in the UI). |
 | `ASSISTANT_RESULT_BYTE_CAP` | `32768` | Max bytes of a result sample fed into model context. |
 | `ASSISTANT_TRACE_INCLUDE_CONTENT` | `true` | When [tracing](../operations/tracing.md#the-ai-assistant) is enabled, record the turn's content (prompt, generated SQL, tool arguments, result samples) on spans. Set `false` to keep only structure — roles, token usage, tool names, timing, status — out of the trace backend. No effect when tracing is off. |
-| `ASSISTANT_DOCS_ENABLED` | `true` | Whether the assistant knows what DuckHaven is — the curated [product-knowledge section](../concepts/assistant.md#product-knowledge) and page index in its instructions, plus the `search_docs` and `read_doc_page` tools. Set `false` to restore exactly the instructions and tool set it had before, at the cost of an assistant that answers product questions from general knowledge of other platforms. Despite the name this is deployment-wide: it also withholds the documentation tools from the [MCP server](../concepts/mcp-server.md#documentation-lookup). |
+| `ASSISTANT_DOCS_ENABLED` | `true` | Whether the assistant knows what DuckHaven is — the curated [product-knowledge section](../ai/assistant.md#product-knowledge) and page index in its instructions, plus the `search_docs` and `read_doc_page` tools. Set `false` to restore exactly the instructions and tool set it had before, at the cost of an assistant that answers product questions from general knowledge of other platforms. Despite the name this is deployment-wide: it also withholds the documentation tools from the [MCP server](../ai/mcp-server.md#documentation-lookup). |
 | `ASSISTANT_DOCS_DIR` | `/app/docs` | Where the documentation pages live. The image copies `docs/` here; point it at the repository's `docs/` when running from a source checkout (`make dev-api` does). If the directory is absent, the page list is left out of the assistant's instructions and the documentation tools are withheld — it behaves as a deployment without the feature rather than offering pages it cannot open. |
 | `ASSISTANT_DOCS_MAX_PAGE_CHARS` | `20000` | Largest page the assistant reads in one call (~5k tokens). The longest few pages exceed it and come back cut off, with a marker stating how much was withheld and a link to the full page, so the assistant does not report a truncated page as silence. |
 | `ASSISTANT_DOCS_SEARCH_LIMIT` | `5` | Default number of pages `search_docs` returns. The assistant may ask for between 1 and 10; anything outside that is clamped. |
@@ -313,10 +313,10 @@ supplied here or via the provider's own standard environment variable (`ANTHROPI
 
 ### MCP server
 
-Controls the [Model Context Protocol endpoint](../concepts/mcp-server.md) at `/mcp`, which lets an external AI agent
+Controls the [Model Context Protocol endpoint](../ai/mcp-server.md) at `/mcp`, which lets an external AI agent
 (Claude Code, Claude Desktop, Cursor) browse catalogs and run governed SQL as the holder of a DuckHaven
-[access token](../guides/service-accounts.md). To connect a client, see
-[Connect an MCP client](../guides/connect-mcp-client.md).
+[access token](../access/service-accounts.md). To connect a client, see
+[Connect an MCP client](../ai/connect-mcp-client.md).
 
 Unlike the AI assistant this is **on by default**, because it needs no model, no API key and no service account, and it
 can reach nothing the caller's token could not already reach through `/api`. It rides the API's existing port, so there
@@ -326,7 +326,7 @@ beyond a trusted network behind [TLS](../deployment/reverse-proxy-tls.md).
 | Variable | Default | Description |
 |---|---|---|
 | `MCP_ENABLED` | `true` | Master switch. When `false`, `/mcp` returns 503 and no tool is reachable. The endpoint is otherwise always mounted, so toggling this takes effect on the next request rather than needing a restart. |
-| `MCP_ALLOW_WRITES` | `false` | Whether `run_sql` may execute `INSERT`/`UPDATE`/`DELETE`/DDL. Off because DuckHaven's only write-approval mechanism is the assistant's in-conversation approve/deny panel, which a generic MCP client cannot show — so a write here would run unattended. Turning it on does not widen what a token can do: the [SQL guard](sql-support.md) and [catalog grants](../concepts/permissions.md) still apply, and a token with no write grant still cannot write. Re-read on every call, so a change takes effect immediately. |
+| `MCP_ALLOW_WRITES` | `false` | Whether `run_sql` may execute `INSERT`/`UPDATE`/`DELETE`/DDL. Off because DuckHaven's only write-approval mechanism is the assistant's in-conversation approve/deny panel, which a generic MCP client cannot show — so a write here would run unattended. Turning it on does not widen what a token can do: the [SQL guard](sql-support.md) and [catalog grants](../access/permissions.md) still apply, and a token with no write grant still cannot write. Re-read on every call, so a change takes effect immediately. |
 | `MCP_QUERY_TIMEOUT_S` | `120.0` | How long `run_sql` waits for a query before cancelling it. A query still running at the deadline is cancelled rather than left occupying a compute agent. |
 | `MCP_RESULT_ROW_CAP` | `100` | Max rows returned to the agent in one call. The rest is paged with `get_query_result`, so a `SELECT *` over a large table cannot fill the agent's context in one go. |
 | `MCP_RESULT_BYTE_CAP` | `32768` | Max bytes of a result sample returned in one call; trims below the row cap when rows are wide. |
@@ -347,7 +347,7 @@ Grafana dashboard, and [Distributed tracing](../operations/tracing.md) for the t
 | Variable | Default | Description |
 |---|---|---|
 | `METRICS_ENABLED` | `true` | Expose `GET /api/metrics` in Prometheus text format. Unauthenticated like the health endpoints (keep it on the internal network); set `false` to remove the endpoint entirely. |
-| `AGENT_METRICS_RETENTION_HOURS` | `168` | How long the per-minute agent rollup and the agent lifecycle trail are kept, which is how far back the [per-agent monitoring page](../operations/agent-monitoring.md) can look (its longest preset is 7 days). Samples are rolled up to one row per agent per minute (~1.4k rows/agent/day), so a week costs roughly 10k rows per agent. Each agent's most recent earlier lifecycle event is always kept. |
+| `AGENT_METRICS_RETENTION_HOURS` | `168` | How long the per-minute agent rollup and the agent lifecycle trail are kept, which is how far back the [per-agent monitoring page](../compute/agent-monitoring.md) can look (its longest preset is 7 days). Samples are rolled up to one row per agent per minute (~1.4k rows/agent/day), so a week costs roughly 10k rows per agent. Each agent's most recent earlier lifecycle event is always kept. |
 | `AGENT_PRESENCE_SWEEP_INTERVAL_S` | `30` | How often the presence sweeper closes the lifecycle trail of agents that went away without a clean disconnect (a crashed replica, a lost network), so the monitoring timeline stops showing them as up. It also runs the retention purge. |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | — | OTLP (http/protobuf) endpoint to export traces to; the compose files default it to the bundled collector, `http://otel-collector:4318`. Unset/empty disables tracing entirely. |
 | `OTEL_SERVICE_NAME` | `duckhaven-api` | Service name reported on spans. Replicas are distinguished by `REPLICA_ID` as `service.instance.id`. |
@@ -365,12 +365,12 @@ Source of truth: the [Agent reference](agent-reference.md). An agent needs only 
 | `RESULTS_HTTP_PORT` | No | `8001` | Port for the local HTTP result server. |
 | `MEMORY_HEADROOM_FRACTION` | No | `0.10` | Fraction of the agent's budget held back from query reservations. The budget itself is read from the container's cgroup (`memory.max`), falling back to host RAM — there is no setting for it, so size the container and the agent follows. |
 | `MAX_CONCURRENCY_PROFILE` | No | `auto` | Reservation sizing: `auto` (EXPLAIN-estimated per query) or a static slot ladder (`single`/`equal_2`/`decaying_2`/`decaying_3`). See [Runbook §6](../operations/runbook.md#6-query-queueing-concurrency). |
-| `PROFILING_ENABLED` | No | `true` | Capture DuckDB's post-execution query profile and return it on `query_done`. Set `false` to disable. The per-query peak memory, CPU time and spill on the [monitoring page](../operations/agent-monitoring.md#the-queries) come from it. |
+| `PROFILING_ENABLED` | No | `true` | Capture DuckDB's post-execution query profile and return it on `query_done`. Set `false` to disable. The per-query peak memory, CPU time and spill on the [monitoring page](../compute/agent-monitoring.md#the-queries) come from it. |
 | `METRICS_MEMORY_POLL_INTERVAL_S` | No | `0.25` | How often, between its 2-second samples, the agent re-reads its memory level to catch a spike that starts and ends inside one sample. `0` disables the poll, leaving the kernel's `memory.peak` and the level at each sample. |
-| `SESSION_BASELINE_BYTES` | No | `67108864` (64 MB) | What a held [SQL session](../concepts/sql-sessions.md) reserves while idle. Under `auto` each statement grows the reservation to its own estimate and shrinks back here afterwards, so this is a floor, not what the session's queries get. Keeping it small is what leaves headroom to grow into. Clamped to the agent's budget. |
+| `SESSION_BASELINE_BYTES` | No | `67108864` (64 MB) | What a held [SQL session](../querying/sql-sessions.md) reserves while idle. Under `auto` each statement grows the reservation to its own estimate and shrinks back here afterwards, so this is a floor, not what the session's queries get. Keeping it small is what leaves headroom to grow into. Clamped to the agent's budget. |
 | `SESSION_MAX_BUCKET_FRACTION` | No | `0.333` | Ceiling on the reservation one session statement may **require** at admission. This is not a ceiling on what it uses — a statement is still offered whatever budget is free on top, so an idle agent hands a heavy statement the whole agent either way. What it bounds is how few statements can run at once: at `1.0` one over-estimate could require the entire budget and serialize everything behind it, where `1/3` guarantees at least three fit. Raise it to favour a single statement's guaranteed memory, lower it to favour concurrency. |
-| `SANDBOX_DISABLED_FILESYSTEMS` | No | — | DuckDB `disabled_filesystems` applied to every connection (comma/space separated; unknown names are logged and skipped). Off by default because the agent reads [staged files](../concepts/sql-sessions.md#staging-files-presigned-urls) over presigned HTTP(S) URLs, which `HTTPFileSystem` serves — set `HTTPFileSystem` only on a deployment that does not use staging. It does **not** break the bundled Polaris/object store: the Iceberg REST client and the S3 filesystem are independent of the generic HTTP one. |
-| `SANDBOX_LOCK_CONFIGURATION` | No | `true` | Lock DuckDB's configuration once the agent has finished setting a connection up, so a session statement cannot re-widen the sandbox with `SET` (`disabled_filesystems`, `enable_external_access`, `secret_directory`, `extension_directory`, `home_directory`, `custom_extension_repository`, `allow_unsigned_extensions`, and the lock itself). The agent's own per-statement settings stay writable. Set `false` only to diagnose a suspected interaction. See [Sandboxing](../concepts/sql-sessions.md#sandboxing). |
+| `SANDBOX_DISABLED_FILESYSTEMS` | No | — | DuckDB `disabled_filesystems` applied to every connection (comma/space separated; unknown names are logged and skipped). Off by default because the agent reads [staged files](../querying/sql-sessions.md#staging-files-presigned-urls) over presigned HTTP(S) URLs, which `HTTPFileSystem` serves — set `HTTPFileSystem` only on a deployment that does not use staging. It does **not** break the bundled Polaris/object store: the Iceberg REST client and the S3 filesystem are independent of the generic HTTP one. |
+| `SANDBOX_LOCK_CONFIGURATION` | No | `true` | Lock DuckDB's configuration once the agent has finished setting a connection up, so a session statement cannot re-widen the sandbox with `SET` (`disabled_filesystems`, `enable_external_access`, `secret_directory`, `extension_directory`, `home_directory`, `custom_extension_repository`, `allow_unsigned_extensions`, and the lock itself). The agent's own per-statement settings stay writable. Set `false` only to diagnose a suspected interaction. See [Sandboxing](../querying/sql-sessions.md#sandboxing). |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | No | — | OTLP (http/protobuf) endpoint to export traces to; the compose files default it to the bundled collector. Unset/empty disables tracing entirely. See [Distributed tracing](../operations/tracing.md). |
 | `OTEL_SERVICE_NAME` | No | `duckhaven-agent` | Service name reported on spans. |
 
@@ -386,7 +386,7 @@ Best-effort knobs that only apply under the `auto` profile. See
 | `ESTIMATE_CEILING_FRACTION` | `1.0` | Caps a reservation at this fraction of the budget. |
 | `EXPLAIN_TIMEOUT_S` | `2.0` | Time budget for the pre-run `EXPLAIN`; on timeout the query uses the fallback bucket. |
 | `ESTIMATE_FALLBACK_BUCKET` | `M` | Bucket used when a query is unestimable (DDL/DML, multi-statement, EXPLAIN error/timeout). |
-| `GRANT_FEEDBACK_ENABLED` | `true` | Once a query has run, size the next one of the same shape from the memory it actually used rather than from its plan. The plan-based estimate overshoots real peaks by 5-11x, and since the estimate picks the bucket, that overshoot costs every other query concurrency. Only queries returning a result set are measured, so DDL/DML keeps `ESTIMATE_FALLBACK_BUCKET`; any write drops what has been learned. Set `false` to size purely from the plan. See [Learning from what a query actually used](../concepts/query-execution.md#learning-from-what-a-query-actually-used). |
+| `GRANT_FEEDBACK_ENABLED` | `true` | Once a query has run, size the next one of the same shape from the memory it actually used rather than from its plan. The plan-based estimate overshoots real peaks by 5-11x, and since the estimate picks the bucket, that overshoot costs every other query concurrency. Only queries returning a result set are measured, so DDL/DML keeps `ESTIMATE_FALLBACK_BUCKET`; any write drops what has been learned. Set `false` to size purely from the plan. See [Learning from what a query actually used](../querying/query-execution.md#learning-from-what-a-query-actually-used). |
 | `GRANT_FEEDBACK_SAFETY_MULTIPLIER` | `1.5` | Margin on the largest remembered peak. A measurement still needs headroom: data grows between runs, and a shape covers every query with the same text rather than the same data. Measurements share `ESTIMATE_CACHE_TTL_S` and `ESTIMATE_CACHE_MAX_ENTRIES`. |
 | `ELASTIC_CEILING_FRACTION` | `0.85` | How far the agent's *idle* memory may top a statement up beyond its required reservation, so DuckDB can cache the Parquet it reads from object storage. Revocable: reclaimed as soon as another query needs the bytes. Additionally bounded by an even share of the budget between open sessions, so one session cannot take it all. Below `1.0` because DuckDB's limit bounds its own allocations, not the whole process. |
 | `STATEMENT_ADMISSION_WAIT_S` | `300.0` | How long a statement may wait for memory to free up before running at whatever it could get. Long on purpose — waiting is what keeps a saturated agent stable instead of letting every query spill at once. Also bounded by the statement's own timeout. `0` never waits. |
@@ -399,7 +399,7 @@ Best-effort knobs that only apply under the `auto` profile. See
 | `MEMORY_HEADROOM_FRACTION` | `0.10` | Fraction of the effective memory budget held back as headroom. |
 | `MAX_QUEUE_DEPTH` | `100` | Maximum queued queries; beyond this a query fails with `queue full`. |
 | `QUEUED_TIMEOUT_S` | `0` (off) | Fails a query that waits longer than this with `queued timeout`. |
-| `SESSION_QUEUED_TIMEOUT_S` | `30` | Same, for a [session](../concepts/sql-sessions.md) open rather than a query. Separate because the control plane fails a session at `SQL_SESSION_OPENING_DEADLINE_S` anyway: waiting past that can only turn a prompt error into a long hang. Keep it below that deadline; `0` restores the wait-forever behaviour. |
+| `SESSION_QUEUED_TIMEOUT_S` | `30` | Same, for a [session](../querying/sql-sessions.md) open rather than a query. Separate because the control plane fails a session at `SQL_SESSION_OPENING_DEADLINE_S` anyway: waiting past that can only turn a prompt error into a long hang. Keep it below that deadline; `0` restores the wait-forever behaviour. |
 
 ### Operator ceilings
 
@@ -410,5 +410,5 @@ Operator-set ceilings that per-query requests cannot exceed — see the
 |---|---|---|
 | `SESSION_MAX_BUCKET_FRACTION` | `0.333` | Ceiling on what one statement may **require** at admission (not on what it may use — free budget is still offered on top). Bounds how few statements can run at once. |
 | `MAX_TIMEOUT_S` | `600` | Hard upper bound on a query's wall-clock timeout. |
-| `RESULT_RETENTION_HOURS` | `24` | How long materialized result Parquet files are kept before the retention sweep removes them. A file the [result cache](../concepts/result-cache.md) serves rows from is kept past it, until its entry expires. |
-| `RESULT_CACHE_MAX_BYTES` | `10737418240` (10 GiB) | Ceiling on result files kept past `RESULT_RETENTION_HOURS` for the [result cache](../concepts/result-cache.md). Past it, the files retained longest ago are deleted first and the cache simply misses for those queries. |
+| `RESULT_RETENTION_HOURS` | `24` | How long materialized result Parquet files are kept before the retention sweep removes them. A file the [result cache](../querying/result-cache.md) serves rows from is kept past it, until its entry expires. |
+| `RESULT_CACHE_MAX_BYTES` | `10737418240` (10 GiB) | Ceiling on result files kept past `RESULT_RETENTION_HOURS` for the [result cache](../querying/result-cache.md). Past it, the files retained longest ago are deleted first and the cache simply misses for those queries. |

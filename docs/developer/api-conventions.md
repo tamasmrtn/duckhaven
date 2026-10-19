@@ -1,13 +1,15 @@
 # API conventions
 
-The rules every DuckHaven REST endpoint follows. They exist so that the surface stays
-predictable as it grows, and so that a client generated from the OpenAPI schema is usable
-without hand-written special cases.
+The rules every DuckHaven REST endpoint follows, for contributors adding or changing one. They keep the surface
+predictable as it grows, and let a client generated from the OpenAPI schema work without hand-written special cases.
 
-New endpoints are reviewed against this page. Where a rule has an exception, the exception
-is written down here — an undocumented deviation is a defect. Every rule that can be checked
-against the generated schema is also asserted by `api/tests/unit/test_openapi_conformance.py`,
-so an endpoint that drifts fails CI rather than shipping.
+New endpoints are reviewed against this page. Where a rule has an exception, the exception is written down here; an
+undocumented deviation is a defect. Every rule that can be checked against the generated schema is also asserted by
+`api/tests/unit/test_openapi_conformance.py`, so an endpoint that drifts fails CI.
+
+What a client sees of these rules is in [REST API → Conventions](../reference/rest-api.md#conventions), and every error
+code is in [Errors](../reference/errors.md). Add a new code to that page in the same change; a unit test fails if a code
+the API raises is missing from it.
 
 ## Path structure
 
@@ -254,9 +256,13 @@ a plain string detail becomes a `message` with an `error` code derived from the 
 | 403 | `forbidden` |
 | 404 | `not_found` |
 | 409 | `conflict` |
+| 410 | `gone` |
 | 422 | `unprocessable_content` |
-| 5xx | `internal_error` |
-| any other 4xx | `bad_request` |
+| 502 | `upstream_error` |
+| 503 | `unavailable` |
+| 504 | `upstream_timeout` |
+| any other 5xx | `internal_error` |
+| 400 and any other 4xx | `bad_request` |
 
 Prefer raising a specific code over relying on the derived one.
 
@@ -298,20 +304,14 @@ exactly when it must not be handed a stack trace.
 
 ## Versioning
 
-`GET /api/version` returns the contract version:
+`api_version`, returned by `GET /api/version` and set as `API_VERSION` in `api/src/api/routers/health.py`, is a single
+integer. Bump it **only** when a change breaks the contract on the wire: a changed URL, request body, response body, or
+status code. Schema-level changes do not bump it: renaming a path *template* parameter, adding a declared response,
+splitting a tag, or setting an `operation_id` leaves every request byte-identical. Bumping for those would make the
+integer meaningless.
 
-```json
-{ "version": "1.4.0", "api_version": 3 }
-```
+A bump ships with an entry in [API versions](../reference/api-versions.md) that says what changed and which client
+releases read the new version.
 
-`api_version` is a single integer, bumped **only** when a change breaks the contract on the
-wire — a changed URL, request body, response body, or status code. Schema-level changes do
-not bump it: renaming a path *template* parameter, adding a declared response, splitting a
-tag, or setting an `operation_id` leaves every request byte-identical. Bumping for those
-would make the integer meaningless.
-
-There is no `/v1/` or `/v2/` path prefix, and none is planned. A version segment would
-double the routing surface and give a consumer no way to discover the version without
-guessing a URL, which `/api/version` already answers in one unauthenticated request.
-
-See the [REST API reference](rest-api.md) for the surface itself.
+There is no `/v1/` or `/v2/` path prefix. A version segment would double the routing surface and give a consumer no way
+to discover the version without guessing a URL, which `/api/version` already answers in one unauthenticated request.

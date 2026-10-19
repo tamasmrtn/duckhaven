@@ -233,4 +233,4 @@ it explicitly rather than working around it.
 
 - [How DuckHaven works](../getting-started/how-duckhaven-works.md) — the same system for users and operators.
 - [Codebase map](codebase-map.md) — the repository layout and where to make a change.
-- [API conventions](../reference/api-conventions.md) — the rules every REST endpoint follows.
+- [API conventions](api-conventions.md) — the rules every REST endpoint follows.

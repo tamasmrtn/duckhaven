@@ -118,6 +118,7 @@ plugins:
         operations/scaling.md: compute/scaling.md
         operations/offboarding.md: access/offboarding.md
         operations/storage-maintenance.md: data/storage-maintenance.md
+        reference/api-conventions.md: developer/api-conventions.md
   - social:
       cards_layout_options:
         background_color: "#0b0f19"
@@ -239,11 +240,11 @@ nav:
       - Agent reference: reference/agent-reference.md
       - CLI reference: reference/cli.md
       - REST API: reference/rest-api.md
-      - API conventions: reference/api-conventions.md
       - Operator scripts: reference/operator-scripts.md
   - Developer:
       - Architecture: developer/architecture.md
       - Codebase map: developer/codebase-map.md
+      - API conventions: developer/api-conventions.md
       - Local development: developer/development.md
       - Contributing: developer/contributing.md
       - Writing docs: developer/writing-docs.md

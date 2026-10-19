@@ -5,7 +5,7 @@ class Page[T](BaseModel):
     """One page of a collection that grows without bound.
 
     The same three fields for every such endpoint, so a client pages once and
-    reuses it everywhere. See docs/reference/api-conventions.md for which
+    reuses it everywhere. See docs/developer/api-conventions.md for which
     collections are exempt and why.
 
     Deliberately carries no total: counting the rows behind a page means a second

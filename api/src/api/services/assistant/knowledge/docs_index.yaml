@@ -310,10 +310,6 @@ pages:
   section: Reference
   summary: 'The control-plane REST API: exact result values, Arrow and Parquet downloads, query parameters,
     describe, workspace metadata, waiting for a result, and client and tags.'
-- path: reference/api-conventions.md
-  title: API conventions
-  section: Reference
-  summary: The rules every DuckHaven REST endpoint follows.
 - path: reference/operator-scripts.md
   title: Operator scripts
   section: Reference

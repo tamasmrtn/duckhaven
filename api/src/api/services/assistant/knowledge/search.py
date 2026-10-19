@@ -23,9 +23,16 @@ nothing should match would then come back as five alphabetically-first pages wit
 excerpts, and the tool's promise that an empty result means "the documentation
 does not cover this" would be worthless.
 
-**Ranking normalises by document length** (``ts_rank_cd``'s flag 2). Without it
-the longest pages win everything an OR-query touches — ``getting-started/how-duckhaven-works.md``
-outranked ``data/storage-backends.md`` for the query "storage backends".
+**Ranking is ``ts_rank`` over the weighted vector, with no length normalisation.**
+Cover density (``ts_rank_cd``) rewards a page for every place the query's terms sit
+close together, so unnormalised it lets the longest pages win everything an OR-query
+touches: ``getting-started/how-duckhaven-works.md`` outranked ``data/storage-backends.md`` for
+"storage backends". Dividing it by length (flag 2) fixed that and overshot: the
+shortest pages whose *title* holds a common word ("Saved queries") then won every
+question containing "query". ``ts_rank`` scores term frequency with the title and
+summary weighted above the body, which already favours the page a question is about,
+and it was at least as good as flag 2 on every slice of the golden cases, before and
+after the docs were rewritten into shorter pages.
 
 The honest limitation: Postgres full-text has no IDF, so a term that appears in
 most of the corpus ("table", "catalog") pulls in noise, and a handful of cases
@@ -67,7 +74,7 @@ _SEARCH = text("""
                'MaxFragments=2, MinWords=8, MaxWords=22, ShortWord=3,'
                'StartSel=**, StopSel=**, FragmentDelimiter=" … "'
            ) AS excerpt,
-           ts_rank_cd(search, q.tq, 2) AS rank
+           ts_rank(search, q.tq) AS rank
     FROM docs_pages, q
     WHERE search @@ q.tq
     ORDER BY rank DESC, path

@@ -278,19 +278,25 @@ def render_llms_txt(pages: list[Page], intro: str, site_url: str) -> str:
     return "\n".join(out) + "\n"
 
 
+def build(docs_dir: Path, mkdocs_yml: Path, existing: dict) -> tuple[list[Page], dict[str, str]]:
+    """The index's pages and aliases: what ``make docs-index`` writes, and what the
+    drift tests compare the committed file against."""
+    config = yaml.load(mkdocs_yml.read_text(), Loader=_TagIgnoringLoader)
+    discovered = discover(docs_dir, mkdocs_yml)
+    aliases = aliases_from(config, {p.path for p in discovered})
+    return merge(discovered, existing, aliases, typed_paths(docs_dir, discovered)), aliases
+
+
 def main() -> None:
     root = _repo_root()
     docs_dir = root / "docs"
     mkdocs_yml = root / "mkdocs.yml"
     existing = yaml.safe_load(INDEX_PATH.read_text()) or {} if INDEX_PATH.exists() else {}
     intro = existing.get("intro") or ""
-    config = yaml.load(mkdocs_yml.read_text(), Loader=_TagIgnoringLoader)
-    discovered = discover(docs_dir, mkdocs_yml)
-    aliases = aliases_from(config, {p.path for p in discovered})
-    pages = merge(discovered, existing, aliases, typed_paths(docs_dir, discovered))
+    pages, aliases = build(docs_dir, mkdocs_yml, existing)
 
     INDEX_PATH.write_text(render_index(pages, intro, aliases))
-    site_url = config["site_url"]
+    site_url = yaml.load(mkdocs_yml.read_text(), Loader=_TagIgnoringLoader)["site_url"]
     (docs_dir / "llms.txt").write_text(render_llms_txt(pages, intro, site_url))
     print(f"{INDEX_PATH.relative_to(root)}: {len(pages)} pages")
 

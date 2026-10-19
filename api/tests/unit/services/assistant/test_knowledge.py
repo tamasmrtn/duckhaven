@@ -95,7 +95,7 @@ def test_contributor_docs_are_left_out():
 TRUNCATES = {
     "reference/configuration.md",
     "reference/rest-api.md",
-    "concepts/sql-sessions.md",
+    "querying/sql-sessions.md",
 }
 
 
@@ -123,10 +123,8 @@ def test_every_page_has_a_title_and_a_summary():
 def test_the_committed_index_matches_what_the_generator_produces():
     """The drift gate, as a test — the hook is bypassable, this is not."""
     committed = yaml.safe_load(INDEX_PATH.read_text())
-    regenerated = generate.render_index(
-        generate.merge(generate.discover(DOCS_DIR, REPO_ROOT / "mkdocs.yml"), committed),
-        committed.get("intro", ""),
-    )
+    pages, aliases = generate.build(DOCS_DIR, REPO_ROOT / "mkdocs.yml", committed)
+    regenerated = generate.render_index(pages, committed.get("intro", ""), aliases)
 
     assert regenerated == INDEX_PATH.read_text()
 
@@ -185,7 +183,7 @@ def test_llms_txt_matches_what_the_generator_produces():
     """The published index for other people's models. It has no unit of its own
     otherwise, and the pre-commit hook that regenerates it does not run in CI."""
     committed = yaml.safe_load(INDEX_PATH.read_text())
-    pages = generate.merge(generate.discover(DOCS_DIR, REPO_ROOT / "mkdocs.yml"), committed)
+    pages, _ = generate.build(DOCS_DIR, REPO_ROOT / "mkdocs.yml", committed)
     site_url = yaml.load(
         (REPO_ROOT / "mkdocs.yml").read_text(), Loader=generate._TagIgnoringLoader
     )["site_url"]
@@ -237,11 +235,11 @@ def test_reading_a_page_returns_its_markdown_and_the_running_version():
 def test_an_oversized_page_is_truncated_with_a_pointer(monkeypatch):
     monkeypatch.setattr(settings, "assistant_docs_max_page_chars", 500)
 
-    result = read_page("concepts/architecture.md")
+    result = read_page("getting-started/how-duckhaven-works.md")
 
     assert result["truncated"] is True
     assert "characters are not shown" in result["text"]
-    assert page_url("concepts/architecture.md") in result["text"]
+    assert page_url("getting-started/how-duckhaven-works.md") in result["text"]
 
 
 def test_an_unindexed_path_is_refused():
@@ -519,3 +517,15 @@ def test_a_citation_recorded_before_a_move_points_at_the_new_page(monkeypatch):
         "title": "SQL support",
         "url": page_url("reference/sql-support.md"),
     }
+
+
+def test_a_guess_in_the_old_layout_is_pointed_at_the_moved_page():
+    index = DocsIndex(
+        pages=(
+            Page("ai/mcp-server.md", "MCP server", "AI", "s"),
+            Page("reference/cli.md", "CLI", "R", "s"),
+        ),
+        aliases={"concepts/mcp-server.md": "ai/mcp-server.md"},
+    )
+
+    assert index.nearest("concepts/mcp.md")[0] == "ai/mcp-server.md"

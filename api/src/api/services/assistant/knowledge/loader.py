@@ -50,8 +50,19 @@ class DocsIndex:
         return self.get(path) or self.get(self.aliases.get(path, ""))
 
     def nearest(self, path: str, n: int = 3) -> list[str]:
-        """Indexed paths closest to a miss, so a wrong guess can be corrected."""
-        return difflib.get_close_matches(path, self.paths, n=n, cutoff=0.3)
+        """Indexed paths closest to a miss, so a wrong guess can be corrected.
+
+        Old paths count as candidates too, answered with where the page lives
+        now: a model that learned the docs before a move guesses in the old
+        layout, and its nearest old path is the best clue to the page it means.
+        """
+        candidates = self.paths + tuple(self.aliases)
+        found: list[str] = []
+        for match in difflib.get_close_matches(path, candidates, n=2 * n, cutoff=0.3):
+            target = self.aliases.get(match, match)
+            if target not in found:
+                found.append(target)
+        return found[:n]
 
     @cached_property
     def prompt_block(self) -> str:

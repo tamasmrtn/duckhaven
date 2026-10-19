@@ -17,7 +17,9 @@ tokens:
   - (?<!(?:is|are|be|was|were|been|being|gets|get) )used to
   - new in
   - recently
-  - yet
+  # "Not yet", or "yet" closing a clause; not the conjunction ("…, yet the files…").
+  - not yet
+  - yet(?=\s*[.;:)])
   - any ?more
   - from now on
   - going forward

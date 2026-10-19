@@ -310,6 +310,16 @@ pages:
   section: Reference
   summary: 'The control-plane REST API: exact result values, Arrow and Parquet downloads, query parameters,
     describe, workspace metadata, waiting for a result, and client and tags.'
+- path: reference/api-versions.md
+  title: API versions
+  section: Reference
+  summary: GET /api/version reports api_version, an integer that changes only when a change breaks
+    existing API clients.
+- path: reference/errors.md
+  title: Errors
+  section: Reference
+  summary: Every API error has an HTTP status and a stable error code; this page lists each code,
+    what causes it and what to do.
 - path: reference/operator-scripts.md
   title: Operator scripts
   section: Reference

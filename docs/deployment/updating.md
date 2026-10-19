@@ -33,6 +33,13 @@ Tags published per release: `:X.Y.Z`, `:X.Y`, `:X` (without the Git tag's `v`). 
 also published per [runtime](../compute/runtimes.md), as `:X.Y.Z-duckdb<runtime>`, and the
 bundled agent runs the default runtime's.
 
+## Upgrade API clients first
+
+Before an update that changes the API's `api_version`, upgrade the tools that call it: scripts, dbt, dlt and BI
+connectors. Moving to `api_version` 3 (builds from `main` after v0.8.0, including `:latest`) needs
+`duckhaven-sql-connector` 0.8.0 or later, which `dbt-duckhaven` and `dlt-duckhaven` use, and `dh` 0.4.0 or later. What
+each version changes is in [API versions](../reference/api-versions.md).
+
 ## One-time: updating past the Chainguard base image migration
 
 The `api` and `agent` images moved from a Debian-based base to Chainguard's distroless base, which runs as a fixed

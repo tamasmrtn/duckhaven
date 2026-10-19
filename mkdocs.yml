@@ -240,6 +240,8 @@ nav:
       - Agent reference: reference/agent-reference.md
       - CLI reference: reference/cli.md
       - REST API: reference/rest-api.md
+      - API versions: reference/api-versions.md
+      - Errors: reference/errors.md
       - Operator scripts: reference/operator-scripts.md
   - Developer:
       - Architecture: developer/architecture.md

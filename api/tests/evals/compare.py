@@ -52,9 +52,9 @@ async def _answer(arm: ArmConfig, case: Case, docs_search) -> RunResult:
     )
 
 
-# Shared across however many pages a case names, rather than capped per page: a
-# flat cap truncates before the cited section and the judge then rules a correct
-# citation a fabrication. A budget sends the common one-or-two-page case whole.
+# Shared across the pages a case names that no arm opened, rather than capped per
+# page: a flat cap truncates before the cited section and the judge then rules a
+# correct citation a fabrication. Pages an arm opened are never trimmed.
 _CONTEXT_BUDGET = 24_000
 _MIN_PER_PAGE = 2_000
 
@@ -128,15 +128,23 @@ def _context(case: Case, *results: RunResult) -> str:
         except Exception:  # noqa: BLE001 — a missing page is context we lack, not a failure
             continue
 
+    # A page an arm opened goes in exactly as the assistant read it: read_page
+    # already caps it, and judging an answer against less of the page than the
+    # assistant saw scores what it read past the cut as invented. Only the case's
+    # own sources that nothing opened share the budget.
+    opened = {p for r in results for p in r.doc_paths}
+    unopened = [(path, page) for path, page in pages if path not in opened]
     # Never trim below the point where a page stops being usable evidence — and
     # so that the floor cannot quietly repeal the budget, drop the pages that do
     # not fit rather than shrinking every share below it.
-    pages = pages[: _CONTEXT_BUDGET // _MIN_PER_PAGE]
-    per_page = max(_MIN_PER_PAGE, _CONTEXT_BUDGET // len(pages)) if pages else 0
+    kept = {path for path, _ in unopened[: _CONTEXT_BUDGET // _MIN_PER_PAGE]}
+    per_page = max(_MIN_PER_PAGE, _CONTEXT_BUDGET // len(kept)) if kept else 0
     blocks = []
     for path, page in pages:
+        if path not in opened and path not in kept:
+            continue
         text = page["text"]
-        if len(text) > per_page:
+        if path not in opened and len(text) > per_page:
             text = text[:per_page] + f"\n[… {len(text) - per_page:,} characters not shown]"
         blocks.append(f"--- {path} ({page['title']}) ---\n{text}")
 

@@ -109,6 +109,21 @@ concurrently (bounded by the harness), so a sampled run stays near the length of
 comparison against older runs: a faithfulness score that drops from 4.3 to 4.0 could mean the assistant got worse or
 the judge changed, and nothing in the number tells you which.
 
+**The judge sees what the assistant saw.** Every page an arm opened reaches the judge whole, as `read_doc_page` returned
+it, together with the tool results and the instructions the assistant was given. Only the case's expected sources that
+no arm opened are trimmed to share a fixed budget. A judge that saw a cut copy of an opened page scored every claim past
+the cut as invented.
+
+**SQL in the eval runs for real.** The fixture gateway executes the assistant's SQL in an in-memory DuckDB holding a
+small seeded copy of the fixture tables. `orders` has 125,000 rows covering the twelve whole months before the current
+one, so no month in the data is partial. The gateway applies the same statement check as the API, and turns off file
+and network access before any of the assistant's SQL runs.
+Results come back the way the API returns them under `api_version` 3: with `column_types`, DECIMAL and wide integers as
+exact strings, and 100 rows a page. Faking results by rule produced answers no engine could give — a filter ignored, a
+`COUNT(*)` that disagreed with the table's row count — and the assistant reported a broken server instead of answering.
+Metric queries compile to SQL that applies the metric's own definition. Iceberg-only SQL such as `iceberg_snapshots()`
+or `AT (VERSION => …)` fails with DuckDB's error, because the seeded tables are not Iceberg tables.
+
 **Pairwise comparisons are judged in both orders**, and a win counts only when the judge agrees with itself after the
 answers are swapped. Judges systematically prefer whichever answer they see first — by a reported 10–15 points of win
 rate, which is larger than most effects worth measuring. Disagreements become ties and are counted as the *flip rate*;

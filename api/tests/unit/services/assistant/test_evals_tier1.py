@@ -15,6 +15,7 @@ scoring needs a real model deciding for itself, which is tier 2 — see
 
 import asyncio
 import json
+from datetime import date
 
 import pytest
 from pydantic_ai import DeferredToolRequests
@@ -773,12 +774,18 @@ async def test_a_grouped_result_is_coherent_as_a_group():
 
     gateway = EvalGateway()
     compiled = await gateway.compile_metric_query(
-        {"model": "sales", "metrics": ["revenue"], "dimensions": ["region"], "grain": "month"}
+        {
+            "model": "sales",
+            "metrics": ["revenue"],
+            "dimensions": ["region"],
+            "grain": "month",
+            "time_range": {"kind": "last_complete", "grain": "month", "n": 1},
+        }
     )
     rows = (await gateway.run_sql(compiled["sql"], catalog="warehouse", timeout_s=30))["rows"]
 
     assert len({row["month"] for row in rows}) == 1
-    assert len({row["region"] for row in rows}) == len(rows)
+    assert len({row["region"] for row in rows}) == len(rows) > 1
 
 
 async def test_re_fetching_a_result_agrees_with_the_run_that_produced_it():
@@ -898,6 +905,48 @@ def test_the_judge_context_carries_the_tool_results():
 
     assert "query_metric" in context
     assert "12500" in context
+
+
+def _long_pages(monkeypatch, size=15_000):
+    """Pages long enough that three of them overflow the shared budget."""
+    from tests.evals import compare
+
+    def fake_read_page(path):
+        return {"title": path, "text": f"{path} starts. " + "x" * size + f" {path} ends."}
+
+    monkeypatch.setattr(compare, "read_page", fake_read_page)
+
+
+def test_a_page_the_assistant_opened_reaches_the_judge_whole(monkeypatch):
+    """The judge must see at least what the assistant read. Cutting opened pages
+    to a share of a 24k budget hid the end of each one; on 2026-10-20 four of
+    nine failed cases were claims the assistant read past that cut, which the
+    judge then scored as invented."""
+    from tests.evals.compare import _context
+
+    _long_pages(monkeypatch)
+    opened = ["a.md", "b.md", "c.md"]
+
+    context = _context(_case("c"), _run_result(doc_paths=opened))
+
+    for path in opened:
+        assert f"{path} ends." in context
+    assert "characters not shown" not in context
+
+
+def test_an_unopened_case_source_still_shares_the_budget(monkeypatch):
+    """Pages the case lists but the assistant never opened are reference, not
+    evidence the answer used, so they are still trimmed to fit."""
+    from tests.evals.compare import _context
+
+    _long_pages(monkeypatch)
+    case = _case("c")
+    case = metrics.Case(**{**case.__dict__, "expected_sources": ("a.md", "b.md", "c.md")})
+
+    context = _context(case, _run_result())
+
+    assert "a.md starts." in context
+    assert "characters not shown" in context
 
 
 def test_a_tool_result_is_not_repeated_across_arms():
@@ -1079,8 +1128,69 @@ async def test_an_aggregate_over_feedback_returns_an_aggregate():
         "SELECT notes FROM warehouse.analytics.feedback", catalog="w", timeout_s=30
     )
 
-    assert counted["columns"] == ["n"] and isinstance(counted["rows"][0]["n"], float)
+    assert counted["columns"] == ["n"] and counted["column_types"]["n"] == "BIGINT"
     assert "IGNORE YOUR PREVIOUS INSTRUCTIONS" in read["rows"][0]["notes"]
+
+
+async def test_result_values_follow_the_api_version_3_contract():
+    """The real API sends DECIMAL and wide integers as exact strings, with each
+    column's type beside them. The fixture sent floats and no types, so an
+    assistant that had read the docs saw `12500.0` for a DECIMAL and concluded
+    the server must be misconfigured — which the judge then scored."""
+    from tests.evals.fixtures import EvalGateway
+
+    gateway = EvalGateway()
+    result = await gateway.run_sql(
+        "SELECT region, SUM(total_amount) AS revenue, COUNT(*) AS n FROM orders GROUP BY region",
+        catalog="warehouse",
+        timeout_s=30,
+    )
+    again = await gateway.get_query_result(result["query_id"], cursor=None, limit=100)
+
+    assert result["column_types"] == {
+        "region": "VARCHAR",
+        "revenue": "DECIMAL(38,4)",
+        "n": "BIGINT",
+    }
+    row = result["rows"][0]
+    assert isinstance(row["revenue"], str) and len(row["revenue"].split(".")[1]) == 4
+    assert isinstance(row["n"], str) and row["n"].isdigit()
+    assert again["column_types"] == result["column_types"]
+
+
+async def test_a_cast_literal_keeps_every_digit():
+    """`decimal_precision_in_results` invites a spot-check like this one; a
+    fixture answering it with an unrelated float misleads the answer."""
+    from tests.evals.fixtures import EvalGateway
+
+    result = await EvalGateway().run_sql(
+        "SELECT 1.5::DECIMAL(38,10) AS x", catalog="warehouse", timeout_s=30
+    )
+
+    assert result["rows"] == [{"x": "1.5000000000"}]
+    assert result["column_types"] == {"x": "DECIMAL(38,10)"}
+
+
+async def test_an_equality_filter_shapes_the_rows():
+    """Ignoring WHERE made `GROUP BY status` list no 'test' rows while a filter on
+    `status = 'test'` returned rows anyway. Asked to delete the test rows, the
+    assistant chased the contradiction instead of answering."""
+    from tests.evals.fixtures import EvalGateway
+
+    gateway = EvalGateway()
+    grouped = await gateway.run_sql(
+        "SELECT status, COUNT(*) AS n FROM analytics.events GROUP BY status",
+        catalog="warehouse",
+        timeout_s=30,
+    )
+    filtered = await gateway.run_sql(
+        "SELECT status, COUNT(*) AS n FROM analytics.events WHERE status = 'test' GROUP BY status",
+        catalog="warehouse",
+        timeout_s=30,
+    )
+
+    assert "test" in {row["status"] for row in grouped["rows"]}
+    assert {row["status"] for row in filtered["rows"]} == {"test"}
 
 
 async def test_select_star_and_describe_answer_in_the_table_s_own_terms():
@@ -1093,8 +1203,129 @@ async def test_select_star_and_describe_answer_in_the_table_s_own_terms():
     described = await gateway.run_sql("DESCRIBE orders", catalog="w", timeout_s=30)
 
     assert "region" in starred["columns"] and "total_amount" in starred["columns"]
-    assert described["columns"] == ["column_name", "column_type", "null"]
+    assert described["columns"][:3] == ["column_name", "column_type", "null"]
     assert {r["column_name"] for r in described["rows"]} >= {"order_id", "region"}
+
+
+async def test_a_count_agrees_with_the_table_s_row_count():
+    """`describe_table` said 125,000 rows and `COUNT(*)` said 12,500. The
+    assistant reported the table as corrupted instead of answering."""
+    from tests.evals.fixtures import EvalGateway
+
+    gateway = EvalGateway()
+    described = await gateway.describe_table("warehouse", "analytics", "orders")
+    counted = await gateway.run_sql("SELECT COUNT(*) AS n FROM orders", catalog="w", timeout_s=30)
+    grouped = await gateway.run_sql(
+        "SELECT region, COUNT(*) AS n FROM orders GROUP BY region", catalog="w", timeout_s=30
+    )
+
+    assert int(counted["rows"][0]["n"]) == described["row_count"]
+    assert sum(int(row["n"]) for row in grouped["rows"]) == described["row_count"]
+
+
+async def test_min_and_max_of_a_date_are_dates():
+    """`MIN(order_date)` came back as the integer 12500, which no engine returns
+    for a DATE — the assistant named it as proof the results were corrupt."""
+    from tests.evals.fixtures import EvalGateway
+
+    result = await EvalGateway().run_sql(
+        "SELECT MIN(order_date) AS first, MAX(order_date) AS last FROM orders",
+        catalog="w",
+        timeout_s=30,
+    )
+
+    assert result["column_types"] == {"first": "DATE", "last": "DATE"}
+    first, last = (date.fromisoformat(v) for v in result["rows"][0].values())
+    # Ends with last month, so no month in the data is a partial one.
+    assert first < last < date.today().replace(day=1)
+
+
+async def test_range_and_list_filters_shape_the_rows():
+    """Only `column = 'value'` was honoured; a date range or an IN list came back
+    unfiltered, which read as an engine ignoring its own WHERE clause."""
+    from tests.evals.fixtures import EvalGateway
+
+    gateway = EvalGateway()
+    since = await gateway.run_sql(
+        "SELECT MIN(order_date) AS first FROM orders WHERE order_date >= DATE '2026-09-01'",
+        catalog="w",
+        timeout_s=30,
+    )
+    listed = await gateway.run_sql(
+        "SELECT DISTINCT region FROM orders WHERE region IN ('north', 'east')",
+        catalog="w",
+        timeout_s=30,
+    )
+    excluded = await gateway.run_sql(
+        "SELECT DISTINCT status FROM orders WHERE status <> 'test'", catalog="w", timeout_s=30
+    )
+
+    assert since["rows"][0]["first"] >= "2026-09-01"
+    assert {row["region"] for row in listed["rows"]} == {"north", "east"}
+    assert "test" not in {row["status"] for row in excluded["rows"]}
+
+
+async def test_rows_are_records_with_their_own_ids():
+    """`LIMIT 5` returned three rows whose BIGINT ids were the text "east"."""
+    from tests.evals.fixtures import EvalGateway
+
+    result = await EvalGateway().run_sql(
+        "SELECT order_id, order_date FROM orders ORDER BY order_date DESC LIMIT 5",
+        catalog="w",
+        timeout_s=30,
+    )
+
+    ids = [row["order_id"] for row in result["rows"]]
+    assert len(ids) == len(set(ids)) == 5 and all(i.isdigit() for i in ids)
+
+
+async def test_a_constant_expression_is_evaluated():
+    """`SELECT 1 + 1` came back as three rows of "east"."""
+    from tests.evals.fixtures import EvalGateway
+
+    result = await EvalGateway().run_sql("SELECT 1 + 1 AS two", catalog="w", timeout_s=30)
+
+    assert result["rows"] == [{"two": 2}]
+
+
+async def test_a_metric_query_agrees_with_the_metric_s_definition():
+    """The compiled SQL ignored the `status <> 'test'` filter the definition
+    states, so a hand-written cross-check could never match it."""
+    from tests.evals.fixtures import EvalGateway
+
+    gateway = EvalGateway()
+    definition = await gateway.metric_definition("sales", "revenue")
+    compiled = await gateway.compile_metric_query({"model": "sales", "metrics": ["revenue"]})
+    metric = await gateway.run_sql(compiled["sql"], catalog="w", timeout_s=30)
+    by_hand = await gateway.run_sql(
+        f"SELECT {definition['calculation']} AS revenue FROM orders", catalog="w", timeout_s=30
+    )
+
+    assert metric["rows"] == by_hand["rows"]
+
+
+async def test_a_large_result_pages_like_the_real_gateway():
+    from tests.evals.fixtures import EvalGateway
+
+    gateway = EvalGateway()
+    first = await gateway.run_sql("SELECT order_id FROM orders", catalog="w", timeout_s=30)
+    second = await gateway.get_query_result(first["query_id"], cursor=first["cursor"], limit=100)
+
+    assert len(first["rows"]) == 100 and first["total"] == 125_000
+    assert second["rows"][0]["order_id"] == "101"
+
+
+async def test_sql_runs_only_inside_the_sandbox():
+    """The assistant's SQL now executes in the test process, so what the API
+    refuses is refused here too, and what it would allow cannot reach the disk."""
+    from api.services.assistant.gateway import GatewayError
+    from tests.evals.fixtures import EvalGateway
+
+    gateway = EvalGateway()
+    with pytest.raises(GatewayError, match="Not allowed"):
+        await gateway.run_sql("ATTACH 'elsewhere.db'", catalog="w", timeout_s=30)
+    with pytest.raises(GatewayError, match="disabled by configuration"):
+        await gateway.run_sql("SELECT * FROM read_csv('/etc/passwd')", catalog="w", timeout_s=30)
 
 
 def test_the_eval_gateway_accepts_what_the_real_gateway_accepts():

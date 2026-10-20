@@ -189,7 +189,9 @@ statement, a mix of placeholder styles, a missing or unused value, a type outsid
 Anything that could break out of the per-query sandbox is rejected, including:
 
 `ATTACH` / `DETACH`, `COPY` / `EXPORT`, `INSTALL` / `LOAD`, `SET`, `CALL`, `EXPLAIN`, `VACUUM`, `PREPARE` / `EXECUTE`,
-and transaction control.
+`CREATE SECRET` / `DROP SECRET`, and transaction control.
+
+The agent sets up the storage credentials each catalog needs, so a query cannot create or drop a secret of its own.
 
 This includes the configuration-setting form of `PRAGMA` — `PRAGMA <name> = <value>`, which DuckDB treats as a `SET` —
 since it could widen the per-query sandbox. The read-only `PRAGMA`s that return rows are allowed, as described above.

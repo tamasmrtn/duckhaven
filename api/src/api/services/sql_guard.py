@@ -8,7 +8,9 @@ transaction control, …) is rejected. Multi-statement bodies must consist
 entirely of allowed statements.
 
 After the type check, `sql_denylist` refuses allowed-type statements that reach
-a foreign database or DuckLake's internal metadata.
+a foreign database or DuckLake's internal metadata, and `CREATE SECRET` /
+`DROP SECRET` are refused: DuckDB types them as `CREATE` and `DROP`, but they
+manage storage credentials, which only the agent sets up.
 
 The control plane uses DuckDB *as a parser*: `duckdb.extract_statements`
 is purely lexical/syntactic — no execution, no storage, no extensions
@@ -18,6 +20,8 @@ never call `.execute()` on user SQL.
 """
 
 from __future__ import annotations
+
+import re
 
 import duckdb
 
@@ -37,6 +41,14 @@ _ALLOWED_TYPES = {
 # Derived rather than listed again, so a statement type admitted in future is
 # gated as a write by default instead of silently becoming a permitted read.
 _WRITE_TYPES = _ALLOWED_TYPES - {duckdb.StatementType.SELECT}
+
+# Comments DuckDB keeps at the front of a statement's text.
+_LEADING_COMMENTS = re.compile(r"\A(?:\s+|--[^\n]*(?:\n|\Z)|/\*.*?\*/)*", re.DOTALL)
+# `CREATE [OR REPLACE] [PERSISTENT | TEMP | TEMPORARY] SECRET`, and `DROP` likewise.
+_SECRET_STATEMENT = re.compile(
+    r"(?:create(?:\s+or\s+replace)?|drop)\s+(?:(?:persistent|temp|temporary)\s+)?secret\b",
+    re.IGNORECASE,
+)
 
 
 class SQLNotAllowed(ValueError):
@@ -64,11 +76,26 @@ def assert_allowed(sql: str) -> None:
             "UPDATE, DELETE, MERGE, CREATE, ALTER, DROP."
         )
 
+    if any(_is_secret(s) for s in statements):
+        raise SQLNotAllowed(
+            "CREATE SECRET and DROP SECRET are not permitted: storage credentials are "
+            "managed by DuckHaven."
+        )
+
     # Re-raised as SQLNotAllowed to keep the router's 422 shape.
     try:
         check_sql(sql)
     except ForeignAccessDenied as exc:
         raise SQLNotAllowed(str(exc)) from exc
+
+
+def _is_secret(statement: duckdb.Statement) -> bool:
+    """True for ``CREATE SECRET`` and ``DROP SECRET``, which DuckDB types as an
+    ordinary ``CREATE`` or ``DROP``."""
+    if statement.type not in (duckdb.StatementType.CREATE, duckdb.StatementType.DROP):
+        return False
+    text = statement.query
+    return _SECRET_STATEMENT.match(text, _LEADING_COMMENTS.match(text).end()) is not None
 
 
 def is_read_only(sql: str) -> bool:

@@ -312,7 +312,7 @@ wireframe with the layout intent, then a short notes block. Margins,
 exact widths, and component states are settled at implementation time
 against the shadcn/ui primitives.
 
-### 4.1 Worksheet (the entire product, basically)
+### 4.1 Worksheet (the core of the product)
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐

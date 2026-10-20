@@ -3,8 +3,8 @@
 A page declares its type in front matter (``type: how-to``). Each type has a
 shape a reader can rely on — a how-to always says what you need before you
 start and what to do when a step fails — and these tests hold typed pages to
-it. Untyped pages are not checked until their subject folder is rewritten and
-added to ``MIGRATED_DIRS``, which turns the type into a requirement there.
+it. Every user page must declare a type; only the home page, the generated CLI
+reference and the contributor docs are exempt.
 
 Two more invariants protect page moves: every redirect points from a path that
 is gone to a page that exists, and nothing outside ``docs/`` still names a moved
@@ -30,21 +30,10 @@ REQUIRED_H2 = {
 }
 # Generated in duckhaven-clients from the CLI's command tree; edits are overwritten.
 GENERATED = frozenset({"reference/cli.md"})
-# Subject folders whose pages have been rewritten to the templates. Every page in
-# one must declare a type. Emptied and removed once every folder is migrated.
-MIGRATED_DIRS: frozenset[str] = frozenset(
-    {
-        "getting-started",
-        "access",
-        "querying",
-        "data",
-        "compute",
-        "deployment",
-        "operations",
-        "ai",
-        "metadata",
-    }
-)
+# Pages outside the templates: the home page is a landing page the theme renders,
+# and contributor docs and release notes follow their own conventions.
+UNTYPED = frozenset({"index.md"}) | GENERATED
+CONTRIBUTOR_DIRS = frozenset({"developer", "release-notes"})
 
 # Where a moved page's old path could still be named, outside the docs tree.
 REFERENCE_ROOTS = (
@@ -183,11 +172,12 @@ def test_typed_pages_follow_their_template(path):
     assert problems((DOCS_DIR / path).read_text(encoding="utf-8")) == []
 
 
-def test_pages_in_migrated_folders_declare_a_type():
+def test_every_user_page_declares_a_type():
     untyped = [
         path
         for path in _pages()
-        if path.split("/", 1)[0] in MIGRATED_DIRS
+        if path not in UNTYPED
+        and path.split("/", 1)[0] not in CONTRIBUTOR_DIRS
         and "type" not in front_matter((DOCS_DIR / path).read_text(encoding="utf-8"))
     ]
     assert untyped == []

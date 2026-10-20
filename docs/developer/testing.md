@@ -45,7 +45,7 @@ assertion you were interested in, so a whole suite can look like it passed when 
 ### Elastic compute in the cross-component layer
 
 Scale-out can only be observed where compute is *absent*, so the elastic tests cannot share the main
-cross-component stack — its agent is already connected and would simply serve every request. They
+cross-component stack — its agent is already connected and would serve every request. They
 boot a second API against a sibling database (`<your DB>_elastic`, dropped and recreated per run, so
 the `DATABASE_URL` role needs `CREATE DATABASE`) with no agent of its own.
 

@@ -89,10 +89,10 @@
 - [Docker Compose](https://tamasmrtn.github.io/duckhaven/deployment/install/): Deploy the full stack with Docker Compose.
 - [Reverse proxy & TLS](https://tamasmrtn.github.io/duckhaven/deployment/reverse-proxy-tls/): Front the stack with a reverse proxy and TLS.
 - [Enable DuckLake](https://tamasmrtn.github.io/duckhaven/deployment/ducklake/): DuckLake is a second catalog kind, available by default.
-- [High availability](https://tamasmrtn.github.io/duckhaven/deployment/high-availability/): Run the control plane with HA Postgres and multiple API replicas.
+- [High availability](https://tamasmrtn.github.io/duckhaven/deployment/high-availability/): The highly-available topology runs Postgres as a Patroni cluster and several API replicas, so the control plane survives losing a database node or an API container.
 - [Azure with Terraform](https://tamasmrtn.github.io/duckhaven/deployment/azure-terraform/): Deploy the whole stack to Azure as managed infrastructure, with Terraform.
 - [Updating](https://tamasmrtn.github.io/duckhaven/deployment/updating/): Updates pull a new image and restart the stack.
-- [Backup & restore](https://tamasmrtn.github.io/duckhaven/deployment/backup-restore/): Back up and restore DuckHaven data.
+- [Backup & restore](https://tamasmrtn.github.io/duckhaven/deployment/backup-restore/): Back up DuckHaven's three Postgres databases and its secret key, restore them, and upgrade Postgres to a new major version without losing data.
 
 ## Operate
 

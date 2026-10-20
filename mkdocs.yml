@@ -199,6 +199,7 @@ nav:
       - AI assistant & MCP:
           - AI assistant: ai/assistant.md
           - Use the AI assistant: ai/use-the-assistant.md
+          - Set up the assistant: ai/set-up-the-assistant.md
           - MCP server: ai/mcp-server.md
           - Connect an MCP client: ai/connect-mcp-client.md
   - Administer:

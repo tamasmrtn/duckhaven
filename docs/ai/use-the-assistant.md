@@ -1,12 +1,18 @@
+---
+type: how-to
+---
+
 # Use the AI assistant
 
 The AI data assistant lets you explore a workspace's data by chatting: ask a question in plain language and it will
 browse the catalog, run SQL, and explain what it found. This guide covers using it day to day. For how it is governed
 and what it can and cannot do, see the [AI data assistant](assistant.md) concept page.
 
-!!! note "Availability"
-    The assistant is only present when an administrator has enabled it and added it to your workspace. If you don't
-    see it, ask your operator — the setup steps are in [Enable the assistant](#enable-the-assistant-operators) below.
+## Before you begin
+
+- **You need:** membership of a workspace where an administrator has added the assistant. If you don't see it, ask
+  them; the steps are in [Set up the assistant](set-up-the-assistant.md).
+- **What it can reach:** only what its own service account may, which can be less than you may.
 
 ## Have a conversation
 
@@ -68,7 +74,7 @@ by day", "add a WHERE clause for 2025", "fix this join". Instead of only chattin
 your editor**:
 
 - The proposed SQL replaces the editor content, shown as an inline diff: added lines are highlighted in place, and any
-  line the assistant removed appears as struck-through ghost text just above where it used to be — so it's obvious
+  line the assistant removed appears as struck-through ghost text just above its old position — so it's obvious
   what changed versus what was already yours.
 - If you have text selected in the editor when you ask, the assistant proposes a replacement for just that selection
   instead of rewriting the whole worksheet — handy for a small tweak in a long query. If the worksheet changed since
@@ -109,16 +115,26 @@ Nothing that changes data runs without your approval.
 - If the assistant says something is not accessible, that reflects the grants of its service account, not a bug. Ask
   your administrator if you need broader access.
 
-## Enable the assistant (operators)
+## If it goes wrong
 
-The assistant acts as a service account named **Assistant** (slug `assistant`), which DuckHaven creates on startup
-once the assistant is enabled. No token is needed — the assistant mints its own short-lived tokens. To turn it on:
+### "Assistant is turned off"
 
-1. Configure the model with the `ASSISTANT_*` settings in
-   [Configuration](../reference/configuration.md#ai-assistant), set `ASSISTANT_ENABLED=true`, and restart the API.
-2. Add the **Assistant** service account to each workspace where the assistant should be usable, and grant it the
-   access you want it to have (`metadata`/`reader` for browse-and-read, `writer` to allow approved writes). See
-   [How access works](../access/how-access-works.md).
+The assistant is not enabled on this deployment. Ask an operator; see [Set up the assistant](set-up-the-assistant.md).
 
-Because access is per workspace, you can safely enable one assistant across many workspaces and let each workspace's
-grants decide what it can reach.
+### "The assistant isn't a member of this workspace, so every question would come back denied."
+
+An admin must add the **Assistant** account to this workspace.
+
+### It says a table is not accessible
+
+That is its service account's access, not a fault. Ask an admin to grant the account access to the table.
+
+### A long conversation forgets what you said early on
+
+Only the most recent turns are kept. Start a new conversation for a new topic.
+
+## Related
+
+- [AI data assistant](assistant.md) — how it is governed and what it cannot do.
+- [Set up the assistant](set-up-the-assistant.md) — for operators.
+- [Run queries](../querying/run-queries.md) — the worksheet it edits.

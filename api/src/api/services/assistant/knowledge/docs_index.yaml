@@ -164,7 +164,13 @@ pages:
 - path: ai/use-the-assistant.md
   title: Use the AI assistant
   section: AI assistant & MCP
-  summary: Browse the catalog, run SQL, and propose worksheet edits with the assistant.
+  summary: 'The AI data assistant lets you explore a workspace''s data by chatting: ask a question
+    in plain language and it will browse the catalog, run SQL, and explain what it found.'
+- path: ai/set-up-the-assistant.md
+  title: Set up the assistant
+  section: AI assistant & MCP
+  summary: Turn on the AI assistant with a model of your choice, then give its service account access
+    to the workspaces it should serve.
 - path: ai/mcp-server.md
   title: MCP server
   section: AI assistant & MCP

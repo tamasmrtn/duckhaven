@@ -55,7 +55,8 @@
 ## AI assistant & MCP
 
 - [AI assistant](https://tamasmrtn.github.io/duckhaven/ai/assistant/): The governed AI data assistant and how it enforces access.
-- [Use the AI assistant](https://tamasmrtn.github.io/duckhaven/ai/use-the-assistant/): Browse the catalog, run SQL, and propose worksheet edits with the assistant.
+- [Use the AI assistant](https://tamasmrtn.github.io/duckhaven/ai/use-the-assistant/): The AI data assistant lets you explore a workspace's data by chatting: ask a question in plain language and it will browse the catalog, run SQL, and explain what it found.
+- [Set up the assistant](https://tamasmrtn.github.io/duckhaven/ai/set-up-the-assistant/): Turn on the AI assistant with a model of your choice, then give its service account access to the workspaces it should serve.
 - [MCP server](https://tamasmrtn.github.io/duckhaven/ai/mcp-server/): Connecting an AI agent you already use — Claude Code, Cursor — to your data.
 - [Connect an MCP client](https://tamasmrtn.github.io/duckhaven/ai/connect-mcp-client/): Point Claude Code, Claude Desktop or Cursor at DuckHaven over MCP.
 

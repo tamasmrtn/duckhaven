@@ -900,6 +900,48 @@ def test_the_judge_context_carries_the_tool_results():
     assert "12500" in context
 
 
+def _long_pages(monkeypatch, size=15_000):
+    """Pages long enough that three of them overflow the shared budget."""
+    from tests.evals import compare
+
+    def fake_read_page(path):
+        return {"title": path, "text": f"{path} starts. " + "x" * size + f" {path} ends."}
+
+    monkeypatch.setattr(compare, "read_page", fake_read_page)
+
+
+def test_a_page_the_assistant_opened_reaches_the_judge_whole(monkeypatch):
+    """The judge must see at least what the assistant read. Cutting opened pages
+    to a share of a 24k budget hid the end of each one; on 2026-10-20 four of
+    nine failed cases were claims the assistant read past that cut, which the
+    judge then scored as invented."""
+    from tests.evals.compare import _context
+
+    _long_pages(monkeypatch)
+    opened = ["a.md", "b.md", "c.md"]
+
+    context = _context(_case("c"), _run_result(doc_paths=opened))
+
+    for path in opened:
+        assert f"{path} ends." in context
+    assert "characters not shown" not in context
+
+
+def test_an_unopened_case_source_still_shares_the_budget(monkeypatch):
+    """Pages the case lists but the assistant never opened are reference, not
+    evidence the answer used, so they are still trimmed to fit."""
+    from tests.evals.compare import _context
+
+    _long_pages(monkeypatch)
+    case = _case("c")
+    case = metrics.Case(**{**case.__dict__, "expected_sources": ("a.md", "b.md", "c.md")})
+
+    context = _context(case, _run_result())
+
+    assert "a.md starts." in context
+    assert "characters not shown" in context
+
+
 def test_a_tool_result_is_not_repeated_across_arms():
     """A pairwise call passes both arms. Identical results would otherwise be
     pasted twice, spending the context budget on a duplicate."""

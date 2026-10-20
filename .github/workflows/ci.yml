@@ -173,6 +173,9 @@ jobs:
           version: 3.24.0
           files: docs
           fail_on_error: true
+          # Errors only: GitHub caps annotations per step, and a large docs diff
+          # carries more suggestions than that, which failed the job on its own.
+          vale_flags: "--minAlertLevel=error"
       - uses: actions/setup-python@v7
         with:
           python-version: '3.13'

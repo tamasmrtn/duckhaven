@@ -268,6 +268,9 @@ MkDocs expands the include when it builds the site, and the assistant expands it
 | `make docs-check` | `docs-lint`, the page-structure tests and a strict build (broken links and anchors fail) |
 | `make docs-index` | Regenerates the assistant's page index and `docs/llms.txt`; pre-commit and CI fail when they are stale |
 
+In CI, Vale reports only errors, on the lines a pull request adds, and fails the check when it finds one. Warnings and
+suggestions appear only when you run `make docs-lint` yourself.
+
 The page-structure tests live in `api/tests/unit/test_docs_structure.py`. Besides the templates, they check that every
 redirect points at a page that exists and that nothing outside `docs/` names a moved page. The assistant's 20,000
 character limit is checked by `TRUNCATES` in `api/tests/unit/services/assistant/test_knowledge.py`: a page that grows

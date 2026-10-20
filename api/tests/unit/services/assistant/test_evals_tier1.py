@@ -1236,7 +1236,8 @@ async def test_min_and_max_of_a_date_are_dates():
 
     assert result["column_types"] == {"first": "DATE", "last": "DATE"}
     first, last = (date.fromisoformat(v) for v in result["rows"][0].values())
-    assert first < last < date.today()
+    # Ends with last month, so no month in the data is a partial one.
+    assert first < last < date.today().replace(day=1)
 
 
 async def test_range_and_list_filters_shape_the_rows():

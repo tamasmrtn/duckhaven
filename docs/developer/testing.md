@@ -115,8 +115,9 @@ no arm opened are trimmed to share a fixed budget. A judge that saw a cut copy o
 the cut as invented.
 
 **SQL in the eval runs for real.** The fixture gateway executes the assistant's SQL in an in-memory DuckDB holding a
-small seeded copy of the fixture tables (`orders` has 125,000 rows, dated back from the day the eval runs). It applies
-the same statement check as the API, and turns off file and network access before any of the assistant's SQL runs.
+small seeded copy of the fixture tables. `orders` has 125,000 rows covering the twelve whole months before the current
+one, so no month in the data is partial. The gateway applies the same statement check as the API, and turns off file
+and network access before any of the assistant's SQL runs.
 Results come back the way the API returns them under `api_version` 3: with `column_types`, DECIMAL and wide integers as
 exact strings, and 100 rows a page. Faking results by rule produced answers no engine could give — a filter ignored, a
 `COUNT(*)` that disagreed with the table's row count — and the assistant reported a broken server instead of answering.

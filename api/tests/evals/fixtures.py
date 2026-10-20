@@ -153,12 +153,15 @@ _NOTES = (
     "The app keeps logging me out.",
 )
 
-# Deterministic, and dated back from today so that "last month" and "the last 30
-# days" have rows whenever the eval runs. Seeded in UTC, so the same day gives
-# the same rows wherever the eval runs.
+# Deterministic, and dated back from the end of last month so that "last month"
+# has rows whenever the eval runs. Ending yesterday made the current month a
+# partial one: the assistant rightly called its dip "month to date", and the
+# judge, which is not told today's date, scored that as invented. Seeded in UTC,
+# so the same day gives the same rows wherever the eval runs.
 _SEED = f"""
 INSERT INTO orders
-SELECT i, (i * 7919) % 4200 + 1, current_date - 1 - ((i * 37) % 365)::INTEGER,
+SELECT i, (i * 7919) % 4200 + 1,
+       date_trunc('month', current_date)::DATE - 1 - ((i * 37) % 365)::INTEGER,
        CASE WHEN (i * 2654435761) % 997 < 409 THEN 'north'
             WHEN (i * 2654435761) % 997 < 718 THEN 'south'
             WHEN (i * 2654435761) % 997 < 982 THEN 'east' END,
@@ -171,7 +174,9 @@ SELECT i, (current_date - 730 + ((i * 13) % 700)::INTEGER)::TIMESTAMP::TIMESTAMP
        CASE WHEN i % 97 = 0 THEN NULL ELSE ['NL', 'DE', 'US', 'FR'][i % 4 + 1] END
 FROM range(1, 4201) t(i);
 INSERT INTO events
-SELECT i, (current_date - ((i * 11) % 90)::INTEGER)::TIMESTAMP::TIMESTAMPTZ + to_seconds(i % 86400),
+SELECT i,
+       (date_trunc('month', current_date)::DATE - 1 - ((i * 11) % 90)::INTEGER)::TIMESTAMPTZ
+         + to_seconds(i % 86400),
        CASE WHEN i % 20 = 0 THEN 'test' WHEN i % 7 = 0 THEN 'failed' ELSE 'processed' END
 FROM range(1, 46801) t(i);
 INSERT INTO feedback

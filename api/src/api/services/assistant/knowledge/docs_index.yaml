@@ -144,7 +144,8 @@ pages:
 - path: metadata/import-dbt-lineage.md
   title: Import lineage from dbt
   section: Metadata & lineage
-  summary: Publish a dbt project's DAG into DuckHaven's lineage graph.
+  summary: Publish your dbt project's manifest.json so DuckHaven's lineage graph shows the dependencies
+    your models declare.
 - path: metadata/semantic-layer.md
   title: Semantic layer
   section: Metadata & lineage
@@ -152,11 +153,13 @@ pages:
 - path: metadata/define-metrics.md
   title: Define metrics
   section: Metadata & lineage
-  summary: Author a semantic model and publish it so the assistant will use it.
+  summary: Create a semantic model, define a metric on it, and publish it so the AI assistant answers
+    from your definition.
 - path: metadata/import-dbt-semantics.md
   title: Import semantics from dbt
   section: Metadata & lineage
-  summary: Import metric definitions from dbt's semantic layer.
+  summary: Publish the semantic models and metrics defined in your dbt project to DuckHaven, so the
+    assistant answers from them.
 - path: ai/assistant.md
   title: AI assistant
   section: AI assistant & MCP

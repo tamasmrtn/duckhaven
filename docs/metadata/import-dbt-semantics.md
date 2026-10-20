@@ -1,4 +1,10 @@
+---
+type: how-to
+---
+
 # Import semantic definitions from dbt
+
+Publish the semantic models and metrics defined in your dbt project to DuckHaven, so the assistant answers from them.
 
 If your metrics are already defined in dbt's semantic layer, DuckHaven can import
 them rather than making you write them twice. The artifact is `manifest.json` —
@@ -9,7 +15,7 @@ See [Semantic layer](semantic-layer.md) for what these definitions
 mean once they are in, and [Import lineage from dbt](import-dbt-lineage.md) for
 the sibling importer that reads the same artifact for lineage.
 
-## What you need
+## Before you begin
 
 - A dbt project with `semantic_models:` and `metrics:` defined, and a
   [time spine model](https://docs.getdbt.com/docs/build/metricflow-time-spine)
@@ -112,7 +118,7 @@ metrics ride on that one decision.
 ## Re-publishing and retiring
 
 By default a payload is treated as dbt's **complete** set for the workspace, and
-models it no longer declares are retired. Pass `--reconcile none` when publishing
+models missing from it are retired. Pass `--reconcile none` when publishing
 a subset (`?reconcile=none` over HTTP).
 
 An imported model is **read-only in DuckHaven** — `PATCH` returns 409. A model has
@@ -124,6 +130,21 @@ To remove everything dbt published:
 ```bash
 dh semantic purge --provider dbt
 ```
+
+## If it goes wrong
+
+### The import is refused with a 422 naming the expected format
+
+The body is not a dbt `manifest.json`, such as a YAML file or an empty body. Send the file `dbt parse` writes.
+
+### Publishing is refused
+
+`This model cannot be published until its definitions resolve.` A binding names a table or column the catalog does
+not have. Run `dh semantic validate`, fix the definition in dbt, and import again.
+
+### A definition you edit in DuckHaven is refused with 409
+
+Imported models are edited at their source, dbt. Change the dbt project and import again.
 
 ## Related
 

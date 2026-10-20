@@ -1,12 +1,15 @@
+---
+type: how-to
+---
+
 # Define metrics
 
-This guide walks through creating a semantic model, defining a metric, and
-publishing it so the AI assistant will use it.
+Create a semantic model, define a metric on it, and publish it so the AI assistant answers from your definition.
 
 See [Semantic layer](semantic-layer.md) for what these definitions
 mean and why they are shaped this way.
 
-## Before you start
+## Before you begin
 
 You need workspace **writer** to author definitions and **owner** to publish
 them. You also need at least `metadata` access to every table the model binds —
@@ -238,7 +241,7 @@ curl -X POST "$DH/api/workspaces/$WS/semantic/imports/duckhaven" \
 Notes on importing:
 
 - By default the payload is treated as the **complete** set for that provider,
-  and models it no longer declares are retired. Pass `?reconcile=none` when
+  and models missing from it are retired. Pass `?reconcile=none` when
   publishing a subset.
 - A typo in one metric costs that metric, not the whole file. Anything unusable
   comes back in `skipped` with a reason.
@@ -301,6 +304,21 @@ The tool-call trail should show `query_metric` naming the model and metric, with
 the compiled SQL. If it shows `run_sql` with hand-written aggregation instead,
 the metric is probably not published, or its synonyms do not include the words
 being used.
+
+## If it goes wrong
+
+### "This model cannot be published until its definitions resolve."
+
+Validation found a binding that does not resolve. Open the model, fix each definition marked `broken`, validate, and
+publish again.
+
+### A dimension cannot be deleted
+
+A metric is measured on it. Point the metric at another time dimension first, or delete the metric.
+
+### A change is refused because the model is imported
+
+Edit it where it came from, then import again; a model has one owner.
 
 ## Related
 

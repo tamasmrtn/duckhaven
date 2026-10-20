@@ -1,10 +1,16 @@
+---
+type: how-to
+---
+
 # Import lineage from dbt
+
+Publish your dbt project's `manifest.json` so DuckHaven's lineage graph shows the dependencies your models declare.
 
 If your transformations already live in a dbt project, its DAG is a description of your lineage that somebody has
 already written down. DuckHaven can import it, so the catalog shows the relationships your project declares alongside
 the ones DuckHaven [observes for itself](lineage.md).
 
-## What you need
+## Before you begin
 
 The `target/manifest.json` your project writes, and a token with **writer** access to the workspace — see [Service
 accounts](../access/service-accounts.md). Where a target table's catalog is attached `scoped`, the token also needs
@@ -106,8 +112,8 @@ catalog attachment, or the project's `database` does not match the catalog's slu
 ## Re-publishing
 
 Publishing is idempotent: posting the same manifest twice changes nothing except when each relationship was last
-seen. Posting a *changed* manifest prunes the **dbt** edges the project no longer declares, scoped to the models the
-payload actually mentions — so a manifest covering part of a project will not delete lineage for the rest of it.
+seen. Posting a *changed* manifest removes the **dbt** edges missing from it, scoped to the models the payload actually
+mentions — so a manifest covering part of a project will not delete lineage for the rest of it.
 
 Reconciliation never touches edges from another producer. Lineage DuckHaven derived itself always survives an import,
 which is what makes the two comparable: if dbt stops declaring a dependency that execution-derived lineage still shows,
@@ -167,6 +173,30 @@ Two things follow from that:
 Sources outside DuckHaven are a known gap: a model reading a database DuckHaven does not manage keeps its table-level
 edge, but the columns coming from it cannot be tied to an asset, so that edge reports column detail as unavailable
 rather than claiming nothing flows.
+
+## Check that it worked
+
+The response counts what changed, such as `{"created": 1, "updated": 0, "removed": 0, "skipped": []}` for one model
+that reads one source. Open a model's table in the catalog explorer: on the **Lineage** tab its upstream edge lists
+`dbt` among its producers. If the model has also run through DuckHaven, the same edge lists `execution` too, with
+column detail from the SQL.
+
+## If it goes wrong
+
+### Everything comes back 0, and no edges appear
+
+The manifest declares no dependencies DuckHaven can map. dbt records an edge only for `ref()` and `source()`, so a
+model that names its tables directly (`from sales.analytics.orders`) has none. Declare the table as a source and read
+it with `{{ source('analytics', 'orders') }}`.
+
+### A model is listed in `skipped`
+
+Its `database` is not a catalog the workspace attaches. Attach the catalog, or make the dbt target's `database`
+match the catalog's slug.
+
+### `403` on publish
+
+The token's account is not a `writer` in the workspace, or lacks `writer` on a scoped catalog a model targets.
 
 ## Notes
 

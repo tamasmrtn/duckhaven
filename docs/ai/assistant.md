@@ -1,0 +1,215 @@
+---
+type: concept
+---
+
+# AI data assistant
+
+The AI data assistant is a chat panel that browses a workspace's catalogs, writes and runs SQL, and explains the
+results, with no more access than the service account it acts as.
+
+It is governed and model-agnostic: an operator chooses the model, and the assistant browses catalog metadata (catalogs,
+schemas, tables, columns), authors and runs SQL against the workspace's catalogs, and explains what it found, all in a
+conversation.
+
+!!! info "Availability"
+    Off until an operator turns it on and gives its service account access; see
+    [Set up the assistant](set-up-the-assistant.md).
+
+Crucially, the assistant is **not** a privileged back door. It acts as an ordinary DuckHaven service-account principal,
+and every action it takes flows through the exact same enforcement as any other client. An administrator governs what
+the assistant can see and do with the same grants they already use for people.
+
+## What it can do
+
+- **Use your curated definitions** — when the workspace has published [semantic models](../metadata/semantic-layer.md),
+  the assistant answers metric questions from those definitions rather than working the calculation out from column
+  names. It looks up what a business term means, compiles the query from the stored definition, and can explain how a
+  metric is calculated and what it excludes.
+- **Browse metadata** — list the catalogs, schemas, and tables visible to it, and describe a table's columns, row count,
+  and size.
+- **Trace lineage** — answer "where does this come from?" and "what breaks if I change it?" from the recorded [lineage
+  graph](../metadata/lineage.md) rather than by guessing from column names. A source it holds no grant on comes back
+  unnamed but still present, and it is told to say so rather than report the path as ending there.
+- **Run SQL** — write and execute a query, then reason over a capped sample of the results. The full result set is
+  available to you in the UI, exactly as if you had run the query yourself. Decimals and large integers reach it as
+  exact values with each column's type, so it quotes them as they are rather than as rounded approximations.
+- **Propose editor edits** — on the worksheet, write or change the SQL in your editor as a highlighted, accept-or-reject
+  suggestion (it never edits or runs on its own). If your worksheet has a non-empty text selection when you ask, the
+  proposed edit is scoped to just that selection instead of rewriting the whole worksheet.
+- **Explain** — summarise what it found and show the SQL it ran.
+- **Answer questions about DuckHaven itself** — which SQL statements are allowed, how to query a table as of a past
+  snapshot, why `DESCRIBE` rather than `information_schema.columns` reads an Iceberg table's columns, and what
+  DuckHaven does not do. See [Product knowledge](#product-knowledge) below.
+- **Ask when unsure** — if a request is missing something it needs to answer correctly (the grain, a time window,
+  which table), it asks a short clarifying question rather than guessing.
+
+It runs one turn at a time in a conversation, and each conversation is private to the person who started it.
+
+To use an AI agent you already have — Claude Code, Claude Desktop, Cursor — against the same data instead, see the
+[MCP server](mcp-server.md). It inherits the governance described below, but acts as the caller's own identity rather
+than as a shared service account.
+
+## What it cannot do
+
+- It cannot exceed the data access of its service account. If the account was granted read-only, `metadata`-tier, or
+  no access to something, the assistant sees exactly that — no more.
+- It cannot bypass the SQL guard. The same statement allowlist that applies to interactive queries applies here.
+- It cannot silently write. Writes are off unless the service account is granted write access, and even then every
+  write (INSERT/UPDATE/DELETE/DDL) must be **approved by a human** before it runs (see below).
+- It has no access to DuckHaven's control-plane database, to Polaris directly, or to the compute agents directly. It
+  only ever calls DuckHaven's own REST API.
+- It cannot use a draft or broken semantic definition. Only *published* models reach it, and a definition whose column
+  is gone is withheld: the assistant says a metric is defined but broken rather than substituting its own calculation.
+- It cannot draw a chart or any other visualisation; it gives the numbers, which you can chart in a worksheet.
+- It cannot search the *contents* of tables. It can match a question to a metric by name or synonym in the
+  [semantic layer](../metadata/semantic-layer.md).
+- It cannot run on a schedule or unattended. It answers one turn at a time, in one conversation.
+- It remembers only the most recent turns of a conversation: a long conversation forgets its oldest messages, and the
+  panel says when that point is crossed. Start a new conversation for an unrelated topic.
+
+## How governance works
+
+The assistant is built on a general agent harness ([Pydantic AI](https://ai.pydantic.dev/)) that supplies the
+conversation loop, the model abstraction, and the tool-calling machinery. DuckHaven supplies the tools, and the tools
+are deliberately thin: each one is an authenticated call to DuckHaven's own REST API, made **as the service account**.
+
+That single design choice is what makes the assistant safe. Because the tools go through the same endpoints the web app
+uses, they inherit the same checks, in the same order:
+
+```
+workspace membership  →  SQL statement allowlist  →  scoped catalog grants  →  DuckDB execution
+```
+
+None of that enforcement lives in the assistant. Even if the language model were confused, or a hostile value in a
+table cell tried to talk it into running something it shouldn't (a *prompt injection*), the worst it could achieve is
+what the service account was already allowed to do — and every attempt is recorded.
+
+On top of that server-side boundary, the assistant adds an **audit and UX layer**: every tool call is logged with its
+arguments and outcome, and a proposed write is paused for human approval rather than executed.
+
+## Identity
+
+The assistant acts as one **service account**, named `Assistant` — the same kind of principal you create for
+automation, described in [Service accounts & tokens](../access/service-accounts.md). It is not configurable, and you do
+not have to create it: enabling the assistant creates it on startup if it is not already there.
+
+!!! warning "A service account you already named Assistant will be reused"
+    The account is identified by the address a service account named `Assistant` would get,
+    `assistant@service-account.local`. If your deployment already has one under that name — created for unrelated
+    automation — enabling the assistant **adopts it**, along with every workspace membership and catalog grant it
+    holds. Check for it before turning the assistant on, and rename it if the AI assistant should not inherit its
+    reach.
+
+Creating it grants nothing. It arrives with no workspace membership and no catalog grants, so until you give it some,
+every question comes back denied — and the assistant panel says exactly that instead of letting you spend a turn finding
+out. You govern its data access per workspace with [workspace membership](../access/workspaces.md) and
+[catalog grants](../access/how-access-works.md), exactly as you would for any principal:
+
+- Give it `reader` or a `metadata`-tier grant for a browse-and-read assistant.
+- Add `writer` where you want it to be able to propose writes (still gated by approval).
+- Leave it out of a workspace entirely, and it cannot be used there.
+
+Because access is scoped per workspace, the same assistant can have different reach in different workspaces — broad in a
+sandbox, narrow in production.
+
+Disabling the account in the admin UI is a kill switch: the assistant stops working everywhere, a restart will not
+re-enable it, and the panel says the account is unavailable rather than pointing you at workspace membership. Disabling
+is also the only option once the assistant has run anything — deleting a service account that has query history is
+refused, to keep the audit trail intact. Where deletion *is* still possible, it lasts until the next restart, which
+recreates the account — again with no access.
+
+When the assistant makes a call, the runtime mints a **short-lived personal access token** for the service account, uses
+it for that turn, and deletes it immediately after. Nothing long-lived or reconstructable is stored, and every query the
+assistant runs is attributed to the service account in the query history and audit trail, with `duckhaven-assistant`
+as its client. Each query also carries an `assistant.conversation`
+[tag](../querying/run-queries.md#find-an-earlier-run) with the conversation's id, so History can tell one conversation's
+queries from another's. A query answered from a metric definition is also tagged with the `semantic.model` and
+`semantic.metrics` it used.
+
+## Write approval
+
+When the assistant proposes a write and its service account is permitted to write, the turn pauses and the UI shows the
+exact SQL for you to **approve or deny**. Only on approval does the statement run — and it still passes through the SQL
+guard and grant checks like any other query. This keeps a human in the loop for anything that changes data.
+
+## Model configuration
+
+The assistant is model-agnostic: the provider and model are deployment configuration, not baked into the code. It
+supports Anthropic, OpenAI, and Mistral natively, and any OpenAI-compatible endpoint (for example a self-hosted Ollama
+or vLLM server) via a base URL — so a fully self-hosted, keyless deployment is possible. See
+[Configuration](../reference/configuration.md#ai-assistant) for the settings.
+
+## Product knowledge
+
+The assistant is told what DuckHaven is, not just how to operate it. Its instructions carry a curated summary of the
+platform's own behaviour — the DuckDB-on-Iceberg dialect and how to address tables across catalogs, the read-only
+time-travel syntax, why an Iceberg table's columns come from `DESCRIBE` rather than `information_schema.columns`, which
+statements the [SQL guard](../reference/sql-support.md) rejects, and which result values lose precision in transit.
+
+The point is less that it can recite these than that it acts on them. Without the `DESCRIBE` rule it writes
+`information_schema.columns` and gets a placeholder row back; without the allowlist it proposes statements the API
+rejects before a compute agent ever sees them.
+
+It is also told to answer these questions from that summary rather than from general knowledge of other data
+platforms, to say plainly when it does not know instead of guessing, and to describe anything experimental or
+unshipped in those words rather than as available. DuckHaven differs from other data platforms in ways that matter,
+and a confident wrong answer about one of those differences is worse than no answer.
+
+Beyond that summary, the assistant carries an **index of this documentation** — every page's path and title, grouped
+by section — and can both **search** the full text of every page and **open** any of them in full. Asked something the
+summary does not cover, it searches for the pages that discuss it, reads the best match, and names the path it used
+rather than reasoning from a title. Set `ASSISTANT_DOCS_ENABLED=false` to remove the section and both tools.
+
+Search is ordinary lexical full-text — Postgres's, over the pages the image ships — not a semantic or vector index.
+That is a deliberate choice for a corpus of this size, and it has an honest consequence: a question sharing no words
+with the page that answers it may not find it. When search comes back empty the assistant says the documentation does
+not cover the question rather than inventing an answer, which is the behaviour that matters.
+
+!!! note "It answers for the version you are running"
+    The pages the assistant reads ship inside the DuckHaven image, so they describe **your** release rather than the
+    latest published documentation. If you are running an older version, that is a feature: it will not tell you about
+    something your deployment does not have. It also means the assistant cannot see documentation written after your
+    build — upgrade to get it.
+
+## What it knows about your workspace
+
+The assistant's instructions are assembled per turn from what the workspace actually has, so it is told about a feature
+only where that feature is in use. A workspace with published [semantic models](../metadata/semantic-layer.md) is told
+to prefer them; one whose catalogs sit on [external storage](../data/storage-backends.md) is told that credentials are
+vended per query and never static; a deployment running [elastic compute](../compute/elastic-compute.md) is told that a
+query may wait while an agent starts; and a workspace with more than one [agent](../compute/agents.md) is told a
+worksheet chooses between them.
+
+A workspace using none of these is told nothing about any of them — not that they are switched off. That is
+deliberate: the instructions stay short, and an assistant that has never heard of a feature cannot offer it to
+someone who does not have it.
+
+## Improving it over time
+
+Every tool call the assistant makes is already recorded with its arguments and outcome, which is enough to find the
+questions it handled badly: searches that returned nothing, documentation it failed to open, turns that produced no
+answer, and product questions it answered without consulting anything. The
+[`assistant-mine-feedback.py`](../reference/operator-scripts.md#assistant-mine-feedbackpy)
+operator script collects those and drafts them as test cases for a person to review.
+
+It is deliberately a script an operator runs rather than an automatic loop. DuckHaven records what the assistant
+*did*, not whether you were satisfied with it, so anything more automatic would be inferring quality from evidence
+that does not contain it.
+
+## Semantic grounding
+
+Where a published semantic model covers a question, the assistant does not write the aggregation. It chooses *which*
+metric and *which* dimensions; DuckHaven generates the SQL from the stored definition, so the filter, the join path and
+the correct date column come from what the organization agreed rather than from the model's judgement.
+
+Free SQL is still available and still right for anything the semantic models do not cover. It is not blocked when a
+metric exists, but bypassing one is [flagged and recorded](../metadata/semantic-layer.md#how-the-assistant-uses-it), so
+how often the agreed definitions get worked around is a number you can look at rather than a hope.
+
+## Related
+
+- [Set up the assistant](set-up-the-assistant.md) — turning it on.
+- [MCP server](mcp-server.md) — the same governance, for an AI agent you already use.
+- [Semantic layer](../metadata/semantic-layer.md) — the definitions the assistant answers metric questions from.
+- [Permissions](../access/how-access-works.md) — the grants that bound what it can reach.
+- [Use the AI assistant](use-the-assistant.md) — turning it on and working with it.

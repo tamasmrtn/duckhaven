@@ -1,0 +1,60 @@
+---
+type: concept
+---
+
+# Tables & Iceberg
+
+A table in an Iceberg catalog is an Apache Iceberg table that Polaris manages, with snapshots, schema evolution and
+time travel.
+
+Every table in an Iceberg [catalog](catalogs.md) is an [Apache Iceberg](https://iceberg.apache.org/) table. Polaris
+arbitrates every commit to it, and any engine that reads Iceberg can open it.
+
+This page describes the default catalog kind. A table in a [DuckLake](ducklake.md) catalog is a DuckLake table
+instead — same Parquet underneath, different metadata and a few different limits.
+
+## Creating tables
+
+Tables can be created two ways, whichever kind the catalog is:
+
+- **From the catalog UI** — a dialog where you specify columns and types.
+- **From SQL** — a `CREATE TABLE` statement run through a worksheet against the attached catalog.
+
+The breadth of `CREATE` / `ALTER` support is bounded by the DuckDB `iceberg` extension version on the executing
+[agent](../compute/agents.md); unsupported operations surface as query errors rather than silent no-ops.
+
+## Inspecting a table's columns
+
+Clicking a table in the catalog browser shows its columns as Polaris holds them. From SQL, use
+`DESCRIBE <catalog>.<schema>.<table>` — the supported path, and the one every DuckHaven client uses.
+`information_schema.columns` cannot introspect an Iceberg table; see
+[SQL support](../reference/sql-support.md#columns-and-types-use-describe) for why and what it returns instead.
+
+## Snapshots and time travel
+
+Each table keeps an Iceberg **snapshot history**. DuckHaven reads it live from Polaris (it is never persisted) and lets
+you open a worksheet pinned to a past snapshot using DuckDB's time-travel syntax. See
+[Snapshots & time travel](snapshots-time-travel.md).
+
+!!! note "Snapshot expiration is recommended, not applied"
+    The [maintenance advisor](maintenance.md) detects snapshot bloat, fragmentation, and orphaned files and recommends
+    expiring or compacting, with a remediation command for an external engine. It does **not** perform these
+    operations on an Iceberg table itself, because DuckDB's `iceberg` extension cannot run them.
+
+## Dropping tables
+
+`DROP TABLE` purges the underlying data files (Polaris drop-with-purge is enabled on DuckHaven-owned catalogs).
+
+## Sample rows and stats
+
+The catalog browser can preview sample rows (capped, run as an internal query excluded from history) and shows
+agent-computed row counts and size, plus format-native facts: the data-file count and whether delete files
+are present for either kind, and the latest snapshot for Iceberg tables.
+See [Metadata](../metadata/table-metadata.md).
+
+## Related
+
+- [Catalogs & Polaris](catalogs.md) — the catalog a table lives in.
+- [Metadata](../metadata/table-metadata.md) — the per-table facts DuckHaven records alongside Polaris.
+- [Snapshots & time travel](snapshots-time-travel.md) — querying a past snapshot.
+- [SQL support](../reference/sql-support.md) — what `CREATE`/`ALTER` and `DESCRIBE` do here.

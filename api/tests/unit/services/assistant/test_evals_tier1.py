@@ -459,11 +459,11 @@ def test_an_answer_that_cites_nothing_is_unscored_rather_than_failed():
 
 
 def test_cited_paths_finds_every_path_named():
-    answer = "See reference/sql-support.md and guides/snapshots-time-travel.md."
+    answer = "See reference/sql-support.md and data/snapshots-time-travel.md."
 
     assert metrics.cited_paths(answer) == {
         "reference/sql-support.md",
-        "guides/snapshots-time-travel.md",
+        "data/snapshots-time-travel.md",
     }
 
 
@@ -987,7 +987,7 @@ def test_the_judge_sees_the_instructions_the_assistant_was_given():
 
 def test_the_judge_can_tell_which_pages_exist():
     """The resident page index goes to the judge whole. Stripping it to save a
-    third of the text cost a correct citation: `guides/service-accounts.md` is a
+    third of the text cost a correct citation: `access/service-accounts.md` is a
     real, indexed page, and without the index the judge scored the pointer to it
     as an invented page."""
     from api.services.assistant.knowledge.loader import load_index
@@ -998,7 +998,7 @@ def test_the_judge_can_tell_which_pages_exist():
 
     context = _context(_case("c"), _run_result(instructions=f"Product facts.{index}"))
 
-    assert "guides/service-accounts.md" in context
+    assert "access/service-accounts.md" in context
 
 
 def test_a_page_search_surfaced_can_be_placed_without_being_opened():
@@ -1008,12 +1008,12 @@ def test_a_page_search_surfaced_can_be_placed_without_being_opened():
     never entered its context."""
     from tests.evals.compare import _context
 
-    result = _run_result(searched_paths=["concepts/elastic-compute.md"])
+    result = _run_result(searched_paths=["compute/elastic-compute.md"])
 
     context = _context(_case("pricing"), result)
 
     assert "search_docs returned" in context
-    assert "concepts/elastic-compute.md" in context
+    assert "compute/elastic-compute.md" in context
 
 
 def test_a_page_that_was_opened_is_not_also_listed_as_merely_searched():

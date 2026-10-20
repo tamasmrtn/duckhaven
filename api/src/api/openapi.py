@@ -1,6 +1,6 @@
 """Schema-level conventions applied to every route at once.
 
-The rules in docs/reference/api-conventions.md that can be derived rather than
+The rules in docs/developer/api-conventions.md that can be derived rather than
 hand-written are derived here, so they hold for endpoints that do not exist yet
 and cannot drift as routes are added. api/tests/unit/test_openapi_conformance.py
 asserts the result.

@@ -12,7 +12,7 @@ time. Asserting the denials means that change cannot land quietly.
 
 Scope note, the same one as test_compose_sandbox.py: this asserts the *manifest*.
 That the proxy actually refuses `/exec` at runtime is verified by the documented
-commands in docs/deployment/homelab-elastic-setup.md. What CI guarantees is that the
+commands in docs/compute/elastic-docker.md. What CI guarantees is that the
 wiring never silently regresses.
 """
 

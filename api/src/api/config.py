@@ -275,7 +275,7 @@ class Settings(BaseSettings):
 
     # ── Result cache ──────────────────────────────────────────────────────────
     # A repeated read is answered from an earlier run's result while every table
-    # it read is unchanged (docs/concepts/result-cache.md). On by default; turning
+    # it read is unchanged (docs/querying/result-cache.md). On by default; turning
     # this off overrides every workspace's own toggle.
     result_cache_enabled: bool = True
     # Budget for deciding whether a query is a hit: parsing it, asking the catalogs
@@ -376,7 +376,7 @@ class Settings(BaseSettings):
     # deployment. The daemon is addressed over TCP rather than a mounted socket, so
     # the API container holds no socket file; in the shipped topology that endpoint
     # is a docker-socket-proxy allowing only container and image calls. Read
-    # docs/deployment/homelab-elastic-setup.md before enabling it -- the proxy
+    # docs/compute/elastic-docker.md before enabling it -- the proxy
     # filters paths, not request bodies.
     elastic_docker_host: str = "tcp://docker-socket-proxy:2375"
     # The user-defined network agents are attached to. On the bundled stack this is

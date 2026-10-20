@@ -1,0 +1,11 @@
+# One name per thing. Permission names are the strings in
+# api/src/api/services/permissions.py, so readers can match them to the UI,
+# the API and the audit log.
+extends: substitution
+message: "Use '%s' instead of '%s'."
+level: warning
+ignorecase: true
+swap:
+  query-admin permission: queries:admin permission
+  cross-workspace query permission: queries:admin permission
+  the catalogs permission: the catalogs:admin permission

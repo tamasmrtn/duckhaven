@@ -261,7 +261,7 @@ def test_the_summary_keeps_what_each_case_actually_did():
             reason="grounded",
             answer="Revenue by region is …",
             tools_called=("search_semantic", "query_metric"),
-            doc_paths=("concepts/semantic-layer.md",),
+            doc_paths=("metadata/semantic-layer.md",),
         )
     ]
 
@@ -269,7 +269,7 @@ def test_the_summary_keeps_what_each_case_actually_did():
 
     assert outcome["case"] == "revenue_by_region"
     assert outcome["tools_called"] == ["search_semantic", "query_metric"]
-    assert outcome["doc_paths"] == ["concepts/semantic-layer.md"]
+    assert outcome["doc_paths"] == ["metadata/semantic-layer.md"]
     assert outcome["answer"].startswith("Revenue by region")
 
 

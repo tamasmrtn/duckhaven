@@ -1,0 +1,27 @@
+# Docs describe how DuckHaven behaves today. Phrases that narrate a change
+# ("now cached", "no longer needed") age badly and leave the reader comparing
+# against a version they never used. Changes over time belong in the GitHub
+# release notes and reference/api-versions.md.
+extends: existence
+message: "'%s' describes a change over time. Describe current behavior; history belongs in release notes."
+level: warning
+ignorecase: true
+tokens:
+  # Not the Lakehouse page's **Scan now** button.
+  - (?<!scan )now
+  - no longer
+  - previously
+  - as before
+  - exactly as before
+  - (?:in )?this release
+  - (?:has|have) always
+  - (?<!(?:is|are|be|was|were|been|being|gets|get) )used to
+  - new in
+  - recently
+  # "Not yet", or "yet" closing a clause; not the conjunction ("…, yet the files…").
+  - not yet
+  - yet(?=\s*[.;:)])
+  - any ?more
+  - from now on
+  - going forward
+  - (?:older|earlier) releases?

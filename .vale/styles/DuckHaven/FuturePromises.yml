@@ -1,0 +1,14 @@
+# Document what exists. Say what is not supported plainly ("DuckLake catalogs
+# cannot be migrated") instead of promising when it will be.
+extends: existence
+message: "'%s' promises future behavior. State what is supported today."
+level: warning
+ignorecase: true
+tokens:
+  - coming soon
+  - will soon
+  - in a future release
+  - on the roadmap
+  - roadmap item
+  - eventually
+  - planned but not yet shipped

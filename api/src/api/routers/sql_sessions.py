@@ -107,6 +107,21 @@ async def _load_session(
     return session
 
 
+def _assert_owner(session: SqlSession, user: User) -> None:
+    """403 unless ``user`` opened ``session``.
+
+    Every member may read a session, as they may read query history, but only its
+    owner may act through it: a statement runs, and is authorized and recorded, as
+    the session's owner, so letting another member submit one would let them act
+    with the owner's grants under the owner's name.
+    """
+    if session.user_id != user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the member who opened this session can use it.",
+        )
+
+
 def _is_restartable_elastic(agent: Agent) -> bool:
     """Whether sending work to this agent should start it rather than fail.
 
@@ -556,6 +571,7 @@ async def run_statement(
     # (say, a USE) must be visible to that check, not land between the check and
     # this dispatch.
     session = await _load_session(db, session_id, user, for_update=True)
+    _assert_owner(session, user)
     if session.status != "open":
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -809,6 +825,7 @@ async def create_staging_files(
     """
     _require_enabled()
     session = await _load_session(db, session_id, user)
+    _assert_owner(session, user)
     # A reaped/closed session (or one whose agent dropped — the reaper reflects it
     # in status) can no longer stage; mirror the statement path's lost-session 409.
     if session.status != "open":
@@ -850,9 +867,15 @@ async def close_session(
     """Close a session and release its connection and any elastic compute.
 
     Idempotent: closing an already-closed, expired or failed session succeeds.
-    Everything session-local -- temp tables, `SET`s -- is gone afterwards."""
+    Everything session-local -- temp tables, `SET`s -- is gone afterwards. Another
+    member's session can be force-closed only with `queries:admin`."""
     _require_enabled()
     session = await _load_session(db, session_id, user)
+    if session.user_id != user.id and not await has_permission(db, user, Permission.QUERIES_ADMIN):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Closing another member's session needs the queries:admin permission.",
+        )
     if session.status in ("closed", "expired", "failed"):
         return Response(status_code=status.HTTP_204_NO_CONTENT)
     session.status = "closing"

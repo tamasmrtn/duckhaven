@@ -12,6 +12,7 @@ from api.models.agent_grant import AgentGrant
 from api.models.query import Query
 from api.models.sql_session import SqlSession
 from api.models.user import User
+from api.models.workspace import WorkspaceMember
 from api.services.agent_registry import registry
 from api.services.auth import hash_password
 from api.services.sql_sessions import service as session_service
@@ -401,6 +402,114 @@ async def test_close_session(
     assert resp.status_code == 204
     await db_session.refresh(session)
     assert session.status == "closing"
+
+
+# ── A session belongs to the member who opened it ─────────────────────────────
+
+
+@pytest_asyncio.fixture
+async def colleague(db_session, workspace):
+    """Another member of the same workspace, holding a session of their own."""
+    u = User(email="c@sessions.local", password_hash=hash_password("pw"), name="Coll", role="user")
+    db_session.add(u)
+    await db_session.flush()
+    db_session.add(WorkspaceMember(workspace_id=workspace.id, user_id=u.id, role="owner"))
+    await db_session.commit()
+    await db_session.refresh(u)
+    return u
+
+
+async def test_a_member_cannot_run_statements_in_a_colleagues_session(
+    authed_client, db_session, workspace, agent, colleague, enabled, monkeypatch
+):
+    session = await _open_session_row(db_session, workspace, agent, colleague)
+    dispatched: list = []
+
+    async def fake_exec(db, sess, query, timeout_s, catalogs):
+        dispatched.append(query)
+        return True
+
+    monkeypatch.setattr(session_service, "dispatch_exec_statement", fake_exec)
+
+    resp = await authed_client.post(
+        f"/sql/sessions/{session.id}/statements", json={"sql": "SELECT 1"}
+    )
+
+    assert resp.status_code == 403, resp.text
+    assert dispatched == []
+
+
+async def test_a_member_cannot_stage_files_in_a_colleagues_session(
+    authed_client, db_session, workspace, agent, colleague, enabled, monkeypatch
+):
+    _patch_presign(monkeypatch)
+    session = await _open_session_row(db_session, workspace, agent, colleague)
+
+    resp = await authed_client.post(
+        f"/sql/sessions/{session.id}/staging-files", json={"files": ["o.parquet"]}
+    )
+
+    assert resp.status_code == 403, resp.text
+
+
+async def test_a_member_cannot_close_a_colleagues_session(
+    authed_client, db_session, workspace, agent, colleague, enabled, monkeypatch
+):
+    session = await _open_session_row(db_session, workspace, agent, colleague)
+    monkeypatch.setattr(session_service, "dispatch_close_session", _fail_if_called)
+
+    resp = await authed_client.delete(f"/sql/sessions/{session.id}")
+
+    assert resp.status_code == 403, resp.text
+    await db_session.refresh(session)
+    assert session.status == "open"
+
+
+async def test_a_queries_admin_may_force_close_a_colleagues_session(
+    authed_client, db_session, workspace, agent, user, colleague, enabled, monkeypatch
+):
+    user.role = "admin"
+    await db_session.commit()
+    session = await _open_session_row(db_session, workspace, agent, colleague)
+
+    async def fake_close(db, agent_id, session_id):
+        return True
+
+    monkeypatch.setattr(session_service, "dispatch_close_session", fake_close)
+
+    resp = await authed_client.delete(f"/sql/sessions/{session.id}")
+
+    assert resp.status_code == 204
+    await db_session.refresh(session)
+    assert session.status == "closing"
+
+
+async def test_a_queries_admin_still_cannot_run_statements_in_it(
+    authed_client, db_session, workspace, agent, user, colleague, enabled
+):
+    user.role = "admin"
+    await db_session.commit()
+    session = await _open_session_row(db_session, workspace, agent, colleague)
+
+    resp = await authed_client.post(
+        f"/sql/sessions/{session.id}/statements", json={"sql": "SELECT 1"}
+    )
+
+    assert resp.status_code == 403
+
+
+async def test_members_can_still_read_a_colleagues_session(
+    authed_client, db_session, workspace, agent, colleague, enabled
+):
+    """Sessions are visible to the whole workspace, like query history."""
+    session = await _open_session_row(db_session, workspace, agent, colleague)
+
+    assert (await authed_client.get(f"/sql/sessions/{session.id}")).status_code == 200
+    assert (await authed_client.get(f"/sql/sessions/{session.id}/statements")).status_code == 200
+
+
+async def _fail_if_called(*args, **kwargs):
+    raise AssertionError("a refused close must not reach the agent")
 
 
 # ── Staging files (presigned URLs, issue #160) ────────────────────────────────

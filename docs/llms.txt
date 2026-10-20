@@ -86,19 +86,19 @@
 
 ## Deploy
 
-- [Docker Compose](https://tamasmrtn.github.io/duckhaven/deployment/install/): Deploy the full stack with Docker Compose.
-- [Reverse proxy & TLS](https://tamasmrtn.github.io/duckhaven/deployment/reverse-proxy-tls/): Front the stack with a reverse proxy and TLS.
+- [Docker Compose](https://tamasmrtn.github.io/duckhaven/deployment/install/): Install DuckHaven on one Linux host with Docker Compose, create the first admin, and keep the install private.
+- [Reverse proxy & TLS](https://tamasmrtn.github.io/duckhaven/deployment/reverse-proxy-tls/): Put DuckHaven behind a reverse proxy that terminates TLS, for any deployment reachable beyond a private network.
 - [Enable DuckLake](https://tamasmrtn.github.io/duckhaven/deployment/ducklake/): DuckLake is a second catalog kind, available by default.
 - [High availability](https://tamasmrtn.github.io/duckhaven/deployment/high-availability/): The highly-available topology runs Postgres as a Patroni cluster and several API replicas, so the control plane survives losing a database node or an API container.
-- [Azure with Terraform](https://tamasmrtn.github.io/duckhaven/deployment/azure-terraform/): Deploy the whole stack to Azure as managed infrastructure, with Terraform.
-- [Updating](https://tamasmrtn.github.io/duckhaven/deployment/updating/): Updates pull a new image and restart the stack.
+- [Azure with Terraform](https://tamasmrtn.github.io/duckhaven/deployment/azure-terraform/): The Terraform in deploy/terraform/ deploys DuckHaven to Azure as managed services, with elastic agents on Container Instances.
+- [Updating](https://tamasmrtn.github.io/duckhaven/deployment/updating/): Pull new images and restart the stack; database migrations run on their own when the API starts.
 - [Backup & restore](https://tamasmrtn.github.io/duckhaven/deployment/backup-restore/): Back up DuckHaven's three Postgres databases and its secret key, restore them, and upgrade Postgres to a new major version without losing data.
 
 ## Operate
 
 - [Monitoring](https://tamasmrtn.github.io/duckhaven/operations/monitoring/): DuckHaven exports Prometheus metrics for alerting, records every query in History, and gives each agent a monitoring page.
 - [Distributed tracing](https://tamasmrtn.github.io/duckhaven/operations/tracing/): DuckHaven emits OpenTelemetry traces alongside the Prometheus metrics.
-- [HA failover runbook](https://tamasmrtn.github.io/duckhaven/operations/ha-failover/): Drills that prove the highly-available control plane survives the failures it is designed for.
+- [HA failover runbook](https://tamasmrtn.github.io/duckhaven/operations/ha-failover/): Run three drills that prove the highly-available control plane survives losing its Postgres primary or an API replica, and never runs background work twice.
 - [Troubleshoot the deployment](https://tamasmrtn.github.io/duckhaven/operations/troubleshooting/): Find what you see on the control-plane host, behind your proxy or on the network, then follow what to do.
 
 ## Reference

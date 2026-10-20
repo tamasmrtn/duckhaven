@@ -1,3 +1,7 @@
+---
+type: concept
+---
+
 # Distributed tracing
 
 DuckHaven emits [OpenTelemetry](https://opentelemetry.io/) traces alongside the
@@ -5,7 +9,7 @@ DuckHaven emits [OpenTelemetry](https://opentelemetry.io/) traces alongside the
 minutes", a trace answers "where did *this* request spend its time" — one timeline per request, spanning the API's
 HTTP handling, its database work, and every call it makes to Apache Polaris.
 
-Tracing is additive: the metrics endpoint, its cardinality policy, and the audit log are unchanged.
+Traces sit beside the metrics and the audit log; they replace neither.
 
 ## Architecture
 
@@ -62,7 +66,7 @@ by default.
 | SQLAlchemy (automatic) | A span per database statement, with the SQL as an attribute. |
 | `dispatch_query` (manual, api) | Wraps handing a query to an agent over the WebSocket control channel. Its W3C trace context rides inside the `DISPATCH_QUERY` frame so the agent's span below continues the same trace instead of starting a new one. Carries `duckhaven.origin` (`interactive` for a user's query, or the schedule/maintenance origin) so automated runs are distinguishable from clicks. |
 | `provision_agent` (manual, api) | Wraps asking a compute backend to create an [elastic agent](../compute/elastic-compute.md). Carries `duckhaven.agent_id`, `duckhaven.compute_provider`, and the requested vCPU/memory. Without it a cold start is an unexplained gap in the trace: the query's own `dispatch_query` span cannot begin until an agent exists, so the wait belongs to no span at all. Failures set the span to an error status. |
-| `handle_dispatch` (manual, agent) | The agent's per-query span: admission queueing, running the query, and sending the result back. Continues the api's trace when the frame carried one; starts a fresh trace otherwise (e.g. an older peer without tracing). Failures set the span to an error status. |
+| `handle_dispatch` (manual, agent) | The agent's per-query span: admission queueing, running the query, and sending the result back. Continues the api's trace when the frame carried one; starts a fresh trace otherwise (for example from an older peer without tracing). Failures set the span to an error status. |
 | `duckdb.execute` (manual, agent) | Wraps the actual DuckDB execution (offloaded to a worker thread), so per-query execution time is visible directly in the trace rather than only in the aggregate `duckhaven_query_duration_seconds` histogram. Also where the agent hands its active span to DuckDB's own Polaris calls — see [Apache Polaris](#apache-polaris). |
 | `assistant.turn` (manual, api) | One span per AI-assistant turn, carrying `duckhaven.conversation_id`, `duckhaven.workspace_id`, and the model name. Pydantic AI's own instrumentation nests under it — an agent-run span, a model-request span per LLM call (with `gen_ai.usage.*` token counts), and a span per tool call — and the assistant's loopback SQL chains on down through `dispatch_query` into the agent. Failures set the span to an error status. See [The AI assistant](#the-ai-assistant). |
 | results server (automatic, agent) | One server span per result-page fetch the api makes to the agent's result server, continuing the api's client span. A windowed page adds a `duckdb.slice_parquet` child span for the local slice. |
@@ -77,9 +81,9 @@ Polaris's own OTel SDK (built into the vendored Quarkus image) is enabled and po
 internal Iceberg-catalog spans — namespace/table lookups, credential vending — join the trace of whatever caused them
 instead of appearing as one opaque HTTP call. Two call paths reach Polaris, joined by different mechanisms:
 
-- **api → Polaris**, e.g. listing schemas or managing grants: no extra code needed. `HTTPXClientInstrumentor` already
-  adds a `traceparent` header to every request the api sends, and Quarkus's server-side instrumentation extracts it and
-  continues the same trace, nested under the api's httpx client span.
+- **api → Polaris**, for example listing schemas or managing grants: no extra code needed. `HTTPXClientInstrumentor`
+  already adds a `traceparent` header to every request the api sends, and Quarkus's server-side instrumentation extracts
+  it and continues the same trace, nested under the api's httpx client span.
 - **agent → Polaris**: DuckDB's own Iceberg REST catalog client makes these calls (OAuth token exchange,
   namespace/table lookups, credential vending) directly from within the `iceberg`/`httpfs` extensions — an HTTP client
   with no OpenTelemetry instrumentation of its own, so it would otherwise start a disconnected trace per call. Before

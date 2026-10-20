@@ -1,6 +1,13 @@
+---
+type: concept
+---
+
 # Azure with Terraform
 
-Deploys DuckHaven to Azure as managed infrastructure: the control plane on Container
+The Terraform in `deploy/terraform/` deploys DuckHaven to Azure as managed services, with elastic agents on
+Container Instances.
+
+It deploys DuckHaven to Azure as managed infrastructure: the control plane on Container
 Apps, a managed PostgreSQL server, ADLS Gen2 for Iceberg data, and the plumbing that
 lets the control plane create [elastic agents](../compute/elastic-compute.md) on
 demand. The Terraform lives in `deploy/terraform/`.
@@ -13,8 +20,8 @@ a node failure and be reproducible from source.
     The topology has been applied and exercised end to end on a staging subscription: the
     API serves, Polaris answers, a storage-backend health check vends credentials and
     reaches ADLS over its private endpoint, and an elastic agent has been created,
-    queried, terminated and restarted. The passwordless database and registry paths are
-    newer and have not yet been through a full apply. The first apply for any environment
+    queried, terminated and restarted. The passwordless database and registry paths have
+    not been through a full apply. The first apply for any environment
     is staged — read [Before the first apply](#before-the-first-apply).
 
 ## What the network looks like

@@ -1,7 +1,19 @@
+---
+type: how-to
+---
+
 # HA failover runbook
 
-Drills that prove the [highly-available control plane](../deployment/high-availability.md)
-survives the failures it is designed for. Run them against a stack started with:
+Run three drills that prove the highly-available control plane survives losing its Postgres primary or an API
+replica, and never runs background work twice.
+
+## Before you begin
+
+- **You need:** shell access to the host running the [HA stack](../deployment/high-availability.md), and an admin
+  account to submit queries with.
+- **Run them on staging.** Each drill kills a component on purpose.
+
+Start the stack with:
 
 ```bash
 docker compose -f deploy/docker-compose.ha.yml --env-file deploy/.env up -d
@@ -65,8 +77,8 @@ reconnect to another replica, and queries keep working.
 
 4. **Expected:** the agent's WebSocket drops and it reconnects through Caddy,
    landing on `api-2`, which becomes the new owner (`owner_url` updates). Caddy
-   stops routing browser traffic to `api-1` because `/api/readyz` no longer
-   answers. Submit a new query — it dispatches via `api-2` and completes.
+   stops routing browser traffic to `api-1` because `/api/readyz` does not
+   answer. Submit a new query — it dispatches via `api-2` and completes.
 5. A query that was *running* on the agent at the instant of the kill may lose its
    final status frame (it is reaped by its timeout); its result Parquet still
    exists on the agent. New work is unaffected.
@@ -141,3 +153,18 @@ curl -fsS localhost:8000/api/readyz && echo OK
 
 Both API replicas should be healthy, the Postgres cluster should have a leader and
 a running standby, and `/api/readyz` should return `200`.
+
+## If it goes wrong
+
+- **No new Postgres leader after Drill 1.** Check `patronictl list` on a surviving node, and etcd's health; Patroni
+  needs etcd to elect a leader.
+- **The agent does not reconnect after Drill 2.** Check that Caddy passes WebSocket upgrades and that `api-2` is
+  healthy; the agent retries every 5 seconds.
+- **Both replicas log a scan or a scheduled run for the same tick in Drill 3.** Leader election failed. Check that
+  both replicas reach the same Postgres through `pg-haproxy`, since the advisory locks live there, and report the
+  logs with the issue.
+
+## Related
+
+- [High availability](../deployment/high-availability.md) — the topology.
+- [Backup and restore](../deployment/backup-restore.md#ha-stack) — dumps through `pg-haproxy`.

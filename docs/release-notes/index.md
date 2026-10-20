@@ -13,13 +13,8 @@ DuckHaven releases are cut by pushing a `vX.Y.Z` Git tag — the tag is the sour
 
 ## Versioning
 
-Tags follow semantic versioning, with the bump chosen from the commits since the last tag:
-
-- `fix:` → patch
-- `feat:` → minor
-- a breaking change → major
-
-A tag containing `-` (for example `v1.3.0-rc.1`) is published as a prerelease.
+Releases follow semantic versioning. A tag with a `-`, such as `v1.3.0-rc.1`, is a prerelease. Changes to the REST
+API's contract are listed in [API versions](../reference/api-versions.md).
 
 ## Consuming a release
 

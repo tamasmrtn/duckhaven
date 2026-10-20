@@ -1,3 +1,7 @@
+---
+type: how-to
+---
+
 # Enable DuckLake
 
 [DuckLake](../data/ducklake.md) is a second [catalog](../data/catalogs.md) kind, available by default. It adds
@@ -10,7 +14,9 @@ by DuckDB and nothing else, though the catalog can be
 Everything on this page is about the PostgreSQL side, which a new install sets up for itself. An install that predates
 DuckLake needs one command — see [On an existing install](#on-an-existing-install).
 
-## What it needs
+## Before you begin
+
+You need shell access to the control-plane host. DuckLake has these requirements:
 
 | Requirement | Why |
 |---|---|
@@ -50,8 +56,8 @@ curl -X POST -H "Authorization: Bearer $PAT" \
     http://localhost:8000/api/admin/catalogs/ducklake/reconcile-roles
 ```
 
-Agents need an image containing the `ducklake` and `postgres` extensions. An older agent is not broken by this — it
-simply will not be offered for a DuckLake catalog, and the error says which extension it lacks.
+Agents need an image containing the `ducklake` and `postgres` extensions. An older agent keeps working for other
+catalogs; it is not offered for a DuckLake catalog, and the error says which extension it lacks.
 
 ## Why the isolation matters
 
@@ -135,6 +141,15 @@ user-delegation-SAS path you actually care about.
 Set `DUCKLAKE_ENABLED=false` and restart the API. Existing DuckLake catalogs stop being reachable but are not deleted;
 their metadata schemas and Parquet stay where they are, and re-enabling the flag restores access. Drop the catalogs
 first if you want the data gone — dropping a catalog purges its object-storage prefix.
+
+## If it goes wrong
+
+- **The catalog dialog offers no DuckLake kind.** `DUCKLAKE_ENABLED` is `false`, or the deployment is the
+  [HA stack](high-availability.md#limitations), which does not set DuckLake up.
+- **Creating a DuckLake catalog fails on an existing install.** The `ducklake` database does not exist; run
+  `scripts/enable-ducklake.sh` as in [On an existing install](#on-an-existing-install).
+- **"No compatible agent is connected".** No agent has the `ducklake` and `postgres` extensions; update the agent
+  image.
 
 ## Related
 

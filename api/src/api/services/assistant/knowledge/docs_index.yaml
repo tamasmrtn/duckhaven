@@ -270,11 +270,13 @@ pages:
 - path: deployment/install.md
   title: Docker Compose
   section: Deploy
-  summary: Deploy the full stack with Docker Compose.
+  summary: Install DuckHaven on one Linux host with Docker Compose, create the first admin, and keep
+    the install private.
 - path: deployment/reverse-proxy-tls.md
   title: Reverse proxy & TLS
   section: Deploy
-  summary: Front the stack with a reverse proxy and TLS.
+  summary: Put DuckHaven behind a reverse proxy that terminates TLS, for any deployment reachable
+    beyond a private network.
 - path: deployment/ducklake.md
   title: Enable DuckLake
   section: Deploy
@@ -287,11 +289,13 @@ pages:
 - path: deployment/azure-terraform.md
   title: Azure with Terraform
   section: Deploy
-  summary: Deploy the whole stack to Azure as managed infrastructure, with Terraform.
+  summary: The Terraform in deploy/terraform/ deploys DuckHaven to Azure as managed services, with
+    elastic agents on Container Instances.
 - path: deployment/updating.md
   title: Updating
   section: Deploy
-  summary: Updates pull a new image and restart the stack.
+  summary: Pull new images and restart the stack; database migrations run on their own when the API
+    starts.
 - path: deployment/backup-restore.md
   title: Backup & restore
   section: Deploy
@@ -309,8 +313,8 @@ pages:
 - path: operations/ha-failover.md
   title: HA failover runbook
   section: Operate
-  summary: Drills that prove the highly-available control plane survives the failures it is designed
-    for.
+  summary: Run three drills that prove the highly-available control plane survives losing its Postgres
+    primary or an API replica, and never runs background work twice.
 - path: operations/troubleshooting.md
   title: Troubleshoot the deployment
   section: Operate

@@ -25,9 +25,21 @@ describe('SetupPage', () => {
     renderWithProviders({ initialRoute: '/setup' })
 
     expect(
-      await screen.findByText(/cat \/var\/duckhaven\/setup_token/),
+      await screen.findByText(/cp api:\/var\/duckhaven\/setup_token/),
     ).toBeInTheDocument()
     expect(screen.queryByText(/secrets\/setup_token/)).not.toBeInTheDocument()
+  })
+
+  it('reads the token with a command that works on the distroless image', async () => {
+    // The api image has no shell or cat, so `docker compose exec api cat …`
+    // fails with "executable file not found"; `docker compose cp` does not exec.
+    server.use(
+      http.get('/api/setup/status', () => HttpResponse.json({ needs_admin: true })),
+    )
+    renderWithProviders({ initialRoute: '/setup' })
+
+    await screen.findByLabelText(/setup token/i)
+    expect(screen.queryByText(/compose exec api/)).not.toBeInTheDocument()
   })
 
   it('redirects to /login when setup is already complete', async () => {

@@ -378,7 +378,7 @@ class EvalGateway:
         return 1
 
     # ── SQL ───────────────────────────────────────────────────────────────────
-    async def run_sql(self, sql: str, *, catalog, timeout_s) -> dict:
+    async def run_sql(self, sql: str, *, catalog, timeout_s, tags=None) -> dict:
         self._record("run_sql")
         lowered = sql.lower()
         if "restricted" in lowered:

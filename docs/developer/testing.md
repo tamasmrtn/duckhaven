@@ -188,6 +188,18 @@ which a model shown one page can only invent.
 Grow the set from real failures rather than by enumerating questions at a desk. `search_docs` records `no_results` on
 its audit row precisely so the questions the documentation failed to answer can be found later.
 
+## Exercising the agent picker by hand
+
+Some behaviour is easiest to confirm on a running stack with two agents registered:
+
+1. Open a worksheet: the agent picker lists both, grouped by whether they can serve the workspace.
+2. Run several queries, switching agent between them, and confirm that:
+    - each query runs on the chosen agent, as **Compute** and **History** record;
+    - an agent missing an extension the workspace needs is refused before dispatch, with the missing extension named;
+    - a query that outlasts its timeout is interrupted on the agent and reported `failed`, not left running.
+3. Confirm that a result older than `RESULT_RETENTION_HOURS` is removed on the agent, and that the query can be run
+   again from its SQL.
+
 ## Before you push
 
 ```bash

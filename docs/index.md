@@ -91,9 +91,9 @@ hide:
 
     ---
 
-    Day-2 operations: query queueing and concurrency, agent management, and the operator runbook.
+    Day-2 operations: monitoring, backups, updates and troubleshooting.
 
-    [:octicons-arrow-right-24: Operate a cluster](operations/runbook.md)
+    [:octicons-arrow-right-24: Operate a cluster](operations/troubleshooting.md)
 
 -   :material-cog:{ .lg .middle } __Configuration__
 

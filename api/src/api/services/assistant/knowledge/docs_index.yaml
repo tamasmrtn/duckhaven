@@ -297,15 +297,11 @@ pages:
   section: Deploy
   summary: Back up DuckHaven's three Postgres databases and its secret key, restore them, and upgrade
     Postgres to a new major version without losing data.
-- path: operations/runbook.md
-  title: Operator runbook
-  section: Operate
-  summary: Operational procedures for the single control-plane box plus its agents.
 - path: operations/monitoring.md
   title: Monitoring
   section: Operate
-  summary: The query history and audit log, Prometheus metrics, starter alert rules and a Grafana
-    dashboard.
+  summary: DuckHaven exports Prometheus metrics for alerting, records every query in History, and
+    gives each agent a monitoring page.
 - path: operations/tracing.md
   title: Distributed tracing
   section: Operate
@@ -316,9 +312,10 @@ pages:
   summary: Drills that prove the highly-available control plane survives the failures it is designed
     for.
 - path: operations/troubleshooting.md
-  title: Troubleshooting
+  title: Troubleshoot the deployment
   section: Operate
-  summary: Common issues and where to look.
+  summary: Find what you see on the control-plane host, behind your proxy or on the network, then
+    follow what to do.
 - path: reference/configuration.md
   title: Configuration
   section: Reference
@@ -418,6 +415,7 @@ aliases:
   guides/using-the-assistant.md: ai/use-the-assistant.md
   operations/agent-monitoring.md: compute/agent-monitoring.md
   operations/offboarding.md: access/offboarding.md
+  operations/runbook.md: operations/troubleshooting.md
   operations/scaling.md: compute/scaling.md
   operations/storage-maintenance.md: data/storage-backends.md
   reference/agent-reference.md: reference/agent-configuration.md

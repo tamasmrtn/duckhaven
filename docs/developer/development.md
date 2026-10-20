@@ -125,10 +125,9 @@ step chased don't exist here." An earlier iteration of these images was built
 on `python:3.14-slim` and spent a `RUN` layer dropping `pip` and purging
 `perl-base` to get the CVE count down; distroless removed the need for it.
 
-One consequence worth knowing before you try: you cannot `docker exec` a shell
-into a running container. See
-[Debugging a running container](../operations/runbook.md) for the `docker debug`
-route and the `-dev` tag.
+One consequence worth knowing before you try: you cannot `docker exec` a shell into a running container. See
+[Troubleshoot the deployment](../operations/troubleshooting.md#you-need-a-shell-inside-the-api-or-agent-container) for
+the `docker debug` route and the `-dev` tag.
 
 ### Building locally
 

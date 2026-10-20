@@ -96,11 +96,10 @@
 
 ## Operate
 
-- [Operator runbook](https://tamasmrtn.github.io/duckhaven/operations/runbook/): Operational procedures for the single control-plane box plus its agents.
-- [Monitoring](https://tamasmrtn.github.io/duckhaven/operations/monitoring/): The query history and audit log, Prometheus metrics, starter alert rules and a Grafana dashboard.
+- [Monitoring](https://tamasmrtn.github.io/duckhaven/operations/monitoring/): DuckHaven exports Prometheus metrics for alerting, records every query in History, and gives each agent a monitoring page.
 - [Distributed tracing](https://tamasmrtn.github.io/duckhaven/operations/tracing/): DuckHaven emits OpenTelemetry traces alongside the Prometheus metrics.
 - [HA failover runbook](https://tamasmrtn.github.io/duckhaven/operations/ha-failover/): Drills that prove the highly-available control plane survives the failures it is designed for.
-- [Troubleshooting](https://tamasmrtn.github.io/duckhaven/operations/troubleshooting/): Common issues and where to look.
+- [Troubleshoot the deployment](https://tamasmrtn.github.io/duckhaven/operations/troubleshooting/): Find what you see on the control-plane host, behind your proxy or on the network, then follow what to do.
 
 ## Reference
 

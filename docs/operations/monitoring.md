@@ -1,28 +1,27 @@
+---
+type: reference
+---
+
 # Monitoring
 
-DuckHaven gives every [agent](../compute/agents.md) its own [monitoring page](../compute/agent-monitoring.md), records a
-full query audit trail on the **History** page, and exports Prometheus metrics for alerting.
+DuckHaven exports Prometheus metrics for alerting, records every query in History, and gives each agent a monitoring
+page.
+
+This page lists the metrics and how to read them. Each [agent](../compute/agents.md)'s own charts are described in
+[Agent monitoring](../compute/agent-monitoring.md).
 
 ## Per-agent monitoring
 
-Every agent has its own **Monitoring** tab (**Compute** → *an agent*): what it is doing now, where its time went, the
-queries it ran and what each cost, and its CPU and memory, over up to a week. See
-[Agent monitoring](../compute/agent-monitoring.md) for what each chart shows and exactly how each number is measured.
+Every agent has its own **Monitoring** tab (**Compute** → *an agent*): what it is doing at the moment, where its time
+went, the queries it ran and what each cost, and its CPU and memory, over up to a week. See [Agent
+monitoring](../compute/agent-monitoring.md) for what each chart shows and exactly how each number is measured.
 
 ## Query history and audit log
 
-Every query a member runs is recorded on the **History** page (newest first), excluding internal queries such as
-table-sample previews. Each member sees the history for the workspace they are in, with a row click opening the
-query's profile. A refresh button re-fetches the list on demand, and a filter by **agent** is open to any member —
-narrowing to one agent reveals nothing about the workspace's own queries that the member could not already see.
-
-Administrators get an extra **This workspace / All workspaces** toggle on the same page. Switching to **All
-workspaces** turns History into the global audit log: every query across every workspace, with a Workspace column.
-Administrators also get a filter by **user**, which — unlike the agent filter — works within the current workspace
-view as well as the cross-workspace one, since it reveals who ran a query and stays admin-only either way. Each
-record captures the **user** who ran it (the human or [service account](../access/service-accounts.md) — shown in the
-**User** column), the SQL, status, row count, duration, result size, and any error. There is no separate audit table;
-the audit log is the query record itself.
+Every query, with the person or [service account](../access/service-accounts.md) who ran it, its SQL, status, rows,
+duration, result size and any error, is recorded on the **History** page; there is no separate audit table. With
+`queries:admin`, the **All workspaces** view makes it the audit log for every workspace. How to filter and read it is in
+[Run queries → Find an earlier run](../querying/run-queries.md#find-an-earlier-run).
 
 ## Prometheus metrics
 
@@ -60,7 +59,7 @@ scrape_configs:
 Counters and histograms are per-replica (carry a `replica_id` label). Aggregate them with
 `sum`/`rate` across replicas — every underlying event (a query completing, a request being
 served) happens on exactly one replica, so summing never double-counts. Counter series carry
-the conventional `_total` suffix in the exposition (e.g. `duckhaven_queries_total`).
+the conventional `_total` suffix in the exposition (for example `duckhaven_queries_total`).
 
 | Metric | Type | Labels | Meaning |
 |---|---|---|---|
@@ -80,14 +79,14 @@ the conventional `_total` suffix in the exposition (e.g. `duckhaven_queries_tota
 | `duckhaven_http_requests_total` | counter | `replica_id`, `method`, `route`, `status` | REST API requests, keyed by route template. |
 | `duckhaven_http_request_duration_seconds` | histogram | `replica_id`, `method`, `route` | REST API request latency. |
 | `duckhaven_polaris_requests_total` | counter | `replica_id`, `operation`, `status` | Requests to Apache Polaris (Iceberg REST + management). `status` is the HTTP code, or `error` for transport failures. |
-| `duckhaven_ducklake_queries_total` | counter | (same) | Metadata queries to a DuckLake catalog database — the counterpart to the Polaris rows above, so a slow browse appears in one or the other by kind. `status` is `ok`, `error`, or `empty` (nothing has attached it yet). |
+| `duckhaven_ducklake_queries_total` | counter | (same) | Metadata queries to a DuckLake catalog database — the counterpart to the Polaris rows above, so a slow browse appears in one or the other by kind. `status` is `ok`, `error`, or `empty` (no agent has attached it). |
 | `duckhaven_ducklake_query_duration_seconds` | histogram | (same) | Latency of the above. |
 | `duckhaven_polaris_request_duration_seconds` | histogram | `replica_id`, `operation` | Latency of requests to Apache Polaris. |
 | `duckhaven_agent_up` | gauge | `replica_id`, `agent_id`, `agent_name` | `1` for each agent with a recent sample owned by this replica. |
 | `duckhaven_agent_cpu_percent` | gauge | (same) | Agent CPU utilization. |
 | `duckhaven_agent_memory_percent` | gauge | (same) | Agent memory utilization. |
 | `duckhaven_agent_running_queries` | gauge | (same) | Admission slots in use on the agent, **including idle held SQL sessions**. For "queries actually running" use `duckhaven_agent_executing_queries`. |
-| `duckhaven_agent_executing_queries` | gauge | (same) | Statements running on the agent right now; an idle held SQL session is not counted. Absent for agents too old to report it. |
+| `duckhaven_agent_executing_queries` | gauge | (same) | Statements running on the agent; an idle held SQL session is not counted. Absent for agents too old to report it. |
 | `duckhaven_agent_idle_sessions` | gauge | (same) | Open SQL sessions on the agent that are not running a statement. |
 | `duckhaven_agent_memory_peak_percent` | gauge | (same) | Highest memory use reached during the agent's last 2-second sample interval, including spikes between samples. |
 | `duckhaven_agent_cpu_seconds_total` | counter | (same) | CPU time consumed by the agent's cgroup. `rate()` of it is exact CPU use over any window, however short the bursts inside it. |
@@ -128,7 +127,7 @@ would hide:
   before it manifests as mysterious query failures.
 - **Elastic supply** — `duckhaven_agent_provisions_total{outcome="failure"}` and
   `duckhaven_agents_reaped_total{reason="provisioning_timeout"}` both mean users are waiting for
-  compute that never arrives, which surfaces to them as a query that simply never starts.
+  compute that never arrives, which surfaces to them as a query that never starts.
   `duckhaven_agents_reaped_total{reason="orphan"}` or `{reason="dead_row"}` means the cloud and
   Postgres had drifted apart — expected occasionally, but a sustained rate is worth
   investigating because orphans bill until they are swept.
@@ -310,5 +309,5 @@ out-of-memory kills, and open maintenance recommendations — extend it from the
 
 - [Distributed tracing](tracing.md) — per-request OpenTelemetry traces, the other half of observability.
 - [Query execution](../querying/query-execution.md) — what the counters reflect.
-- [Operator runbook](runbook.md) — procedures for running the cluster.
+- [Troubleshoot the deployment](troubleshooting.md) — problems on the host and network.
 - [Configuration reference](../reference/configuration.md#observability) — the `METRICS_ENABLED` knob.

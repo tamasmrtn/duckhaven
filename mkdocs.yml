@@ -121,6 +121,7 @@ plugins:
         data/storage-maintenance.md: data/storage-backends.md
         reference/api-conventions.md: developer/api-conventions.md
         reference/agent-reference.md: reference/agent-configuration.md
+        operations/runbook.md: operations/troubleshooting.md
   - social:
       cards_layout_options:
         background_color: "#0b0f19"
@@ -232,11 +233,10 @@ nav:
           - Updating: deployment/updating.md
           - Backup & restore: deployment/backup-restore.md
       - Operate:
-          - Operator runbook: operations/runbook.md
           - Monitoring: operations/monitoring.md
           - Distributed tracing: operations/tracing.md
           - HA failover runbook: operations/ha-failover.md
-          - Troubleshooting: operations/troubleshooting.md
+          - Troubleshoot the deployment: operations/troubleshooting.md
       - Release notes: release-notes/index.md
   - Reference:
       - Configuration: reference/configuration.md

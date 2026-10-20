@@ -160,7 +160,8 @@ pages:
 - path: ai/assistant.md
   title: AI assistant
   section: AI assistant & MCP
-  summary: The governed AI data assistant and how it enforces access.
+  summary: The AI data assistant is a chat panel that browses a workspace's catalogs, writes and runs
+    SQL, and explains the results, with no more access than the service account it acts as.
 - path: ai/use-the-assistant.md
   title: Use the AI assistant
   section: AI assistant & MCP
@@ -174,11 +175,13 @@ pages:
 - path: ai/mcp-server.md
   title: MCP server
   section: AI assistant & MCP
-  summary: Connecting an AI agent you already use — Claude Code, Cursor — to your data.
+  summary: DuckHaven speaks the Model Context Protocol, so an AI agent running somewhere else — Claude
+    Code in your terminal, Claude Desktop, Cursor — can work with your data directly.
 - path: ai/connect-mcp-client.md
   title: Connect an MCP client
   section: AI assistant & MCP
-  summary: Point Claude Code, Claude Desktop or Cursor at DuckHaven over MCP.
+  summary: Connect Claude Code, Claude Desktop, Cursor or another MCP client to DuckHaven's /mcp endpoint
+    with a token.
 - path: access/how-access-works.md
   title: How access works
   section: Access

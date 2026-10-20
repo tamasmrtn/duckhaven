@@ -1,10 +1,20 @@
+---
+type: how-to
+---
+
 # Connect an MCP client
+
+Connect Claude Code, Claude Desktop, Cursor or another MCP client to DuckHaven's `/mcp` endpoint with a token.
 
 DuckHaven exposes a [Model Context Protocol server](mcp-server.md) at `/mcp`, so an AI agent — Claude Code,
 Claude Desktop, Cursor, or anything else that speaks MCP — can browse your catalogs and run governed SQL on your
 behalf. This page connects one.
 
-Two things are needed: the endpoint URL, and an access token.
+## Before you begin
+
+- **You need:** membership of the workspaces the agent should reach, and a way to get a token: `dh auth login` for
+  your own, or an admin for a [service-account token](../access/service-accounts.md).
+- **Enabled by:** `MCP_ENABLED`, on by default.
 
 ## 1. Get a token
 
@@ -118,7 +128,7 @@ A healthy server answers with its tool definitions — fourteen, or twelve where
   documentation for the version you are running, so "how do I read this table as it was last Tuesday?" is answered
   from DuckHaven's own time-travel syntax rather than from what the model remembers about other warehouses.
 
-## When something is wrong
+## If it goes wrong
 
 | What you see | What it means |
 |---|---|

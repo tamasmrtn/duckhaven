@@ -1,8 +1,19 @@
+---
+type: concept
+---
+
 # AI data assistant
 
-The AI data assistant is a governed, model-agnostic chat assistant that helps people explore a workspace's data. It can
-browse catalog metadata (catalogs → schemas → tables → columns), author and run SQL against the workspace's governed
-catalogs, and explain the results — all in a conversation.
+The AI data assistant is a chat panel that browses a workspace's catalogs, writes and runs SQL, and explains the
+results, with no more access than the service account it acts as.
+
+It is governed and model-agnostic: an operator chooses the model, and the assistant browses catalog metadata (catalogs,
+schemas, tables, columns), authors and runs SQL against the workspace's catalogs, and explains what it found, all in a
+conversation.
+
+!!! info "Availability"
+    Off until an operator turns it on and gives its service account access; see
+    [Set up the assistant](set-up-the-assistant.md).
 
 Crucially, the assistant is **not** a privileged back door. It acts as an ordinary DuckHaven service-account principal,
 and every action it takes flows through the exact same enforcement as any other client. An administrator governs what
@@ -48,8 +59,13 @@ than as a shared service account.
 - It has no access to DuckHaven's control-plane database, to Polaris directly, or to the compute agents directly. It
   only ever calls DuckHaven's own REST API.
 - It cannot use a draft or broken semantic definition. Only *published* models reach it, and a definition whose column
-  no longer exists is withheld — the assistant will say a metric is defined but currently broken rather than quietly
-  substituting its own calculation.
+  is gone is withheld: the assistant says a metric is defined but broken rather than substituting its own calculation.
+- It cannot draw a chart or any other visualisation; it gives the numbers, which you can chart in a worksheet.
+- It cannot search the *contents* of tables. It can match a question to a metric by name or synonym in the
+  [semantic layer](../metadata/semantic-layer.md).
+- It cannot run on a schedule or unattended. It answers one turn at a time, in one conversation.
+- It remembers only the most recent turns of a conversation: a long conversation forgets its oldest messages, and the
+  panel says when that point is crossed. Start a new conversation for an unrelated topic.
 
 ## How governance works
 
@@ -91,7 +107,7 @@ out. You govern its data access per workspace with [workspace membership](../acc
 
 - Give it `reader` or a `metadata`-tier grant for a browse-and-read assistant.
 - Add `writer` where you want it to be able to propose writes (still gated by approval).
-- Leave it out of a workspace entirely, and it simply cannot be used there.
+- Leave it out of a workspace entirely, and it cannot be used there.
 
 Because access is scoped per workspace, the same assistant can have different reach in different workspaces — broad in a
 sandbox, narrow in production.
@@ -190,16 +206,9 @@ Free SQL is still available and still right for anything the semantic models do 
 metric exists, but bypassing one is [flagged and recorded](../metadata/semantic-layer.md#how-the-assistant-uses-it), so
 how often the agreed definitions get worked around is a number you can look at rather than a hope.
 
-!!! note "Scope"
-    The assistant is a focused v1: single-agent, one conversation turn at a time, no chart generation and no retrieval
-    over table *contents*, and no scheduled/unattended runs. Retrieval over semantic *definitions* — matching a
-    question to a metric by name or synonym — does exist; see [Semantic layer](../metadata/semantic-layer.md).
-    Conversation memory is also bounded — only the most recent turns are replayed to the model, so a very long
-    conversation gradually forgets its oldest messages; start a new conversation for an unrelated topic. The panel
-    shows a small notice once a conversation has crossed that point.
-
 ## Related
 
+- [Set up the assistant](set-up-the-assistant.md) — turning it on.
 - [MCP server](mcp-server.md) — the same governance, for an AI agent you already use.
 - [Semantic layer](../metadata/semantic-layer.md) — the definitions the assistant answers metric questions from.
 - [Permissions](../access/how-access-works.md) — the grants that bound what it can reach.

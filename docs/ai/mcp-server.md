@@ -1,3 +1,7 @@
+---
+type: concept
+---
+
 # MCP server
 
 DuckHaven speaks the [Model Context Protocol](https://modelcontextprotocol.io), so an AI agent running somewhere else —

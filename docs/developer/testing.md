@@ -109,6 +109,13 @@ concurrently (bounded by the harness), so a sampled run stays near the length of
 comparison against older runs: a faithfulness score that drops from 4.3 to 4.0 could mean the assistant got worse or
 the judge changed, and nothing in the number tells you which.
 
+**The judge sees what the assistant saw.** Every page an arm opened reaches the judge whole, as `read_doc_page` returned
+it, together with the tool results and the instructions the assistant was given. Only the case's expected sources that
+no arm opened are trimmed to share a fixed budget. A judge that saw a cut copy of an opened page scored every claim past
+the cut as invented. The fixture gateway answers SQL the way the real API does under `api_version` 3: each result has
+`column_types`, DECIMAL and wide integers arrive as exact strings, and an equality filter in `WHERE` shapes the rows.
+Rows that contradict the API's own contract make the assistant report a broken server instead of answering.
+
 **Pairwise comparisons are judged in both orders**, and a win counts only when the judge agrees with itself after the
 answers are swapped. Judges systematically prefer whichever answer they see first — by a reported 10–15 points of win
 rate, which is larger than most effects worth measuring. Disagreements become ties and are counted as the *flip rate*;

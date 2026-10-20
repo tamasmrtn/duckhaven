@@ -87,7 +87,9 @@ cases:
       provenance: hand
       negative: false
       expected_sources: [reference/sql-support.md]
-      must_contain: ["float"]
+      # Under api_version 3 a DECIMAL arrives as an exact string; fewer digits
+      # means an older client or api_version, not a float in the server.
+      must_contain: ["string"]
 
   - name: schedule_a_query
     inputs:

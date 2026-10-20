@@ -188,6 +188,12 @@ services:
   api:
     image: ghcr.io/tamasmrtn/duckhaven-api:${DUCKHAVEN_IMAGE_TAG:-latest}
     restart: unless-stopped
+    # Every setting in .env reaches the API, including the many this file does
+    # not list (LDAP_*, SESSION_MAX_AGE_SECONDS, RESULT_CACHE_*, …). The
+    # `environment:` block below still wins for the values it wires itself.
+    env_file:
+      - path: .env
+        required: false
     # Joins the agent's isolated network in addition to `default`, so the
     # agent can reach it while this service keeps its own outbound access.
     networks:

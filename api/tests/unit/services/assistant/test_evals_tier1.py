@@ -1095,3 +1095,29 @@ async def test_select_star_and_describe_answer_in_the_table_s_own_terms():
     assert "region" in starred["columns"] and "total_amount" in starred["columns"]
     assert described["columns"] == ["column_name", "column_type", "null"]
     assert {r["column_name"] for r in described["rows"]} >= {"order_id", "region"}
+
+
+def test_the_eval_gateway_accepts_what_the_real_gateway_accepts():
+    """The tools call the gateway with the real signature. When the real one grew
+    a ``tags`` argument and this stand-in did not, every judged run failed on its
+    first SQL call — after paying for the turns before it."""
+    import inspect
+
+    from api.services.assistant.gateway import Gateway
+    from tests.evals.fixtures import EvalGateway
+
+    def params(cls, name):
+        return set(inspect.signature(getattr(cls, name)).parameters)
+
+    shared = [
+        name
+        for name, _ in inspect.getmembers(EvalGateway, inspect.isfunction)
+        if not name.startswith("_") and hasattr(Gateway, name)
+    ]
+    assert shared
+    mismatched = {
+        name: params(Gateway, name) - params(EvalGateway, name)
+        for name in shared
+        if params(Gateway, name) - params(EvalGateway, name)
+    }
+    assert mismatched == {}

@@ -50,6 +50,10 @@ ALLOWED = [
     "DESC analytics.analytics.events",
     "SELECT * FROM (DESCRIBE analytics.analytics.events)",
     "SHOW ALL TABLES",
+    # A table, schema or value named `secret` is not a secret statement.
+    "CREATE TABLE secret (x INT)",
+    "CREATE TABLE analytics.secret AS SELECT 'secret' AS s",
+    "DROP TABLE secret",
 ]
 
 
@@ -66,6 +70,17 @@ DISALLOWED = [
     ("VACUUM", None),
     # multi-statement mixed: an allowed SELECT alongside a blocked COPY rejects.
     ("SELECT 1; COPY t TO 'f.parquet'", "COPY"),
+    # Secrets: DuckDB types these as CREATE and DROP, the kinds allowed above, so
+    # the guard has to look past the statement type to refuse them.
+    ("CREATE SECRET s (TYPE s3, KEY_ID 'k', SECRET 'v')", "SECRET"),
+    ("CREATE OR REPLACE SECRET s (TYPE s3)", "SECRET"),
+    ("CREATE TEMPORARY SECRET s (TYPE s3)", "SECRET"),
+    ("CREATE OR REPLACE PERSISTENT SECRET s (TYPE s3)", "SECRET"),
+    ("CREATE SECRET IF NOT EXISTS s (TYPE s3)", "SECRET"),
+    ("/* note */ -- more\ncreate secret s (type s3)", "SECRET"),
+    ("DROP SECRET s", "SECRET"),
+    ("DROP PERSISTENT SECRET IF EXISTS s", "SECRET"),
+    ("SELECT 1; CREATE SECRET s (TYPE s3)", "SECRET"),
 ]
 
 

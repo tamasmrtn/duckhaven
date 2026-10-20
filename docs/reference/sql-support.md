@@ -83,6 +83,10 @@ checks above are rejected on both paths:
 | Checkpoint | `CHECKPOINT` | No | No |
 | Prepared statements | `PREPARE p AS SELECT 1` | No | No |
 | | `EXECUTE p` | No | No |
+| Create or drop a secret | `CREATE SECRET s3_creds (TYPE s3, …)` | No | No |
+| | `DROP SECRET s3_creds` | No | No |
+
+The agent sets up the storage credentials each catalog needs, so a query cannot create or drop a secret of its own.
 
 To see a query's plan, open its [profile](../querying/query-profiles.md) after it runs.
 

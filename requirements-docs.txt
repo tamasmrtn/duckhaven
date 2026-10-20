@@ -1,4 +1,4 @@
 # The docs site toolchain, pinned in one place. Used by the Docs and CI
 # workflows and by `make docs-serve` / `make docs-build`.
-mkdocs-material[imaging]==9.5.49
+mkdocs-material[imaging]==9.7.7
 mkdocs-redirects==1.2.3

@@ -13,8 +13,8 @@ files, because the nav is what a reader actually sees. That does mean a page
 absent from the nav is absent from the index, and mkdocs will not complain —
 ``validation.nav.omitted_files`` defaults to ``info``, which ``--strict`` does
 not promote — so the drift test reads ``docs/`` directly rather than trusting
-this walk. Summaries are derived from each page's opening paragraph and then
-**preserved across regeneration**, so a hand-tuned one is never clobbered.
+this walk. Each summary is the page's lead sentence, regenerated every time, so it
+always matches the page.
 
 Deliberately records no version or commit: the index would then change on every
 commit and the drift gate would fire constantly. The running version is stamped
@@ -86,8 +86,8 @@ def _is_indexed(path: str) -> bool:
 def summarise(body: str) -> str:
     """The page's opening paragraph, reduced to one plain-text line.
 
-    A starting point for a human, not a finished description: ``merge`` keeps any
-    summary already in the index, so editing one here is permanent.
+    The templates make that paragraph's first sentence answer the page's question,
+    so it is the summary; to change a summary, edit the page's lead.
     """
     paragraph: list[str] = []
     for line in strip_front_matter(body).splitlines():
@@ -155,50 +155,6 @@ def discover(docs_dir: Path, mkdocs_yml: Path) -> list[Page]:
         heading = title or (m.group(1).strip() if (m := _H1.search(body)) else Path(path).stem)
         pages.append(Page(path=path, title=heading, section=section, summary=summarise(body)))
     return pages
-
-
-def typed_paths(docs_dir: Path, pages: list[Page]) -> frozenset[str]:
-    """Pages that declare a ``type:``, i.e. have been rewritten to a template."""
-    return frozenset(
-        p.path
-        for p in pages
-        if _TYPE_LINE.search(_front_matter_block((docs_dir / p.path).read_text(encoding="utf-8")))
-    )
-
-
-_TYPE_LINE = re.compile(r"^type:\s*\S", re.MULTILINE)
-
-
-def _front_matter_block(text: str) -> str:
-    return text[: len(text) - len(strip_front_matter(text))]
-
-
-def merge(
-    discovered: list[Page],
-    existing: dict,
-    aliases: dict[str, str] | None = None,
-    typed: frozenset[str] = frozenset(),
-) -> list[Page]:
-    """Keep hand-edited summaries; take everything else from the docs tree.
-
-    A summary follows its page across a move (``aliases`` maps old path to new).
-    A page that declares a ``type:`` always takes its summary from its lead
-    sentence instead: the templates require that sentence to answer the page's
-    question, so it is the better summary, and it cannot go stale behind an edit.
-    """
-    kept = {p["path"]: p.get("summary", "") for p in existing.get("pages", [])}
-    for old, new in (aliases or {}).items():
-        if old in kept and new not in kept:
-            kept[new] = kept[old]
-    return [
-        Page(
-            p.path,
-            p.title,
-            p.section,
-            p.summary if p.path in typed else kept.get(p.path) or p.summary,
-        )
-        for p in discovered
-    ]
 
 
 def aliases_from(mkdocs_config: dict, indexed: set[str]) -> dict[str, str]:
@@ -278,13 +234,15 @@ def render_llms_txt(pages: list[Page], intro: str, site_url: str) -> str:
     return "\n".join(out) + "\n"
 
 
-def build(docs_dir: Path, mkdocs_yml: Path, existing: dict) -> tuple[list[Page], dict[str, str]]:
+def build(docs_dir: Path, mkdocs_yml: Path) -> tuple[list[Page], dict[str, str]]:
     """The index's pages and aliases: what ``make docs-index`` writes, and what the
-    drift tests compare the committed file against."""
+    drift tests compare the committed file against.
+
+    Every summary is the page's lead sentence. The templates require that sentence
+    to answer the page's question, so nothing hand-written can go stale beside it."""
     config = yaml.load(mkdocs_yml.read_text(), Loader=_TagIgnoringLoader)
-    discovered = discover(docs_dir, mkdocs_yml)
-    aliases = aliases_from(config, {p.path for p in discovered})
-    return merge(discovered, existing, aliases, typed_paths(docs_dir, discovered)), aliases
+    pages = discover(docs_dir, mkdocs_yml)
+    return pages, aliases_from(config, {p.path for p in pages})
 
 
 def main() -> None:
@@ -293,7 +251,7 @@ def main() -> None:
     mkdocs_yml = root / "mkdocs.yml"
     existing = yaml.safe_load(INDEX_PATH.read_text()) or {} if INDEX_PATH.exists() else {}
     intro = existing.get("intro") or ""
-    pages, aliases = build(docs_dir, mkdocs_yml, existing)
+    pages, aliases = build(docs_dir, mkdocs_yml)
 
     INDEX_PATH.write_text(render_index(pages, intro, aliases))
     site_url = yaml.load(mkdocs_yml.read_text(), Loader=_TagIgnoringLoader)["site_url"]

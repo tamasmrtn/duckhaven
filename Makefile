@@ -219,7 +219,7 @@ format:
 
 # ── Assistant documentation index ─────────────────────────────────────────────
 # Regenerates docs_index.yaml (what the assistant sees) and docs/llms.txt from
-# docs/ and mkdocs.yml. Hand-edited page summaries are preserved. Run after
+# docs/ and mkdocs.yml; each summary is the page's lead sentence. Run after
 # adding, removing or renaming a docs page; pre-commit and CI check for drift.
 docs-index:
 	uv run --package duckhaven-api python -m api.services.assistant.knowledge.generate

@@ -122,33 +122,13 @@ def test_every_page_has_a_title_and_a_summary():
 def test_the_committed_index_matches_what_the_generator_produces():
     """The drift gate, as a test — the hook is bypassable, this is not."""
     committed = yaml.safe_load(INDEX_PATH.read_text())
-    pages, aliases = generate.build(DOCS_DIR, REPO_ROOT / "mkdocs.yml", committed)
+    pages, aliases = generate.build(DOCS_DIR, REPO_ROOT / "mkdocs.yml")
     regenerated = generate.render_index(pages, committed.get("intro", ""), aliases)
 
     assert regenerated == INDEX_PATH.read_text()
 
 
 # ── The generator ─────────────────────────────────────────────────────────────
-
-
-def test_regeneration_preserves_a_hand_written_summary():
-    """Summaries are the one part a human owns; a mechanical guess must not win."""
-    discovered = generate.discover(DOCS_DIR, REPO_ROOT / "mkdocs.yml")
-    existing = {"pages": [{"path": discovered[0].path, "summary": "Hand-written."}]}
-
-    merged = generate.merge(discovered, existing)
-
-    assert merged[0].summary == "Hand-written."
-    assert merged[1].summary == discovered[1].summary
-
-
-def test_a_page_missing_from_the_index_gets_a_derived_summary():
-    discovered = generate.discover(DOCS_DIR, REPO_ROOT / "mkdocs.yml")
-
-    merged = generate.merge(discovered, {"pages": []})
-
-    assert merged[0].summary == discovered[0].summary
-    assert merged[0].summary
 
 
 @pytest.mark.parametrize(
@@ -182,7 +162,7 @@ def test_llms_txt_matches_what_the_generator_produces():
     """The published index for other people's models. It has no unit of its own
     otherwise, and the pre-commit hook that regenerates it does not run in CI."""
     committed = yaml.safe_load(INDEX_PATH.read_text())
-    pages, _ = generate.build(DOCS_DIR, REPO_ROOT / "mkdocs.yml", committed)
+    pages, _ = generate.build(DOCS_DIR, REPO_ROOT / "mkdocs.yml")
     site_url = yaml.load(
         (REPO_ROOT / "mkdocs.yml").read_text(), Loader=generate._TagIgnoringLoader
     )["site_url"]
@@ -402,38 +382,10 @@ def test_a_bad_redirect_map_fails_generation(maps, indexed, message):
         generate.aliases_from(_config(maps), indexed)
 
 
-def test_a_moved_page_keeps_its_hand_written_summary():
-    moved = Page("querying/new.md", "New", "Querying", "derived")
-    existing = {"pages": [{"path": "guides/old.md", "summary": "Hand-written."}]}
-
-    (page,) = generate.merge([moved], existing, {"guides/old.md": "querying/new.md"})
-
-    assert page.summary == "Hand-written."
-
-
-def test_a_typed_page_takes_its_summary_from_its_lead():
-    """Rewritten pages are held to a lead that answers the page's question, so
-    that sentence is the summary and an edit to it can never be shadowed."""
-    page = Page("querying/new.md", "New", "Querying", "The lead sentence.")
-    existing = {"pages": [{"path": "querying/new.md", "summary": "Stale."}]}
-
-    (merged,) = generate.merge([page], existing, typed=frozenset({"querying/new.md"}))
-
-    assert merged.summary == "The lead sentence."
-
-
 def test_the_summary_ignores_front_matter():
     body = "---\ntype: how-to\n---\n\n# Rotate a token\n\nIssue a new token, then revoke the old.\n"
 
     assert generate.summarise(body) == "Issue a new token, then revoke the old."
-
-
-def test_typed_pages_are_found_by_their_front_matter(tmp_path):
-    (tmp_path / "a.md").write_text("---\ntype: concept\n---\n# A\n")
-    (tmp_path / "b.md").write_text("# B\n\ntype: not front matter\n")
-    pages = [Page("a.md", "A", "", ""), Page("b.md", "B", "", "")]
-
-    assert generate.typed_paths(tmp_path, pages) == {"a.md"}
 
 
 def test_a_third_nav_level_is_labelled_with_its_nearest_section(tmp_path):

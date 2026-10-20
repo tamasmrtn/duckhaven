@@ -15,7 +15,7 @@ hide:
     A Monaco SQL editor with tabs, a results grid, and CSV export. Write and run queries together without
     emailing `.sql` snippets around.
 
--   :material-file-tree:{ .lg .middle } __Shared Iceberg catalog__
+-   :material-file-tree:{ .lg .middle } __Shared lakehouse catalogs__
 
     ---
 

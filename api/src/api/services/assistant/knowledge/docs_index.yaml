@@ -4,9 +4,9 @@ intro: |-
   DuckHaven is a self-hosted data lakehouse. Apache Iceberg brought the table format,
   Apache Polaris the catalog, and DuckDB the engine; DuckHaven is the control plane that
   holds the three together, so a team can run its own lakehouse instead of renting one.
-  It gives collaborative browser worksheets, a governed Iceberg catalog, compute that
-  scales to zero between runs, scheduled queries, column-level lineage, a semantic layer,
-  an advisory maintenance scanner, single sign-on, fine-grained access grants, machine
+  It gives collaborative browser worksheets, governed catalogs (Apache Iceberg or DuckLake),
+  compute that scales to zero between runs, scheduled queries, column-level lineage, a
+  semantic layer, a maintenance advisor, single sign-on, fine-grained access grants, machine
   identities, and governed AI access — all on your own infrastructure, in one Docker
   Compose deploy. No cloud warehouse lock-in, no Kubernetes, no platform team required.
 pages:

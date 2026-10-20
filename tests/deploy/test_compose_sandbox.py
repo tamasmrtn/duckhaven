@@ -9,7 +9,7 @@ isolated `duckhaven_internal` network **alone** — that is the control that sto
 Scope note: this asserts the *manifest*. Whether Docker's `internal: true`
 actually blocks egress cannot be checked from a pytest process outside the
 compose network; that is verified by the documented runtime command in
-docs/concepts/sql-sessions.md. What CI can guarantee is that the wiring never
+docs/querying/sql-sessions.md. What CI can guarantee is that the wiring never
 silently regresses — e.g. the agent quietly regaining the default network.
 """
 

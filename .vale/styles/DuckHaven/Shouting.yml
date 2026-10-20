@@ -1,0 +1,12 @@
+# Emphasis belongs in an admonition (!!! warning), which readers recognise and
+# the assistant's summariser skips, not in capitals mid-sentence.
+extends: existence
+message: "Use an admonition instead of '%s'."
+level: warning
+ignorecase: false
+nonword: true
+tokens:
+  - '\bIMPORTANT:'
+  - '\bNOTE:'
+  - '\bWARNING:'
+  - '\bCAUTION:'

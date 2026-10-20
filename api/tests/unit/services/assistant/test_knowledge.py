@@ -19,13 +19,18 @@ from api.models.docs import DocsCorpusMeta, DocsPage
 from api.services.assistant.knowledge import generate, sync
 from api.services.assistant.knowledge.loader import (
     INDEX_PATH,
+    DocsIndex,
     DocsUnavailableError,
+    Page,
     PageNotIndexed,
     docs_available,
+    expand_snippets,
     load_index,
+    page_body,
     page_url,
     read_page,
 )
+from api.services.assistant.persistence import _sources
 
 REPO_ROOT = generate._repo_root()
 DOCS_DIR = REPO_ROOT / "docs"
@@ -90,7 +95,6 @@ def test_contributor_docs_are_left_out():
 TRUNCATES = {
     "reference/configuration.md",
     "reference/rest-api.md",
-    "concepts/sql-sessions.md",
 }
 
 
@@ -118,35 +122,13 @@ def test_every_page_has_a_title_and_a_summary():
 def test_the_committed_index_matches_what_the_generator_produces():
     """The drift gate, as a test — the hook is bypassable, this is not."""
     committed = yaml.safe_load(INDEX_PATH.read_text())
-    regenerated = generate.render_index(
-        generate.merge(generate.discover(DOCS_DIR, REPO_ROOT / "mkdocs.yml"), committed),
-        committed.get("intro", ""),
-    )
+    pages, aliases = generate.build(DOCS_DIR, REPO_ROOT / "mkdocs.yml")
+    regenerated = generate.render_index(pages, committed.get("intro", ""), aliases)
 
     assert regenerated == INDEX_PATH.read_text()
 
 
 # ── The generator ─────────────────────────────────────────────────────────────
-
-
-def test_regeneration_preserves_a_hand_written_summary():
-    """Summaries are the one part a human owns; a mechanical guess must not win."""
-    discovered = generate.discover(DOCS_DIR, REPO_ROOT / "mkdocs.yml")
-    existing = {"pages": [{"path": discovered[0].path, "summary": "Hand-written."}]}
-
-    merged = generate.merge(discovered, existing)
-
-    assert merged[0].summary == "Hand-written."
-    assert merged[1].summary == discovered[1].summary
-
-
-def test_a_page_missing_from_the_index_gets_a_derived_summary():
-    discovered = generate.discover(DOCS_DIR, REPO_ROOT / "mkdocs.yml")
-
-    merged = generate.merge(discovered, {"pages": []})
-
-    assert merged[0].summary == discovered[0].summary
-    assert merged[0].summary
 
 
 @pytest.mark.parametrize(
@@ -180,7 +162,7 @@ def test_llms_txt_matches_what_the_generator_produces():
     """The published index for other people's models. It has no unit of its own
     otherwise, and the pre-commit hook that regenerates it does not run in CI."""
     committed = yaml.safe_load(INDEX_PATH.read_text())
-    pages = generate.merge(generate.discover(DOCS_DIR, REPO_ROOT / "mkdocs.yml"), committed)
+    pages, _ = generate.build(DOCS_DIR, REPO_ROOT / "mkdocs.yml")
     site_url = yaml.load(
         (REPO_ROOT / "mkdocs.yml").read_text(), Loader=generate._TagIgnoringLoader
     )["site_url"]
@@ -232,11 +214,11 @@ def test_reading_a_page_returns_its_markdown_and_the_running_version():
 def test_an_oversized_page_is_truncated_with_a_pointer(monkeypatch):
     monkeypatch.setattr(settings, "assistant_docs_max_page_chars", 500)
 
-    result = read_page("concepts/architecture.md")
+    result = read_page("getting-started/how-duckhaven-works.md")
 
     assert result["truncated"] is True
     assert "characters are not shown" in result["text"]
-    assert page_url("concepts/architecture.md") in result["text"]
+    assert page_url("getting-started/how-duckhaven-works.md") in result["text"]
 
 
 def test_an_unindexed_path_is_refused():
@@ -365,3 +347,136 @@ async def test_a_database_that_refuses_the_write_still_lets_the_replica_boot(
     monkeypatch.setattr(type(db_session), "execute", refuse)
 
     assert await sync.sync_corpus(db_session) is False
+
+
+# ── Moved pages, front matter and snippets ────────────────────────────────────
+
+
+def _config(redirect_maps: dict) -> dict:
+    return {"plugins": ["search", {"redirects": {"redirect_maps": redirect_maps}}]}
+
+
+def test_a_redirect_to_an_indexed_page_becomes_an_alias():
+    aliases = generate.aliases_from(
+        _config({"guides/old.md": "querying/new.md#section"}), {"querying/new.md"}
+    )
+
+    assert aliases == {"guides/old.md": "querying/new.md"}
+
+
+def test_a_redirect_into_excluded_docs_is_not_an_alias():
+    """The site follows it; the assistant has no page to send anyone to."""
+    assert generate.aliases_from(_config({"guides/old.md": "developer/new.md"}), set()) == {}
+
+
+@pytest.mark.parametrize(
+    ("maps", "indexed", "message"),
+    [
+        ({"a.md": "b.md"}, {"a.md", "b.md"}, "still a page"),
+        ({"a.md": "b.md", "b.md": "c.md"}, {"c.md"}, "chains"),
+        ({"a.md": "missing.md"}, {"b.md"}, "points at no page"),
+    ],
+)
+def test_a_bad_redirect_map_fails_generation(maps, indexed, message):
+    with pytest.raises(ValueError, match=message):
+        generate.aliases_from(_config(maps), indexed)
+
+
+def test_the_summary_ignores_front_matter():
+    body = "---\ntype: how-to\n---\n\n# Rotate a token\n\nIssue a new token, then revoke the old.\n"
+
+    assert generate.summarise(body) == "Issue a new token, then revoke the old."
+
+
+def test_a_third_nav_level_is_labelled_with_its_nearest_section(tmp_path):
+    docs = tmp_path / "docs"
+    (docs / "querying").mkdir(parents=True)
+    (docs / "querying" / "run.md").write_text("# Run\n\nA lead sentence.\n")
+    mkdocs = tmp_path / "mkdocs.yml"
+    mkdocs.write_text("nav:\n  - Use:\n    - Querying:\n      - Run: querying/run.md\n")
+
+    (page,) = generate.discover(docs, mkdocs)
+
+    assert page.section == "Querying"
+
+
+def test_aliases_are_written_only_when_there_are_some():
+    page = Page("a.md", "A", "S", "Summary.")
+
+    assert "aliases" not in generate.render_index([page], "intro")
+    assert "old.md: a.md" in generate.render_index([page], "intro", {"old.md": "a.md"})
+
+
+def test_front_matter_is_stripped_and_snippets_are_expanded(tmp_path):
+    (tmp_path / "_snippets").mkdir()
+    (tmp_path / "_snippets" / "allowed.md").write_text("- `SELECT`\n- `INSERT`\n")
+    text = (
+        "---\ntype: reference\n---\n# SQL\n\n"
+        '--8<-- "allowed.md"\n\n!!! note\n    --8<-- "allowed.md"\n'
+    )
+
+    body = page_body(text, tmp_path)
+
+    assert body.startswith("# SQL")
+    assert "- `SELECT`\n- `INSERT`" in body
+    assert "    - `SELECT`\n    - `INSERT`" in body
+
+
+@pytest.mark.parametrize("name", ["missing.md", "../outside.md"])
+def test_a_snippet_that_does_not_resolve_inside_the_snippets_dir_is_left_alone(tmp_path, name):
+    (tmp_path / "_snippets").mkdir()
+    (tmp_path / "outside.md").write_text("secret\n")
+    line = f'--8<-- "{name}"'
+
+    assert expand_snippets(f"# T\n\n{line}\n", tmp_path) == f"# T\n\n{line}\n"
+
+
+def test_an_old_path_reads_the_page_it_moved_to(monkeypatch):
+    index = load_index()
+    moved = DocsIndex(pages=index.pages, aliases={"guides/sql.md": "reference/sql-support.md"})
+    monkeypatch.setattr("api.services.assistant.knowledge.loader.load_index", lambda: moved)
+
+    result = read_page("guides/sql.md")
+
+    assert (result["path"], result["title"]) == ("reference/sql-support.md", "SQL support")
+
+
+def test_a_read_page_is_returned_as_rendered(monkeypatch, tmp_path):
+    docs = tmp_path / "docs"
+    (docs / "_snippets").mkdir(parents=True)
+    (docs / "_snippets" / "fact.md").write_text("The shared fact.\n")
+    (docs / "reference").mkdir()
+    (docs / "reference" / "sql-support.md").write_text(
+        '---\ntype: reference\n---\n# SQL support\n\n--8<-- "fact.md"\n'
+    )
+    monkeypatch.setattr(settings, "assistant_docs_dir", docs)
+
+    text = read_page("reference/sql-support.md")["text"]
+
+    assert text == "# SQL support\n\nThe shared fact.\n"
+
+
+def test_a_citation_recorded_before_a_move_points_at_the_new_page(monkeypatch):
+    index = load_index()
+    moved = DocsIndex(pages=index.pages, aliases={"guides/sql.md": "reference/sql-support.md"})
+    monkeypatch.setattr("api.services.assistant.knowledge.loader.load_index", lambda: moved)
+
+    (source,) = _sources(["guides/sql.md"])
+
+    assert source == {
+        "path": "reference/sql-support.md",
+        "title": "SQL support",
+        "url": page_url("reference/sql-support.md"),
+    }
+
+
+def test_a_guess_in_the_old_layout_is_pointed_at_the_moved_page():
+    index = DocsIndex(
+        pages=(
+            Page("ai/mcp-server.md", "MCP server", "AI", "s"),
+            Page("reference/cli.md", "CLI", "R", "s"),
+        ),
+        aliases={"concepts/mcp-server.md": "ai/mcp-server.md"},
+    )
+
+    assert index.nearest("concepts/mcp.md")[0] == "ai/mcp-server.md"

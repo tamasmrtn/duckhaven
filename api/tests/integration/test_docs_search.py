@@ -102,7 +102,7 @@ async def test_a_title_match_outranks_a_passing_mention(corpus):
     results = await search_pages(corpus, "storage backends", limit=5)
 
     assert results
-    assert results[0]["path"] == "concepts/storage-backends.md"
+    assert results[0]["path"] == "data/storage-backends.md"
 
 
 async def test_results_carry_an_excerpt_showing_the_match(corpus):

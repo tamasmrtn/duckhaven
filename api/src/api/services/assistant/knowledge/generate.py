@@ -13,8 +13,8 @@ files, because the nav is what a reader actually sees. That does mean a page
 absent from the nav is absent from the index, and mkdocs will not complain —
 ``validation.nav.omitted_files`` defaults to ``info``, which ``--strict`` does
 not promote — so the drift test reads ``docs/`` directly rather than trusting
-this walk. Summaries are derived from each page's opening paragraph and then
-**preserved across regeneration**, so a hand-tuned one is never clobbered.
+this walk. Each summary is the page's lead sentence, regenerated every time, so it
+always matches the page.
 
 Deliberately records no version or commit: the index would then change on every
 commit and the drift gate would fire constantly. The running version is stamped
@@ -28,13 +28,13 @@ from pathlib import Path
 
 import yaml
 
-from api.services.assistant.knowledge.loader import Page
+from api.services.assistant.knowledge.loader import Page, strip_front_matter
 
 # Contributor documentation answers questions about working *on* DuckHaven, not
 # about using it, and the release notes date instantly. Excluding them keeps the
 # resident index roughly 300 tokens smaller and stops the assistant citing the
 # testing guide at someone asking about time travel.
-EXCLUDED_PREFIXES = ("developer/", "release-notes/")
+EXCLUDED_PREFIXES = ("developer/", "release-notes/", "_snippets/")
 EXCLUDED_PATHS = frozenset({"index.md"})
 
 INDEX_PATH = Path(__file__).with_name("docs_index.yaml")
@@ -86,11 +86,11 @@ def _is_indexed(path: str) -> bool:
 def summarise(body: str) -> str:
     """The page's opening paragraph, reduced to one plain-text line.
 
-    A starting point for a human, not a finished description: ``merge`` keeps any
-    summary already in the index, so editing one here is permanent.
+    The templates make that paragraph's first sentence answer the page's question,
+    so it is the summary; to change a summary, edit the page's lead.
     """
     paragraph: list[str] = []
-    for line in body.splitlines():
+    for line in strip_front_matter(body).splitlines():
         stripped = line.strip()
         if not paragraph:
             # Skip everything before the lead prose: the H1, front matter, lists,
@@ -138,7 +138,9 @@ def _walk(nav: list, section: str) -> list[tuple[str, str | None, str]]:
                 if isinstance(value, str):
                     found.append((value, title, section or title))
                 elif isinstance(value, list):
-                    found += _walk(value, section or title)
+                    # The nearest heading names the section: under a tab such as
+                    # "Use", a page belongs to "Querying", not to the tab.
+                    found += _walk(value, title)
     return found
 
 
@@ -155,10 +157,32 @@ def discover(docs_dir: Path, mkdocs_yml: Path) -> list[Page]:
     return pages
 
 
-def merge(discovered: list[Page], existing: dict) -> list[Page]:
-    """Keep hand-edited summaries; take everything else from the docs tree."""
-    kept = {p["path"]: p.get("summary", "") for p in existing.get("pages", [])}
-    return [Page(p.path, p.title, p.section, kept.get(p.path) or p.summary) for p in discovered]
+def aliases_from(mkdocs_config: dict, indexed: set[str]) -> dict[str, str]:
+    """Old path -> indexed page, from the ``redirects`` plugin's map.
+
+    Only redirects that land on an indexed page become aliases; one into
+    ``developer/`` is a real redirect for the site but nothing the assistant can
+    read. The checks make a bad map fail ``make docs-index`` rather than send the
+    assistant to a page that is not there.
+    """
+    maps: dict[str, str] = {}
+    for plugin in mkdocs_config.get("plugins") or []:
+        if isinstance(plugin, dict) and "redirects" in plugin:
+            maps = (plugin["redirects"] or {}).get("redirect_maps") or {}
+    aliases: dict[str, str] = {}
+    for old, new in maps.items():
+        target = new.split("#", 1)[0]
+        if old in indexed:
+            raise ValueError(f"redirect source {old} is still a page; remove it or the redirect")
+        if target in maps:
+            raise ValueError(f"redirect {old} -> {target} chains; point it at {maps[target]}")
+        if target in indexed:
+            aliases[old] = target
+        elif target.startswith(("http://", "https://")) or not _is_indexed(target):
+            continue  # a real redirect for the site, but no page the assistant can read
+        else:
+            raise ValueError(f"redirect {old} -> {target} points at no page")
+    return aliases
 
 
 class _IndexDumper(yaml.SafeDumper):
@@ -173,14 +197,16 @@ _IndexDumper.add_representer(
 )
 
 
-def render_index(pages: list[Page], intro: str) -> str:
-    payload = {
+def render_index(pages: list[Page], intro: str, aliases: dict[str, str] | None = None) -> str:
+    payload: dict = {
         "intro": intro,
         "pages": [
             {"path": p.path, "title": p.title, "section": p.section, "summary": p.summary}
             for p in pages
         ],
     }
+    if aliases:
+        payload["aliases"] = dict(sorted(aliases.items()))
     header = (
         "# Generated by `make docs-index` from docs/ and mkdocs.yml — do not add pages\n"
         "# by hand. Summaries ARE hand-editable: regeneration preserves them.\n"
@@ -208,15 +234,26 @@ def render_llms_txt(pages: list[Page], intro: str, site_url: str) -> str:
     return "\n".join(out) + "\n"
 
 
+def build(docs_dir: Path, mkdocs_yml: Path) -> tuple[list[Page], dict[str, str]]:
+    """The index's pages and aliases: what ``make docs-index`` writes, and what the
+    drift tests compare the committed file against.
+
+    Every summary is the page's lead sentence. The templates require that sentence
+    to answer the page's question, so nothing hand-written can go stale beside it."""
+    config = yaml.load(mkdocs_yml.read_text(), Loader=_TagIgnoringLoader)
+    pages = discover(docs_dir, mkdocs_yml)
+    return pages, aliases_from(config, {p.path for p in pages})
+
+
 def main() -> None:
     root = _repo_root()
     docs_dir = root / "docs"
     mkdocs_yml = root / "mkdocs.yml"
     existing = yaml.safe_load(INDEX_PATH.read_text()) or {} if INDEX_PATH.exists() else {}
     intro = existing.get("intro") or ""
-    pages = merge(discover(docs_dir, mkdocs_yml), existing)
+    pages, aliases = build(docs_dir, mkdocs_yml)
 
-    INDEX_PATH.write_text(render_index(pages, intro))
+    INDEX_PATH.write_text(render_index(pages, intro, aliases))
     site_url = yaml.load(mkdocs_yml.read_text(), Loader=_TagIgnoringLoader)["site_url"]
     (docs_dir / "llms.txt").write_text(render_llms_txt(pages, intro, site_url))
     print(f"{INDEX_PATH.relative_to(root)}: {len(pages)} pages")

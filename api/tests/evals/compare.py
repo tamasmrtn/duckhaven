@@ -95,7 +95,7 @@ def _instructions_given(results: tuple[RunResult, ...]) -> str | None:
     Kept whole, page index included. Dropping it to save a third of the text was
     a mistake: *which pages exist* is exactly the assertion a citation has to be
     checked against, and without it the judge scored a correct pointer to
-    guides/service-accounts.md — a real, indexed page — as an invented one.
+    access/service-accounts.md — a real, indexed page — as an invented one.
     """
     text = next((r.instructions for r in results if r.instructions), "")
     return text.strip() or None
@@ -112,7 +112,7 @@ def _context(case: Case, *results: RunResult) -> str:
     Tool results are here because leaving them out had the same effect on the
     other half of the case set. Asked to chart revenue, the assistant queried the
     curated metric and reported the figures it got back; the judge saw only
-    `concepts/assistant.md`, which contains no revenue, and scored the answer 1
+    `ai/assistant.md`, which contains no revenue, and scored the answer 1
     for fabrication. A number the assistant looked up is not a number it made up,
     and faithfulness cannot tell the difference without seeing the lookup.
     """

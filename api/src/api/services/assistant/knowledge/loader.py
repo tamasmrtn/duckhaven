@@ -10,7 +10,8 @@ documentation than its own code would describe features it does not have.
 from __future__ import annotations
 
 import difflib
-from dataclasses import dataclass
+import re
+from dataclasses import dataclass, field
 from functools import cached_property, lru_cache
 from pathlib import Path
 
@@ -32,6 +33,10 @@ class Page:
 @dataclass(frozen=True)
 class DocsIndex:
     pages: tuple[Page, ...]
+    # Old path -> current path, from the site's redirect map. A page that moved
+    # keeps answering to its old path, because old paths outlive the move: in
+    # stored conversations' citations, and in a model's guess.
+    aliases: dict[str, str] = field(default_factory=dict)
 
     @property
     def paths(self) -> tuple[str, ...]:
@@ -40,9 +45,24 @@ class DocsIndex:
     def get(self, path: str) -> Page | None:
         return next((p for p in self.pages if p.path == path), None)
 
+    def resolve(self, path: str) -> Page | None:
+        """The page at ``path``, or the page it moved to."""
+        return self.get(path) or self.get(self.aliases.get(path, ""))
+
     def nearest(self, path: str, n: int = 3) -> list[str]:
-        """Indexed paths closest to a miss, so a wrong guess can be corrected."""
-        return difflib.get_close_matches(path, self.paths, n=n, cutoff=0.3)
+        """Indexed paths closest to a miss, so a wrong guess can be corrected.
+
+        Old paths count as candidates too, answered with where the page lives
+        now: a model that learned the docs before a move guesses in the old
+        layout, and its nearest old path is the best clue to the page it means.
+        """
+        candidates = self.paths + tuple(self.aliases)
+        found: list[str] = []
+        for match in difflib.get_close_matches(path, candidates, n=2 * n, cutoff=0.3):
+            target = self.aliases.get(match, match)
+            if target not in found:
+                found.append(target)
+        return found[:n]
 
     @cached_property
     def prompt_block(self) -> str:
@@ -74,7 +94,48 @@ def load_index() -> DocsIndex:
         raise DocsUnavailableError(f"Documentation index is empty or malformed: {INDEX_PATH}")
     return DocsIndex(
         pages=tuple(Page(p["path"], p["title"], p["section"], p.get("summary", "")) for p in pages),
+        aliases=dict(raw.get("aliases") or {}),
     )
+
+
+_FRONT_MATTER = re.compile(r"\A---\n.*?\n---\n", re.DOTALL)
+_SNIPPET = re.compile(r'^([ \t]*)--8<--[ \t]+"([^"]+)"[ \t]*$', re.MULTILINE)
+SNIPPETS_DIR = "_snippets"
+
+
+def strip_front_matter(text: str) -> str:
+    """A page's body without its YAML header (``type: how-to`` and the like).
+
+    The header is for the site and the docs checks; to a model it is noise, and
+    to the summariser it would read as the page's opening line.
+    """
+    return _FRONT_MATTER.sub("", text, count=1)
+
+
+def expand_snippets(text: str, root: Path) -> str:
+    """Inline ``--8<-- "name.md"`` includes the way MkDocs renders them.
+
+    MkDocs expands these at build time, but the assistant reads the Markdown
+    source, where an unexpanded include is a line of punctuation in place of the
+    fact it stands for. An include that does not resolve inside the snippets
+    directory is left as written rather than read from elsewhere.
+    """
+    base = (root / SNIPPETS_DIR).resolve()
+
+    def include(match: re.Match) -> str:
+        target = (base / match.group(2)).resolve()
+        if not target.is_relative_to(base) or not target.is_file():
+            return match.group(0)
+        indent = match.group(1)
+        body = target.read_text(encoding="utf-8").rstrip("\n")
+        return "\n".join(indent + line if line else line for line in body.splitlines())
+
+    return _SNIPPET.sub(include, text)
+
+
+def page_body(text: str, root: Path) -> str:
+    """What a reader of the rendered page sees, as Markdown."""
+    return expand_snippets(strip_front_matter(text), root)
 
 
 class DocsUnavailableError(RuntimeError):
@@ -109,9 +170,10 @@ def read_page(path: str) -> dict:
     absolute path can reach a file outside the docs tree even if the model is
     talked into asking for one.
     """
-    page = load_index().get(path)
+    page = load_index().resolve(path)
     if page is None:
         raise PageNotIndexed(path)
+    path = page.path
 
     root = docs_dir().resolve()
     resolved = (root / path).resolve()
@@ -120,7 +182,7 @@ def read_page(path: str) -> dict:
     if not resolved.is_relative_to(root) or not resolved.is_file():
         raise DocsUnavailableError(f"Documentation page is missing from this build: {path}")
 
-    text = resolved.read_text(encoding="utf-8")
+    text = page_body(resolved.read_text(encoding="utf-8"), root)
     cap = settings.assistant_docs_max_page_chars
     truncated = len(text) > cap
     if truncated:

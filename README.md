@@ -75,7 +75,7 @@ trail — with data sovereignty, network privacy, and no SaaS lock-in.
   whether it changed before every hit, so writes from Spark, PyIceberg or dlt
   are caught too, and the caller's grants are still checked. On by default;
   switch it off per deployment, workspace, SQL session or run. See
-  [docs/concepts/result-cache.md](docs/concepts/result-cache.md).
+  [docs/querying/result-cache.md](docs/querying/result-cache.md).
 - **Query profiles** — After a query runs, inspect a per-operator profile: an
   interactive operator graph with rows in → out, bytes, and timing per step,
   plus automatic flags for spills to disk, scan blow-ups, and bad cardinality
@@ -98,7 +98,7 @@ trail — with data sovereignty, network privacy, and no SaaS lock-in.
   DuckLake tables are read by DuckDB only, where Iceberg tables are read by
   Spark, Trino, Flink and PyIceberg — so Iceberg stays the default kind, and a
   DuckLake catalog can be exported to Iceberg if that changes. See
-  [docs/concepts/ducklake.md](docs/concepts/ducklake.md).
+  [docs/data/ducklake.md](docs/data/ducklake.md).
 - **Snapshot history & time travel** — Browse a table's Iceberg snapshots and run
   "query at this snapshot" against any point in its history.
 - **Data lineage, down to the column** — See where a table's data came from and
@@ -183,7 +183,7 @@ trail — with data sovereignty, network privacy, and no SaaS lock-in.
   DuckHaven's own documentation for the version you are running — as the
   holder of a DuckHaven access token, through the same enforcement chokepoints
   as any other client, so it is never a new way in. Read-only by default. See
-  [docs/concepts/mcp-server.md](docs/concepts/mcp-server.md).
+  [docs/ai/mcp-server.md](docs/ai/mcp-server.md).
 
 ### Storage
 
@@ -254,7 +254,7 @@ flowchart TB
   the same Docker Compose foundation. See
   [High availability](docs/deployment/high-availability.md).
 
-For the full architecture, see [docs/concepts/architecture.md](docs/concepts/architecture.md). For
+For the full architecture, see [docs/getting-started/how-duckhaven-works.md](docs/getting-started/how-duckhaven-works.md). For
 the UI design system, see [docs/developer/design-system.md](docs/developer/design-system.md).
 
 ## Tech Stack
@@ -290,14 +290,14 @@ docker compose cp api:/var/duckhaven/setup_token ./setup_token && cat ./setup_to
 
 - [Install](docs/deployment/install.md)
 - [Update](docs/deployment/updating.md)
-- [Storage backends (bundled / S3 / ADLS)](docs/deployment/storage.md)
-- [Single sign-on (OIDC)](docs/guides/connect-idp.md)
-- [LDAP / Active Directory](docs/guides/connect-ldap.md)
+- [Storage backends (bundled / S3 / ADLS)](docs/data/configure-storage.md)
+- [Single sign-on (OIDC)](docs/access/connect-idp.md)
+- [LDAP / Active Directory](docs/access/connect-ldap.md)
 - [Reverse proxy + TLS (Caddy)](docs/deployment/reverse-proxy-tls.md)
 - [High availability](docs/deployment/high-availability.md)
 - [Monitoring (Prometheus)](docs/operations/monitoring.md)
 - [Backup & restore](docs/deployment/backup-restore.md)
-- [Add an agent](docs/deployment/add-agent.md)
+- [Add an agent](docs/compute/add-agent.md)
 
 For local development (running the API and Vite dev server against a
 compose-managed Postgres) see [docs/developer/development.md](docs/developer/development.md). For
@@ -326,7 +326,7 @@ Also hardening in flight: finishing the Polaris `storageConfigInfo` credential
 wiring (role ARN / tenant) so external S3 / ADLS Gen 2 backends are
 production-ready outside the opt-in integration tests.
 
-See [docs/concepts/architecture.md](docs/concepts/architecture.md) for the
+See [docs/getting-started/how-duckhaven-works.md](docs/getting-started/how-duckhaven-works.md) for the
 architectural decisions.
 
 ## Contributing

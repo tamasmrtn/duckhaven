@@ -386,7 +386,7 @@ async def test_read_pages_are_cited_on_the_turn_that_read_them(db_session, conve
         records={
             "c1": ToolCallRecord(
                 tool="read_doc_page",
-                args={"path": "guides/snapshots-time-travel.md"},
+                args={"path": "data/snapshots-time-travel.md"},
                 status="ok",
             )
         },
@@ -432,7 +432,7 @@ async def test_read_pages_are_cited_on_the_turn_that_read_them(db_session, conve
     by_text = {i["text"]: i for i in await render_transcript_with_sql(db_session, conversation.id)}
 
     assert [s["path"] for s in by_text["Use the AT clause."]["sources"]] == [
-        "guides/snapshots-time-travel.md"
+        "data/snapshots-time-travel.md"
     ]
     assert [s["path"] for s in by_text["ATTACH and INSTALL."]["sources"]] == [
         "reference/sql-support.md"

@@ -186,7 +186,8 @@ def _sources(paths: list[str]) -> list[dict]:
 
     Titles and URLs come from the shipped index, so a citation names the page the
     way a reader would recognise it and links to the version this build actually
-    carries — not to whatever the docs site says today.
+    carries — not to whatever the docs site says today. A path recorded before its
+    page moved resolves to where the page is now.
     """
     from api.services.assistant.knowledge.loader import load_index, page_url
 
@@ -196,9 +197,9 @@ def _sources(paths: list[str]) -> list[dict]:
         return [{"path": path, "title": path, "url": None} for path in paths]
     return [
         {
-            "path": path,
-            "title": page.title if (page := index.get(path)) else path,
-            "url": page_url(path) if page else None,
+            "path": page.path if (page := index.resolve(path)) else path,
+            "title": page.title if page else path,
+            "url": page_url(page.path) if page else None,
         }
         for path in paths
     ]

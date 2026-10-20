@@ -1,9 +1,19 @@
+---
+type: how-to
+---
+
 # Reverse proxy + TLS
 
-The bundled `api` service publishes plain HTTP on port 8000. For any deploy
-reachable beyond a private network, front it with a reverse proxy that
-terminates TLS. Caddy is the smallest path; nginx / Traefik / Cloudflare
-Tunnel all work equally well.
+Put DuckHaven behind a reverse proxy that terminates TLS, for any deployment reachable beyond a private network.
+
+The bundled `api` service publishes plain HTTP on port 8000. Caddy is the smallest path; nginx, Traefik and
+Cloudflare Tunnel work as well.
+
+## Before you begin
+
+- **You need:** a DNS name pointing at the host, and shell access to the host to set `.env`.
+- **Applies to:** the compose stack. For a deployment reached only over Tailscale or a VPN, see
+  [Private-network deploys](#private-network-deploys).
 
 ## Caddy (recommended)
 
@@ -51,7 +61,7 @@ docker compose -f docker-compose.yml -f docker-compose.tls.yml up -d
 ```
 
 Set `COOKIE_SECURE=true` in `.env` so the api issues `Secure`-flagged session
-cookies; otherwise the browser drops them and login appears to silently fail.
+cookies, which the browser then never sends over plain HTTP.
 
 Caddy auto-provisions a Let's Encrypt cert for the hostname on first request.
 
@@ -151,9 +161,8 @@ shorter sessions.
 
 ### Set `COOKIE_SECURE=true`
 
-Same as the Caddy path: NPM terminates TLS, so the api must issue
-`Secure`-flagged cookies or the browser will drop them. Add to DuckHaven's
-`.env`:
+Same as the Caddy path: NPM terminates TLS, so have the api issue
+`Secure`-flagged cookies. Add to DuckHaven's `.env`:
 
 ```sh
 COOKIE_SECURE=true
@@ -170,6 +179,20 @@ snippets correctly with no extra config.
 (set automatically by Caddy and most other proxies). The compose snippet
 generated in the admin UI uses `wss://duckhaven.example.com/agents/connect`
 when fronted by TLS, `ws://...` otherwise.
+
+## Check that it worked
+
+Open `https://duckhaven.example.com`, sign in, and stay signed in after a reload. In **Compute → Generate bootstrap**,
+the snippet's `CONTROL_PLANE_URL` starts with `wss://`.
+
+## If it goes wrong
+
+- **Sign-in returns to the login page.** `COOKIE_SECURE` does not match how users reach DuckHaven; see [Troubleshoot
+  sign-in and access](../access/troubleshooting.md#sign-in-seems-to-succeed-then-returns-to-the-login-page).
+- **Agents behind the proxy disconnect, or never connect.** The proxy must pass WebSocket upgrades on
+  `/agents/connect` and must not close idle connections quickly. Raise its read timeout.
+- **The bootstrap snippet shows `ws://` or the wrong host.** The proxy does not send `X-Forwarded-Proto` and
+  `X-Forwarded-Host`; configure it to.
 
 ## Private-network deploys
 

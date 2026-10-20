@@ -26,7 +26,7 @@ does not cover this" would be worthless.
 **Ranking is ``ts_rank`` over the weighted vector, with no length normalisation.**
 Cover density (``ts_rank_cd``) rewards a page for every place the query's terms sit
 close together, so unnormalised it lets the longest pages win everything an OR-query
-touches: ``concepts/architecture.md`` outranked ``concepts/storage-backends.md`` for
+touches: ``getting-started/how-duckhaven-works.md`` outranked ``data/storage-backends.md`` for
 "storage backends". Dividing it by length (flag 2) fixed that and overshot: the
 shortest pages whose *title* holds a common word ("Saved queries") then won every
 question containing "query". ``ts_rank`` scores term frequency with the title and

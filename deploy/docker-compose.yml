@@ -267,13 +267,13 @@ services:
       # DuckHaven access token. On by default — it needs no configuration and can
       # reach nothing that token could not already reach through /api. Writes are
       # off separately: there is no way to ask a human to approve one over MCP.
-      # See docs/concepts/mcp-server.md.
+      # See docs/ai/mcp-server.md.
       MCP_ENABLED: ${MCP_ENABLED:-true}
       MCP_ALLOW_WRITES: ${MCP_ALLOW_WRITES:-false}
       MCP_QUERY_TIMEOUT_S: ${MCP_QUERY_TIMEOUT_S:-120.0}
       MCP_RESULT_ROW_CAP: ${MCP_RESULT_ROW_CAP:-100}
       MCP_RESULT_BYTE_CAP: ${MCP_RESULT_BYTE_CAP:-32768}
-      # DuckLake: see docs/concepts/ducklake.md. The API connects as the owner;
+      # DuckLake: see docs/data/ducklake.md. The API connects as the owner;
       # agents use each catalog's own login.
       DUCKLAKE_ENABLED: ${DUCKLAKE_ENABLED:-true}
       DUCKLAKE_DATABASE_URL: ${DUCKLAKE_DATABASE_URL:-postgresql+asyncpg://duckhaven:${POSTGRES_PASSWORD:-duckhaven}@postgres:5432/ducklake}
@@ -288,7 +288,7 @@ services:
       SQL_SESSION_MAX_LIFETIME_S: ${SQL_SESSION_MAX_LIFETIME_S:-14400}
       # OIDC / SSO (optional). Empty by default -> SSO off, local login only.
       # OIDC_PROVIDERS is a JSON list of providers (one button each); see
-      # docs/guides/connect-idp.md. The OIDC_* fields below are a single-provider
+      # docs/access/connect-idp.md. The OIDC_* fields below are a single-provider
       # shorthand used only when OIDC_PROVIDERS is empty. For Entra, scopes must
       # not include "groups" (not a valid Entra scope).
       OIDC_PROVIDERS: ${OIDC_PROVIDERS:-}
@@ -461,7 +461,7 @@ volumes:
 #
 # Cost: an agent whose catalogs use EXTERNAL storage (s3 / adls_gen2), or that
 # must reach an off-host Polaris, needs real internet — those deployments opt out
-# with deploy/docker-compose.egress-opt-out.yml. See docs/concepts/sql-sessions.md.
+# with deploy/docker-compose.egress-opt-out.yml. See docs/querying/sql-sessions.md.
 networks:
   default:
   duckhaven_internal:

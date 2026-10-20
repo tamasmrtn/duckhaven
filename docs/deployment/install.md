@@ -1,10 +1,17 @@
+---
+type: how-to
+---
+
 # Install DuckHaven
 
-DuckHaven runs as one `docker compose` stack — Postgres, Apache Polaris, and the
-DuckHaven API (which serves both the REST API and the web UI on port 8000). No
-`git clone` is required.
+Install DuckHaven on one Linux host with Docker Compose, create the first admin, and keep the install private.
 
-## Prerequisites
+DuckHaven runs as one `docker compose` stack — Postgres, Apache Polaris, the bundled
+object store, the DuckHaven API (which serves both the REST API and the web UI on
+port 8000), a bundled DuckDB agent, and the tracing services. No `git clone` is
+required.
+
+## Before you begin
 
 - Linux host with Docker Engine 24+ and Docker Compose v2
 - 8 GB RAM minimum
@@ -32,9 +39,7 @@ required.
 
 Read the setup token on the host:
 
-```bash
-docker compose cp api:/var/duckhaven/setup_token ./setup_token && cat ./setup_token
-```
+--8<-- "setup-token.md"
 
 Open `http://<host>:8000` in a browser. The SPA detects an empty database and
 routes you to the setup screen — paste the token, pick admin credentials,
@@ -43,9 +48,6 @@ regenerated on subsequent boots.
 
 The UI is self-contained: the browser loads everything it needs, the SQL editor
 included, from DuckHaven itself, so users' browsers need no internet access.
-Releases up to 0.8 fetched the SQL editor from `cdn.jsdelivr.net` at runtime
-instead; on a network without internet access their worksheets never got past
-"Loading editor…".
 
 To start over, wipe the stack:
 
@@ -57,14 +59,14 @@ docker compose down -v
 
 ## Add agents
 
-Agents are deployed to separate hosts. See [add-agent.md](./add-agent.md).
+Agents are deployed to separate hosts. See [add-agent.md](../compute/add-agent.md).
 
 ## Agent network egress
 
 The bundled agent is attached to an **isolated Docker network with no route off the host**. It can reach the API,
 Polaris, the object store, and the trace collector — and nothing else. Because agents run a broad SQL surface governed
 by a statement policy rather than a hard allowlist, this is the layer that contains a statement trying to read from or
-write to an arbitrary address. See [Sandboxing](../concepts/sql-sessions.md#sandboxing).
+write to an arbitrary address. See [Sandboxing](../querying/sql-sessions.md#sandboxing).
 
 ### When you must opt out
 
@@ -141,8 +143,17 @@ spec:
     and others do). Applying this manifest on a cluster without one gives you **no protection at all** and no error.
     Confirm enforcement before relying on it.
 
+## If it goes wrong
+
+- **The setup screen rejects the token.** See
+  [Troubleshoot sign-in and access](../access/troubleshooting.md#invalid-or-missing-setup-token).
+- **A container keeps restarting.** Read its log with `docker compose logs ⟨service⟩`, and see
+  [Troubleshoot the deployment](../operations/troubleshooting.md).
+- **The browser cannot reach port 8000.** Check the host's firewall, and that you use the host's address on your
+  private network.
+
 ## Next steps
 
-- [Update](./updating.md) — pull a new release.
-- [Reverse proxy + TLS](./reverse-proxy-tls.md) — front the stack with Caddy.
-- [Backup and restore](./backup-restore.md) — protecting Postgres.
+- [Update](updating.md) — pull a new release.
+- [Reverse proxy + TLS](reverse-proxy-tls.md) — front the stack with Caddy.
+- [Backup and restore](backup-restore.md) — protecting Postgres.

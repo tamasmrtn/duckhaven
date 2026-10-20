@@ -1,7 +1,7 @@
 """Keyset paging for the collections that grow without bound.
 
 One helper so every paged endpoint cuts its pages the same way and returns the
-same envelope. See docs/reference/api-conventions.md for which collections are
+same envelope. See docs/developer/api-conventions.md for which collections are
 exempt from paging and why.
 
 Keyset rather than offset: these collections are written to continuously, and an

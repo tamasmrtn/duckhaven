@@ -27,9 +27,9 @@ def _ctx(docs_enabled: bool = True):
 
 
 async def test_reading_a_page_returns_its_text_and_the_running_version():
-    result = await read_doc_page(_ctx(), "guides/snapshots-time-travel.md")
+    result = await read_doc_page(_ctx(), "data/snapshots-time-travel.md")
 
-    assert result["path"] == "guides/snapshots-time-travel.md"
+    assert result["path"] == "data/snapshots-time-travel.md"
     assert result["title"] == "Snapshots & time travel"
     assert "AT (TIMESTAMP =>" in result["text"]
     assert result["version"] == settings.app_version
@@ -74,7 +74,7 @@ async def test_an_oversized_page_says_how_much_it_is_missing(monkeypatch):
     does, further down."""
     monkeypatch.setattr(settings, "assistant_docs_max_page_chars", 1_000)
 
-    result = await read_doc_page(_ctx(), "concepts/architecture.md")
+    result = await read_doc_page(_ctx(), "getting-started/how-duckhaven-works.md")
 
     assert result["truncated"] is True
     assert "characters are not shown" in result["text"]
@@ -100,7 +100,7 @@ def _search_ctx(results=None, *, fail=None, seen=None, docs_enabled=True):
 
 
 async def test_search_returns_ranked_pages():
-    hit = {"path": "concepts/storage-backends.md", "title": "Storage backends", "rank": 0.9}
+    hit = {"path": "data/storage-backends.md", "title": "Storage backends", "rank": 0.9}
 
     result = await search_docs(_search_ctx([hit]), "what storage backends exist")
 

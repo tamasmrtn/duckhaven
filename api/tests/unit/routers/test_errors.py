@@ -1,6 +1,6 @@
 """The error envelope, exercised through real routes.
 
-docs/reference/api-conventions.md promises one body shape for every 4xx and
+docs/developer/api-conventions.md promises one body shape for every 4xx and
 5xx. The conformance test asserts the schema says so; these assert the server
 actually does it, for each way an error can be raised.
 """

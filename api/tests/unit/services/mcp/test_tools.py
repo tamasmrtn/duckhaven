@@ -232,8 +232,8 @@ async def test_get_table_lineage_surfaces_a_governed_denial(gateways):
 
 
 async def test_read_doc_page_returns_a_shipped_page():
-    page = await tools.read_doc_page("concepts/mcp-server.md")
-    assert page["path"] == "concepts/mcp-server.md"
+    page = await tools.read_doc_page("ai/mcp-server.md")
+    assert page["path"] == "ai/mcp-server.md"
     assert "Model Context Protocol" in page["text"]
     assert page["version"] == settings.app_version
 
@@ -246,7 +246,7 @@ async def test_read_doc_page_suggests_near_misses():
     with pytest.raises(ToolError) as exc:
         await tools.read_doc_page("concepts/mcp.md")
     assert "Closest indexed paths" in str(exc.value)
-    assert "concepts/mcp-server.md" in str(exc.value)
+    assert "ai/mcp-server.md" in str(exc.value)
 
 
 async def test_read_doc_page_cannot_escape_the_docs_tree():
@@ -263,7 +263,7 @@ async def test_read_doc_page_needs_no_authenticated_call():
     Called here with no request context at all: anything that reached for the
     caller's loopback client would raise instead of returning a page.
     """
-    assert (await tools.read_doc_page("concepts/mcp-server.md"))["title"]
+    assert (await tools.read_doc_page("ai/mcp-server.md"))["title"]
 
 
 async def test_search_docs_clamps_its_limit(monkeypatch):
@@ -304,14 +304,14 @@ async def test_search_docs_returns_the_running_version(monkeypatch):
     """
 
     async def fake_search(db, query, *, limit):
-        return [{"path": "concepts/mcp-server.md", "title": "MCP server"}]
+        return [{"path": "ai/mcp-server.md", "title": "MCP server"}]
 
     monkeypatch.setattr(tools, "search_pages", fake_search)
     monkeypatch.setattr(tools, "async_session_factory", _NullSessionFactory())
 
     out = await tools.search_docs("mcp")
     assert out["version"] == settings.app_version
-    assert out["results"][0]["path"] == "concepts/mcp-server.md"
+    assert out["results"][0]["path"] == "ai/mcp-server.md"
 
 
 class _NullSessionFactory:

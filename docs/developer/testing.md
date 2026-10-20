@@ -45,7 +45,7 @@ assertion you were interested in, so a whole suite can look like it passed when 
 ### Elastic compute in the cross-component layer
 
 Scale-out can only be observed where compute is *absent*, so the elastic tests cannot share the main
-cross-component stack — its agent is already connected and would simply serve every request. They
+cross-component stack — its agent is already connected and would serve every request. They
 boot a second API against a sibling database (`<your DB>_elastic`, dropped and recreated per run, so
 the `DATABASE_URL` role needs `CREATE DATABASE`) with no agent of its own.
 
@@ -202,6 +202,18 @@ which a model shown one page can only invent.
 
 Grow the set from real failures rather than by enumerating questions at a desk. `search_docs` records `no_results` on
 its audit row precisely so the questions the documentation failed to answer can be found later.
+
+## Exercising the agent picker by hand
+
+Some behaviour is easiest to confirm on a running stack with two agents registered:
+
+1. Open a worksheet: the agent picker lists both, grouped by whether they can serve the workspace.
+2. Run several queries, switching agent between them, and confirm that:
+    - each query runs on the chosen agent, as **Compute** and **History** record;
+    - an agent missing an extension the workspace needs is refused before dispatch, with the missing extension named;
+    - a query that outlasts its timeout is interrupted on the agent and reported `failed`, not left running.
+3. Confirm that a result older than `RESULT_RETENTION_HOURS` is removed on the agent, and that the query can be run
+   again from its SQL.
 
 ## Before you push
 

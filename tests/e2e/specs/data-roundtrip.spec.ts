@@ -19,10 +19,11 @@ test("create → insert → read-back preserves edge-case values", async ({ work
     `INSERT INTO ${table} VALUES (1,'O''Brien',1000.50),(2,'日本語',-50),(3,NULL,0)`,
   );
   const rows = await worksheetPage.runAndReadRows(`SELECT * FROM ${table} ORDER BY id`);
+  // DECIMAL arrives as an exact string at its declared scale (api_version 3).
   expect(rows).toEqual([
-    ["1", "O'Brien", "1000.5"],
-    ["2", "日本語", "-50"],
-    ["3", "NULL", "0"],
+    ["1", "O'Brien", "1000.50"],
+    ["2", "日本語", "-50.00"],
+    ["3", "NULL", "0.00"],
   ]);
   await worksheetPage.runAndReadRows(`DROP TABLE ${table}`);
 });

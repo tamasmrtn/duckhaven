@@ -1,0 +1,8 @@
+# Long sentences are the first thing a scanning reader skips. A sentence over
+# 35 words usually holds two ideas.
+extends: occurrence
+message: "This sentence has more than 35 words. Consider splitting it."
+level: suggestion
+scope: sentence
+max: 35
+token: '\b\w+\b'

@@ -1,0 +1,14 @@
+# These words tell the reader how to feel about a step instead of helping
+# with it, and read as condescending when the step turns out not to be easy.
+extends: existence
+message: "Remove '%s'; it adds no information."
+level: warning
+ignorecase: true
+tokens:
+  - simply
+  - easily
+  - obviously
+  - of course
+  - basically
+  - clearly
+  - please

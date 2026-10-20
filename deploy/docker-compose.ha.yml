@@ -24,6 +24,11 @@
 x-api-base: &api-base
   image: ghcr.io/tamasmrtn/duckhaven-api:${DUCKHAVEN_IMAGE_TAG:-latest}
   restart: unless-stopped
+  # Every setting in .env reaches the API, including the many this file does not
+  # list; the `environment:` block still wins for the values it wires itself.
+  env_file:
+    - path: .env
+      required: false
   depends_on:
     # Wait for a healthy Postgres primary before migrating/booting, so the
     # advisory-locked migrations and the bootstrap-token seed don't race

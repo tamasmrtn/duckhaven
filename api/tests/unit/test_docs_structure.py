@@ -33,7 +33,17 @@ GENERATED = frozenset({"reference/cli.md"})
 # Subject folders whose pages have been rewritten to the templates. Every page in
 # one must declare a type. Emptied and removed once every folder is migrated.
 MIGRATED_DIRS: frozenset[str] = frozenset(
-    {"getting-started", "access", "querying", "data", "compute", "deployment", "operations", "ai"}
+    {
+        "getting-started",
+        "access",
+        "querying",
+        "data",
+        "compute",
+        "deployment",
+        "operations",
+        "ai",
+        "metadata",
+    }
 )
 
 # Where a moved page's old path could still be named, outside the docs tree.

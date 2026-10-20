@@ -45,10 +45,10 @@
 
 ## Metadata & lineage
 
-- [Metadata](https://tamasmrtn.github.io/duckhaven/metadata/table-metadata/): What Polaris owns, what Postgres owns, and the table-metadata sidecar.
-- [Lineage](https://tamasmrtn.github.io/duckhaven/metadata/lineage/): Where a table's data came from, and what breaks if you change it.
+- [Metadata](https://tamasmrtn.github.io/duckhaven/metadata/table-metadata/): Each catalog's own metastore owns its tables' structure; DuckHaven's database adds only facts the metastore does not track, such as owner and last write.
+- [Lineage](https://tamasmrtn.github.io/duckhaven/metadata/lineage/): DuckHaven's lineage graph shows where a table's data came from and what depends on it, from the SQL it runs and from tools such as dbt.
 - [Import lineage from dbt](https://tamasmrtn.github.io/duckhaven/metadata/import-dbt-lineage/): Publish your dbt project's manifest.json so DuckHaven's lineage graph shows the dependencies your models declare.
-- [Semantic layer](https://tamasmrtn.github.io/duckhaven/metadata/semantic-layer/): Recording what a business term means so a metric is computed one agreed way.
+- [Semantic layer](https://tamasmrtn.github.io/duckhaven/metadata/semantic-layer/): A semantic model records what your business terms mean and how they are calculated, so the AI assistant answers metric questions from agreed definitions.
 - [Define metrics](https://tamasmrtn.github.io/duckhaven/metadata/define-metrics/): Create a semantic model, define a metric on it, and publish it so the AI assistant answers from your definition.
 - [Import semantics from dbt](https://tamasmrtn.github.io/duckhaven/metadata/import-dbt-semantics/): Publish the semantic models and metrics defined in your dbt project to DuckHaven, so the assistant answers from them.
 

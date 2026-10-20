@@ -1,4 +1,11 @@
+---
+type: concept
+---
+
 # Semantic layer
+
+A semantic model records what your business terms mean and how they are calculated, so the AI assistant answers metric
+questions from agreed definitions.
 
 A **semantic model** records what your business terms mean and how they are
 calculated: that revenue is the sum of `amount` over purchase events, excluding
@@ -57,7 +64,7 @@ A relationship declares a cardinality, and only two are available:
 
 Joining from a fact table toward a table that is *not* unique on the join key
 multiplies fact rows. Every `SUM` that crosses that join comes back inflated,
-and nothing errors — the query succeeds and the number is simply too big. By
+and nothing errors — the query succeeds and the number is too big. By
 having no vocabulary for that direction, DuckHaven cannot generate such a join.
 
 Validation goes further: a `many_to_one` whose right-hand columns are not that
@@ -139,7 +146,7 @@ definition carries one of three states:
 | State | Meaning |
 | --- | --- |
 | `ok` | Checked, and every column it names is still there |
-| `broken` | Checked, and it no longer resolves |
+| `broken` | Checked, and a binding does not resolve |
 | `unchecked` | Nothing has looked since something changed |
 
 `unchecked` is not a softer `ok`. It is what a definition becomes when its table
@@ -179,7 +186,7 @@ record that an agreed definition was bypassed.
 !!! note "What this deliberately does not do"
     V1 has no ratio, derived, cumulative or conversion metric types; a metric is
     one aggregation over one dataset. There is no version history — changing a
-    definition changes it, though previously-run queries keep their SQL in query
+    definition changes it, though queries that already ran keep their SQL in query
     history. There are no fiscal calendars or custom time spines, and no
     approval workflow beyond publish. Metrics from two different datasets cannot
     be combined in one query.

@@ -1,4 +1,11 @@
+---
+type: concept
+---
+
 # Metadata
+
+Each catalog's own metastore owns its tables' structure; DuckHaven's database adds only facts the metastore does not
+track, such as owner and last write.
 
 DuckHaven splits its state across two stores, and the split is an [architectural
 invariant](../developer/architecture.md#architectural-invariants): catalog structure lives in the
@@ -15,7 +22,7 @@ catalog's own metastore, and DuckHaven's own entities live in Postgres.
 !!! note "Two things in one Postgres instance"
     A DuckLake catalog's metastore *is* SQL, and the bundled deployment puts it in the same Postgres server as
     DuckHaven's own tables — in its own database, which DuckHaven's migrations do not manage. That is the same
-    relationship the Polaris metastore has always had with that server. Colocation is not ownership: the `ducklake`
+    relationship the Polaris metastore has with that server. Colocation is not ownership: the `ducklake`
     database is the authority for a DuckLake catalog's structure, and DuckHaven's schema still mirrors none of it.
 
 ## The table-metadata sidecar

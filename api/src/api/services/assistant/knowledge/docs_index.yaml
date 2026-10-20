@@ -136,11 +136,13 @@ pages:
 - path: metadata/table-metadata.md
   title: Metadata
   section: Metadata & lineage
-  summary: What Polaris owns, what Postgres owns, and the table-metadata sidecar.
+  summary: Each catalog's own metastore owns its tables' structure; DuckHaven's database adds only
+    facts the metastore does not track, such as owner and last write.
 - path: metadata/lineage.md
   title: Lineage
   section: Metadata & lineage
-  summary: Where a table's data came from, and what breaks if you change it.
+  summary: DuckHaven's lineage graph shows where a table's data came from and what depends on it,
+    from the SQL it runs and from tools such as dbt.
 - path: metadata/import-dbt-lineage.md
   title: Import lineage from dbt
   section: Metadata & lineage
@@ -149,7 +151,8 @@ pages:
 - path: metadata/semantic-layer.md
   title: Semantic layer
   section: Metadata & lineage
-  summary: Recording what a business term means so a metric is computed one agreed way.
+  summary: A semantic model records what your business terms mean and how they are calculated, so
+    the AI assistant answers metric questions from agreed definitions.
 - path: metadata/define-metrics.md
   title: Define metrics
   section: Metadata & lineage

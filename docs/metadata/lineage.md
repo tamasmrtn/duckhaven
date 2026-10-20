@@ -1,4 +1,11 @@
+---
+type: concept
+---
+
 # Lineage
+
+DuckHaven's lineage graph shows where a table's data came from and what depends on it, from the SQL it runs and from
+tools such as dbt.
 
 Lineage answers two questions about a table: *where did this data come from*, and *what breaks if I change it*.
 DuckHaven records both as a graph of relationships between datasets, and shows it on the Lineage tab of any table in
@@ -6,7 +13,7 @@ the catalog explorer.
 
 Two things produce that graph. DuckHaven derives lineage from the SQL it runs, with no configuration and no
 instrumentation, and it accepts lineage imported from a tool that already knows about it —
-[dbt](import-dbt-lineage.md) today, others later. Both end up in the same graph, and every relationship
+[dbt](import-dbt-lineage.md). Both end up in the same graph, and every relationship
 records which of them asserted it.
 
 ## What a relationship means
@@ -29,7 +36,7 @@ Lineage comes from statements that **write** a dataset:
 | Statement | Recorded as |
 |---|---|
 | `CREATE TABLE … AS SELECT` | `create_table_as` |
-| `CREATE VIEW … AS SELECT` | `create_view` (not yet reachable — see below) |
+| `CREATE VIEW … AS SELECT` | `create_view` (not reachable — see below) |
 | `INSERT INTO … SELECT` | `insert` |
 | `UPDATE …` with a source subquery | `update` |
 | `MERGE INTO … USING` | `merge` |
@@ -104,7 +111,7 @@ A relationship is **stale** when no producer has re-asserted it within `LINEAGE_
 switch the concept off).
 
 Stale means *unconfirmed*, not *wrong*. A table rebuilt once a year has perfectly correct lineage that nothing will
-confirm again for eleven months. What staleness tells you is how recently something vouched for the relationship, which
+confirm again for eleven months. What staleness tells you is when something last vouched for the relationship, which
 is what you need in order to decide how hard to check before acting on it.
 
 The threshold applies to each producer's own claim:
@@ -224,7 +231,7 @@ it is the kind of thing people act on. Column detail is not recorded when:
 - two output columns end up with the same name. DuckDB accepts that and renames one, so the names in the SQL are not
   the names in the table.
 
-In every case the table-level edge is recorded exactly as before.
+In every case the table-level edge is recorded.
 
 ### Imported column lineage
 

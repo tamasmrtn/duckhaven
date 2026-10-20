@@ -45,6 +45,13 @@ jobs:
             docs:
               - 'docs/**'
               - 'mkdocs.yml'
+              - 'overrides/**'
+              - 'requirements-docs.txt'
+              - '.vale.ini'
+              - '.vale/**'
+              - '.mdlrc'
+              - '.mdl_style.rb'
+              - 'README.md'
             web:
               - 'web/**'
               - '.github/workflows/ci.yml'
@@ -118,6 +125,12 @@ jobs:
             --cov=api/src \
             --cov-config=pyproject.toml \
             --cov-report=
+      # Retrieval over the docs corpus, scored against this job's Postgres. The
+      # integration job runs it whenever Python changes; this covers the
+      # docs-only PRs that job skips, which are the ones most likely to move it.
+      - name: Docs retrieval quality
+        if: needs.changes.outputs.python != 'true'
+        run: uv run --package duckhaven-api pytest api/tests/integration/test_docs_search.py -m integration -v
       # The agent suite stays serial: its control-channel tests settle with
       # fixed sleeps, which flake under xdist worker contention, and the whole
       # suite runs in ~13s anyway. The API suite above is the parallel one.
@@ -140,6 +153,39 @@ jobs:
         with:
           name: python-coverage
           path: coverage.xml
+
+  # Prose and Markdown lint plus a strict site build. Vale reports through
+  # reviewdog on added lines only, so existing pages do not fail a PR that
+  # never touched them; errors on a changed line do.
+  docs-lint:
+    name: Docs lint
+    runs-on: ubuntu-latest
+    needs: [changes]
+    if: needs.changes.outputs.docs == 'true'
+    permissions:
+      contents: read
+      checks: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: vale-cli/vale-action@v3
+        with:
+          version: 3.24.0
+          files: docs
+          fail_on_error: true
+          # Errors only: GitHub caps annotations per step, and a large docs diff
+          # carries more suggestions than that, which failed the job on its own.
+          vale_flags: "--minAlertLevel=error"
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - name: Install image libraries for social cards
+        run: sudo apt-get update && sudo apt-get install -y libcairo2-dev libfreetype6-dev libffi-dev libjpeg-dev libpng-dev
+      - run: pip install -r requirements-docs.txt pre-commit
+      - name: Markdown lint
+        run: pre-commit run markdownlint --all-files
+      - name: Build site
+        run: mkdocs build --strict
 
   integration:
     name: Integration tests
@@ -402,6 +448,7 @@ jobs:
       - changes
       - python-lint
       - python-test
+      - docs-lint
       - integration
       - cross-component
       - e2e

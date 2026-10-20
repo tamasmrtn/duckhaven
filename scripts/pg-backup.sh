@@ -22,7 +22,7 @@ case " $databases " in
     *" ducklake "*)
         echo "note: DuckLake is enabled. Snapshot object storage at the same point"
         echo "      in time as this dump, and restore storage first. See"
-        echo "      docs/operations/runbook.md and scripts/ducklake-check.py."
+        echo "      docs/deployment/backup-restore.md and scripts/ducklake-check.py."
         ;;
 esac
 

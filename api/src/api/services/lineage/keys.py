@@ -9,7 +9,7 @@ Internal assets key on ``catalogs.id`` rather than the catalog slug, so renaming
 catalog leaves its lineage intact — the slug is display-only. A *table* rename is
 a different matter and does break continuity: the renamed table has a new key, so
 old edges are orphaned until the old name is dropped (which deletes them). That
-is a real limitation, documented in ``docs/concepts/lineage.md`` rather than
+is a real limitation, documented in ``docs/metadata/lineage.md`` rather than
 papered over.
 """
 

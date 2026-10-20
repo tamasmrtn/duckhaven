@@ -48,9 +48,9 @@ function seed(): MockConversation[] {
           sql: null,
           sources: [
             {
-              path: "guides/snapshots-time-travel.md",
+              path: "data/snapshots-time-travel.md",
               title: "Snapshots & time travel",
-              url: "https://tamasmrtn.github.io/duckhaven/guides/snapshots-time-travel/",
+              url: "https://tamasmrtn.github.io/duckhaven/data/snapshots-time-travel/",
             },
             {
               path: "reference/sql-support.md",

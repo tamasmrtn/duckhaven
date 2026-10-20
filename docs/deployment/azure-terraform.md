@@ -1,8 +1,15 @@
+---
+type: concept
+---
+
 # Azure with Terraform
 
-Deploys DuckHaven to Azure as managed infrastructure: the control plane on Container
+The Terraform in `deploy/terraform/` deploys DuckHaven to Azure as managed services, with elastic agents on
+Container Instances.
+
+It deploys DuckHaven to Azure as managed infrastructure: the control plane on Container
 Apps, a managed PostgreSQL server, ADLS Gen2 for Iceberg data, and the plumbing that
-lets the control plane create [elastic agents](../concepts/elastic-compute.md) on
+lets the control plane create [elastic agents](../compute/elastic-compute.md) on
 demand. The Terraform lives in `deploy/terraform/`.
 
 This is the cloud counterpart to the [Docker Compose install](install.md). Compose is
@@ -13,8 +20,8 @@ a node failure and be reproducible from source.
     The topology has been applied and exercised end to end on a staging subscription: the
     API serves, Polaris answers, a storage-backend health check vends credentials and
     reaches ADLS over its private endpoint, and an elastic agent has been created,
-    queried, terminated and restarted. The passwordless database and registry paths are
-    newer and have not yet been through a full apply. The first apply for any environment
+    queried, terminated and restarted. The passwordless database and registry paths have
+    not been through a full apply. The first apply for any environment
     is staged — read [Before the first apply](#before-the-first-apply).
 
 ## What the network looks like
@@ -207,7 +214,7 @@ does not cover fails at plan time and tells you to set `location_short` yourself
 3. **Images in the registry.** A Container App whose image cannot be pulled never
    becomes healthy, so build and push `duckhaven-api` and `duckhaven-agent` between the
    registry apply and the app apply. The agent is built once per
-   [runtime](../concepts/runtimes.md) in `agent_runtimes` (default `["1.5"]`), tagged
+   [runtime](../compute/runtimes.md) in `agent_runtimes` (default `["1.5"]`), tagged
    `<tag>-duckdb<runtime>`. The `next_steps` output prints every build and push command.
    `default_runtime` must be one of them. The two Polaris images are mirrored by the apply
    itself, using a server-side `az acr import`; set `polaris_mirror_images = false` to
@@ -276,7 +283,7 @@ the data needs keeping.
 
 ## Related
 
-- [Elastic compute on Azure](azure-elastic-setup.md) — the agent-provisioning
+- [Elastic compute on Azure](../compute/elastic-azure.md) — the agent-provisioning
   configuration in detail.
 - [Configuration reference](../reference/configuration.md) — every environment variable.
 - [High availability](high-availability.md) — the multi-replica control plane.

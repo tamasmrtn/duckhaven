@@ -8,7 +8,7 @@ the thing that creates the container differs.
 The daemon is reached over TCP rather than a mounted socket, so the API container
 holds no socket file. In the shipped topology that endpoint is a
 ``docker-socket-proxy`` which allows only the container and image calls below. Read
-``docs/deployment/homelab-elastic-setup.md`` before deploying it: the proxy filters
+``docs/compute/elastic-docker.md`` before deploying it: the proxy filters
 paths and methods, **not** request bodies, so it narrows the API's reach without
 making container creation unprivileged.
 

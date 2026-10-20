@@ -1,4 +1,4 @@
-"""Executable form of the API conventions in docs/reference/api-conventions.md.
+"""Executable form of the API conventions in docs/developer/api-conventions.md.
 
 Every rule in that page that can be checked against the generated schema is
 checked here, so an endpoint that drifts fails CI instead of shipping. Prose
@@ -525,10 +525,10 @@ def test_every_pagination_exemption_is_documented():
     reads -- and an exemption is exactly the kind of decision that has to be
     written down to stay a decision rather than an accident.
     """
-    page = Path(__file__).parents[3] / "docs" / "reference" / "api-conventions.md"
+    page = Path(__file__).parents[3] / "docs" / "developer" / "api-conventions.md"
     cited = set(re.findall(r"`(/[a-z0-9{}_/-]+)`", page.read_text()))
     undocumented = sorted(BOUNDED_COLLECTIONS - cited)
     assert not undocumented, (
-        "exempt from pagination but not named in docs/reference/api-conventions.md:\n"
+        "exempt from pagination but not named in docs/developer/api-conventions.md:\n"
         f"{failures(undocumented)}"
     )

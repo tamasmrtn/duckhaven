@@ -55,8 +55,73 @@ extra_css:
 extra_javascript:
   - javascripts/theme-switch.js
 
+# Fragments included into several pages with --8<-- (see docs/developer/
+# writing-docs.md). Excluded so they are not built as pages of their own.
+exclude_docs: |
+  _snippets/
+
 plugins:
   - search
+  # One entry per moved or merged page: old path -> new path. Keep it flat (no
+  # chains); `make docs-index` turns it into the assistant's path aliases.
+  - redirects:
+      redirect_maps:
+        access/access-levels.md: access/how-access-works.md
+        access/permissions.md: access/how-access-works.md
+        getting-started/installation.md: getting-started/quickstart.md
+        getting-started/first-workspace.md: getting-started/quickstart.md#3-create-a-workspace
+        getting-started/first-query.md: getting-started/quickstart.md#5-create-a-table-and-query-it
+        concepts/what-is-duckhaven.md: getting-started/what-is-duckhaven.md
+        concepts/architecture.md: getting-started/how-duckhaven-works.md
+        concepts/workspaces.md: access/workspaces.md
+        concepts/permissions.md: access/how-access-works.md
+        concepts/catalogs.md: data/catalogs.md
+        concepts/tables.md: data/tables.md
+        concepts/ducklake.md: data/ducklake.md
+        concepts/storage-backends.md: data/storage-backends.md
+        concepts/maintenance.md: data/maintenance.md
+        concepts/agents.md: compute/agents.md
+        concepts/elastic-compute.md: compute/elastic-compute.md
+        concepts/runtimes.md: compute/runtimes.md
+        concepts/query-execution.md: querying/query-execution.md
+        concepts/result-cache.md: querying/result-cache.md
+        concepts/sql-sessions.md: querying/sql-sessions.md
+        concepts/assistant.md: ai/assistant.md
+        concepts/mcp-server.md: ai/mcp-server.md
+        concepts/lineage.md: metadata/lineage.md
+        concepts/semantic-layer.md: metadata/semantic-layer.md
+        concepts/metadata.md: metadata/table-metadata.md
+        deployment/add-agent.md: compute/add-agent.md
+        deployment/homelab-elastic-setup.md: compute/elastic-docker.md
+        deployment/azure-elastic-setup.md: compute/elastic-azure.md
+        deployment/storage.md: data/configure-storage.md
+        guides/run-queries.md: querying/run-queries.md
+        guides/query-profiles.md: querying/query-profiles.md
+        guides/saved-queries.md: querying/saved-queries.md
+        guides/schedule-queries.md: querying/schedule-queries.md
+        guides/session-audit.md: querying/session-audit.md
+        guides/manage-catalogs.md: data/manage-catalogs.md
+        guides/create-a-ducklake-catalog.md: data/create-a-ducklake-catalog.md
+        guides/migrate-catalog-storage.md: data/migrate-catalog-storage.md
+        guides/snapshots-time-travel.md: data/snapshots-time-travel.md
+        guides/import-dbt-lineage.md: metadata/import-dbt-lineage.md
+        guides/define-metrics.md: metadata/define-metrics.md
+        guides/import-dbt-semantics.md: metadata/import-dbt-semantics.md
+        guides/using-the-assistant.md: ai/use-the-assistant.md
+        guides/connect-mcp-client.md: ai/connect-mcp-client.md
+        guides/access-levels.md: access/how-access-works.md
+        guides/users-access.md: access/manage-users.md
+        guides/service-accounts.md: access/service-accounts.md
+        guides/connect-idp.md: access/connect-idp.md
+        guides/connect-ldap.md: access/connect-ldap.md
+        operations/agent-monitoring.md: compute/agent-monitoring.md
+        operations/scaling.md: compute/scaling.md
+        operations/offboarding.md: access/offboarding.md
+        operations/storage-maintenance.md: data/storage-backends.md
+        data/storage-maintenance.md: data/storage-backends.md
+        reference/api-conventions.md: developer/api-conventions.md
+        reference/agent-reference.md: reference/agent-configuration.md
+        operations/runbook.md: operations/troubleshooting.md
   - social:
       cards_layout_options:
         background_color: "#0b0f19"
@@ -76,7 +141,9 @@ markdown_extensions:
   - pymdownx.highlight:
       anchor_linenums: true
   - pymdownx.inlinehilite
-  - pymdownx.snippets
+  - pymdownx.snippets:
+      base_path: [docs/_snippets]
+      check_paths: true
   - pymdownx.tabbed:
       alternate_style: true
   - pymdownx.superfences:
@@ -93,88 +160,103 @@ extra:
 
 nav:
   - Home: index.md
-  - Getting started:
-      - Installation: getting-started/installation.md
+  - Get started:
+      - What is DuckHaven?: getting-started/what-is-duckhaven.md
       - Quickstart: getting-started/quickstart.md
-      - Your first workspace: getting-started/first-workspace.md
-      - Your first query: getting-started/first-query.md
       - Command line (dh): getting-started/cli-quickstart.md
-  - Concepts:
-      - What is DuckHaven?: concepts/what-is-duckhaven.md
-      - Architecture: concepts/architecture.md
-      - Workspaces: concepts/workspaces.md
-      - Catalogs: concepts/catalogs.md
-      - Tables & Iceberg: concepts/tables.md
-      - DuckLake: concepts/ducklake.md
-      - Agents: concepts/agents.md
-      - Elastic compute: concepts/elastic-compute.md
-      - Runtimes: concepts/runtimes.md
-      - Storage backends: concepts/storage-backends.md
-      - Query execution: concepts/query-execution.md
-      - Result cache: concepts/result-cache.md
-      - SQL sessions: concepts/sql-sessions.md
-      - Permissions: concepts/permissions.md
-      - AI assistant: concepts/assistant.md
-      - MCP server: concepts/mcp-server.md
-      - Metadata: concepts/metadata.md
-      - Lineage: concepts/lineage.md
-      - Semantic layer: concepts/semantic-layer.md
-      - Lakehouse maintenance: concepts/maintenance.md
-  - Deployment:
-      - Docker Compose: deployment/install.md
-      - Add an agent: deployment/add-agent.md
-      - Elastic compute on a single Docker host: deployment/homelab-elastic-setup.md
-      - Elastic compute on Azure: deployment/azure-elastic-setup.md
-      - Configure storage: deployment/storage.md
-      - Enable DuckLake: deployment/ducklake.md
-      - Reverse proxy & TLS: deployment/reverse-proxy-tls.md
-      - High availability: deployment/high-availability.md
-      - Azure with Terraform: deployment/azure-terraform.md
-      - Updating: deployment/updating.md
-      - Backup & restore: deployment/backup-restore.md
-  - Guides:
-      - Run queries: guides/run-queries.md
-      - Manage catalogs: guides/manage-catalogs.md
-      - Create a DuckLake catalog: guides/create-a-ducklake-catalog.md
-      - Migrate a catalog's storage: guides/migrate-catalog-storage.md
-      - Snapshots & time travel: guides/snapshots-time-travel.md
-      - Read query profiles: guides/query-profiles.md
-      - Saved queries: guides/saved-queries.md
-      - Schedule queries: guides/schedule-queries.md
-      - Read the session audit trail: guides/session-audit.md
-      - Import lineage from dbt: guides/import-dbt-lineage.md
-      - Define metrics: guides/define-metrics.md
-      - Import semantics from dbt: guides/import-dbt-semantics.md
-      - Use the AI assistant: guides/using-the-assistant.md
-      - Connect an MCP client: guides/connect-mcp-client.md
-      - How access works: guides/access-levels.md
-      - Manage users & access: guides/users-access.md
-      - Service accounts & tokens: guides/service-accounts.md
-      - Connect an IdP (SSO): guides/connect-idp.md
-      - Connect LDAP / AD: guides/connect-ldap.md
-  - Operations:
-      - Operator runbook: operations/runbook.md
-      - Storage security & maintenance: operations/storage-maintenance.md
-      - Monitoring: operations/monitoring.md
-      - Agent monitoring: operations/agent-monitoring.md
-      - Distributed tracing: operations/tracing.md
-      - Scaling compute: operations/scaling.md
-      - HA failover runbook: operations/ha-failover.md
-      - Offboarding & break-glass: operations/offboarding.md
-      - Troubleshooting: operations/troubleshooting.md
+      - How DuckHaven works: getting-started/how-duckhaven-works.md
+  - Use:
+      - Querying:
+          - Query execution: querying/query-execution.md
+          - Run queries: querying/run-queries.md
+          - Saved queries: querying/saved-queries.md
+          - Schedule queries: querying/schedule-queries.md
+          - Read query profiles: querying/query-profiles.md
+          - Result cache: querying/result-cache.md
+          - SQL sessions: querying/sql-sessions.md
+          - Connect dbt: querying/connect-dbt.md
+          - Load data with dlt: querying/load-data-with-dlt.md
+          - Read the session audit trail: querying/session-audit.md
+          - Troubleshoot queries: querying/troubleshooting.md
+      - Data & storage:
+          - Catalogs: data/catalogs.md
+          - Manage catalogs: data/manage-catalogs.md
+          - Tables & Iceberg: data/tables.md
+          - Snapshots & time travel: data/snapshots-time-travel.md
+          - DuckLake: data/ducklake.md
+          - Create a DuckLake catalog: data/create-a-ducklake-catalog.md
+          - Storage backends: data/storage-backends.md
+          - Configure storage: data/configure-storage.md
+          - Migrate a catalog's storage: data/migrate-catalog-storage.md
+          - Lakehouse maintenance: data/maintenance.md
+      - Metadata & lineage:
+          - Metadata: metadata/table-metadata.md
+          - Lineage: metadata/lineage.md
+          - Import lineage from dbt: metadata/import-dbt-lineage.md
+          - Semantic layer: metadata/semantic-layer.md
+          - Define metrics: metadata/define-metrics.md
+          - Import semantics from dbt: metadata/import-dbt-semantics.md
+      - AI assistant & MCP:
+          - AI assistant: ai/assistant.md
+          - Use the AI assistant: ai/use-the-assistant.md
+          - Set up the assistant: ai/set-up-the-assistant.md
+          - MCP server: ai/mcp-server.md
+          - Connect an MCP client: ai/connect-mcp-client.md
+  - Administer:
+      - Access:
+          - How access works: access/how-access-works.md
+          - Scoped access: access/scoped-access.md
+          - Agent access: access/agent-access.md
+          - Workspaces: access/workspaces.md
+          - Manage users & access: access/manage-users.md
+          - Service accounts & tokens: access/service-accounts.md
+          - Connect an IdP (SSO): access/connect-idp.md
+          - Connect LDAP / AD: access/connect-ldap.md
+          - Offboarding & break-glass: access/offboarding.md
+          - Troubleshoot sign-in and access: access/troubleshooting.md
+      - Compute:
+          - Agents: compute/agents.md
+          - Add an agent: compute/add-agent.md
+          - Runtimes: compute/runtimes.md
+          - Elastic compute: compute/elastic-compute.md
+          - Elastic compute on a single Docker host: compute/elastic-docker.md
+          - Elastic compute on Azure: compute/elastic-azure.md
+          - Scaling compute: compute/scaling.md
+          - Agent monitoring: compute/agent-monitoring.md
+          - Troubleshoot compute: compute/troubleshooting.md
+  - Deploy & operate:
+      - Deploy:
+          - Docker Compose: deployment/install.md
+          - Reverse proxy & TLS: deployment/reverse-proxy-tls.md
+          - Enable DuckLake: deployment/ducklake.md
+          - High availability: deployment/high-availability.md
+          - Azure with Terraform: deployment/azure-terraform.md
+          - Updating: deployment/updating.md
+          - Backup & restore: deployment/backup-restore.md
+      - Operate:
+          - Monitoring: operations/monitoring.md
+          - Distributed tracing: operations/tracing.md
+          - HA failover runbook: operations/ha-failover.md
+          - Troubleshoot the deployment: operations/troubleshooting.md
+      - Release notes: release-notes/index.md
   - Reference:
       - Configuration: reference/configuration.md
       - SQL support: reference/sql-support.md
-      - Agent reference: reference/agent-reference.md
+      - Permissions: reference/permissions.md
+      - Agent configuration: reference/agent-configuration.md
       - CLI reference: reference/cli.md
       - REST API: reference/rest-api.md
-      - API conventions: reference/api-conventions.md
+      - SQL sessions API: reference/sql-sessions-api.md
+      - API versions: reference/api-versions.md
+      - Errors: reference/errors.md
       - Operator scripts: reference/operator-scripts.md
   - Developer:
+      - Architecture: developer/architecture.md
       - Codebase map: developer/codebase-map.md
+      - API conventions: developer/api-conventions.md
       - Local development: developer/development.md
       - Contributing: developer/contributing.md
+      - Writing docs: developer/writing-docs.md
       - Testing: developer/testing.md
       - Releasing: developer/releasing.md
       - Design system: developer/design-system.md
-  - Release notes: release-notes/index.md

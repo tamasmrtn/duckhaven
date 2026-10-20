@@ -1,28 +1,27 @@
+---
+type: reference
+---
+
 # Monitoring
 
-DuckHaven gives every [agent](../concepts/agents.md) its own [monitoring page](agent-monitoring.md), records a full
-query audit trail on the **History** page, and exports Prometheus metrics for alerting.
+DuckHaven exports Prometheus metrics for alerting, records every query in History, and gives each agent a monitoring
+page.
+
+This page lists the metrics and how to read them. Each [agent](../compute/agents.md)'s own charts are described in
+[Agent monitoring](../compute/agent-monitoring.md).
 
 ## Per-agent monitoring
 
-Every agent has its own **Monitoring** tab (**Compute** → *an agent*): what it is doing now, where its time went, the
-queries it ran and what each cost, and its CPU and memory, over up to a week. See
-[Agent monitoring](agent-monitoring.md) for what each chart shows and exactly how each number is measured.
+Every agent has its own **Monitoring** tab (**Compute** → *an agent*): what it is doing at the moment, where its time
+went, the queries it ran and what each cost, and its CPU and memory, over up to a week. See [Agent
+monitoring](../compute/agent-monitoring.md) for what each chart shows and exactly how each number is measured.
 
 ## Query history and audit log
 
-Every query a member runs is recorded on the **History** page (newest first), excluding internal queries such as
-table-sample previews. Each member sees the history for the workspace they are in, with a row click opening the
-query's profile. A refresh button re-fetches the list on demand, and a filter by **agent** is open to any member —
-narrowing to one agent reveals nothing about the workspace's own queries that the member could not already see.
-
-Administrators get an extra **This workspace / All workspaces** toggle on the same page. Switching to **All
-workspaces** turns History into the global audit log: every query across every workspace, with a Workspace column.
-Administrators also get a filter by **user**, which — unlike the agent filter — works within the current workspace
-view as well as the cross-workspace one, since it reveals who ran a query and stays admin-only either way. Each
-record captures the **user** who ran it (the human or [service account](../guides/service-accounts.md) — shown in the
-**User** column), the SQL, status, row count, duration, result size, and any error. There is no separate audit table;
-the audit log is the query record itself.
+Every query, with the person or [service account](../access/service-accounts.md) who ran it, its SQL, status, rows,
+duration, result size and any error, is recorded on the **History** page; there is no separate audit table. With
+`queries:admin`, the **All workspaces** view makes it the audit log for every workspace. How to filter and read it is in
+[Run queries → Find an earlier run](../querying/run-queries.md#find-an-earlier-run).
 
 ## Prometheus metrics
 
@@ -36,9 +35,9 @@ scrapers carry no session cookie, and DuckHaven already assumes no public ingres
 the internal network. Set `METRICS_ENABLED=false` (see the
 [configuration reference](../reference/configuration.md#observability)) to remove it entirely.
 
-DuckHaven does **not** ship a bundled Grafana container — deploying the dashboard stack is left
-to you. The metric reference, scrape config, and a starter dashboard below are everything you
-need to wire it into an existing Prometheus + Grafana.
+The bundled Grafana is wired to Tempo for [traces](tracing.md) only; DuckHaven does **not**
+ship a Prometheus. The metric reference, scrape config, and a starter dashboard below are
+everything you need to wire the metrics into your own Prometheus + Grafana.
 
 ### Scrape configuration
 
@@ -60,7 +59,7 @@ scrape_configs:
 Counters and histograms are per-replica (carry a `replica_id` label). Aggregate them with
 `sum`/`rate` across replicas — every underlying event (a query completing, a request being
 served) happens on exactly one replica, so summing never double-counts. Counter series carry
-the conventional `_total` suffix in the exposition (e.g. `duckhaven_queries_total`).
+the conventional `_total` suffix in the exposition (for example `duckhaven_queries_total`).
 
 | Metric | Type | Labels | Meaning |
 |---|---|---|---|
@@ -71,7 +70,7 @@ the conventional `_total` suffix in the exposition (e.g. `duckhaven_queries_tota
 | `duckhaven_query_result_bytes` | histogram | `replica_id` | Result size of completed (`done`) user queries. |
 | `duckhaven_query_queue_wait_seconds` | histogram | `replica_id` | Time a user query waited in the agent admission queue before running. |
 | `duckhaven_query_queue_rejected_total` | counter | `replica_id`, `reason` | User queries rejected by agent admission control (`reason`: `queue_full`/`queued_timeout`). |
-| `duckhaven_result_cache_lookups_total` | counter | `replica_id`, `outcome`, `reason` | [Result cache](../concepts/result-cache.md) lookups by `outcome` and the run's `cache_detail`; hits are not in `duckhaven_queries_total`. |
+| `duckhaven_result_cache_lookups_total` | counter | `replica_id`, `outcome`, `reason` | [Result cache](../querying/result-cache.md) lookups by `outcome` and the run's `cache_detail`; hits are not in `duckhaven_queries_total`. |
 | `duckhaven_result_cache_lookup_seconds` | histogram | `replica_id` | Time to decide whether a query is a hit. |
 | `duckhaven_result_cache_admissions_total` | counter | `replica_id`, `outcome`, `reason` | Finished runs `admitted` (`inline`/`agent`) or `refused` with a reason. |
 | `duckhaven_result_cache_revalidations_total` | counter | `replica_id`, `catalog_kind` | Hits served after compaction-only commits. |
@@ -80,14 +79,14 @@ the conventional `_total` suffix in the exposition (e.g. `duckhaven_queries_tota
 | `duckhaven_http_requests_total` | counter | `replica_id`, `method`, `route`, `status` | REST API requests, keyed by route template. |
 | `duckhaven_http_request_duration_seconds` | histogram | `replica_id`, `method`, `route` | REST API request latency. |
 | `duckhaven_polaris_requests_total` | counter | `replica_id`, `operation`, `status` | Requests to Apache Polaris (Iceberg REST + management). `status` is the HTTP code, or `error` for transport failures. |
-| `duckhaven_ducklake_queries_total` | counter | (same) | Metadata queries to a DuckLake catalog database — the counterpart to the Polaris rows above, so a slow browse appears in one or the other by kind. `status` is `ok`, `error`, or `empty` (nothing has attached it yet). |
+| `duckhaven_ducklake_queries_total` | counter | (same) | Metadata queries to a DuckLake catalog database — the counterpart to the Polaris rows above, so a slow browse appears in one or the other by kind. `status` is `ok`, `error`, or `empty` (no agent has attached it). |
 | `duckhaven_ducklake_query_duration_seconds` | histogram | (same) | Latency of the above. |
 | `duckhaven_polaris_request_duration_seconds` | histogram | `replica_id`, `operation` | Latency of requests to Apache Polaris. |
 | `duckhaven_agent_up` | gauge | `replica_id`, `agent_id`, `agent_name` | `1` for each agent with a recent sample owned by this replica. |
 | `duckhaven_agent_cpu_percent` | gauge | (same) | Agent CPU utilization. |
 | `duckhaven_agent_memory_percent` | gauge | (same) | Agent memory utilization. |
 | `duckhaven_agent_running_queries` | gauge | (same) | Admission slots in use on the agent, **including idle held SQL sessions**. For "queries actually running" use `duckhaven_agent_executing_queries`. |
-| `duckhaven_agent_executing_queries` | gauge | (same) | Statements running on the agent right now; an idle held SQL session is not counted. Absent for agents too old to report it. |
+| `duckhaven_agent_executing_queries` | gauge | (same) | Statements running on the agent; an idle held SQL session is not counted. Absent for agents too old to report it. |
 | `duckhaven_agent_idle_sessions` | gauge | (same) | Open SQL sessions on the agent that are not running a statement. |
 | `duckhaven_agent_memory_peak_percent` | gauge | (same) | Highest memory use reached during the agent's last 2-second sample interval, including spikes between samples. |
 | `duckhaven_agent_cpu_seconds_total` | counter | (same) | CPU time consumed by the agent's cgroup. `rate()` of it is exact CPU use over any window, however short the bursts inside it. |
@@ -123,13 +122,12 @@ would hide:
   also show up under `duckhaven_queries_total{status="failed"}`; this counter is the specific
   breakdown.)
 - **Catalog dependency health** — `duckhaven_polaris_requests_total` and `duckhaven_ducklake_queries_total`,
-  each with its `_duration_seconds` companion. Watch whichever kinds are deployed.
-  surface the Iceberg catalog's error rate and latency. Alert on a non-zero rate of
-  `status="error"` (or 5xx) here to catch catalog-layer degradation before it manifests as
-  mysterious query failures.
+  each with its `_duration_seconds` companion, surface each catalog kind's error rate and latency; watch whichever
+  kinds are deployed. Alert on a non-zero rate of `status="error"` (or 5xx) here to catch catalog-layer degradation
+  before it manifests as mysterious query failures.
 - **Elastic supply** — `duckhaven_agent_provisions_total{outcome="failure"}` and
   `duckhaven_agents_reaped_total{reason="provisioning_timeout"}` both mean users are waiting for
-  compute that never arrives, which surfaces to them as a query that simply never starts.
+  compute that never arrives, which surfaces to them as a query that never starts.
   `duckhaven_agents_reaped_total{reason="orphan"}` or `{reason="dead_row"}` means the cloud and
   Postgres had drifted apart — expected occasionally, but a sustained rate is worth
   investigating because orphans bill until they are swept.
@@ -140,7 +138,7 @@ about why an agent went away.
 
 ### Blocked sandbox escapes
 
-A [SQL session](../concepts/sql-sessions.md) statement that tries to leave its sandbox is
+A [SQL session](../querying/sql-sessions.md) statement that tries to leave its sandbox is
 rejected at one of two layers, and each is observable:
 
 - **At the API** — `duckhaven_statement_policy_rejections_total{rule}` counts statements the
@@ -156,7 +154,7 @@ rejected at one of two layers, and each is observable:
 
 Note that the **network egress** restriction has no metric of its own: a blocked connection
 surfaces as an ordinary statement failure with a connection error. It is verified by the
-runtime check in [Sandboxing](../concepts/sql-sessions.md#sandboxing), not by a counter.
+runtime check in [Sandboxing](../querying/sql-sessions.md#sandboxing), not by a counter.
 
 ### Behavior under high availability
 
@@ -310,6 +308,6 @@ out-of-memory kills, and open maintenance recommendations — extend it from the
 ## Related
 
 - [Distributed tracing](tracing.md) — per-request OpenTelemetry traces, the other half of observability.
-- [Query execution](../concepts/query-execution.md) — what the counters reflect.
-- [Operator runbook](runbook.md) — procedures for running the cluster.
+- [Query execution](../querying/query-execution.md) — what the counters reflect.
+- [Troubleshoot the deployment](troubleshooting.md) — problems on the host and network.
 - [Configuration reference](../reference/configuration.md#observability) — the `METRICS_ENABLED` knob.

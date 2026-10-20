@@ -15,11 +15,11 @@ hide:
     A Monaco SQL editor with tabs, a results grid, and CSV export. Write and run queries together without
     emailing `.sql` snippets around.
 
--   :material-file-tree:{ .lg .middle } __Shared Iceberg catalog__
+-   :material-file-tree:{ .lg .middle } __Shared lakehouse catalogs__
 
     ---
 
-    Browse schemas and tables with sample rows. Every table is Iceberg-native, with snapshot history and
+    Browse schemas and tables with sample rows. Tables are Apache Iceberg or DuckLake, with snapshot history and
     "query at this snapshot" time travel.
 
 -   :material-shield-account:{ .lg .middle } __Governed workspaces__
@@ -77,7 +77,7 @@ hide:
 
     The control-plane / compute split, invariants, and data flow — the defining idea behind DuckHaven.
 
-    [:octicons-arrow-right-24: Understand the design](concepts/architecture.md)
+    [:octicons-arrow-right-24: Understand the design](getting-started/how-duckhaven-works.md)
 
 -   :material-server:{ .lg .middle } __Deployment__
 
@@ -91,9 +91,9 @@ hide:
 
     ---
 
-    Day-2 operations: query queueing and concurrency, agent management, and the operator runbook.
+    Day-2 operations: monitoring, backups, updates and troubleshooting.
 
-    [:octicons-arrow-right-24: Operate a cluster](operations/runbook.md)
+    [:octicons-arrow-right-24: Operate a cluster](operations/troubleshooting.md)
 
 -   :material-cog:{ .lg .middle } __Configuration__
 

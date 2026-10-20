@@ -3,97 +3,114 @@
 > DuckHaven is a self-hosted data lakehouse. Apache Iceberg brought the table format,
 > Apache Polaris the catalog, and DuckDB the engine; DuckHaven is the control plane that
 > holds the three together, so a team can run its own lakehouse instead of renting one.
-> It gives collaborative browser worksheets, a governed Iceberg catalog, compute that
-> scales to zero between runs, scheduled queries, column-level lineage, a semantic layer,
-> an advisory maintenance scanner, single sign-on, fine-grained access grants, machine
+> It gives collaborative browser worksheets, governed catalogs (Apache Iceberg or DuckLake),
+> compute that scales to zero between runs, scheduled queries, column-level lineage, a
+> semantic layer, a maintenance advisor, single sign-on, fine-grained access grants, machine
 > identities, and governed AI access — all on your own infrastructure, in one Docker
 > Compose deploy. No cloud warehouse lock-in, no Kubernetes, no platform team required.
 
-## Getting started
+## Get started
 
-- [Installation](https://tamasmrtn.github.io/duckhaven/getting-started/installation/): Prerequisites and how to install the stack.
-- [Quickstart](https://tamasmrtn.github.io/duckhaven/getting-started/quickstart/): Stand up the full stack with one `docker compose` command and run your first query.
-- [Your first workspace](https://tamasmrtn.github.io/duckhaven/getting-started/first-workspace/): Create a workspace and invite collaborators.
-- [Your first query](https://tamasmrtn.github.io/duckhaven/getting-started/first-query/): Write and run a query in a browser worksheet.
-- [Command line (dh)](https://tamasmrtn.github.io/duckhaven/getting-started/cli-quickstart/): dh is DuckHaven's command-line interface.
+- [What is DuckHaven?](https://tamasmrtn.github.io/duckhaven/getting-started/what-is-duckhaven/): DuckHaven is a self-hosted data lakehouse.
+- [Quickstart](https://tamasmrtn.github.io/duckhaven/getting-started/quickstart/): Install DuckHaven with Docker Compose, create the first admin, and query a table you created yourself in about fifteen minutes.
+- [Command line (dh)](https://tamasmrtn.github.io/duckhaven/getting-started/cli-quickstart/): Install dh, DuckHaven's command-line interface, sign in, and run queries and catalog commands from a terminal or a script.
+- [How DuckHaven works](https://tamasmrtn.github.io/duckhaven/getting-started/how-duckhaven-works/): DuckHaven splits into a control plane that decides what may run and agents that run it, with your tables on object storage you own.
 
-## Concepts
+## Querying
 
-- [What is DuckHaven?](https://tamasmrtn.github.io/duckhaven/concepts/what-is-duckhaven/): Overview of the product and who it is for.
-- [Architecture](https://tamasmrtn.github.io/duckhaven/concepts/architecture/): The control-plane / compute split and data flow — the defining idea behind DuckHaven.
-- [Workspaces](https://tamasmrtn.github.io/duckhaven/concepts/workspaces/): How workspaces isolate queries, permissions, and history.
-- [Catalogs](https://tamasmrtn.github.io/duckhaven/concepts/catalogs/): Catalogs of either kind, how they bind to workspaces, and what a kind decides.
-- [Tables & Iceberg](https://tamasmrtn.github.io/duckhaven/concepts/tables/): Iceberg-native tables, snapshots, and time travel.
-- [DuckLake](https://tamasmrtn.github.io/duckhaven/concepts/ducklake/): DuckLake is the second kind of catalog DuckHaven can create.
-- [Agents](https://tamasmrtn.github.io/duckhaven/concepts/agents/): DuckDB compute agents you pick per query.
-- [Elastic compute](https://tamasmrtn.github.io/duckhaven/concepts/elastic-compute/): Provisioning agents on demand and terminating them when they go idle.
-- [Runtimes](https://tamasmrtn.github.io/duckhaven/concepts/runtimes/): A runtime is the DuckDB an agent runs, together with the extensions baked into its image.
-- [Storage backends](https://tamasmrtn.github.io/duckhaven/concepts/storage-backends/): Where Iceberg data physically lives, and how credentials reach an agent.
-- [Query execution](https://tamasmrtn.github.io/duckhaven/concepts/query-execution/): Queueing, memory estimation and concurrency, and the column types and exact values a result carries.
-- [Result cache](https://tamasmrtn.github.io/duckhaven/concepts/result-cache/): Answering a repeated query from an earlier run's result while nothing it reads has changed.
-- [SQL sessions](https://tamasmrtn.github.io/duckhaven/concepts/sql-sessions/): Persistent connections for dbt, dlt and other Python DB-API clients, brokered through the API.
-- [Permissions](https://tamasmrtn.github.io/duckhaven/concepts/permissions/): Per-workspace access control and audit trail.
-- [AI assistant](https://tamasmrtn.github.io/duckhaven/concepts/assistant/): The governed AI data assistant and how it enforces access.
-- [MCP server](https://tamasmrtn.github.io/duckhaven/concepts/mcp-server/): Connecting an AI agent you already use — Claude Code, Cursor — to your data.
-- [Metadata](https://tamasmrtn.github.io/duckhaven/concepts/metadata/): What Polaris owns, what Postgres owns, and the table-metadata sidecar.
-- [Lineage](https://tamasmrtn.github.io/duckhaven/concepts/lineage/): Where a table's data came from, and what breaks if you change it.
-- [Semantic layer](https://tamasmrtn.github.io/duckhaven/concepts/semantic-layer/): Recording what a business term means so a metric is computed one agreed way.
-- [Lakehouse maintenance](https://tamasmrtn.github.io/duckhaven/concepts/maintenance/): The advisor that scores table health and recommends compaction and cleanup.
+- [Query execution](https://tamasmrtn.github.io/duckhaven/querying/query-execution/): A query is checked by the API, sent to an agent, waits until the agent has memory to start it, runs, and is kept as a result file read a page at a time.
+- [Run queries](https://tamasmrtn.github.io/duckhaven/querying/run-queries/): Write SQL in a worksheet, run it on an agent you choose, read the result, and find earlier runs in History.
+- [Saved queries](https://tamasmrtn.github.io/duckhaven/querying/saved-queries/): Save a worksheet's SQL under a name so everyone in the workspace can open it, run it and schedule it.
+- [Schedule queries](https://tamasmrtn.github.io/duckhaven/querying/schedule-queries/): Run a saved query automatically on a cron schedule, such as every night at 02:00, with every run recorded.
+- [Read query profiles](https://tamasmrtn.github.io/duckhaven/querying/query-profiles/): Open a query's profile to see where its time and memory went, and whether it was slow because it waited or because it worked.
+- [Result cache](https://tamasmrtn.github.io/duckhaven/querying/result-cache/): The result cache answers a repeated query from an earlier run's result when nothing it reads has changed, so it does not run again.
+- [SQL sessions](https://tamasmrtn.github.io/duckhaven/querying/sql-sessions/): A SQL session is a database connection that DuckHaven holds open on one agent, so a tool can run many statements that share state.
+- [Connect dbt](https://tamasmrtn.github.io/duckhaven/querying/connect-dbt/): Run a dbt project on DuckHaven with the dbt-duckhaven adapter, so models build in your catalogs on DuckHaven's agents.
+- [Load data with dlt](https://tamasmrtn.github.io/duckhaven/querying/load-data-with-dlt/): Load data from any dlt source into DuckHaven tables with the dlt-duckhaven destination.
+- [Read the session audit trail](https://tamasmrtn.github.io/duckhaven/querying/session-audit/): Use the Connections screen to see which SQL sessions are holding agents, what a dbt or dlt run did, and why a session ended.
+- [Troubleshoot queries](https://tamasmrtn.github.io/duckhaven/querying/troubleshooting/): Find the message you see in the results pane, in History, or in a tool's error, then follow what to do.
 
-## Deployment
+## Data & storage
 
-- [Docker Compose](https://tamasmrtn.github.io/duckhaven/deployment/install/): Deploy the full stack with Docker Compose.
-- [Add an agent](https://tamasmrtn.github.io/duckhaven/deployment/add-agent/): Scale compute by adding DuckDB agents.
-- [Elastic compute on a single Docker host](https://tamasmrtn.github.io/duckhaven/deployment/homelab-elastic-setup/): Enable elastic compute with the Docker backend, provisioning agents as containers on a single host.
-- [Elastic compute on Azure](https://tamasmrtn.github.io/duckhaven/deployment/azure-elastic-setup/): Enable elastic compute with the Azure Container Instances backend, provisioning agents in the cloud.
-- [Configure storage](https://tamasmrtn.github.io/duckhaven/deployment/storage/): Point DuckHaven at your object storage backend.
-- [Enable DuckLake](https://tamasmrtn.github.io/duckhaven/deployment/ducklake/): DuckLake is a second catalog kind, off by default.
-- [Reverse proxy & TLS](https://tamasmrtn.github.io/duckhaven/deployment/reverse-proxy-tls/): Front the stack with a reverse proxy and TLS.
-- [High availability](https://tamasmrtn.github.io/duckhaven/deployment/high-availability/): Run the control plane with HA Postgres and multiple API replicas.
-- [Azure with Terraform](https://tamasmrtn.github.io/duckhaven/deployment/azure-terraform/): Deploy the whole stack to Azure as managed infrastructure, with Terraform.
-- [Updating](https://tamasmrtn.github.io/duckhaven/deployment/updating/): Updates pull a new image and restart the stack.
-- [Backup & restore](https://tamasmrtn.github.io/duckhaven/deployment/backup-restore/): Back up and restore DuckHaven data.
+- [Catalogs](https://tamasmrtn.github.io/duckhaven/data/catalogs/): A catalog is a collection of schemas and tables with its own metadata store and storage, which any number of workspaces can attach.
+- [Manage catalogs](https://tamasmrtn.github.io/duckhaven/data/manage-catalogs/): Browse a workspace's catalogs, create, attach, detach and drop catalogs, and create and drop their schemas and tables.
+- [Tables & Iceberg](https://tamasmrtn.github.io/duckhaven/data/tables/): A table in an Iceberg catalog is an Apache Iceberg table that Polaris manages, with snapshots, schema evolution and time travel.
+- [Snapshots & time travel](https://tamasmrtn.github.io/duckhaven/data/snapshots-time-travel/): Browse a table's snapshot history and query the table as it was at an earlier snapshot or time.
+- [DuckLake](https://tamasmrtn.github.io/duckhaven/data/ducklake/): A DuckLake catalog keeps its metadata in PostgreSQL and its data as Parquet in object storage; only DuckDB can read it, but DuckHaven can maintain it.
+- [Create a DuckLake catalog](https://tamasmrtn.github.io/duckhaven/data/create-a-ducklake-catalog/): Create a DuckLake catalog, create and query its tables, and drop it when you are done with it.
+- [Storage backends](https://tamasmrtn.github.io/duckhaven/data/storage-backends/): A storage backend is an object-storage location, such as a bucket and prefix, where the tables of one or more catalogs live.
+- [Configure storage](https://tamasmrtn.github.io/duckhaven/data/configure-storage/): Register an AWS S3 or Azure ADLS Gen2 bucket as a storage backend, test it, and create catalogs on it.
+- [Migrate a catalog's storage](https://tamasmrtn.github.io/duckhaven/data/migrate-catalog-storage/): Move a catalog to another storage backend, such as from the bundled object store to an S3 bucket, with all its data and snapshot history.
+- [Lakehouse maintenance](https://tamasmrtn.github.io/duckhaven/data/maintenance/): The maintenance advisor scans every table, scores its health, and recommends compaction, snapshot expiry and cleanup; for DuckLake tables it can also run them.
 
-## Guides
+## Metadata & lineage
 
-- [Run queries](https://tamasmrtn.github.io/duckhaven/guides/run-queries/): Day-to-day querying in worksheets.
-- [Manage catalogs](https://tamasmrtn.github.io/duckhaven/guides/manage-catalogs/): Create and govern catalogs.
-- [Create a DuckLake catalog](https://tamasmrtn.github.io/duckhaven/guides/create-a-ducklake-catalog/): A walkthrough of creating, using and dropping a DuckLake catalog.
-- [Migrate a catalog's storage](https://tamasmrtn.github.io/duckhaven/guides/migrate-catalog-storage/): Move a catalog to a different storage backend without losing data.
-- [Snapshots & time travel](https://tamasmrtn.github.io/duckhaven/guides/snapshots-time-travel/): Query tables at a past snapshot.
-- [Read query profiles](https://tamasmrtn.github.io/duckhaven/guides/query-profiles/): Inspect operator graphs, timing, and spills.
-- [Saved queries](https://tamasmrtn.github.io/duckhaven/guides/saved-queries/): Save a frequently used query so your team can recall and run it later.
-- [Schedule queries](https://tamasmrtn.github.io/duckhaven/guides/schedule-queries/): Run a saved query on a cron schedule, and read its run history.
-- [Read the session audit trail](https://tamasmrtn.github.io/duckhaven/guides/session-audit/): Trace what a dbt or dlt run did, on the Connections screen.
-- [Import lineage from dbt](https://tamasmrtn.github.io/duckhaven/guides/import-dbt-lineage/): Publish a dbt project's DAG into DuckHaven's lineage graph.
-- [Define metrics](https://tamasmrtn.github.io/duckhaven/guides/define-metrics/): Author a semantic model and publish it so the assistant will use it.
-- [Import semantics from dbt](https://tamasmrtn.github.io/duckhaven/guides/import-dbt-semantics/): Import metric definitions from dbt's semantic layer.
-- [Use the AI assistant](https://tamasmrtn.github.io/duckhaven/guides/using-the-assistant/): Browse the catalog, run SQL, and propose worksheet edits with the assistant.
-- [Connect an MCP client](https://tamasmrtn.github.io/duckhaven/guides/connect-mcp-client/): Point Claude Code, Claude Desktop or Cursor at DuckHaven over MCP.
-- [How access works](https://tamasmrtn.github.io/duckhaven/guides/access-levels/): The three access layers, including fine-grained catalog/schema/table grants.
-- [Manage users & access](https://tamasmrtn.github.io/duckhaven/guides/users-access/): Administer users and permissions.
-- [Service accounts & tokens](https://tamasmrtn.github.io/duckhaven/guides/service-accounts/): Machine auth via service accounts and Personal Access Tokens.
-- [Connect an IdP (SSO)](https://tamasmrtn.github.io/duckhaven/guides/connect-idp/): Delegate sign-in to an OIDC provider, and map its groups to roles.
-- [Connect LDAP / AD](https://tamasmrtn.github.io/duckhaven/guides/connect-ldap/): As a secondary federated path, DuckHaven can authenticate users against an LDAP directory or Active Directory.
+- [Metadata](https://tamasmrtn.github.io/duckhaven/metadata/table-metadata/): Each catalog's own metastore owns its tables' structure; DuckHaven's database adds only facts the metastore does not track, such as owner and last write.
+- [Lineage](https://tamasmrtn.github.io/duckhaven/metadata/lineage/): DuckHaven's lineage graph shows where a table's data came from and what depends on it, from the SQL it runs and from tools such as dbt.
+- [Import lineage from dbt](https://tamasmrtn.github.io/duckhaven/metadata/import-dbt-lineage/): Publish your dbt project's manifest.json so DuckHaven's lineage graph shows the dependencies your models declare.
+- [Semantic layer](https://tamasmrtn.github.io/duckhaven/metadata/semantic-layer/): A semantic model records what your business terms mean and how they are calculated, so the AI assistant answers metric questions from agreed definitions.
+- [Define metrics](https://tamasmrtn.github.io/duckhaven/metadata/define-metrics/): Create a semantic model, define a metric on it, and publish it so the AI assistant answers from your definition.
+- [Import semantics from dbt](https://tamasmrtn.github.io/duckhaven/metadata/import-dbt-semantics/): Publish the semantic models and metrics defined in your dbt project to DuckHaven, so the assistant answers from them.
 
-## Operations
+## AI assistant & MCP
 
-- [Operator runbook](https://tamasmrtn.github.io/duckhaven/operations/runbook/): Operational procedures for the single control-plane box plus its agents.
-- [Storage security & maintenance](https://tamasmrtn.github.io/duckhaven/operations/storage-maintenance/): Day-2 practice for external S3 and ADLS Gen2 backends: securing access, rotating trust, and routine upkeep.
-- [Monitoring](https://tamasmrtn.github.io/duckhaven/operations/monitoring/): The query history and audit log, Prometheus metrics, starter alert rules and a Grafana dashboard.
-- [Agent monitoring](https://tamasmrtn.github.io/duckhaven/operations/agent-monitoring/): An agent's Monitoring tab — live load, where its time went, the queries it ran and what they cost, CPU and memory — and exactly how each number is measured.
+- [AI assistant](https://tamasmrtn.github.io/duckhaven/ai/assistant/): The AI data assistant is a chat panel that browses a workspace's catalogs, writes and runs SQL, and explains the results, with no more access than the service account it acts as.
+- [Use the AI assistant](https://tamasmrtn.github.io/duckhaven/ai/use-the-assistant/): The AI data assistant lets you explore a workspace's data by chatting: ask a question in plain language and it will browse the catalog, run SQL, and explain what it found.
+- [Set up the assistant](https://tamasmrtn.github.io/duckhaven/ai/set-up-the-assistant/): Turn on the AI assistant with a model of your choice, then give its service account access to the workspaces it should serve.
+- [MCP server](https://tamasmrtn.github.io/duckhaven/ai/mcp-server/): DuckHaven speaks the Model Context Protocol, so an AI agent running somewhere else — Claude Code in your terminal, Claude Desktop, Cursor — can work with your data directly.
+- [Connect an MCP client](https://tamasmrtn.github.io/duckhaven/ai/connect-mcp-client/): Connect Claude Code, Claude Desktop, Cursor or another MCP client to DuckHaven's /mcp endpoint with a token.
+
+## Access
+
+- [How access works](https://tamasmrtn.github.io/duckhaven/access/how-access-works/): DuckHaven decides what you can do in four independent layers, and a request is allowed only if it clears every layer that applies to it.
+- [Scoped access](https://tamasmrtn.github.io/duckhaven/access/scoped-access/): A scoped catalog shows each workspace member only the schemas and tables a grant gives them, down to a single table, instead of applying their workspace role to everything.
+- [Agent access](https://tamasmrtn.github.io/duckhaven/access/agent-access/): Agent access decides who may run work on an agent and who may restart or administer it, so a team can reserve compute while the rest of the fleet stays open.
+- [Workspaces](https://tamasmrtn.github.io/duckhaven/access/workspaces/): A workspace is where a team works: its members and their roles, the catalogs it uses, and the worksheets, saved queries and history of everything run in it.
+- [Manage users & access](https://tamasmrtn.github.io/duckhaven/access/manage-users/): Add people to DuckHaven, give them a global role, and give them a role in the workspaces they work in.
+- [Service accounts & tokens](https://tamasmrtn.github.io/duckhaven/access/service-accounts/): Create a service account, give it access to a workspace, and call the API with its token, for CI pipelines, schedulers and other unattended clients.
+- [Connect an IdP (SSO)](https://tamasmrtn.github.io/duckhaven/access/connect-idp/): Let people sign in to DuckHaven through your OpenID Connect identity provider, such as Microsoft Entra ID, Okta, Keycloak, Authentik, AWS Cognito or Google Workspace.
+- [Connect LDAP / AD](https://tamasmrtn.github.io/duckhaven/access/connect-ldap/): Let people sign in to DuckHaven with their LDAP or Active Directory credentials on the normal login form.
+- [Offboarding & break-glass](https://tamasmrtn.github.io/duckhaven/access/offboarding/): Remove someone's access cleanly when they leave, and keep a way in when your identity provider is down.
+- [Troubleshoot sign-in and access](https://tamasmrtn.github.io/duckhaven/access/troubleshooting/): Find the message you see on the setup or login screen, in the results pane, or in an API response, then follow what to do.
+
+## Compute
+
+- [Agents](https://tamasmrtn.github.io/duckhaven/compute/agents/): An agent is a process running DuckDB on its own host that connects out to the control plane and runs the queries it is sent.
+- [Add an agent](https://tamasmrtn.github.io/duckhaven/compute/add-agent/): Run a static agent on another host: generate a bootstrap snippet, start it with Docker Compose, and watch it register.
+- [Runtimes](https://tamasmrtn.github.io/duckhaven/compute/runtimes/): A runtime is the DuckDB an agent runs, together with the extensions baked into its image.
+- [Elastic compute](https://tamasmrtn.github.io/duckhaven/compute/elastic-compute/): Elastic compute starts agents when work arrives and none is running, and stops them after they sit idle, so nothing runs, or is billed, between queries.
+- [Elastic compute on a single Docker host](https://tamasmrtn.github.io/duckhaven/compute/elastic-docker/): Turn on elastic compute with the Docker backend, so DuckHaven starts agent containers on the host running your stack when work arrives and removes them when idle.
+- [Elastic compute on Azure](https://tamasmrtn.github.io/duckhaven/compute/elastic-azure/): Turn on elastic compute with the Azure Container Instances backend, so DuckHaven starts agents in your Azure subscription when work arrives and stops them when idle.
+- [Scaling compute](https://tamasmrtn.github.io/duckhaven/compute/scaling/): Add agents for more capacity, give an agent more memory for heavier queries, or change how one agent shares its memory between queries.
+- [Agent monitoring](https://tamasmrtn.github.io/duckhaven/compute/agent-monitoring/): An agent's Monitoring tab shows whether it was saturated, how its memory and CPU behaved, and which queries it ran, over up to a week.
+- [Troubleshoot compute](https://tamasmrtn.github.io/duckhaven/compute/troubleshooting/): Find the message you see in an agent's log, on the Compute page, or in a query's error, then follow what to do.
+
+## Deploy
+
+- [Docker Compose](https://tamasmrtn.github.io/duckhaven/deployment/install/): Install DuckHaven on one Linux host with Docker Compose, create the first admin, and keep the install private.
+- [Reverse proxy & TLS](https://tamasmrtn.github.io/duckhaven/deployment/reverse-proxy-tls/): Put DuckHaven behind a reverse proxy that terminates TLS, for any deployment reachable beyond a private network.
+- [Enable DuckLake](https://tamasmrtn.github.io/duckhaven/deployment/ducklake/): DuckLake is a second catalog kind, available by default.
+- [High availability](https://tamasmrtn.github.io/duckhaven/deployment/high-availability/): The highly-available topology runs Postgres as a Patroni cluster and several API replicas, so the control plane survives losing a database node or an API container.
+- [Azure with Terraform](https://tamasmrtn.github.io/duckhaven/deployment/azure-terraform/): The Terraform in deploy/terraform/ deploys DuckHaven to Azure as managed services, with elastic agents on Container Instances.
+- [Updating](https://tamasmrtn.github.io/duckhaven/deployment/updating/): Pull new images and restart the stack; database migrations run on their own when the API starts.
+- [Backup & restore](https://tamasmrtn.github.io/duckhaven/deployment/backup-restore/): Back up DuckHaven's three Postgres databases and its secret key, restore them, and upgrade Postgres to a new major version without losing data.
+
+## Operate
+
+- [Monitoring](https://tamasmrtn.github.io/duckhaven/operations/monitoring/): DuckHaven exports Prometheus metrics for alerting, records every query in History, and gives each agent a monitoring page.
 - [Distributed tracing](https://tamasmrtn.github.io/duckhaven/operations/tracing/): DuckHaven emits OpenTelemetry traces alongside the Prometheus metrics.
-- [Scaling compute](https://tamasmrtn.github.io/duckhaven/operations/scaling/): DuckHaven scales compute horizontally: the control plane stays small (one box) while you add agents at the edge.
-- [HA failover runbook](https://tamasmrtn.github.io/duckhaven/operations/ha-failover/): Drills that prove the highly-available control plane survives the failures it is designed for.
-- [Offboarding & break-glass](https://tamasmrtn.github.io/duckhaven/operations/offboarding/): How to remove someone's access cleanly, and how to stay in control when your identity provider is down.
-- [Troubleshooting](https://tamasmrtn.github.io/duckhaven/operations/troubleshooting/): Common issues and where to look.
+- [HA failover runbook](https://tamasmrtn.github.io/duckhaven/operations/ha-failover/): Run three drills that prove the highly-available control plane survives losing its Postgres primary or an API replica, and never runs background work twice.
+- [Troubleshoot the deployment](https://tamasmrtn.github.io/duckhaven/operations/troubleshooting/): Find what you see on the control-plane host, behind your proxy or on the network, then follow what to do.
 
 ## Reference
 
-- [Configuration](https://tamasmrtn.github.io/duckhaven/reference/configuration/): Every control-plane and agent environment variable.
-- [SQL support](https://tamasmrtn.github.io/duckhaven/reference/sql-support/): Supported SQL surface and DuckDB features, and binding typed query parameters.
-- [Agent reference](https://tamasmrtn.github.io/duckhaven/reference/agent-reference/): Agent configuration and behavior.
+- [Configuration](https://tamasmrtn.github.io/duckhaven/reference/configuration/): Every DuckHaven environment variable, with its default and what it changes.
+- [SQL support](https://tamasmrtn.github.io/duckhaven/reference/sql-support/): DuckHaven runs DuckDB SQL, checked against an allowlist before an agent runs it; statements such as ATTACH, INSTALL and SET are rejected.
+- [Permissions](https://tamasmrtn.github.io/duckhaven/reference/permissions/): Every global permission, workspace role, data-grant tier and agent tier in DuckHaven, and what each one allows.
+- [Agent configuration](https://tamasmrtn.github.io/duckhaven/reference/agent-configuration/): Every environment variable an agent reads; an agent needs only CONTROL_PLANE_URL and BOOTSTRAP_TOKEN.
 - [CLI reference](https://tamasmrtn.github.io/duckhaven/reference/cli/): Every dh command, its summary and its flags.
-- [REST API](https://tamasmrtn.github.io/duckhaven/reference/rest-api/): The control-plane REST API: exact result values, Arrow and Parquet downloads, query parameters, describe, workspace metadata, waiting for a result, and client and tags.
-- [API conventions](https://tamasmrtn.github.io/duckhaven/reference/api-conventions/): The rules every DuckHaven REST endpoint follows.
-- [Operator scripts](https://tamasmrtn.github.io/duckhaven/reference/operator-scripts/): DuckHaven ships a few small helper scripts under scripts/ for operators.
+- [REST API](https://tamasmrtn.github.io/duckhaven/reference/rest-api/): DuckHaven's REST API, under /api, does everything the web UI does, so any task can be scripted with a token.
+- [SQL sessions API](https://tamasmrtn.github.io/duckhaven/reference/sql-sessions-api/): The endpoints a driver uses to open a SQL session, run statements in it, stage files and close it.
+- [API versions](https://tamasmrtn.github.io/duckhaven/reference/api-versions/): GET /api/version reports api_version, an integer that changes only when a change breaks existing API clients.
+- [Errors](https://tamasmrtn.github.io/duckhaven/reference/errors/): Every API error has an HTTP status and a stable error code; this page lists each code, what causes it and what to do.
+- [Operator scripts](https://tamasmrtn.github.io/duckhaven/reference/operator-scripts/): The helper scripts under scripts/ back up Postgres, check DuckLake catalogs, review the assistant's answers and wait for the stack to start.

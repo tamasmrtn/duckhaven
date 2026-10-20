@@ -45,6 +45,14 @@ repos:
         files: ^(docs/.*\.md|docs/llms\.txt|mkdocs\.yml|api/src/api/services/assistant/knowledge/(generate|docs_index)\.(py|yaml))$
         pass_filenames: false
 
+      # Prose rules from docs/developer/writing-docs.md (.vale.ini, .vale/styles).
+      # Skips when Vale is absent, like the Terraform hooks; CI enforces it.
+      - id: vale
+        name: vale
+        language: system
+        entry: bash -c 'command -v vale >/dev/null || { echo "vale not on PATH; skipping"; exit 0; }; vale "$@"' --
+        files: ^docs/.*\.md$
+
       - id: prettier
         name: Prettier
         language: system

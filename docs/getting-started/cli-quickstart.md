@@ -1,139 +1,117 @@
+---
+type: tutorial
+---
+
 # Command-line quickstart
 
-`dh` is DuckHaven's command-line interface. It gives analysts, CI pipelines and operators scriptable
-access to everything the API offers: running SQL, browsing the catalog, publishing dbt lineage and
-semantic models, managing grants, and operating service accounts and agents.
+Install `dh`, DuckHaven's command-line interface, sign in, and run queries and catalog commands from a terminal or a
+script.
 
-## Install
+`dh` reaches everything the API offers: running SQL, browsing catalogs, publishing dbt lineage and semantic models,
+managing grants, and operating service accounts and agents. This tutorial uses the `analytics` workspace and the
+`sales.analytics.orders` table from the [Quickstart](quickstart.md).
 
-```sh
+## Before you begin
+
+- Python 3.10 or newer, with `pip` or [uv](https://docs.astral.sh/uv/).
+- A DuckHaven account with a password, and the address of your DuckHaven, such as `https://duckhaven.example.com`. If
+  your DuckHaven signs people in only through an identity provider, ask an administrator for a
+  [service-account token](../access/service-accounts.md) instead; step 2 shows where it goes.
+
+## 1. Install the CLI
+
+```bash
 pip install duckhaven-cli
 ```
 
-Or, for an isolated tool install that does not touch a project's environment:
+Or, to keep it out of your project's environment, `uv tool install duckhaven-cli`. Check it landed:
 
-```sh
-uv tool install duckhaven-cli
-```
-
-It runs on Python 3.10 and newer. Check it landed:
-
-```sh
+```bash
 dh --version
 ```
 
-## Sign in
-
-```sh
-dh auth login --host https://duckhaven.example.com
+```text
+0.2.0
 ```
 
-`dh` asks for your email and password, mints a personal access token for you, and writes it to
-`~/.config/duckhaven/config.toml` with mode `0600`. The sign-in session itself is never stored — it
-exists for the three requests it takes to issue the token, then is discarded.
+## 2. Sign in
 
-!!! note "Single sign-on deployments"
-    If your DuckHaven authenticates only through an identity provider, there is no password for `dh`
-    to collect. Ask an administrator for a [service-account token](../guides/service-accounts.md) and
-    run `dh auth login --host https://... --token dh_pat_...` instead.
-
-Confirm it worked, and see which credential is in play:
-
-```sh
-dh auth status
-dh auth describe
-```
-
-`dh auth describe` is the one to reach for when something is not behaving: it prints every setting
-and **where it came from** — a flag, an environment variable, or which profile.
-
-### Your tokens
-
-`dh auth status` warns when the token you are using is within a fortnight of expiring, so a scheduled
-job does not discover it with a 401. To see and manage them:
-
-```sh
-dh auth tokens              # what you hold, and which one is in use
-dh auth revoke <id>         # retire one, including the one you are using
-```
-
-The listing never shows a token's value, and cannot: only a hash of it is stored. A token is shown
-once, when it is issued — if you lose it, issue a new one with `dh auth login` and revoke the old.
-
-## Set a default workspace
-
-Most commands act on a workspace. Set one once rather than passing `--workspace` every time:
-
-```sh
-dh workspace list
+```bash
 dh auth login --host https://duckhaven.example.com --workspace analytics
 ```
 
-Or edit the profile directly:
+`dh` asks for your email and password, issues a personal access token, and stores the token — never your password —
+in `~/.config/duckhaven/config.toml`, readable only by you. The token is valid for 90 days; `--expires-in-days` changes
+that. `--workspace` makes `analytics` the default, so later commands need no `--workspace` flag.
 
-```toml
-default_profile = "default"
+With a token from an administrator instead, run
+`dh auth login --host https://duckhaven.example.com --token dh_pat_… --workspace analytics`.
 
-[profile.default]
-host      = "https://duckhaven.example.com"
-token     = "dh_pat_..."
-workspace = "analytics"
-catalog   = "main"
+Confirm who you are signed in as:
+
+```bash
+dh auth status
 ```
 
-## Run a query
-
-```sh
-dh sql -q "select count(*) from sales.orders"
+```text
+field             value
+host              https://duckhaven.example.com
+profile           default
+user              admin@example.com
+name              Admin
+role              admin
+workspace         analytics
+token_expires_at  2027-01-17T14:23:12.113093Z
+server_version    0.8.0
+api_version       3
 ```
 
-`dh sql` submits the query, waits for it to finish, and prints every page of results. From a file, or
-from a pipe:
+## 3. Run a query
 
-```sh
-dh sql -f report.sql
-echo "select 1" | dh sql -i
+```bash
+dh sql -q "SELECT customer, sum(amount) AS revenue FROM sales.analytics.orders GROUP BY customer ORDER BY revenue DESC;"
 ```
 
-Run `dh sql` with no arguments in a terminal and you get an interactive shell.
+```text
+customer  revenue
+initech   310.00
+acme      162.25
+globex    75.50
+```
 
-## Browse the catalog
+`dh sql` submits the query, waits for it to finish, and prints every page of the result. It also reads SQL from a file
+(`dh sql -f report.sql`) or from a pipe (`echo "SELECT 1;" | dh sql -i`), and with no arguments at a terminal it opens
+an interactive shell.
 
-```sh
+## 4. Browse the catalog
+
+```bash
 dh catalog list
-dh schema list
-dh table list sales
-dh table get sales.orders
-dh table sample sales.orders
+dh table list analytics
+dh table get analytics.orders
+dh table sample analytics.orders
 ```
 
-A table is `schema.table`, or `catalog.schema.table` when you want a catalog other than your default
-for one command. `dh table sample` returns a fixed 20-row preview; for anything else, write the query.
+A table is `schema.table` in your default catalog, or `catalog.schema.table` for any other. `dh table get` prints the
+table's columns, format and storage location; `dh table sample` returns a 20-row preview.
 
-## Use it from a script
+## 5. Use it from a script
 
-Two things make `dh` safe to automate.
+Output is a table at a terminal and JSON when piped or redirected. Every JSON response has the same shape, so `jq`
+works the same way against every command:
 
-**One output shape.** `--format json` wraps every response the same way, so `jq` works the same
-against every command:
-
-```sh
-dh query list --status failed --format json | jq '.data[].id'
+```bash
+dh catalog list --format json | jq -c '.data[] | {slug, kind, is_default}'
 ```
 
-```json
-{
-  "data": [],
-  "cursor": null,
-  "has_more": false
-}
+```text
+{"slug":"sales","kind":"iceberg_polaris","is_default":true}
 ```
 
-Output defaults to a table on a terminal and to JSON when piped or redirected, so this works whether
-or not you remember the flag. `--all` walks every page rather than returning the first one.
+The envelope is always `{"data": …, "cursor": …, "has_more": …}`; `--all` walks every page instead of returning the
+first.
 
-**Exit codes that mean something.** In particular, a query that runs and fails exits `6`, so a
-pipeline can tell bad SQL from a broken CLI or an unreachable server:
+The exit code says what went wrong, so a pipeline can tell bad SQL from an unreachable server:
 
 | Code | Meaning |
 |---:|---|
@@ -145,51 +123,39 @@ pipeline can tell bad SQL from a broken CLI or an unreachable server:
 | 6 | The query ran and failed |
 | 7 | Timed out |
 | 8 | Server unavailable |
-| 9 | A destructive command was not confirmed, so nothing happened |
+| 9 | A destructive command was not confirmed, so nothing was sent |
 
-### Destructive commands ask first
+Commands that destroy data — `workspace delete`, `catalog drop`, `catalog detach`, `schema drop`, `table drop`,
+`lineage purge` and `semantic purge` — ask before acting at a terminal, and the default answer is no. Without a
+terminal, in a pipeline or a cron job, there is nobody to ask: they exit `9` without sending anything. Pass `--yes`
+when you mean it.
 
-Commands that destroy data — `workspace delete`, `catalog drop`, `catalog detach`, `schema drop`,
-`table drop`, `lineage purge` and `semantic purge` — will not run unattended. At a terminal they ask,
-and the default answer is no:
+In CI, set `DH_HOST`, `DH_TOKEN` and `DH_WORKSPACE` instead of using a config file:
 
-```sh
-$ dh table drop sales.orders
-Drop table sales.orders? [y/N]:
-```
-
-Anywhere else — a pipeline, a cron job, a CI step — there is nobody to ask, so `dh` **refuses and
-exits `9` without sending anything**. Pass `--yes` (or `-y`) to say so up front:
-
-```sh
-dh table drop sales.orders --yes
-```
-
-!!! note "Why it refuses instead of prompting"
-    Prompting in a job with no terminal would hang it on a question nobody will answer, and
-    proceeding anyway would make `--yes` decorative. Exit `9` is its own code so a script can tell
-    "the server rejected this" (`5`) from "I never sent it".
-
-### Credentials in CI
-
-`dh` reads `DH_HOST`, `DH_TOKEN` and `DH_WORKSPACE` from the environment, so a pipeline needs no
-config file at all:
-
-```sh
+```bash
 export DH_HOST=https://duckhaven.example.com
-export DH_TOKEN=dh_pat_...
+export DH_TOKEN=⟨a service-account token⟩
 export DH_WORKSPACE=analytics
-dh sql -q "select 1"
+dh sql -q "SELECT count(*) FROM sales.analytics.orders;"
 ```
 
-!!! warning "Do not use your personal token for CI"
-    `dh auth login` mints a token tied to **you**: it expires, and it stops working the day you
-    leave. Have an administrator create a [service account](../guides/service-accounts.md) and issue
-    a token for that instead.
+Use a [service-account token](../access/service-accounts.md) there, not your own: a personal token expires and stops
+working when you leave.
 
-## Where to go next
+## If it goes wrong
 
-- [CLI reference](../reference/cli.md) — every command and flag
-- [Import lineage from dbt](../guides/import-dbt-lineage.md) — publishing from CI
-- [Import semantics from dbt](../guides/import-dbt-semantics.md)
-- [Service accounts & tokens](../guides/service-accounts.md) — credentials for automation
+### A command says it is not authenticated, or exits `3`
+
+Your token expired or was revoked. `dh auth status` warns two weeks before a token expires. Sign in again with
+`dh auth login`, and retire the old token with `dh auth revoke ⟨id⟩`; `dh auth tokens` lists yours.
+
+### A setting is not what you expect
+
+`dh auth describe` prints every setting and where it came from: a flag, an environment variable, or a profile in the
+config file.
+
+## Next steps
+
+- [CLI reference](../reference/cli.md) — every command and flag.
+- [Import lineage from dbt](../metadata/import-dbt-lineage.md) — publish lineage from CI.
+- [Service accounts & tokens](../access/service-accounts.md) — credentials for automation.

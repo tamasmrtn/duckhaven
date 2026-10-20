@@ -1,4 +1,11 @@
+---
+type: concept
+---
+
 # High availability
+
+The highly-available topology runs Postgres as a Patroni cluster and several API replicas, so the control plane
+survives losing a database node or an API container.
 
 By default DuckHaven runs a **single-node control plane** — one Postgres, one
 Polaris, one API container — which is simple to operate and fine for most
@@ -8,7 +15,7 @@ container goes down, everyone is down until it comes back.
 This page describes the **opt-in highly-available topology**: HA Postgres plus
 multiple API replicas behind a load balancer, so the control plane survives the
 loss of a database node or an API container. It runs entirely on Docker Compose
-(no Kubernetes). Compute [agents](../concepts/agents.md) already scale
+(no Kubernetes). Compute [agents](../compute/agents.md) already scale
 horizontally and are unaffected.
 
 !!! note "This is opt-in"
@@ -40,7 +47,7 @@ already flow back through Postgres, so only this outbound hop is added. No Redis
 or other broker is involved.
 
 **Background work.** The maintenance scanner and database migrations would
-otherwise run on every replica at once. Both are now serialized with Postgres
+otherwise run on every replica at once. Both are serialized with Postgres
 advisory locks: the scanner elects one leader per tick, and `alembic upgrade head`
 takes a lock so concurrent replicas migrate one-at-a-time (the rest find the
 database already at head). This is why you can leave
@@ -222,8 +229,8 @@ single-node stack: a read-only root filesystem, dropped capabilities,
 `duckhaven_internal` network only — so it can reach Caddy, Polaris, the object store, and the
 collector, and nothing else. Opting out (for external cloud storage) works the
 same way as on the single-node stack; see
-[Install](./install.md#agent-network-egress) and
-[Sandboxing](../concepts/sql-sessions.md#sandboxing).
+[Install](install.md#agent-network-egress) and
+[Sandboxing](../querying/sql-sessions.md#sandboxing).
 
 ## Limitations
 
@@ -233,8 +240,11 @@ same way as on the single-node stack; see
   query is reaped by its timeout. New queries are routed to a live replica
   immediately. A graceful stop (SIGTERM) drains cleanly.
 - **Live agent metrics** are a best-effort view aggregated across replicas; a
-  replica that is momentarily unreachable is simply omitted from the metrics
+  replica that is momentarily unreachable is omitted from the metrics
   panel until it responds.
+- **No DuckLake.** The HA stack creates no `ducklake` database and sets no
+  `DUCKLAKE_DATABASE_URL`, so DuckLake catalogs cannot be created on it. Set
+  `DUCKLAKE_ENABLED=false` so the catalog dialog does not offer them.
 - **Polaris** is run single-instance here. It is stateless on Postgres and can be
   replicated behind the load balancer the same way, but that is outside this
   guide's scope.

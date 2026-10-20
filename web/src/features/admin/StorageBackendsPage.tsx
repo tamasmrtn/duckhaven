@@ -502,7 +502,7 @@ export function StorageBackendsPage() {
           <span>
             Object storage backends are stored in the bundled object store on
             the control-plane host — no off-box disaster recovery by default.
-            Ensure off-box backups (see the runbook).
+            Ensure off-box backups (see Backup and restore in the docs).
           </span>
         </Banner>
       )}

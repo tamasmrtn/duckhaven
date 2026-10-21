@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/tamasmrtn/duckhaven/security/advisories/new
+    about: Report vulnerabilities privately. Do not open a public issue; see SECURITY.md.
+  - name: CLI, Python connector, dbt or dlt adapter
+    url: https://github.com/tamasmrtn/duckhaven-clients/issues/new/choose
+    about: Bugs and requests for the client packages belong in the duckhaven-clients repository.
+  - name: Documentation
+    url: https://tamasmrtn.github.io/duckhaven/
+    about: Check the docs first; your answer may already be there.

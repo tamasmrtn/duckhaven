@@ -1,0 +1,31 @@
+name: Feature request
+description: Suggest a new capability or an improvement to an existing one.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the suggestion. Search the [open issues](https://github.com/tamasmrtn/duckhaven/issues) first;
+        if a similar request exists, add your use case there instead.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+      description: Describe what you are trying to do and what stops you today, before describing a solution.
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: What would you like to happen?
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you have considered
+      description: Workarounds you use today, or how other tools handle it.
+  - type: checkboxes
+    id: contribute
+    attributes:
+      label: Contributing
+      options:
+        - label: I am willing to submit a pull request for this, after agreeing on the approach in this issue.

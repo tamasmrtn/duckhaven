@@ -1,0 +1,95 @@
+name: Bug report
+description: Something in DuckHaven does not work as documented.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report a bug.
+
+        * **Possible security vulnerability?** Stop here and
+          [report it privately](https://github.com/tamasmrtn/duckhaven/security/advisories/new) instead.
+        * Search the [open issues](https://github.com/tamasmrtn/duckhaven/issues) first; someone may have reported it.
+        * Do **not** paste passwords, tokens, storage keys or private URLs. Redact them from logs.
+  - type: input
+    id: version
+    attributes:
+      label: DuckHaven version
+      description: |
+        The `version` from `curl -s http://<host>/api/version`. For a build from `main`, give the commit.
+      placeholder: "0.8.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      description: Where you see the problem. Pick the closest; it is fine to be unsure.
+      options:
+        - Web UI
+        - REST API
+        - SQL sessions (dbt, dlt and other drivers)
+        - Agents and query execution
+        - Elastic compute
+        - Catalogs and storage (Polaris, DuckLake, object store)
+        - Access control (users, grants, IdP, LDAP)
+        - AI assistant or MCP server
+        - Deployment and upgrades
+        - Documentation
+        - Not sure
+    validations:
+      required: true
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: Deployment
+      options:
+        - Bundled Docker Compose stack
+        - Docker Compose with elastic agents
+        - Azure (Terraform)
+        - Local development (make dev-api / make dev-web)
+        - Other (describe below)
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Include the exact error message, and the SQL or request that triggered it.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: The smaller the better. A sequence that works on a fresh Compose stack is ideal.
+      placeholder: |
+        1. Create a DuckLake catalog ...
+        2. Run `SELECT ...` in a worksheet ...
+        3. See error ...
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: |
+        For example `docker compose logs api agent`. This is formatted as code automatically, so no backticks needed.
+      render: text
+  - type: textarea
+    id: context
+    attributes:
+      label: Anything else?
+      description: Catalog kind, storage backend, DuckDB runtime, browser, or anything that seems related.
+  - type: checkboxes
+    id: contribute
+    attributes:
+      label: Contributing a fix
+      options:
+        - label: I am willing to submit a pull request for this.

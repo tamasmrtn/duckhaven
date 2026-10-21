@@ -96,9 +96,9 @@ Agents on different runtimes can read and write the same catalogs, with limits:
   extension's version. A newer extension can upgrade an older catalog, but the upgrade can't be undone, and an older
   runtime can't open the result. DuckHaven never asks for that upgrade. It also checks, on every dispatch, that the
   agent's runtime opens the catalog's format as-is (`ducklake_format_unsupported` otherwise). That check has a
-  consequence for new catalogs: a catalog that doesn't exist yet is created by whichever agent attaches it first, in
-  that agent's format, and any statement may attach any catalog of its workspace. So only a runtime whose format the
-  default runtime can open may work in a workspace that has a DuckLake catalog not yet created. DuckDB 1.5 creates
+  consequence for new catalogs: whichever agent attaches a catalog first creates it, in that agent's format, and
+  any statement may attach any catalog of its workspace. So in a workspace with a DuckLake catalog that has no
+  metadata, only a runtime whose format the default runtime can open may run work. DuckDB 1.5 creates
   and opens format `1.0`. DuckDB 2.0 opens `1.0` without changing it, but creates `1.1`, which 1.5 can't open. So a
   2.0 agent works on existing DuckLake catalogs but isn't allowed to create new ones.
 - **A beta runtime may run background checks differently.** Background work only runs on agents the server picks,

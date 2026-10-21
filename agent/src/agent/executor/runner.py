@@ -1483,15 +1483,20 @@ def _apply_watermarks(summary: dict[str, Any], watermarks: dict[str, int]) -> No
         watermarks[key] = max(previous, raw)
 
 
-# How DuckDB 1.5.5 names a catalog a statement needs but the connection has not
-# attached, per statement shape. The last one also fires for a schema that does
-# not exist, which is why a name is only acted on when it is a workspace catalog.
+# How DuckDB names a catalog a statement needs but the connection has not
+# attached, per statement shape. 1.5 says "catalog"; 2.0 has nested schemas, so it
+# reads `other.main.t` as schema `other.main` and reports that schema missing,
+# hence the first dotted part. The schema patterns also fire for a schema that
+# does not exist, which is why a name is only acted on when it is a workspace
+# catalog.
 _MISSING_CATALOG_PATTERNS = (
     re.compile(r'Catalog "([^"]+)" does not exist'),
     re.compile(r"Catalog with name (\S+) does not exist"),
     re.compile(r'Failed to find attached database "([^"]+)"'),
     re.compile(r'No catalog \+ schema named "([^".]+)\.'),
-    re.compile(r'because schema "([^"]+)" does not exist'),
+    re.compile(r'because schema "([^".]+)[."]'),
+    re.compile(r"Schema with name ([^\s.!]+)[.!\s]"),
+    re.compile(r'"([^"]+)" is not a catalog or schema'),
 )
 
 # Attach a catalog a statement turned out to need: (connection, slug) -> attached.

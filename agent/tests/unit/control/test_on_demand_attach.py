@@ -8,6 +8,7 @@ control plane would.
 from __future__ import annotations
 
 import asyncio
+import re
 
 import pytest
 
@@ -148,7 +149,8 @@ async def test_a_refused_catalog_fails_the_statement_with_duckdbs_error(tmp_path
     done = await _exec(ws, admission, tmp_path, "SELECT v FROM v")
 
     assert done.payload["status"] == "failed"
-    assert 'Catalog "other" does not exist' in done.payload["error"]
+    # 1.5 names catalog `other`; 2.0, with nested schemas, names schema `other.main`.
+    assert re.search(r'"other(\.main)?" does not exist', done.payload["error"])
     assert ws.requests() == ["other"]
 
 

@@ -86,6 +86,7 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 
 - Group changed files into **logical units** and commit each unit separately. Do not dump all changes into one commit.
 - Stage specific files by name (`git add src/foo.py`), never `git add .` or `git add -A`.
+- Sign off every commit with `git commit -s` (DCO); the `DCO sign-off` CI job fails a PR without it.
 - Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/):
   `<type>[(scope)][!]: <description>`.
    - Type is one of the branch prefixes: `feat`, `fix`, `chore`, `docs`, `refactor`, `test`.

@@ -128,14 +128,16 @@ def test_a_default_runtime_ducklake_catalog_stays_open_to_the_default(
 def test_a_catalog_a_newer_runtime_creates_matches_its_declared_format(
     ducklake_meta, tmp_path, other
 ):
-    """The manifest says whether the default can open what this runtime creates;
-    this holds the manifest to what the extensions actually do."""
+    """The manifest names the format this runtime creates and whether the default can
+    open it; this holds the manifest to what the extensions actually do. The exact
+    format matters: the dispatch gate compares it to each runtime's formats."""
     lake = {
         "meta": ducklake_meta,
         "schema": f"rtc_{uuid.uuid4().hex[:8]}",
         "data_path": f"{tmp_path}/",
     }
-    _ok(_run(other, "ducklake_write", id=1, label="other", **lake))
+    written = _ok(_run(other, "ducklake_write", id=1, label="other", **lake))
+    assert written["format"] == RUNTIMES[other].ducklake_format
 
     read = _run(DEFAULT_RUNTIME_ID, "ducklake_read", **lake)
     declared_open = RUNTIMES[other].ducklake_format in RUNTIMES[DEFAULT_RUNTIME_ID].ducklake_formats

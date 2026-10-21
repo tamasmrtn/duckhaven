@@ -82,7 +82,12 @@ def ducklake_write(args: dict) -> dict:
     conn = _ducklake(args)
     conn.execute('CREATE TABLE IF NOT EXISTS "lake"."main".t (id INTEGER, label VARCHAR)')
     conn.execute(f'INSERT INTO "lake"."main".t VALUES ({args["id"]}, \'{args["label"]}\')')
-    return {"count": conn.execute('SELECT count(*) FROM "lake"."main".t').fetchone()[0]}
+    # The format as the API's dispatch gate reads it: "version" in ducklake_metadata.
+    meta = f'"__ducklake_metadata_lake"."{args["schema"]}".ducklake_metadata'
+    return {
+        "count": conn.execute('SELECT count(*) FROM "lake"."main".t').fetchone()[0],
+        "format": conn.execute(f"SELECT value FROM {meta} WHERE key = 'version'").fetchone()[0],
+    }
 
 
 def ducklake_read(args: dict) -> dict:

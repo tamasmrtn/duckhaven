@@ -1,3 +1,8 @@
+# 4.7.0 is the first release whose node hooks (commitlint) install under npm 12.
+minimum_pre_commit_version: '4.7.0'
+# `pre-commit install` also installs commitlint, which checks the DCO sign-off.
+default_install_hook_types: [pre-commit, commit-msg]
+
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0

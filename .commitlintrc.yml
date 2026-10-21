@@ -2,3 +2,6 @@ extends:
   - '@commitlint/config-conventional'
 rules:
   header-max-length: [2, always, 72]
+  # DCO sign-off (CONTRIBUTING.md). Not `signed-off-by`: that rule only reads the
+  # last line, so a sign-off followed by another trailer fails it.
+  trailer-exists: [2, always, 'Signed-off-by:']

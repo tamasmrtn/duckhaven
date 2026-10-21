@@ -102,5 +102,5 @@ repos:
         entry: commitlint --edit
         stages: [commit-msg]
         additional_dependencies:
-          - '@commitlint/cli@19'
-          - '@commitlint/config-conventional@19'
+          - '@commitlint/cli@21'
+          - '@commitlint/config-conventional@21'

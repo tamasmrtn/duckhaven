@@ -44,7 +44,7 @@ assertion you were interested in, so a whole suite can look like it passed when 
 
 ### Other agent runtimes
 
-The main virtualenv runs the default [runtime](../concepts/runtimes.md)'s DuckDB, from `uv.lock`. Every other
+The main virtualenv runs the default [runtime](../compute/runtimes.md)'s DuckDB, from `uv.lock`. Every other
 runtime gets its own virtualenv, `.venv-duckdb<id>`, with its pinned DuckDB installed over the locked environment:
 
 ```bash

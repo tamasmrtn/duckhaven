@@ -1,6 +1,6 @@
 # Runtime qualification
 
-A [runtime](../concepts/runtimes.md) is one DuckDB line baked into an agent image. The agent runs on every runtime
+A [runtime](../compute/runtimes.md) is one DuckDB line baked into an agent image. The agent runs on every runtime
 from the same source, so each new DuckDB line has to be *qualified*: shown to work with DuckHaven, and its differences
 recorded. This page is the checklist for that, and the record of each runtime's results.
 
@@ -28,7 +28,7 @@ DuckDB 2.0, a benchmark conclusion reversed completely, so results never carry o
 6. **Across runtimes.** `make test-runtime-compat` covers five checks against the default runtime:
    - Iceberg tables written by either runtime read on the other.
    - A DuckLake catalog the default runtime created is read and written by the new runtime without being migrated.
-   - Whether the default runtime can open a catalog the new runtime creates matches the manifest.
+   - The format of a catalog the new runtime creates, and whether the default runtime opens it, match the manifest.
    - Result pages written on the new runtime decode on the default one.
    - Result pages written on the default runtime decode on the new one.
 
@@ -63,19 +63,18 @@ refused with that reason, and remove it from the manifest in the release after.
 
 ## DuckDB 2.0 (beta)
 
-Qualified on 2026-09-26 against the pre-release `v2.0.0-alpha43385` (PyPI `duckdb==2.0.0.dev2609250715`), since 2.0
-is not released yet (planned for 2026-10-21).
+Qualified on 2026-10-21 against the release `v2.0.0` (PyPI `duckdb==2.0.0`, source `d54cbbe3df`).
 
 | Check | Result |
 |---|---|
-| Build | Every extension loads (`httpfs`, `azure`, `iceberg`, `ducklake`, `postgres`). Image 391 MB against 346 MB for 1.5. |
+| Build | Every extension loads (`httpfs`, `azure`, `iceberg`, `ducklake`, `postgres`). Image 425 MB against 349 MB for 1.5. |
 | Unit tests | All pass. |
-| Integration tests | All pass except two that fail: the table-size and orphan probes, see *vended credentials* below. |
-| Sandbox | `verified`. |
-| DuckLake | Creates format `1.1-dev1`, opens `1.0` and `1.1-dev1`. It opens and writes a 1.0 catalog without migrating it. 1.5 cannot open a 1.1-dev1 catalog. The dispatch gate therefore keeps 2.0 agents from creating catalogs while 1.5 is the default. DuckHaven's metadata SQL reads 1.1-dev1 unchanged: the format only adds columns, and renames columns in tables DuckHaven never reads directly. |
+| Integration tests | All pass. The replaced-vended-secret test skips: 2.0 has no such secret, see *vended credentials* below. |
+| Sandbox | `verified`. Quack server mode can't be installed, and the new settings (`allow_extension_repositories`, `enable_legacy_parser`, `lambda_syntax`, `error_on_division_by_zero`) are locked. |
+| DuckLake | Creates format `1.1`, opens `1.0` and `1.1`. It opens and writes a 1.0 catalog without migrating it. 1.5 cannot open a 1.1 catalog. The dispatch gate therefore keeps 2.0 agents from creating catalogs while 1.5 is the default. DuckHaven's metadata SQL reads 1.1 unchanged: the format adds columns and a table, and renames columns only in the inlined-data tables, which DuckHaven never reads directly. |
 | Across runtimes | All pass. |
-| End to end | Passes, including a query and a session on the 2.0 agent and the DuckLake refusal. |
-| Benchmark | **Not run on this build.** Must be re-run on the 2.0 release before any promotion. |
+| End to end | **Not re-run on this build.** Passed on `v2.0.0-alpha43385`, including a query and a session on the 2.0 agent and the DuckLake refusal. |
+| Benchmark | **Not run on this build.** Must be run before any promotion. |
 
 Differences the agent absorbs, so they need no action from users:
 
@@ -89,13 +88,27 @@ Differences the agent absorbs, so they need no action from users:
   query fails as an aborted transaction, so it is allowed.
 - **A `SELECT`'s runtime error surfaces when its rows are fetched, not when it runs.** The agent drains a script's
   final result.
+- **Nested schemas change the missing-catalog error.** 2.0 reads `other.main.t` with no catalog `other` as schema
+  `other.main`, and reports that schema missing. The agent reads the catalog from either form, so a view over a
+  catalog the statement doesn't name is still attached on demand.
+- **Every `PRAGMA` is typed `PRAGMA`.** 1.5 types the row-returning ones as `SELECT`. The API admits only those, so
+  the agent materializes any `PRAGMA` it receives.
+- **A connection refuses a concurrent call** with `ResourceInUseException`, where 1.5 waited. The agent runs one
+  statement at a time per connection, and `interrupt()` still works from another thread.
+
+Differences users see are listed on the [Runtimes](../compute/runtimes.md#sql-on-duckdb-20) page.
 
 Open items. These don't block beta, since beta agents are only used when named, but they block promotion:
 
 - **Vended credentials are not exposed as a DuckDB secret.** On 1.5 the `iceberg` extension registers the storage
-  credentials Polaris vends as an S3 secret. On 2.0 it keeps them internal, so reading a table's files directly gets
-  a 403. That breaks the table-health probes that size data files from their Parquet footers and list the storage
-  prefix for orphans. They run only on auto-picked agents, which are never beta, so today nothing reaches them.
-- **The API parses SQL with 1.5.** SQL only 2.0 understands is refused before it reaches a 2.0 agent.
+  credentials Polaris vends as an S3 secret. On 2.0 it keeps them internal, so a direct read of a table's files
+  needs another secret. The catalog-scoped fallback secret the API sends with every Iceberg catalog serves those
+  reads, so the table-health probes work. For an external store that fallback is minted in the background, so the
+  first dispatch after the API starts can lack it, and that probe gets a 403.
+- **The API parses SQL with 1.5.** SQL only 2.0 understands is refused before it reaches a 2.0 agent. Once the API
+  parses with 2.0, it admits nested-schema DDL (`CREATE SCHEMA c.a.b`). DuckLake 1.1 records the parent in
+  `ducklake_schema.parent_schema_id`, which DuckHaven's metadata SQL ignores, so a nested schema would list as a
+  top-level one. The API also needs to type every `PRAGMA` itself, since 2.0 no longer marks the row-returning ones.
 - **Performance.** On the August and September alphas, reads through DuckHaven were 6% slower with warm caches,
   while writes and cold reads were 30% faster. The release build decides whether 2.0 becomes the default.
+- **Patch release.** DuckDB advises critical deployments to wait for 2.0.1, planned for 2026-11-18.

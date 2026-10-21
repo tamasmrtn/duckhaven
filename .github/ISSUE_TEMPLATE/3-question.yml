@@ -1,0 +1,21 @@
+name: Question
+description: Ask how to do something with DuckHaven.
+labels: [question]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Check the [documentation](https://tamasmrtn.github.io/duckhaven/) first; your answer may already be there.
+        Do **not** paste passwords, tokens, storage keys or private URLs.
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: What you are trying to do, and what you have tried so far.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: DuckHaven version
+      description: The `version` from `curl -s http://<host>/api/version`, if you have a running stack.

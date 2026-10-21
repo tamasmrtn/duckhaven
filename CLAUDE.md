@@ -86,13 +86,15 @@ Strong success criteria let you loop independently. Weak criteria ("make it work
 
 - Group changed files into **logical units** and commit each unit separately. Do not dump all changes into one commit.
 - Stage specific files by name (`git add src/foo.py`), never `git add .` or `git add -A`.
+- Sign off every commit with `git commit -s` (DCO); the `DCO sign-off` CI job fails a PR without it.
 - Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/):
   `<type>[(scope)][!]: <description>`.
    - Type is one of the branch prefixes: `feat`, `fix`, `chore`, `docs`, `refactor`, `test`.
-   - Optional scope names the area, e.g. `fix(agent): Bound the EXPLAIN timeout`.
+   - Optional scope names the area, e.g. `fix(agent): bound the EXPLAIN timeout`.
    - Mark breaking changes with `!` after the type/scope and a `BREAKING CHANGE:` footer.
-   - The description starts with a capital letter.
-   - Imperative mood: "Add validation" not "Added validation".
+   - The description starts with a lowercase letter; commitlint rejects sentence-case, start-case, pascal-case and
+     upper-case subjects.
+   - Imperative mood: "add validation" not "added validation".
    - Max 72 characters for the whole subject line, no trailing period.
    - No `Co-authored-by` trailers. No AI attribution of any kind.
    - Body (if needed): blank line after subject, wrapped at 72 chars.
@@ -122,7 +124,7 @@ EOF
 )"
 ```
 
-- PR title follows the same format as the commit subject (`<type>: <Description>`, imperative, ≤72 chars).
+- PR title follows the same format as the commit subject (`<type>: <description>`, imperative, ≤72 chars).
 - Use `--draft` if the work is not yet ready for review.
 - Do not push or create a PR unless the user explicitly asks.
 

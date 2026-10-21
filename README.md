@@ -332,8 +332,9 @@ architectural decisions.
 ## Contributing
 
 Conventional commits, branch prefixes (`feat/`, `fix/`, `chore/`, `docs/`,
-`refactor/`, `test/`), and tests for every change. See [CLAUDE.md](CLAUDE.md)
-for the full development guidelines.
+`refactor/`, `test/`), signed-off commits, and tests for every change. See
+[CONTRIBUTING.md](CONTRIBUTING.md) for the full guide, and
+[SECURITY.md](SECURITY.md) to report a vulnerability.
 
 - Frontend: Vitest + React Testing Library + MSW
 - Backend: pytest + pytest-asyncio (API ≥80% coverage, agent ≥75% coverage)

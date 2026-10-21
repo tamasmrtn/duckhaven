@@ -1,3 +1,8 @@
+# 4.7.0 is the first release whose node hooks (commitlint) install under npm 12.
+minimum_pre_commit_version: '4.7.0'
+# `pre-commit install` also installs commitlint, which checks the DCO sign-off.
+default_install_hook_types: [pre-commit, commit-msg]
+
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
@@ -23,7 +28,9 @@ repos:
         # on inline HTML (grid cards) and YAML front matter; mdl can't parse it.
         # README.md embeds a <video> tag (MD033); mdl has no inline per-line
         # suppression, only whole-file exclusion or a repo-wide rule disable.
-        exclude: ^(docs/index\.md|README\.md)$
+        # The PR template becomes a PR body under its own title, so its sections
+        # start at ## and trip MD002 (first header must be top-level).
+        exclude: ^(docs/index\.md|README\.md|\.github/pull_request_template\.md)$
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.15.13
@@ -95,5 +102,5 @@ repos:
         entry: commitlint --edit
         stages: [commit-msg]
         additional_dependencies:
-          - '@commitlint/cli@19'
-          - '@commitlint/config-conventional@19'
+          - '@commitlint/cli@21'
+          - '@commitlint/config-conventional@21'

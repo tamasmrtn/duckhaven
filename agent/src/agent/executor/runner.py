@@ -187,21 +187,26 @@ def _is_credential_error(exc: Exception) -> bool:
     return any(marker in msg for marker in _CREDENTIAL_ERROR_MARKERS)
 
 
+_ROW_STATEMENT_TYPES = frozenset({duckdb.StatementType.SELECT, duckdb.StatementType.PRAGMA})
+
+
 def _is_single_select(sql: str) -> bool:
     """True when the body is exactly one row-producing statement — the only shape
     we materialize to Parquet. Everything else (DDL/DML, multi-statement scripts)
     is executed directly and produces no result file.
 
     Note this is broader than a literal `SELECT`: DuckDB also reports `DESCRIBE`,
-    `SHOW`, `SUMMARIZE` and the row-returning `PRAGMA`s as `StatementType.SELECT`
-    (a config-setting `PRAGMA x = y` is typed `SET`, not SELECT). They all return
-    a result grid, so they all belong on the materialize path — see
+    `SHOW` and `SUMMARIZE` as `StatementType.SELECT`, and 1.5 the row-returning
+    `PRAGMA`s too (a config-setting `PRAGMA x = y` is typed `SET`, not SELECT).
+    2.0 types every other `PRAGMA` as `PRAGMA`; the API admits only those its 1.5
+    parser types as SELECT, so one that gets here returns rows. They all return a
+    result grid, so they all belong on the materialize path — see
     `_run_one_statement` for why that path cannot use `COPY (…) TO`."""
     try:
         statements = duckdb.extract_statements(sql)
     except Exception:  # noqa: BLE001 - a parse failure surfaces when executed
         return False
-    return len(statements) == 1 and statements[0].type == duckdb.StatementType.SELECT
+    return len(statements) == 1 and statements[0].type in _ROW_STATEMENT_TYPES
 
 
 # Statement types that touch no data and need no memory beyond the connection

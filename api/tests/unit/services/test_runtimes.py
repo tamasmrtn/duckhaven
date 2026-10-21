@@ -204,7 +204,7 @@ def test_the_default_runtime_must_be_curated_and_not_beta(extra_runtimes, value)
 # ── DuckLake formats ──────────────────────────────────────────────────────────
 #
 # Measured against the real extensions: 1.5 creates and opens format 1.0; 2.0
-# opens 1.0 without migrating it but creates 1.1-dev1, which 1.5 cannot open.
+# opens 1.0 without migrating it but creates 1.1, which 1.5 cannot open.
 
 
 def _ducklake(slug="lake"):
@@ -232,7 +232,7 @@ def test_a_newer_runtime_may_not_create_a_catalog_the_default_cannot_open():
 
 def test_an_older_runtime_is_refused_a_format_it_cannot_open():
     with pytest.raises(svc.AgentNotDispatchable) as exc:
-        _dispatch(_caps("1.5", "v1.5.5"), {"lake": "1.1-dev1"})
+        _dispatch(_caps("1.5", "v1.5.5"), {"lake": "1.1"})
     assert exc.value.code == "ducklake_format_unsupported"
 
 

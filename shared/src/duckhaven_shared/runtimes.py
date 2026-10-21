@@ -57,10 +57,9 @@ RUNTIMES: dict[str, Runtime] = {
         extensions=("httpfs", "azure", "iceberg", "ducklake", "postgres"),
         ducklake_format="1.0",
         ducklake_formats=("1.0",),
-        upstream_eol=date(2026, 11, 1),
+        upstream_eol=date(2027, 3, 1),
     ),
-    # A pre-release build (see agent/runtimes/2.0.in) until DuckDB 2.0 ships; its
-    # qualification record is docs/developer/runtime-qualification.md.
+    # Its qualification record is docs/developer/runtime-qualification.md.
     "2.0": Runtime(
         id="2.0",
         display_name="DuckDB 2.0",
@@ -68,10 +67,10 @@ RUNTIMES: dict[str, Runtime] = {
         status="beta",
         extensions=("httpfs", "azure", "iceberg", "ducklake", "postgres"),
         # Measured: 2.0 opens and writes a 1.0 catalog without migrating it, but a
-        # catalog it creates is 1.1-dev1, which 1.5 cannot open.
-        ducklake_format="1.1-dev1",
-        ducklake_formats=("1.0", "1.1-dev1"),
-        upstream_eol=None,
+        # catalog it creates is 1.1, which 1.5 cannot open.
+        ducklake_format="1.1",
+        ducklake_formats=("1.0", "1.1"),
+        upstream_eol=date(2027, 10, 22),
     ),
 }
 

@@ -92,13 +92,11 @@ async def test_the_fallback_secret_covers_a_replaced_vended_secret(
     Without the catalog's fallback secret that is the crash's own error; with it,
     the read succeeds. Runs the production attach path end to end.
     """
-    import os
-    from urllib.parse import urlparse
+    from testkit.iceberg import fallback_storage
 
     from agent.executor import runner
 
     catalog, ns = polaris_s3_catalog
-    endpoint = urlparse(os.environ.get("POLARIS_S3_ENDPOINT", "http://127.0.0.1:9000"))
     descriptor = {
         "slug": "lake",
         "kind": "iceberg_polaris",
@@ -107,16 +105,7 @@ async def test_the_fallback_secret_covers_a_replaced_vended_secret(
         "default_schema": ns,
     }
     if with_fallback:
-        descriptor["storage"] = {
-            "type": "s3",
-            "scope": os.environ["POLARIS_S3_BUCKET"].rstrip("/") + "/",
-            "key_id": os.getenv("OBJECT_STORE_ACCESS_KEY", "duckhaven"),
-            "secret": os.getenv("OBJECT_STORE_SECRET_KEY", "duckhaven"),
-            "region": os.getenv("POLARIS_S3_REGION", "us-east-1"),
-            "endpoint": endpoint.netloc,
-            "url_style": "path",
-            "use_ssl": endpoint.scheme == "https",
-        }
+        descriptor["storage"] = fallback_storage()
     polaris = {
         "endpoint": polaris_base_url,
         "client_id": polaris_creds[0],
@@ -135,6 +124,11 @@ async def test_the_fallback_secret_covers_a_replaced_vended_secret(
         vended = conn.execute(
             "SELECT name FROM duckdb_secrets() WHERE name LIKE '__internal_ic_%'"
         ).fetchall()
+        if not vended and conn.execute("SELECT version()").fetchone()[0].startswith("v2."):
+            pytest.skip(
+                "DuckDB 2.0 keeps vended credentials inside the iceberg extension, so "
+                "there is no secret to replace; the table-health tests cover the fallback"
+            )
         assert vended, "no vended secret to remove: the test would prove nothing"
         for (name,) in vended:
             conn.execute(f'DROP TEMPORARY SECRET "{name}"')

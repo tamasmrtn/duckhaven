@@ -10,8 +10,8 @@ extensions (`httpfs`, `azure`, `iceberg`, `ducklake`, `postgres`).
 
 | Runtime | Status | Notes |
 |---|---|---|
-| DuckDB 1.5 | Generally available, the default | Upstream support ends 2026-11-01. |
-| DuckDB 2.0 | Beta | Built from a 2.0 pre-release until 2.0 ships. See its [qualification record](../developer/runtime-qualification.md#duckdb-20-beta). |
+| DuckDB 1.5 | Generally available, the default | Upstream support ends 2027-03-01. |
+| DuckDB 2.0 | Beta | Upstream support ends 2027-10-22. See [SQL on DuckDB 2.0](#sql-on-duckdb-20) and its [qualification record](../developer/runtime-qualification.md#duckdb-20-beta). |
 
 Runtimes exist because DuckDB versions are not interchangeable. A new line changes performance (sometimes for the
 better and sometimes not, depending on the workload), changes behaviour the agent relies on, and changes what it can
@@ -45,8 +45,8 @@ Some work doesn't name an agent: a pool run, a background maintenance probe, the
 2. then other generally available runtimes,
 3. then deprecated ones.
 
-An agent on a **beta** runtime is never picked this way. Work reaches it only by naming it, so trying a pre-release
-DuckDB never changes where anyone else's queries run.
+An agent on a **beta** runtime is never picked this way. Work reaches it only by naming it, so trying a new DuckDB
+line never changes where anyone else's queries run.
 
 ## Lifecycle
 
@@ -96,14 +96,25 @@ Agents on different runtimes can read and write the same catalogs, with limits:
   extension's version. A newer extension can upgrade an older catalog, but the upgrade can't be undone, and an older
   runtime can't open the result. DuckHaven never asks for that upgrade. It also checks, on every dispatch, that the
   agent's runtime opens the catalog's format as-is (`ducklake_format_unsupported` otherwise). That check has a
-  consequence for new catalogs: every query attaches every catalog in its workspace, and a catalog that doesn't exist
-  yet is created by whichever agent attaches it first, in that agent's format. So only a runtime whose format the
-  default runtime can open may be the first to touch a new catalog. DuckDB 1.5 creates and opens format `1.0`.
-  DuckDB 2.0 opens `1.0` without changing it, but creates `1.1-dev1`, which 1.5 can't open. So a 2.0 agent works on
-  existing DuckLake catalogs but isn't allowed to create new ones.
-- **A beta runtime may run background checks differently.** For example, the DuckDB 2.0 pre-release can't size a
-  table's files for the maintenance advisor. Background work only runs on agents the server picks, which are never
-  beta, so this doesn't reach you. Such differences are listed in each runtime's qualification record.
+  consequence for new catalogs: a catalog that doesn't exist yet is created by whichever agent attaches it first, in
+  that agent's format, and any statement may attach any catalog of its workspace. So only a runtime whose format the
+  default runtime can open may work in a workspace that has a DuckLake catalog not yet created. DuckDB 1.5 creates
+  and opens format `1.0`. DuckDB 2.0 opens `1.0` without changing it, but creates `1.1`, which 1.5 can't open. So a
+  2.0 agent works on existing DuckLake catalogs but isn't allowed to create new ones.
+- **A beta runtime may run background checks differently.** Background work only runs on agents the server picks,
+  which are never beta, so such a difference doesn't reach you. Each runtime's qualification record lists them.
+
+## SQL on DuckDB 2.0
+
+A few statements that work on DuckDB 1.5 fail or return something else on a 2.0 agent:
+
+| On 1.5 | On 2.0 | Write instead |
+|---|---|---|
+| `list_transform([1, 2], x -> x + 1)` works. | Fails with `Binder Error: Deprecated lambda arrow (->) detected.` | `list_transform([1, 2], lambda x: x + 1)`, which both lines accept. |
+| Integer division `7 // 0` and modulo `7 % 0` return `NULL`. | Fail with `Invalid Input Error: Division by zero in expression (7 // 0).` | `TRY(7 // 0)` returns `NULL` on both lines. |
+
+DuckDB has settings that restore the 1.5 behavior (`lambda_syntax`, `error_on_division_by_zero`), but no query or
+SQL session can change them on an agent, so change the SQL instead. Division with `/` returns `inf` on both lines.
 
 ## Related
 

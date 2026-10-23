@@ -1,4 +1,6 @@
 import asyncio
+import base64
+import binascii
 import contextlib
 import datetime as dt
 import logging
@@ -63,9 +65,12 @@ _tracer = trace.get_tracer("duckhaven.api")
 class Completion(asyncio.Event):
     """Set when a statement reaches a terminal state here. ``row`` is the terminal
     row as committed, by attribute name, when the setter had it: the waiter takes
-    it rather than reading back what this process has just written."""
+    it rather than reading back what this process has just written.
+    ``result_parquet`` is the statement's whole result file when the agent sent it
+    along with QUERY_DONE, so the waiter can answer without fetching it back."""
 
     row: dict[str, Any] | None = None
+    result_parquet: bytes | None = None
 
 
 # Requests waiting for a statement to finish, by query id (see
@@ -92,14 +97,35 @@ def completion_waiter(query_id: uuid.UUID):
         _completion_waiters.pop(query_id, None)
 
 
-def signal_completion(query_id: uuid.UUID, row: dict[str, Any] | None = None) -> None:
+def signal_completion(
+    query_id: uuid.UUID,
+    row: dict[str, Any] | None = None,
+    result_parquet: bytes | None = None,
+) -> None:
     """Wake anything waiting on ``query_id``. Called after the status is committed,
     so a woken waiter's next read is guaranteed to see the terminal row, or need
     not read it at all when ``row`` is that row."""
     event = _completion_waiters.get(query_id)
     if event is not None:
         event.row = row
+        event.result_parquet = result_parquet
         event.set()
+
+
+# Larger than any agent sends by default (its `SESSION_RESULT_INLINE_MAX_BYTES` is
+# 256 KiB): a bound on what one frame may make this process hold, not a tuning knob.
+_MAX_INLINE_RESULT_BYTES = 1024 * 1024
+
+
+def _inline_result(encoded: Any) -> bytes | None:
+    """The result file an agent put in its QUERY_DONE, or None when there is none
+    or it cannot be used. The waiter then fetches the file as it always did."""
+    if not isinstance(encoded, str) or len(encoded) > _MAX_INLINE_RESULT_BYTES * 4 // 3 + 4:
+        return None
+    try:
+        return base64.b64decode(encoded, validate=True)
+    except binascii.Error:
+        return None
 
 
 class AgentUnavailable(ValueError):
@@ -257,6 +283,9 @@ async def handle_agent_frame(db: AsyncSession, frame: Frame, polaris=None) -> No
             record_query_queue_wait((now - _utc(row.started_at)).total_seconds())
         return
     if frame.type == FrameType.QUERY_DONE:
+        # Never stored: only a request in this process waiting on the statement
+        # uses it, to skip fetching the file back from the agent.
+        encoded_result = frame.payload.pop("result_parquet", None)
         status_val = frame.payload.get("status", "done")
         finished = datetime.now(tz=UTC)
         statement = await db.get(Query, query_id)
@@ -302,6 +331,9 @@ async def handle_agent_frame(db: AsyncSession, frame: Frame, polaris=None) -> No
         signal_completion(
             query_id,
             None if terminal is None else {k: terminal._mapping[c] for k, c in columns.items()},
+            _inline_result(encoded_result)
+            if columns is not None and status_val == "done"
+            else None,
         )
         query = await db.get(Query, query_id)
         if query is not None and query.origin is None:
@@ -650,17 +682,7 @@ async def fetch_result_page(
     column_schema = query.result_schema
     source = await resolve_result_source(db, query)
     if source.inline is not None:
-        started = time.monotonic()
-        rows, columns = decode_parquet_page(source.inline, limit, offset)
-        record_rows_decode(time.monotonic() - started)
-        next_offset = offset + limit
-        return RowsPageOut(
-            rows=rows,
-            columns=columns,
-            cursor=str(next_offset) if next_offset < total else None,
-            total=total,
-            column_schema=column_schema,
-        )
+        return page_from_parquet(query, source.inline, limit=limit, offset=offset)
 
     try:
         upstream = await proxy_rows(
@@ -688,6 +710,26 @@ async def fetch_result_page(
         cursor=str(next_offset) if next_offset < total else None,
         total=total,
         column_schema=column_schema,
+    )
+
+
+def page_from_parquet(query: Query, data: bytes, *, limit: int, offset: int = 0) -> RowsPageOut:
+    """One page of ``query``'s rows from its whole result file, held in memory.
+
+    For a result that is already here: a result-cache entry kept in Postgres, or
+    the file the agent sent with a statement's QUERY_DONE.
+    """
+    total = query.row_count or 0
+    started = time.monotonic()
+    rows, columns = decode_parquet_page(data, limit, offset)
+    record_rows_decode(time.monotonic() - started)
+    next_offset = offset + limit
+    return RowsPageOut(
+        rows=rows,
+        columns=columns,
+        cursor=str(next_offset) if next_offset < total else None,
+        total=total,
+        column_schema=query.result_schema,
     )
 
 

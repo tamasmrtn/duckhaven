@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import functools
 import logging
 import platform
@@ -933,6 +934,24 @@ async def _attach_for_statement(state, descriptors: list[dict]) -> None:
     await asyncio.get_running_loop().run_in_executor(_session_open_executor(), _attach)
 
 
+def _inline_result(stats: dict, result_path: Path) -> str | None:
+    """A small statement result's Parquet, base64-encoded for its QUERY_DONE frame.
+
+    None when the statement wrote no result, or one larger than
+    ``session_result_inline_max_bytes``. The file stays on disk either way: the
+    rows route, the result cache and a control-plane replica that did not hear
+    this frame still read it from the result server.
+    """
+    size = stats.get("result_bytes")
+    limit = settings.session_result_inline_max_bytes
+    if limit <= 0 or not stats.get("wrote_result") or size is None or size > limit:
+        return None
+    try:
+        return base64.b64encode(result_path.read_bytes()).decode("ascii")
+    except OSError:
+        return None
+
+
 async def _handle_exec_statement(
     ws, payload: dict, results_dir: Path, admission: Admission
 ) -> None:
@@ -1050,6 +1069,8 @@ async def _handle_exec_statement(
         }
         if context is not None:
             done_payload["session_context"] = context
+        if (inline := _inline_result(stats, result_path)) is not None:
+            done_payload["result_parquet"] = inline
         await ws.send(Frame(type=FrameType.QUERY_DONE, payload=done_payload).model_dump_json())
     except StatementAbandoned as exc:
         # The lock has already been released (the `async with` block above

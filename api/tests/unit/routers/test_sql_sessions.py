@@ -1721,6 +1721,93 @@ async def test_statement_inlines_a_small_result_as_arrow_when_asked(
     assert resp.json()["first_page"] is None
 
 
+def _parquet(sql: str) -> bytes:
+    import os
+    import tempfile
+
+    import duckdb
+
+    fd, path = tempfile.mkstemp(suffix=".parquet")
+    os.close(fd)
+    try:
+        duckdb.connect().execute(f"COPY ({sql}) TO '{path}' (FORMAT PARQUET)")
+        with open(path, "rb") as f:
+            return f.read()
+    finally:
+        os.unlink(path)
+
+
+def _done_sending_the_result(data: bytes, row_count: int):
+    """Stand in for an agent whose QUERY_DONE carried the result file: the receive
+    loop commits the terminal row and hands the bytes to this request's waiter."""
+    from api.services import query as query_service
+
+    async def fake_exec(db, sess, query, timeout_s, catalogs):
+        query.status = "done"
+        query.row_count = row_count
+        query.result_path = "/results/x.parquet"
+        query.result_bytes = len(data)
+        await db.commit()
+        query_service.signal_completion(query.id, None, data)
+        return True
+
+    return fake_exec
+
+
+async def _never(*a, **k):  # pragma: no cover - must not be reached
+    raise AssertionError("asked the agent for a result it already sent")
+
+
+async def test_a_result_sent_with_done_is_paged_without_asking_the_agent(
+    authed_client, db_session, workspace, agent, user, enabled, monkeypatch
+):
+    from api.services import query as query_service
+
+    session = await _open_session_row(db_session, workspace, agent, user)
+    data = _parquet("SELECT range AS n FROM range(3)")
+    fake_exec = _done_sending_the_result(data, 3)
+    monkeypatch.setattr(session_service, "dispatch_exec_statement", fake_exec)
+    monkeypatch.setattr(query_service, "fetch_result_page", _never)
+    monkeypatch.setattr(query_service, "resolve_result_source", _never)
+    monkeypatch.setattr(settings, "sql_statement_wait_timeout_s", 5.0)
+
+    resp = await authed_client.post(
+        f"/sql/sessions/{session.id}/statements",
+        json={"sql": "SELECT range AS n FROM range(3)", "first_page_limit": 2},
+    )
+    assert resp.status_code == 200, resp.text
+    page = resp.json()["first_page"]
+    assert page["columns"] == ["n"]
+    assert page["rows"] == [{"n": "0"}, {"n": "1"}]
+    assert page["total"] == 3
+    assert page["cursor"] == "2"
+
+
+async def test_a_result_sent_with_done_is_inlined_as_arrow_without_asking_the_agent(
+    authed_client, db_session, workspace, agent, user, enabled, monkeypatch
+):
+    import base64
+
+    import pyarrow as pa
+
+    from api.services import query as query_service
+
+    session = await _open_session_row(db_session, workspace, agent, user)
+    data = _parquet("SELECT 42 AS n")
+    fake_exec = _done_sending_the_result(data, 1)
+    monkeypatch.setattr(session_service, "dispatch_exec_statement", fake_exec)
+    monkeypatch.setattr(query_service, "resolve_result_source", _never)
+    monkeypatch.setattr(settings, "sql_statement_wait_timeout_s", 5.0)
+
+    resp = await authed_client.post(
+        f"/sql/sessions/{session.id}/statements",
+        json={"sql": "SELECT 42 AS n", "inline_format": "arrow"},
+    )
+    assert resp.status_code == 200, resp.text
+    table = pa.ipc.open_stream(base64.b64decode(resp.json()["inline_arrow"])).read_all()
+    assert table.to_pydict() == {"n": [42]}
+
+
 @pytest.mark.parametrize("result_bytes", [None, 2_000_000])
 async def test_a_large_or_unsized_result_is_not_inlined_as_arrow(
     authed_client, db_session, workspace, agent, user, enabled, monkeypatch, result_bytes

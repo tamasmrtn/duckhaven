@@ -102,6 +102,12 @@ class Settings(BaseSettings):
     # orphans; <= 0 disables the respective check.
     session_idle_timeout_s: float = 1200.0
     session_max_lifetime_s: float = 18000.0
+    # A statement result no larger than this travels in its QUERY_DONE frame, so
+    # the control plane can answer the statement's request without fetching the
+    # file back from the result server: that fetch, and the agent cutting the first
+    # page out of the file, cost ~20 ms per statement. Matches the API's
+    # `SQL_STATEMENT_INLINE_ARROW_MAX_BYTES`; 0 turns it off.
+    session_result_inline_max_bytes: int = 256 * 1024
 
     # EXPLAIN-based cost estimation (the `auto` profile). Each query's reservation
     # is sized from its EXPLAIN estimate * safety, snapped to a T-shirt bucket, and

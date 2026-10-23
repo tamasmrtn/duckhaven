@@ -714,6 +714,62 @@ async def test_push_metrics_counts_a_statement_running_on_a_session(monkeypatch)
     assert seen["idle_sessions"] == 0
 
 
+async def test_a_small_result_travels_in_its_done_frame(tmp_path):
+    """The control plane answers the statement from these bytes instead of fetching
+    the file back from the result server, which stays where it was."""
+    import base64
+
+    import agent.control.channel as ch
+
+    admission = _admission()
+    await ch._handle_open_session(_FakeWS(), {"session_id": "s1"}, admission)
+
+    ws = _FakeWS()
+    await ch._handle_exec_statement(
+        ws, {"session_id": "s1", "query_id": "stmt1", "sql": "SELECT 42 AS n"}, tmp_path, admission
+    )
+    payload = _last(ws).payload
+    on_disk = (tmp_path / "stmt1.parquet").read_bytes()
+    assert base64.b64decode(payload["result_parquet"]) == on_disk
+    assert payload["result_bytes"] == len(on_disk)
+
+
+async def test_a_statement_without_a_result_sends_no_bytes(tmp_path):
+    import agent.control.channel as ch
+
+    admission = _admission()
+    await ch._handle_open_session(_FakeWS(), {"session_id": "s1"}, admission)
+
+    ws = _FakeWS()
+    await ch._handle_exec_statement(
+        ws,
+        {"session_id": "s1", "query_id": "stmt1", "sql": "CREATE TABLE t (x INT)"},
+        tmp_path,
+        admission,
+    )
+    assert "result_parquet" not in _last(ws).payload
+
+
+@pytest.mark.parametrize("limit", [0, 10])
+async def test_a_result_over_the_inline_limit_stays_on_disk_only(tmp_path, monkeypatch, limit):
+    """0 turns inlining off; any result larger than the limit is read the old way."""
+    import agent.control.channel as ch
+    from agent.config import settings
+
+    monkeypatch.setattr(settings, "session_result_inline_max_bytes", limit)
+    admission = _admission()
+    await ch._handle_open_session(_FakeWS(), {"session_id": "s1"}, admission)
+
+    ws = _FakeWS()
+    await ch._handle_exec_statement(
+        ws, {"session_id": "s1", "query_id": "stmt1", "sql": "SELECT 42 AS n"}, tmp_path, admission
+    )
+    payload = _last(ws).payload
+    assert payload["status"] == "done"
+    assert "result_parquet" not in payload
+    assert (tmp_path / "stmt1.parquet").exists()
+
+
 async def test_a_statement_reports_the_context_it_leaves_the_session_in(tmp_path):
     """The control plane's result cache keys a session's later statements on the
     catalog, schema and time zone the connection resolves in, as the engine

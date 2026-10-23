@@ -184,6 +184,26 @@ def test_a_hugeint_past_38_digits_fails_and_leaves_no_file(tmp_path):
     assert not result_path.exists()
 
 
+def test_result_schema_is_read_before_the_result_is_written(tmp_path, monkeypatch):
+    """DuckDB 2.0 re-binds an executed relation the next time its types are read,
+    which costs a full bind of the query; read before the write, they are free."""
+    from agent.executor import runner
+
+    calls = []
+    real_schema, real_write = runner._result_schema, runner._write_result
+    monkeypatch.setattr(
+        runner, "_result_schema", lambda rel: calls.append("schema") or real_schema(rel)
+    )
+    monkeypatch.setattr(
+        runner, "_write_result", lambda rel, path: calls.append("write") or real_write(rel, path)
+    )
+
+    stats = _run("SELECT 1 AS x", tmp_path / "out.parquet")
+
+    assert calls == ["schema", "write"]
+    assert stats["result_schema"] == [{"name": "x", "type": "INTEGER"}]
+
+
 def test_result_schema_capture_failure_degrades_to_none():
     """A capture failure yields no schema rather than failing the query."""
 

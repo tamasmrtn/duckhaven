@@ -1630,14 +1630,17 @@ def _run_statement_once(
             # streams it through the identical `BATCH_COPY_TO_FILE` operator, so the
             # Parquet output and the captured profile are unchanged for a SELECT.
             rel = conn.sql(sql)
-            _write_result(rel, result_path)
-            duration_ms = int((time.monotonic() - start) * 1000)
             # The relation's own types, read before the Parquet hop: the writer
             # is lossy (ENUM -> VARCHAR, INTEGER[2] -> INTEGER[], BIT -> VARCHAR;
             # HUGEINT is written as DECIMAL(38,0)), so the control plane cannot
             # recover these from the file it proxies. This is the only place the
-            # query's real result types exist.
+            # query's real result types exist. Read before the write, not after:
+            # DuckDB 2.0 re-binds an executed relation on its next `.types`, which
+            # costs as much as binding the query again (6-44 ms on TPC-H over
+            # Iceberg, growing with the tables it reads); 1.5 keeps them.
             result_schema = _result_schema(rel)
+            _write_result(rel, result_path)
+            duration_ms = int((time.monotonic() - start) * 1000)
             if enable_profiling:
                 conn.execute("PRAGMA disable_profiling")
                 profile = _capture_profile(conn, profile_path)

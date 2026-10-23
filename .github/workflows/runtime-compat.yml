@@ -1,0 +1,53 @@
+name: Runtime compatibility
+
+# Agents on different runtimes (DuckDB lines) share catalogs, and the API reads
+# every agent's result pages with the default runtime's DuckDB. This writes data
+# on each runtime and reads it on the others, nightly, so an upstream build that
+# changes a format is caught before a deployment mixes runtimes on it. See
+# tests/runtime_compat and docs/developer/runtime-qualification.md.
+
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+
+jobs:
+  runtime-compat:
+    name: Cross-runtime reads and writes
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: testpassword
+          POSTGRES_DB: testdb
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    env:
+      POLARIS_BASE_URL: http://localhost:8181
+      POLARIS_CLIENT_ID: root
+      POLARIS_CLIENT_SECRET: s3cr3t
+      POLARIS_S3_BUCKET: s3://warehouse
+      POLARIS_S3_ENDPOINT: http://localhost:9000
+      POLARIS_S3_ENDPOINT_INTERNAL: http://dh-objectstore-dev:9000
+      DUCKLAKE_DATABASE_URL: postgresql+asyncpg://postgres:testpassword@localhost:5432/ducklake
+      DUCKLAKE_AGENT_HOST: 127.0.0.1
+      DUCKLAKE_AGENT_PORT: "5432"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - run: uv sync --dev
+      - name: Create the DuckLake catalog database
+        run: psql postgresql://postgres:testpassword@localhost:5432/postgres -c "CREATE DATABASE ducklake"
+      - name: Start Polaris + object store (S3)
+        run: make polaris-dev
+      - name: Cross-runtime tests
+        run: make test-runtime-compat

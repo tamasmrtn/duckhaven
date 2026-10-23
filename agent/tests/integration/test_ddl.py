@@ -221,7 +221,7 @@ async def test_drop_table_purges_its_files(
     run(f"CREATE TABLE {table} AS SELECT range AS id FROM range(1000)")
     files_path = tmp_path / "files.parquet"
     run(f'SELECT file_path FROM iceberg_metadata("{catalog}"."{ns}"."{table}")', files_path)
-    data_file = duckdb.read_parquet(str(files_path)).fetchone()[0]
+    data_file = duckdb.read_parquet(str(files_path)).fetchall()[0][0]
     table_prefix = data_file.split("/data/")[0] + "/"
     assert _object_store_keys(table_prefix), "the table should have files before the drop"
 

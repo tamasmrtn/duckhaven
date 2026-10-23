@@ -99,6 +99,7 @@ Each message has an entry in [Troubleshoot sign-in and access](../access/trouble
 | `agent_incompatible` | 422 | The agent lacks an extension a catalog needs. The message names the extension and the catalog. |
 | `runtime_retired` | 409, 422 | The agent runs a [runtime](../compute/runtimes.md) that is retired. Create an agent on a supported runtime. |
 | `runtime_unsupported` | 422 | The agent is not running a supported runtime. The message names the runtime it reports. |
+| `ducklake_format_unsupported` | 422 | The agent's [runtime](../compute/runtimes.md#mixing-runtimes-on-the-same-data) can't open a DuckLake catalog in the workspace as it is, or would create a catalog the default runtime can't open. The message names the catalog and its format. Send the work to an agent on the default runtime. |
 | `agent_sandbox_unverified` | 422 | The agent could not lock its DuckDB configuration, so it cannot hold a SQL session. It still runs queries; its logs say why the lock failed. |
 | `session_not_open` | 409 | `session is ⟨status⟩`: the SQL session is still starting, or closed. Wait for `open`, or open a new one. |
 | `session_open_failed` | 503 | The agent failed to open the SQL session; the message carries its reason. |

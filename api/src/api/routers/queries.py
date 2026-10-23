@@ -49,8 +49,8 @@ from api.services.result_cache import service as result_cache
 from api.services.runtimes import (
     AgentNotDispatchable,
     RuntimeRetired,
-    assert_dispatchable,
     assert_restartable,
+    check_dispatchable,
 )
 from api.services.sql_classify import STATEMENT_TYPES, classify_statement
 from api.services.sql_guard import SQLNotAllowed, assert_allowed, is_read_only
@@ -218,7 +218,7 @@ async def _submit_query(
     # Checked here, before a query row exists, so a refusal leaves nothing behind.
     # dispatch_query applies the same check on every other path.
     try:
-        assert_dispatchable(agent, catalogs)
+        await check_dispatchable(agent, catalogs)
     except AgentNotDispatchable as exc:
         raise _not_dispatchable(exc) from None
 
@@ -705,7 +705,7 @@ async def get_sql_metadata(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
         await assert_agent_tier(db, user, agent, "use")
         try:
-            assert_dispatchable(agent, await resolve_workspace_catalogs(db, workspace.id))
+            await check_dispatchable(agent, await resolve_workspace_catalogs(db, workspace.id))
         except AgentNotDispatchable:
             agent = None
         if agent is not None and not await is_agent_connected(db, agent.id):

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import duckdb
 import pytest
+from testkit.iceberg import fallback_storage
 
 from agent.executor import runner
 
@@ -38,6 +39,9 @@ def _attach(
                 "polaris_name": warehouse,
                 "backend": {"kind": "s3"},
                 "default_schema": ns,
+                # As production attaches it; DuckDB 2.0 reads the table's files
+                # directly only through this secret (see fallback_storage).
+                "storage": fallback_storage(),
             }
         ],
         active_catalog=warehouse,

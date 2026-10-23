@@ -415,7 +415,8 @@ def test_inlined_secret_values_create_a_working_secret(monkeypatch):
     from agent import runtime
 
     monkeypatch.setattr(runtime, "SECRET_BIND_PARAMETERS", False)
-    conn = duckdb.connect()
+    # Unredacted, because 2.0 redacts EXTRA_HTTP_HEADERS in duckdb_secrets().
+    conn = duckdb.connect(config={"allow_unredacted_secrets": True})
     # INSTALL as well: a fresh machine (CI) has no extensions cached.
     conn.execute("INSTALL httpfs")
     conn.execute("LOAD httpfs")
@@ -431,9 +432,11 @@ def test_inlined_secret_values_create_a_working_secret(monkeypatch):
         "TYPE HTTP",
         {"EXTRA_HTTP_HEADERS": {"traceparent": "00-a-b-01"}, "SCOPE": "http://polaris:8181"},
     )
-    secrets = dict(conn.execute("select name, secret_string from duckdb_secrets()").fetchall())
+    secrets = dict(
+        conn.execute("select name, secret_string from duckdb_secrets(redact=false)").fetchall()
+    )
     assert "scope=s3://b/p/" in secrets["s3"]
-    assert "traceparent" in secrets["hdr"]
+    assert "traceparent=00-a-b-01" in secrets["hdr"]
 
 
 def test_inlined_secret_values_are_scrubbed_from_errors(monkeypatch):

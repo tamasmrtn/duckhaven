@@ -11,7 +11,7 @@ extensions (`httpfs`, `azure`, `iceberg`, `ducklake`, `postgres`).
 | Runtime | Status | Notes |
 |---|---|---|
 | DuckDB 1.5 | Generally available, the default | Upstream support ends 2027-03-01. |
-| DuckDB 2.0 | Beta | Upstream support ends 2027-10-22. See [SQL on DuckDB 2.0](#sql-on-duckdb-20) and its [qualification record](../developer/runtime-qualification.md#duckdb-20-beta). |
+| DuckDB 2.0 | Beta | Upstream support ends 2027-10-22. See [performance](#performance-on-duckdb-20), [SQL on DuckDB 2.0](#sql-on-duckdb-20) and its [qualification record](../developer/runtime-qualification.md#duckdb-20-beta). |
 
 Runtimes exist because DuckDB versions are not interchangeable. A new line changes performance (sometimes for the
 better and sometimes not, depending on the workload), changes behaviour the agent relies on, and changes what it can
@@ -103,6 +103,19 @@ Agents on different runtimes can read and write the same catalogs, with limits:
   2.0 agent works on existing DuckLake catalogs but isn't allowed to create new ones.
 - **A beta runtime may run background checks differently.** Background work only runs on agents the server picks,
   which are never beta, so such a difference doesn't reach you. Each runtime's qualification record lists them.
+
+## Performance on DuckDB 2.0
+
+Measured on TPC-H at scale factor 10, against DuckDB 1.5.6 on an agent of the same size, reading and writing Iceberg
+tables through DuckHaven:
+
+- **Writes are faster.** `CREATE TABLE … AS SELECT` takes about 29% less time.
+- **A first read is faster.** A query that reads its tables for the first time on a session is about 16% faster.
+- **A repeat read is slower.** A query whose data is already in the agent's file cache is about 12% slower. This is
+  DuckDB 2.0 itself: a plain 2.0 connection outside DuckHaven is just as slow.
+
+On that workload, where most reads are repeats, queries are about 11% slower overall. So 2.0 favors writes and work
+that reads many different tables, and 1.5 favors queries that rerun over the same data, such as dashboards.
 
 ## SQL on DuckDB 2.0
 

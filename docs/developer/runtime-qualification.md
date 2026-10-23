@@ -73,8 +73,8 @@ Qualified on 2026-10-21 against the release `v2.0.0` (PyPI `duckdb==2.0.0`, sour
 | Sandbox | `verified`. Quack server mode can't be installed, and the new settings (`allow_extension_repositories`, `enable_legacy_parser`, `lambda_syntax`, `error_on_division_by_zero`) are locked. |
 | DuckLake | Creates format `1.1`, opens `1.0` and `1.1`. It opens and writes a 1.0 catalog without migrating it. 1.5 cannot open a 1.1 catalog. The dispatch gate therefore keeps 2.0 agents from creating catalogs while 1.5 is the default. DuckHaven's metadata SQL reads 1.1 unchanged: the format adds columns and a table, and renames columns only in the inlined-data tables, which DuckHaven never reads directly. |
 | Across runtimes | All pass. |
-| End to end | **Not re-run on this build.** Passed on `v2.0.0-alpha43385`, including a query and a session on the 2.0 agent and the DuckLake refusal. |
-| Benchmark | **Not run on this build.** Must be run before any promotion. |
+| End to end | All pass. The agent reports runtime `2.0`, engine `v2.0.0` and sandbox `verified`, serves a query that names it, and holds a SQL session. Auto-pick sent five queries and a session to the 1.5 agent beside it. The DuckLake refusal is covered by the integration tests. |
+| Benchmark | Run on TPC-H SF10 against 1.5.6. Raw DuckDB: 23% faster on local storage, 33% faster on Iceberg. Through DuckHaven: Iceberg writes 29% faster, first reads 16% faster, repeat reads 12% slower, all queries 11% slower. The repeat-read loss is in DuckDB 2.0 itself, so it blocks promotion until a patch release closes it. |
 
 Differences the agent absorbs, so they need no action from users:
 

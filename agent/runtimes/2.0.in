@@ -1,0 +1,3 @@
+# DuckDB 2.0 runtime (status: beta). After moving this pin, re-run
+# docs/developer/runtime-qualification.md.
+duckdb==2.0.0

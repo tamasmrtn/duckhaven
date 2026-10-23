@@ -42,3 +42,15 @@ def test_default_is_a_curated_generally_available_runtime():
 def test_every_runtime_is_keyed_by_its_own_line(runtime):
     assert runtime.id.split("-")[0] == runtime.duckdb_line
     assert runtime.extensions
+
+
+@pytest.mark.parametrize("runtime", list(runtimes.RUNTIMES.values()), ids=lambda r: r.id)
+def test_every_runtime_opens_the_ducklake_format_it_creates(runtime):
+    assert runtime.ducklake_format in runtime.ducklake_formats
+
+
+@pytest.mark.parametrize("runtime", list(runtimes.RUNTIMES.values()), ids=lambda r: r.id)
+def test_every_runtime_opens_the_default_runtimes_catalogs(runtime):
+    """Otherwise it could never serve a catalog the default runtime created."""
+    default = runtimes.RUNTIMES[runtimes.DEFAULT_RUNTIME_ID]
+    assert default.ducklake_format in runtime.ducklake_formats

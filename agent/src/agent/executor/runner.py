@@ -189,21 +189,26 @@ def _is_credential_error(exc: Exception) -> bool:
     return any(marker in msg for marker in _CREDENTIAL_ERROR_MARKERS)
 
 
+_ROW_STATEMENT_TYPES = frozenset({duckdb.StatementType.SELECT, duckdb.StatementType.PRAGMA})
+
+
 def _is_single_select(sql: str) -> bool:
     """True when the body is exactly one row-producing statement — the only shape
     we materialize to Parquet. Everything else (DDL/DML, multi-statement scripts)
     is executed directly and produces no result file.
 
     Note this is broader than a literal `SELECT`: DuckDB also reports `DESCRIBE`,
-    `SHOW`, `SUMMARIZE` and the row-returning `PRAGMA`s as `StatementType.SELECT`
-    (a config-setting `PRAGMA x = y` is typed `SET`, not SELECT). They all return
-    a result grid, so they all belong on the materialize path — see
+    `SHOW` and `SUMMARIZE` as `StatementType.SELECT`, and 1.5 the row-returning
+    `PRAGMA`s too (a config-setting `PRAGMA x = y` is typed `SET`, not SELECT).
+    2.0 types every other `PRAGMA` as `PRAGMA`; the API admits only those its 1.5
+    parser types as SELECT, so one that gets here returns rows. They all return a
+    result grid, so they all belong on the materialize path — see
     `_run_one_statement` for why that path cannot use `COPY (…) TO`."""
     try:
         statements = duckdb.extract_statements(sql)
     except Exception:  # noqa: BLE001 - a parse failure surfaces when executed
         return False
-    return len(statements) == 1 and statements[0].type == duckdb.StatementType.SELECT
+    return len(statements) == 1 and statements[0].type in _ROW_STATEMENT_TYPES
 
 
 # Statement types that touch no data and need no memory beyond the connection
@@ -1125,6 +1130,10 @@ _KNOWN_FILESYSTEMS = frozenset(
 #     the profiling-metrics setting     -> _run_one_statement's profile capture
 #   TimeZone                            -> the `SET timezone` the API statement
 #                                          policy deliberately admits
+#   current_transaction_invalidation_   -> DuckDB 2.0's `ducklake` sets it around
+#     policy                               every statement; locked, each DuckLake
+#                                          query fails as an aborted transaction.
+#                                          Governs error handling, not access.
 # Everything else — disabled_filesystems, enable_external_access,
 # secret_directory, extension_directory, home_directory, custom_extension_repository,
 # allow_unsigned_extensions, and `allowed_configs`/`lock_configuration` themselves
@@ -1145,6 +1154,7 @@ _ALLOWED_CONFIGS = tuple(
         "enable_profiling",
         "profiling_output",
         runtime.PROFILE_SETTING,
+        "current_transaction_invalidation_policy",
     )
     if name in runtime.SETTINGS
 )
@@ -1509,15 +1519,20 @@ def _apply_watermarks(summary: dict[str, Any], watermarks: dict[str, int]) -> No
         watermarks[key] = max(previous, raw)
 
 
-# How DuckDB 1.5.5 names a catalog a statement needs but the connection has not
-# attached, per statement shape. The last one also fires for a schema that does
-# not exist, which is why a name is only acted on when it is a workspace catalog.
+# How DuckDB names a catalog a statement needs but the connection has not
+# attached, per statement shape. 1.5 says "catalog"; 2.0 has nested schemas, so it
+# reads `other.main.t` as schema `other.main` and reports that schema missing,
+# hence the first dotted part. The schema patterns also fire for a schema that
+# does not exist, which is why a name is only acted on when it is a workspace
+# catalog.
 _MISSING_CATALOG_PATTERNS = (
     re.compile(r'Catalog "([^"]+)" does not exist'),
     re.compile(r"Catalog with name (\S+) does not exist"),
     re.compile(r'Failed to find attached database "([^"]+)"'),
     re.compile(r'No catalog \+ schema named "([^".]+)\.'),
-    re.compile(r'because schema "([^"]+)" does not exist'),
+    re.compile(r'because schema "([^".]+)[."]'),
+    re.compile(r"Schema with name ([^\s.!]+)[.!\s]"),
+    re.compile(r'"([^"]+)" is not a catalog or schema'),
 )
 
 # Attach a catalog a statement turned out to need: (connection, slug) -> attached.
@@ -1646,14 +1661,17 @@ def _run_statement_once(
             # streams it through the identical `BATCH_COPY_TO_FILE` operator, so the
             # Parquet output and the captured profile are unchanged for a SELECT.
             rel = conn.sql(sql)
-            _write_result(rel, result_path)
-            duration_ms = int((time.monotonic() - start) * 1000)
             # The relation's own types, read before the Parquet hop: the writer
             # is lossy (ENUM -> VARCHAR, INTEGER[2] -> INTEGER[], BIT -> VARCHAR;
             # HUGEINT is written as DECIMAL(38,0)), so the control plane cannot
             # recover these from the file it proxies. This is the only place the
-            # query's real result types exist.
+            # query's real result types exist. Read before the write, not after:
+            # DuckDB 2.0 re-binds an executed relation on its next `.types`, which
+            # costs as much as binding the query again (6-44 ms on TPC-H over
+            # Iceberg, growing with the tables it reads); 1.5 keeps them.
             result_schema = _result_schema(rel)
+            _write_result(rel, result_path)
+            duration_ms = int((time.monotonic() - start) * 1000)
             if enable_profiling:
                 conn.execute("PRAGMA disable_profiling")
                 profile = _capture_profile(conn, profile_path)

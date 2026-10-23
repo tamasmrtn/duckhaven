@@ -14,6 +14,11 @@ from agent.executor import runner
 
 _POLARIS = {"endpoint": "http://polaris:8181", "client_id": "root", "client_secret": "pw"}
 
+# A read of an unattached catalog: 1.5 raises a BinderException naming catalog
+# `other`, 2.0 (nested schemas) a CatalogException naming schema `other.main`.
+_UNATTACHED = (duckdb.BinderException, duckdb.CatalogException)
+_UNATTACHED_MESSAGE = r'"other(\.main)?" does not exist'
+
 
 @pytest.mark.parametrize(
     "sql",
@@ -23,6 +28,7 @@ _POLARIS = {"endpoint": "http://polaris:8181", "client_id": "root", "client_secr
         "DESCRIBE other.main.t",
         "INSERT INTO other.main.t VALUES (1)",
         "CREATE TABLE other.main.x AS SELECT 1",
+        "CREATE SCHEMA other.s",
         "USE other.main",
         "SELECT * FROM OTHER.main.t",
     ],
@@ -92,7 +98,7 @@ def test_a_refused_catalog_raises_the_original_error(tmp_path):
         asked.append(name)
         return False
 
-    with pytest.raises(duckdb.BinderException, match='Catalog "other" does not exist'):
+    with pytest.raises(_UNATTACHED, match=_UNATTACHED_MESSAGE):
         _run(conn, "SELECT v FROM v", tmp_path, refuse)
     assert asked == ["other"]
 
@@ -106,7 +112,7 @@ def test_a_catalog_is_asked_for_only_once(tmp_path):
         asked.append(name)
         return True
 
-    with pytest.raises(duckdb.BinderException):
+    with pytest.raises(_UNATTACHED):
         _run(conn, "SELECT v FROM v", tmp_path, no_op)
     assert asked == ["other"]
 
@@ -116,14 +122,14 @@ def test_a_script_is_never_retried(tmp_path):
     conn = _conn_with_a_view_over_other()
     asked: list[str] = []
 
-    with pytest.raises(duckdb.BinderException):
+    with pytest.raises(_UNATTACHED):
         _run(conn, "CREATE TABLE made AS SELECT 1; SELECT v FROM v", tmp_path, _attach_other(asked))
     assert asked == []
 
 
 def test_without_a_resolver_the_error_stands(tmp_path):
     conn = _conn_with_a_view_over_other()
-    with pytest.raises(duckdb.BinderException):
+    with pytest.raises(_UNATTACHED):
         _run(conn, "SELECT v FROM v", tmp_path, None)
 
 

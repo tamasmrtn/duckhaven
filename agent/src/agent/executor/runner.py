@@ -15,7 +15,9 @@ import functools
 import json
 import logging
 import re
+import threading
 import time
+import weakref
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -1344,8 +1346,37 @@ def apply_memory_limit(conn: duckdb.DuckDBPyConnection, memory_bytes: int) -> No
     1.5.5: 383 MB -> 64 MB in 12 ms), which is exactly what makes the admission
     manager's elastic tier revocable — and also why nothing should lower it
     casually.
+
+    A connection already at ``memory_bytes`` is left alone. The first ``SET`` after
+    a query costs milliseconds even when the value does not change (3.6 ms on
+    1.5.6, 6.7 ms on 2.0.0, for an SF10 Iceberg join) and a held session sets the
+    same value before and after every statement. The skip trusts the remembered
+    value only while DuckDB still reports the setting this function left: the
+    sandbox has to leave ``memory_limit`` writable for this function, so a
+    statement could change it too, and re-applying it before the next statement is
+    what puts it back.
     """
+    with _applied_memory_limits_lock:
+        applied = _applied_memory_limits.get(conn)
+    if applied is not None and applied[0] == memory_bytes and _memory_limit(conn) == applied[1]:
+        return
     conn.execute(f"SET memory_limit='{memory_bytes / 1024**3}GiB'")
+    setting = _memory_limit(conn)
+    with _applied_memory_limits_lock:
+        _applied_memory_limits[conn] = (memory_bytes, setting)
+
+
+# What `apply_memory_limit` last set on each connection: the bytes asked for and
+# DuckDB's own rendering of the result. Weak, so a closed connection drops out.
+_applied_memory_limits: weakref.WeakKeyDictionary[duckdb.DuckDBPyConnection, tuple[int, str]] = (
+    weakref.WeakKeyDictionary()
+)
+_applied_memory_limits_lock = threading.Lock()
+
+
+def _memory_limit(conn: duckdb.DuckDBPyConnection) -> str:
+    row = conn.execute("SELECT current_setting('memory_limit')").fetchone()
+    return str(row[0]) if row else ""
 
 
 def _capture_profile(conn: duckdb.DuckDBPyConnection, profile_path: Path) -> dict[str, Any] | None:

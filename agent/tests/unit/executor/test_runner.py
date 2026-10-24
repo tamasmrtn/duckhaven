@@ -261,6 +261,62 @@ def test_duckdb_pinned_to_granted_slice(tmp_path, mem_bytes, threads):
     assert mem_setting == f"{mem_bytes // 1024**3}.0 GiB"
 
 
+class _RecordingConn:
+    """A real DuckDB connection that records the SQL it is asked to run."""
+
+    def __init__(self) -> None:
+        import duckdb
+
+        self.conn = duckdb.connect()
+        self.sql: list[str] = []
+
+    def execute(self, sql: str):
+        self.sql.append(sql)
+        return self.conn.execute(sql)
+
+    def sets(self) -> int:
+        return sum(s.startswith("SET memory_limit") for s in self.sql)
+
+
+def test_an_unchanged_memory_limit_is_not_set_again():
+    """The first SET after a query costs milliseconds even for the same value,
+    and a held session applies the same value before and after every statement."""
+    from agent.executor.runner import apply_memory_limit
+
+    conn = _RecordingConn()
+    apply_memory_limit(conn, 2 * 1024**3)
+    apply_memory_limit(conn, 2 * 1024**3)
+    assert conn.sets() == 1
+
+    apply_memory_limit(conn, 3 * 1024**3)
+    assert conn.sets() == 2
+    assert conn.conn.execute("SELECT current_setting('memory_limit')").fetchone()[0] == "3.0 GiB"
+
+
+def test_a_memory_limit_changed_behind_its_back_is_set_again():
+    """The sandbox leaves memory_limit writable, so a statement could move it; the
+    next apply must put the granted value back rather than trust what it set."""
+    from agent.executor.runner import apply_memory_limit
+
+    conn = _RecordingConn()
+    apply_memory_limit(conn, 2 * 1024**3)
+    conn.conn.execute("SET memory_limit='8GiB'")
+
+    apply_memory_limit(conn, 2 * 1024**3)
+
+    assert conn.sets() == 2
+    assert conn.conn.execute("SELECT current_setting('memory_limit')").fetchone()[0] == "2.0 GiB"
+
+
+def test_a_new_connection_gets_its_memory_limit_set():
+    from agent.executor.runner import apply_memory_limit
+
+    first, second = _RecordingConn(), _RecordingConn()
+    apply_memory_limit(first, 2 * 1024**3)
+    apply_memory_limit(second, 2 * 1024**3)
+    assert (first.sets(), second.sets()) == (1, 1)
+
+
 async def test_timeout_interrupts_running_query(tmp_path):
     """A wall-clock timeout interrupts the in-flight DuckDB query (G-D2-a):
     the call raises TimeoutError far sooner than the query would complete on

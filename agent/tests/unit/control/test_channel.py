@@ -1600,6 +1600,9 @@ async def test_close_frees_the_slot_of_an_open_still_on_the_executor(tmp_path, m
         def execute(self, sql):  # SET memory_limit / SET threads
             return self
 
+        def fetchone(self):  # reading the memory limit back
+            return None
+
         def close(self):
             closed.append(self)
 

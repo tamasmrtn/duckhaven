@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import os
 import tempfile
 
@@ -274,6 +275,64 @@ async def test_done_preserves_a_running_at_already_stamped(db_session):
 
     await db_session.refresh(query)
     assert query.running_at == stamped
+
+
+async def test_done_hands_its_waiter_the_result_file(db_session):
+    """An agent sends a small result with QUERY_DONE; a request here waiting on the
+    statement gets the file, and nothing keeps it after."""
+    import base64
+
+    ws, _ = await _make_workspace(db_session)
+    query = await _queued_query(db_session, ws)
+    data = _parquet_bytes("SELECT 42 AS n")
+    payload = {
+        "query_id": str(query.id),
+        "status": "done",
+        "row_count": 1,
+        "result_parquet": base64.b64encode(data).decode("ascii"),
+    }
+    with query_service.completion_waiter(query.id) as done:
+        await query_service.handle_agent_frame(
+            db_session, Frame(type=FrameType.QUERY_DONE, payload=payload)
+        )
+
+    assert done.result_parquet == data
+    assert "result_parquet" not in done.row
+
+
+@pytest.mark.parametrize(
+    ("status", "encoded"),
+    [("done", "not base64!"), ("done", 42), ("failed", base64.b64encode(b"x").decode())],
+)
+async def test_an_unusable_result_file_is_dropped(db_session, status, encoded):
+    """The waiter then fetches the file from the agent, as it always did."""
+    ws, _ = await _make_workspace(db_session)
+    query = await _queued_query(db_session, ws)
+    payload = {"query_id": str(query.id), "status": status, "result_parquet": encoded}
+    with query_service.completion_waiter(query.id) as done:
+        await query_service.handle_agent_frame(
+            db_session, Frame(type=FrameType.QUERY_DONE, payload=payload)
+        )
+
+    assert done.is_set()
+    assert done.result_parquet is None
+
+
+async def test_a_result_file_with_no_waiter_here_is_ignored(db_session):
+    import base64
+
+    ws, _ = await _make_workspace(db_session)
+    query = await _queued_query(db_session, ws)
+    payload = {
+        "query_id": str(query.id),
+        "status": "done",
+        "result_parquet": base64.b64encode(_parquet_bytes("SELECT 1")).decode("ascii"),
+    }
+    await query_service.handle_agent_frame(
+        db_session, Frame(type=FrameType.QUERY_DONE, payload=payload)
+    )
+    await db_session.refresh(query)
+    assert query.status == "done"
 
 
 async def test_done_hands_its_waiter_the_terminal_row(db_session):

@@ -76,6 +76,7 @@ Under `auto`, the agent runs `EXPLAIN` before each query and reserves memory fro
 | `SESSION_QUEUED_TIMEOUT_S` | `30` | How long a session open may wait for capacity. Keep it below the control plane's `SQL_SESSION_OPENING_DEADLINE_S` |
 | `SESSION_IDLE_TIMEOUT_S` | `1200` | The agent closes a session idle this long, in case the control plane's close was lost. Longer than the control plane's own timeout on purpose. `0` turns the check off |
 | `SESSION_MAX_LIFETIME_S` | `18000` | The agent closes a session older than this, on the same terms |
+| `SESSION_RESULT_INLINE_MAX_BYTES` | `262144` (256 KiB) | A statement result file no larger than this goes to the control plane with the statement's completion, so the response doesn't wait for the control plane to fetch it back. The file stays on the agent either way. `0` turns this off |
 
 ## Sandbox
 

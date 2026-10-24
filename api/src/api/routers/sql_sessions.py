@@ -736,14 +736,21 @@ async def run_statement(
         # and the client reads it exactly where it would have after polling.
         response.status_code = status.HTTP_200_OK
 
-    return await _with_first_page(db, query, body)
+    return await _with_first_page(db, query, body, done.result_parquet)
 
 
-async def _with_first_page(db: AsyncSession, query: Query, body: SqlStatementCreate):
+async def _with_first_page(
+    db: AsyncSession, query: Query, body: SqlStatementCreate, result: bytes | None = None
+):
     """The statement's response, with its first page of rows inlined when it is
-    done, produced rows, and the caller did not opt out."""
+    done, produced rows, and the caller did not opt out.
+
+    ``result`` is the whole result file when the agent sent it with QUERY_DONE to
+    this process. The page is then read from it, and the agent is not asked for
+    the file: that fetch, and the agent cutting the page out of it, cost ~20 ms.
+    """
     if body.inline_format == "arrow":
-        return await _with_inline_arrow(db, query)
+        return await _with_inline_arrow(db, query, result)
     # On unless the caller opts out with 0: the round trip this removes is paid by
     # every client, including ones that will never send the field.
     first_page_limit = (
@@ -759,6 +766,9 @@ async def _with_first_page(db: AsyncSession, query: Query, body: SqlStatementCre
         and query.result_path is not None
     ):
         out = QueryOut.model_validate(query, from_attributes=True)
+        if result is not None:
+            out.first_page = query_service.page_from_parquet(query, result, limit=first_page_limit)
+            return out
         try:
             out.first_page = await query_service.fetch_result_page(
                 db, query, limit=first_page_limit
@@ -774,9 +784,10 @@ async def _with_first_page(db: AsyncSession, query: Query, body: SqlStatementCre
     return query
 
 
-async def _with_inline_arrow(db: AsyncSession, query: Query):
+async def _with_inline_arrow(db: AsyncSession, query: Query, result: bytes | None = None):
     """The statement's response with its whole result inlined as Arrow, when it is
-    done, produced rows, and is small enough to carry."""
+    done, produced rows, and is small enough to carry. ``result`` as for
+    :func:`_with_first_page`."""
     if not query.has_result:
         # Still running, failed, or DDL/DML: has_result tells the client which.
         return query
@@ -795,7 +806,10 @@ async def _with_inline_arrow(db: AsyncSession, query: Query):
         return query
     out = QueryOut.model_validate(query, from_attributes=True)
     try:
-        source = await query_service.resolve_result_source(db, query)
+        if result is not None:
+            source = query_service.ResultSource(query=query, inline=result)
+        else:
+            source = await query_service.resolve_result_source(db, query)
         out.inline_arrow = await result_stream.read_arrow_inline(source, max_bytes)
     except HTTPException:
         # As for the JSON first page: the statement succeeded, only its result is

@@ -44,7 +44,7 @@ from sqlglot import exp
 from sqlglot.lineage import Node as LineageNode
 from sqlglot.lineage import lineage as sqlglot_lineage
 from sqlglot.optimizer.qualify import qualify
-from sqlglot.optimizer.scope import build_scope
+from sqlglot.optimizer.scope import Scope, ScopeType, build_scope, traverse_scope
 
 from api.models.catalog import Catalog
 from api.services.catalog_backends import backend_for
@@ -379,10 +379,11 @@ async def _derive(
     that declares them (``INSERT ... (a, b)``) and one where the projection is
     already the answer.
     """
-    # Two passes, because most statements do not need a schema at all. sqlglot can
-    # attribute unqualified columns whenever there is only one relation in scope,
-    # and qualified ones whatever the shape — so only `SELECT *` and a
-    # multi-source query with a bare column name have to cost a catalog read.
+    # Two passes, because most statements do not need a schema at all. Unqualified
+    # columns are attributable whenever a scope reads only one relation (see
+    # `_attribute_sole_source_columns`), and qualified ones whatever the shape — so
+    # only `SELECT *` and a multi-source query with a bare column name have to cost
+    # a catalog read.
     resolved = _walk(query, active_catalog=active_catalog, schema=None)
     if resolved is None:
         mapping = await _statement_schema(
@@ -444,6 +445,92 @@ async def _derive(
     return pairs
 
 
+def _reads_only_its_own_from(scope: Scope) -> bool:
+    """Whether a bare column in this scope can only mean a column of its own FROM.
+
+    A scalar or ``IN`` subquery cannot say: it may be correlated, and a bare name
+    there belongs to the outer query whenever the inner relation lacks it, which
+    only a schema can tell. A derived table beside other relations is the same
+    case, since DuckDB lets it reach laterally into the ones before it. A branch of
+    a set operation answers for the operation it belongs to.
+    """
+    while scope.scope_type is ScopeType.SET_OPERATION and scope.parent is not None:
+        scope = scope.parent
+    if scope.scope_type is ScopeType.DERIVED_TABLE:
+        return scope.parent is not None and len(scope.parent.selected_sources) == 1
+    return scope.scope_type in (ScopeType.ROOT, ScopeType.CTE)
+
+
+def _attribute_sole_source_columns(query: exp.Expression) -> None:
+    """Qualify, in place, the bare columns of every scope that reads one relation.
+
+    ``SELECT id, amount FROM orders`` has one possible home for ``id`` whatever
+    ``orders`` holds, so it should not cost a catalog read. sqlglot used to infer
+    this itself when handed no schema; 30.22 removed that and now fails the whole
+    query instead, which left every single-table statement abandoned or paying for
+    a lookup it did not need.
+
+    This is deliberately narrower than what sqlglot used to infer. A column is left
+    alone when:
+
+    - the scope reads more than one relation, or the query is a subquery that could
+      be correlated — the name might belong to any of them;
+    - it shares a name with an alias defined in the same ``SELECT``. DuckDB lets
+      later clauses reach back to an alias, so ``SELECT price * 2 AS price ... WHERE
+      price > 5`` is ambiguous without the schema;
+    - it is a lambda parameter.
+
+    Whatever is left unqualified fails validation downstream and falls through to
+    the schema pass, which resolves it properly. Leaving a column alone is always
+    safe; qualifying one wrongly is not.
+    """
+    for scope in traverse_scope(query):
+        if not isinstance(scope.expression, exp.Select) or not _reads_only_its_own_from(scope):
+            continue
+        qualifier = _sole_source_qualifier(scope)
+        if qualifier is None:
+            continue
+        aliases = {
+            alias.alias for alias in scope.expression.expressions if isinstance(alias, exp.Alias)
+        }
+        for column in scope.columns:
+            if (
+                column.table
+                or isinstance(column.this, exp.Star)
+                or column.find_ancestor(exp.Select) is not scope.expression
+                or column.name in aliases
+                or _is_lambda_parameter(column)
+            ):
+                continue
+            column.set("table", qualifier.copy())
+
+
+def _sole_source_qualifier(scope: Scope) -> exp.Identifier | None:
+    """The name a scope's only relation answers to, or ``None`` if there is not exactly one."""
+    if len(scope.selected_sources) != 1 or scope.lateral_sources:
+        return None
+    node, source = next(iter(scope.selected_sources.values()))
+    if isinstance(source, Scope) and not isinstance(node, exp.Table):
+        # A derived table or CTE is a source in its own right and is referred to by
+        # its alias; one with no alias cannot be named.
+        name = node.args.get("alias")
+        return name.this if name and isinstance(name.this, exp.Identifier) else None
+    if isinstance(node, exp.Table):
+        name = node.args.get("alias")
+        identifier = name.this if name else node.this
+        return identifier if isinstance(identifier, exp.Identifier) else None
+    return None
+
+
+def _is_lambda_parameter(column: exp.Column) -> bool:
+    node = column.parent
+    while node is not None:
+        if isinstance(node, exp.Lambda) and column.name in {p.name for p in node.expressions}:
+            return True
+        node = node.parent
+    return False
+
+
 def _has_unexpanded_star(expression: exp.Expression) -> bool:
     """Whether a ``*`` survived qualification *in a projection*.
 
@@ -496,12 +583,19 @@ def _walk(
     identifier it cannot place through unresolved, which here would attribute a
     column edge to whichever relation happened to be in scope. ``identify`` is off
     to match, so column names come back bare rather than quoted.
+
+    Without a schema, sqlglot (30.22 onward) no longer guesses where a bare column
+    lives, so the one case that needs no schema — a scope reading a single
+    relation — is settled by :func:`_attribute_sole_source_columns` first.
     """
     from api.services.workspace import DEFAULT_SCHEMA
 
+    query = query.copy()
+    if schema is None:
+        _attribute_sole_source_columns(query)
     try:
         qualified = qualify(
-            query.copy(),
+            query,
             schema=schema,
             dialect="duckdb",
             db=DEFAULT_SCHEMA,
@@ -520,7 +614,11 @@ def _walk(
     if scope is None:
         return None
     try:
-        outputs = sqlglot_lineage(None, qualified, scope=scope, dialect="duckdb")
+        # `schema` is positional-required from 30.22 on. The tree is already
+        # qualified and the scope handed in, so it is only there to satisfy the signature.
+        outputs = sqlglot_lineage(
+            None, qualified, schema=schema or {}, scope=scope, dialect="duckdb"
+        )
     except Exception:
         return None
     if not isinstance(outputs, dict):

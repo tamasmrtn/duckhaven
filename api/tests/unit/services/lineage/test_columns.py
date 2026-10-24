@@ -460,6 +460,68 @@ async def test_single_source_with_bare_columns_needs_no_schema_lookup():
     assert lookup.calls == []
 
 
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "WITH o AS (SELECT id, amount FROM orders) SELECT id, amount FROM o",
+        "SELECT id, amount FROM (SELECT id, amount FROM orders) AS o",
+        "SELECT id, amount FROM orders UNION ALL SELECT id, amount FROM orders",
+        "SELECT id, amount FROM orders WHERE amount > 5 ORDER BY id",
+        "SELECT id, amount FROM orders AS o",
+        f"SELECT id, amount FROM warehouse.{DEFAULT_SCHEMA}.orders",
+    ],
+)
+async def test_bare_columns_over_one_relation_per_scope_need_no_schema_lookup(sql):
+    lookup = CountingLookup(SCHEMAS)
+    result = await derive(f"CREATE TABLE target AS {sql}", schemas=lookup)
+    assert lookup.calls == []
+    entry = result[(ref("orders").key, ref("target").key)]
+    assert entry.state == DERIVED
+    assert {(p.source_column, p.target_column) for p in entry.pairs} == {
+        ("id", "id"),
+        ("amount", "amount"),
+    }
+
+
+async def test_a_lambda_parameter_is_not_mistaken_for_a_column():
+    lookup = CountingLookup(SCHEMAS)
+    sql = """
+        CREATE TABLE target AS
+        SELECT list_transform([1, 2], status -> status * quantity) AS scaled FROM orders
+    """
+    assert await pairs_for(sql, schemas=lookup) == {("quantity", "scaled")}
+    assert lookup.calls == []
+
+
+async def test_bare_column_in_a_subquery_is_left_to_the_schema():
+    """Inside a subquery a bare name may belong to the outer query, so it is not guessed.
+
+    ``status`` exists on ``orders`` only, so reading it as a ``customers`` column
+    would be wrong — and only the schema can say so. The three tests below pin
+    answers and not lookup counts: where sqlglot still guesses, they cost none.
+    """
+    sql = """
+        CREATE TABLE target AS
+        SELECT id, amount FROM orders
+        WHERE EXISTS (SELECT 1 FROM customers WHERE region = status)
+    """
+    assert await pairs_for(sql) == {("id", "id"), ("amount", "amount")}
+
+
+async def test_an_alias_shadowing_a_column_is_left_to_the_schema():
+    sql = "CREATE TABLE target AS SELECT amount * 2 AS amount FROM orders WHERE amount > 5"
+    assert await pairs_for(sql) == {("amount", "amount")}
+
+
+async def test_a_derived_table_beside_another_relation_is_left_to_the_schema():
+    """DuckDB lets a derived table reach laterally into the relations before it."""
+    sql = """
+        CREATE TABLE target AS
+        SELECT c.name, s.total FROM customers c, (SELECT amount AS total FROM orders) AS s
+    """
+    assert await pairs_for(sql) == {("amount", "total")}
+
+
 async def test_star_needs_a_lookup_and_only_one_per_table():
     lookup = CountingLookup(SCHEMAS)
     sql = """

@@ -42,7 +42,7 @@ There is no `/v1/` path prefix. One server serves one version, and `GET /api/ver
 
 | `api_version` | Servers |
 |---|---|
-| 3 | Builds from `main` after v0.8.0, including the `:latest` image |
+| 3 | v0.9.0 and later, and the `:latest` image |
 | 2 | v0.8.0 |
 | 1 | v0.5.0 – v0.7.0 |
 

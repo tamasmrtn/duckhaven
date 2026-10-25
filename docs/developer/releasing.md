@@ -16,7 +16,13 @@ conventional commits merged since the last tag:
 
 - `fix:` → patch (`v0.2.0` → `v0.2.1`)
 - `feat:` → minor (`v0.2.0` → `v0.3.0`)
-- a breaking change → major (`v0.2.0` → `v1.0.0`)
+- a breaking change → minor while the major version is 0 (`v0.8.0` → `v0.9.0`), major from
+  1.0 on (`v1.2.0` → `v2.0.0`)
+
+A change to the API's `api_version` is a breaking change. The generated release notes do not
+mark breaking changes, so when `api_version` changes, add a section to the top of the GitHub
+Release by hand that names the new version and links
+[API versions](../reference/api-versions.md).
 
 A tag containing a `-` (e.g. `v1.3.0-rc.1`) is published as a **prerelease**.
 

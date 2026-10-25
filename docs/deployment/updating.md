@@ -46,7 +46,7 @@ bundled agent runs the default runtime's.
 ## Upgrade API clients first
 
 Before an update that changes the API's `api_version`, upgrade the tools that call it: scripts, dbt, dlt and BI
-connectors. Moving to `api_version` 3 (builds from `main` after v0.8.0, including `:latest`) needs
+connectors. Moving to `api_version` 3 (v0.9.0 and later, and `:latest`) needs
 `duckhaven-sql-connector` 0.8.0 or later, which `dbt-duckhaven` and `dlt-duckhaven` use, and `dh` 0.4.0 or later. What
 each version changes is in [API versions](../reference/api-versions.md).
 

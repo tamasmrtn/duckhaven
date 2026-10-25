@@ -24,7 +24,7 @@ For agents that DuckHaven starts and stops itself, see [Elastic compute](elastic
 ```yaml
 services:
   duckhaven-agent:
-    image: ghcr.io/tamasmrtn/duckhaven-agent:0.8.0-duckdb1.5
+    image: ghcr.io/tamasmrtn/duckhaven-agent:0.9.0-duckdb1.5
     restart: unless-stopped
     environment:
       CONTROL_PLANE_URL: wss://duckhaven.example.com/agents/connect

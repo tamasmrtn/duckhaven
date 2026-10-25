@@ -6,6 +6,16 @@ from agent.auth import TokenHolder
 from agent.results.server import make_results_app
 
 
+@pytest.fixture(autouse=True)
+def _no_warm_connections():
+    """Leave no warm spares behind: `run_control_channel` turns the pool on, and a
+    later test's `open_and_attach` would take a spare instead of opening its own."""
+    yield
+    from agent.executor import runner
+
+    runner.enable_warm_connections(0)
+
+
 @pytest_asyncio.fixture
 async def results_client(tmp_path):
     """Yields (AsyncClient, results_dir, session_token) for results server tests."""

@@ -36,6 +36,7 @@ from agent.executor.runner import (
     _is_single_select,
     apply_memory_limit,
     attach_catalog,
+    enable_warm_connections,
     is_cheap_statement,
     open_and_attach,
     sandbox_state,
@@ -1398,6 +1399,7 @@ async def run_control_channel(
     # One sampler for the agent's lifetime, so its memory-peak poll is started once
     # rather than per connection; rebased on every reconnect.
     sampler = MetricsSampler(memory_poll_interval_s=settings.metrics_memory_poll_interval_s)
+    enable_warm_connections(settings.warm_connections)
 
     # One admission manager for the agent's lifetime; the in-memory queue + the
     # active concurrency profile persist across reconnects (reset on restart).

@@ -62,7 +62,7 @@ name              Admin
 role              admin
 workspace         analytics
 token_expires_at  2027-01-17T14:23:12.113093Z
-server_version    0.8.0
+server_version    0.9.0
 api_version       3
 ```
 

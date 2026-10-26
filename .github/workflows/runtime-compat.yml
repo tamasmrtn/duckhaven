@@ -33,7 +33,6 @@ jobs:
       POLARIS_BASE_URL: http://localhost:8181
       POLARIS_CLIENT_ID: root
       POLARIS_CLIENT_SECRET: s3cr3t
-      POLARIS_S3_BUCKET: s3://warehouse
       POLARIS_S3_ENDPOINT: http://localhost:9000
       POLARIS_S3_ENDPOINT_INTERNAL: http://dh-objectstore-dev:9000
       DUCKLAKE_DATABASE_URL: postgresql+asyncpg://postgres:testpassword@localhost:5432/ducklake
@@ -50,4 +49,8 @@ jobs:
       - name: Start Polaris + object store (S3)
         run: make polaris-dev
       - name: Cross-runtime tests
+        # Here, not job-wide: `make polaris-dev` names its bucket from
+        # POLARIS_S3_BUCKET, and an s3:// URL there creates no bucket.
+        env:
+          POLARIS_S3_BUCKET: s3://warehouse
         run: make test-runtime-compat

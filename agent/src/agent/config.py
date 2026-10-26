@@ -108,6 +108,12 @@ class Settings(BaseSettings):
     # page out of the file, cost ~20 ms per statement. Matches the API's
     # `SQL_STATEMENT_INLINE_ARROW_MAX_BYTES`; 0 turns it off.
     session_result_inline_max_bytes: int = 256 * 1024
+    # Connections kept open with their extensions loaded, per workspace shape, for
+    # the next query or session to take (see executor.warm_connections). A fresh
+    # connection's extension loads cost ~390 ms on a DuckLake workspace, almost all
+    # of it DuckDB's signature check; a spare takes that off the query's path. Each
+    # idle spare holds ~5 MB. 0 opens every connection on the spot.
+    warm_connections: int = 2
 
     # EXPLAIN-based cost estimation (the `auto` profile). Each query's reservation
     # is sized from its EXPLAIN estimate * safety, snapped to a T-shirt bucket, and

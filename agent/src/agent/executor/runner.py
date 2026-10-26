@@ -29,6 +29,7 @@ import duckdb
 
 from agent import runtime
 from agent.executor.plan import parse_profile
+from agent.executor.warm_connections import Prepared, WarmConnections
 
 logger = logging.getLogger(__name__)
 
@@ -1282,28 +1283,22 @@ def open_and_attach(
     by the caller on the event-loop thread, since this function runs on a
     worker thread via `run_in_executor` where OpenTelemetry's current-span
     context is not available.
+
+    The connection and its extensions (`_load_phase`) come from a warm spare
+    when one is ready; see `executor.warm_connections`. Attaching, secrets and
+    the sandbox always happen here, for this caller.
     """
-    conn = duckdb.connect()
     catalogs = catalogs or []
     backend_kinds = {(cat.get("backend") or {}).get("kind") for cat in catalogs}
     backend_kinds |= set(preload_backend_kinds)
-    for kind in backend_kinds:
-        if (io_ext := _BACKEND_IO_EXTENSION.get(kind or "")) is not None:
-            if _safe_install_load(conn, io_ext) and io_ext == "httpfs":
-                # Only meaningful once httpfs is loaded; it owns the setting.
-                _enable_connection_caching(conn)
-    # External cloud backends (s3/adls_gen2) talk HTTPS and need a CA bundle the
-    # statically-linked extensions can't find on their own.
-    if backend_kinds - {None, "object_store"}:
-        _configure_external_tls(conn, azure="adls_gen2" in backend_kinds)
-
     catalog_kinds = {cat.get("kind", "iceberg_polaris") for cat in catalogs}
     catalog_kinds |= set(preload_catalog_kinds)
-    loaded: set[str] = set()
-    for catalog_kind in catalog_kinds:
-        for ext in _CATALOG_KIND_EXTENSIONS.get(catalog_kind, ()):
-            if ext not in loaded and _safe_install_load(conn, ext):
-                loaded.add(ext)
+    shape = (frozenset(backend_kinds), frozenset(catalog_kinds))
+    prepared = _warm.take(shape) if _warm is not None else None
+    if prepared is None:
+        prepared = _load_phase(shape)
+    conn, loaded = prepared.conn, prepared.loaded
+
     # Drop catalogs whose extensions failed to load: the iceberg secret is
     # created outside the per-catalog guard, so a failed `iceberg` load would
     # otherwise take the DuckLake attaches down with it.
@@ -1315,8 +1310,6 @@ def open_and_attach(
             for ext in _CATALOG_KIND_EXTENSIONS.get(cat.get("kind", "iceberg_polaris"), ())
         )
     ]
-    if KIND_DUCKLAKE in catalog_kinds:
-        _configure_ducklake(conn)
 
     if catalogs and (polaris or KIND_DUCKLAKE in catalog_kinds):
         try:
@@ -1339,6 +1332,48 @@ def open_and_attach(
     # attach/credential-vending path.
     _apply_sandbox(conn, disabled_filesystems, lock_config=lock_config)
     return conn
+
+
+def _load_phase(shape: tuple[frozenset[str | None], frozenset[str]]) -> Prepared:
+    """A new connection with the extensions and settings ``shape`` calls for.
+
+    ``shape`` is the backend kinds and catalog kinds to prepare for. Nothing here
+    depends on which catalogs a query attaches or who runs it, which is what lets
+    a warm spare stand in for it.
+    """
+    backend_kinds, catalog_kinds = shape
+    conn = duckdb.connect()
+    for kind in backend_kinds:
+        if (io_ext := _BACKEND_IO_EXTENSION.get(kind or "")) is not None:
+            if _safe_install_load(conn, io_ext) and io_ext == "httpfs":
+                # Only meaningful once httpfs is loaded; it owns the setting.
+                _enable_connection_caching(conn)
+    # External cloud backends (s3/adls_gen2) talk HTTPS and need a CA bundle the
+    # statically-linked extensions can't find on their own.
+    if backend_kinds - {None, "object_store"}:
+        _configure_external_tls(conn, azure="adls_gen2" in backend_kinds)
+
+    loaded: set[str] = set()
+    for catalog_kind in catalog_kinds:
+        for ext in _CATALOG_KIND_EXTENSIONS.get(catalog_kind, ()):
+            if ext not in loaded and _safe_install_load(conn, ext):
+                loaded.add(ext)
+    if KIND_DUCKLAKE in catalog_kinds:
+        _configure_ducklake(conn)
+    return Prepared(conn, frozenset(loaded))
+
+
+# Loaded spares for `open_and_attach`; None (the default) opens every connection on
+# the spot. The agent turns it on at startup (`enable_warm_connections`).
+_warm: WarmConnections | None = None
+
+
+def enable_warm_connections(per_shape: int) -> None:
+    """Keep ``per_shape`` loaded spares for each recent workspace shape; 0 keeps none."""
+    global _warm
+    if _warm is not None:
+        _warm.close()
+    _warm = WarmConnections(_load_phase, per_shape=per_shape) if per_shape > 0 else None
 
 
 def apply_memory_limit(conn: duckdb.DuckDBPyConnection, memory_bytes: int) -> None:

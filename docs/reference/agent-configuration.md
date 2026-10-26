@@ -50,6 +50,7 @@ There is no setting for the budget itself: size the container and the agent foll
 | `STATEMENT_ADMISSION_WAIT_S` | `300` | How long a statement may wait for memory before running with what it can get; also bounded by its timeout. `0` never waits |
 | `STATEMENT_ADMISSION_FLOOR_FRACTION` | `0.5` | Wait only while the memory available is below this share of the request. `1.0` waits for all of it; `0` never waits |
 | `ELASTIC_CEILING_FRACTION` | `0.85` | How far idle memory may top up a statement beyond its reservation, for DuckDB's cache of the Parquet it reads. Taken back as soon as another query needs it |
+| `WARM_CONNECTIONS` | `2` | Connections kept open with their extensions loaded, for each of the last four mixes of catalog and storage kinds the agent has served, so a query or session open skips loading them. That takes about 0.3 s off a query on a DuckLake workspace and 0.1 to 0.35 s on an Iceberg one; most of it is DuckDB checking each extension's signature. Each is used once, then replaced in the background on one CPU, and holds a few MB while it waits. Queries that arrive faster than the replacements, such as a burst of dashboard tiles, open the rest when they are needed. `0` opens every connection when it is needed |
 
 ### The `auto` estimator
 

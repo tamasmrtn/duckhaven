@@ -253,6 +253,25 @@ async def delete_agent(db: AsyncSession, agent: Agent) -> None:
     await db.execute(
         sa.update(Worksheet).where(Worksheet.agent_id == agent.id).values(agent_id=None)
     )
+    # A workspace default is cleared explicitly, not left to the FK's SET NULL: those
+    # workspaces fall back to server-picked compute, which is worth a log line.
+    cleared = (
+        (await db.execute(sa.select(Workspace.slug).where(Workspace.default_agent_id == agent.id)))
+        .scalars()
+        .all()
+    )
+    if cleared:
+        await db.execute(
+            sa.update(Workspace)
+            .where(Workspace.default_agent_id == agent.id)
+            .values(default_agent_id=None)
+        )
+        logger.warning(
+            "Deleted agent %s was the default compute of workspace(s) %s; they now pick compute "
+            "automatically",
+            agent.id,
+            ", ".join(sorted(cleared)),
+        )
     await db.execute(
         sa.update(TableMetadata)
         .where(TableMetadata.last_write_agent_id == agent.id)
@@ -504,6 +523,9 @@ async def bind_queued_work(db: AsyncSession, agent: Agent) -> int:
                     # same way (query.run_internal_query).
                     Query.origin.in_(("elastic", "describe")),
                     Query.status == "queued",
+                    # A run parked on a named agent (the workspace default) is that
+                    # agent's alone, whichever pool agent happens to register first.
+                    Query.requested_agent_id.is_(None),
                 )
             )
         )
@@ -715,6 +737,17 @@ async def bind_targeted_work(db: AsyncSession, agent: Agent) -> int:
                 **({} if query.timeout_s is None else {"timeout_s": query.timeout_s}),
             )
             bound += 1
+        except AgentNotDispatchable as exc:
+            # Known only now: a restarted agent advertises nothing until it registers,
+            # so the refusal (a missing extension, a runtime that cannot open the
+            # catalog) is the answer the requester is waiting for.
+            logger.warning(
+                "Targeted query %s refused by agent %s: %s", query.id, agent.id, exc.detail
+            )
+            query.status = "failed"
+            query.error = exc.detail
+            query.finished_at = datetime.now(tz=UTC)
+            query.agent_id = None
         except Exception:
             logger.exception("Failed to bind targeted query %s to agent %s", query.id, agent.id)
             query.status = "failed"
@@ -767,6 +800,11 @@ async def bind_scheduled_work(db: AsyncSession, agent: Agent) -> int:
         if target is None and schedule.saved_query_id is not None:
             saved = await db.get(SavedQuery, schedule.saved_query_id)
             target = saved.default_agent_id if saved is not None else None
+        if target is None:
+            # The same order the scheduler resolves it by: schedule, saved query,
+            # then the workspace default.
+            workspace = await db.get(Workspace, schedule.workspace_id)
+            target = workspace.default_agent_id if workspace is not None else None
         if target != agent.id:
             continue
 

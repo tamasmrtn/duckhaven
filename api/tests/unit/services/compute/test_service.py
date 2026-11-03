@@ -951,3 +951,136 @@ async def test_bind_pending_sessions_fails_a_session_on_an_unsupported_runtime(
         row = await db.get(SqlSession, session_id)
         assert row.status == "failed"
         assert row.error == "runtime_unsupported"
+
+
+# ── Work parked on the workspace default ──────────────────────────────────────
+
+
+async def test_the_pool_binder_leaves_a_run_parked_on_a_named_agent_alone(
+    session_factory, elastic_on, monkeypatch
+):
+    """A describe run parked on the workspace default carries origin "describe", which
+    the pool binder also takes. It must wait for the agent it named, not go to whichever
+    pool agent registers first."""
+    from api.models.query import Query
+
+    async def fake_dispatch(db, query, **kwargs):
+        raise AssertionError("dispatched a run that named another agent")
+
+    monkeypatch.setattr("api.services.query.dispatch_query", fake_dispatch)
+
+    async with session_factory() as db:
+        ws, _ = await seed_workspace(db, user_id=uuid.uuid4())
+        agent = await _seed_running_elastic_agent(db)
+        db.add(
+            Query(
+                workspace_id=ws.id,
+                agent_id=None,
+                requested_agent_id=uuid.uuid4(),
+                sql="DESCRIBE SELECT 1",
+                status="queued",
+                origin="describe",
+            )
+        )
+        await db.commit()
+        assert await service.bind_queued_work(db, agent) == 0
+
+
+async def test_a_targeted_run_the_restarted_agent_refuses_fails_with_the_reason(
+    session_factory, elastic_on, monkeypatch
+):
+    """A restarted agent advertises nothing until it registers, so an incompatibility
+    only shows now. The requester is waiting on exactly that answer."""
+    from api.models.query import Query
+    from api.services.runtimes import AgentNotDispatchable
+
+    async def refusing_dispatch(db, query, **kwargs):
+        raise AgentNotDispatchable("agent_incompatible", "Agent 'e' is missing 'httpfs'.")
+
+    monkeypatch.setattr("api.services.query.dispatch_query", refusing_dispatch)
+
+    async with session_factory() as db:
+        ws, _ = await seed_workspace(db, user_id=uuid.uuid4())
+        agent = await _seed_running_elastic_agent(db)
+        db.add(
+            Query(
+                workspace_id=ws.id,
+                agent_id=None,
+                requested_agent_id=agent.id,
+                sql="SELECT 1",
+                status="queued",
+            )
+        )
+        await db.commit()
+        assert await service.bind_targeted_work(db, agent) == 0
+
+    async with session_factory() as db:
+        query = (await db.execute(sa.select(Query))).scalars().one()
+        assert query.status == "failed"
+        assert query.error == "Agent 'e' is missing 'httpfs'."
+        assert query.agent_id is None
+
+
+async def test_bind_scheduled_work_finds_a_run_parked_on_the_workspace_default(
+    session_factory, elastic_on, monkeypatch
+):
+    """A schedule and saved query that name no agent run on the workspace default, so
+    that is who its parked run waits for."""
+    from api.models.query import Query, SavedQuery, Schedule
+    from api.models.user import User
+    from api.services.auth import hash_password
+
+    dispatched: list = []
+
+    async def fake_dispatch(db, query, **kwargs):
+        dispatched.append(query.id)
+
+    monkeypatch.setattr("api.services.query.dispatch_query", fake_dispatch)
+
+    async with session_factory() as db:
+        user = User(email="s@x.local", password_hash=hash_password("pw"), name="S", role="user")
+        db.add(user)
+        await db.flush()
+        ws, _ = await seed_workspace(db, user_id=user.id)
+        agent = await _seed_running_elastic_agent(db, pool_key=None)
+        ws.default_agent_id = agent.id
+        saved = SavedQuery(
+            workspace_id=ws.id,
+            name="nightly",
+            sql="SELECT 1",
+            created_by=user.id,
+            updated_by=user.id,
+        )
+        db.add(saved)
+        await db.flush()
+        schedule = Schedule(
+            workspace_id=ws.id, saved_query_id=saved.id, cron="0 * * * *", created_by=user.id
+        )
+        db.add(schedule)
+        await db.flush()
+        db.add(
+            Query(
+                workspace_id=ws.id,
+                agent_id=None,
+                sql="SELECT 1",
+                status="queued",
+                origin="scheduled",
+                schedule_id=schedule.id,
+            )
+        )
+        await db.commit()
+        assert await service.bind_scheduled_work(db, agent) == 1
+
+    assert len(dispatched) == 1
+
+
+async def test_deleting_the_default_agent_clears_the_workspace_default(db_session, elastic_on):
+    ws, _ = await seed_workspace(db_session, user_id=uuid.uuid4())
+    agent = await _seed_running_elastic_agent(db_session)
+    ws.default_agent_id = agent.id
+    await db_session.commit()
+
+    await service.delete_agent(db_session, agent)
+
+    await db_session.refresh(ws)
+    assert ws.default_agent_id is None

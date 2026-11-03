@@ -15,6 +15,7 @@ from api.models.agent import Agent
 from api.models.agent_grant import AgentGrant
 from api.models.query import Query, SavedQuery, Schedule
 from api.models.user import User
+from api.models.workspace import Workspace
 from api.services.agent_registry import registry
 from api.services.auth import hash_password
 from api.services.scheduler import scanner as scheduler_mod
@@ -595,6 +596,83 @@ async def test_terminated_elastic_agent_is_restarted_and_the_run_parks(
         after = await db.get(Agent, agent_id)
         assert after.lifecycle == "provisioning"
         assert after.terminated_at is None
+
+
+async def _seed_default_schedule(db, *, provider, lifecycle, connected, other_connected=False):
+    """A schedule and saved query that name no agent, in a workspace whose default
+    compute is an agent of the given kind and state."""
+    schedule, agent = await _seed_with_agent(
+        db, provider=provider, lifecycle=lifecycle, connected=connected
+    )
+    schedule.agent_id = None
+    workspace = await db.get(Workspace, schedule.workspace_id)
+    workspace.default_agent_id = agent.id
+    if other_connected:
+        other = Agent(
+            name="rival",
+            status="healthy",
+            capabilities={"duckdb_version": "1.5.5", "extensions": ["httpfs", "iceberg"]},
+        )
+        db.add(other)
+        await db.flush()
+        registry.register(other.id, FakeWS())  # type: ignore[arg-type]
+    await db.commit()
+    return schedule, agent
+
+
+async def test_a_schedule_that_names_no_agent_runs_on_the_workspace_default(
+    session_factory, elastic_enabled
+):
+    async with session_factory() as db:
+        _schedule, agent = await _seed_default_schedule(
+            db, provider="null", lifecycle="terminated", connected=False
+        )
+        agent_id = agent.id
+
+    await run_cycle(session_factory, now=_NOW)
+
+    run = await _only_run(session_factory)
+    assert (run.status, run.agent_id, run.error) == ("queued", None, None)
+    async with session_factory() as db:
+        assert (await db.get(Agent, agent_id)).lifecycle == "provisioning"
+        provisioned = (
+            (await db.execute(select(Agent).where(Agent.provider.is_not(None)))).scalars().all()
+        )
+        assert [a.id for a in provisioned] == [agent_id]
+
+
+async def test_a_schedule_joins_a_default_that_is_already_starting(
+    session_factory, elastic_enabled
+):
+    async with session_factory() as db:
+        _schedule, agent = await _seed_default_schedule(
+            db, provider="null", lifecycle="provisioning", connected=False
+        )
+        agent.instance_id = "dh-already-starting"
+        await db.commit()
+
+    await run_cycle(session_factory, now=_NOW)
+
+    run = await _only_run(session_factory)
+    assert (run.status, run.error) == ("queued", None)
+    async with session_factory() as db:
+        agent = (await db.execute(select(Agent).where(Agent.provider.is_not(None)))).scalars().one()
+        assert agent.instance_id == "dh-already-starting"
+
+
+async def test_an_offline_workspace_default_fails_the_run_instead_of_picking_another(
+    session_factory, elastic_enabled
+):
+    async with session_factory() as db:
+        await _seed_default_schedule(
+            db, provider=None, lifecycle=None, connected=False, other_connected=True
+        )
+
+    await run_cycle(session_factory, now=_NOW)
+
+    run = await _only_run(session_factory)
+    assert run.status == "failed"
+    assert run.error == "Configured agent is not connected"
 
 
 async def test_offline_static_agent_still_fails(session_factory, elastic_enabled):

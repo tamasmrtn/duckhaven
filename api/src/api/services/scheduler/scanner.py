@@ -271,8 +271,14 @@ async def _cache_lookup(
     catalogs = await resolve_workspace_catalogs(db, workspace.id)
     if not catalogs:
         return result_cache.Lookup(status=result_cache.BYPASS, detail="no_catalogs")
-    named = schedule.agent_id or saved.default_agent_id
-    agent = await db.get(Agent, named) if named is not None else await pick_agent_for(db, workspace)
+    named = schedule.agent_id or saved.default_agent_id or workspace.default_agent_id
+    # Auto-pick is scoped to the schedule's owner, as the run itself is, so the cache
+    # context is the agent the run would really use.
+    agent = (
+        await db.get(Agent, named)
+        if named is not None
+        else await pick_agent_for(db, workspace, principal_id=schedule.created_by)
+    )
     default = await get_default_catalog(db, workspace.id)
     context = result_cache.context_for(
         agent,
@@ -297,7 +303,9 @@ async def _resolve_agent(
     """Resolve the agent for a scheduled run.
 
     Order: the schedule's explicit ``agent_id`` → the saved query's
-    ``default_agent_id`` → auto-pick a compatible connected agent.
+    ``default_agent_id`` → the workspace's default compute → auto-pick a compatible
+    connected agent. Auto-pick is reached only when none of the three is set; a
+    workspace default that cannot run is an error, not a reason to pick another.
 
     An explicit choice that is offline is *not* silently re-picked. What happens
     instead depends on what kind of agent it is:
@@ -327,7 +335,8 @@ async def _resolve_agent(
     and the runs feed, and re-granting resumes it with no further action.
     """
     owner_id = schedule.created_by
-    for chosen in (schedule.agent_id, saved.default_agent_id):
+    workspace_default = workspace.default_agent_id if workspace is not None else None
+    for chosen in (schedule.agent_id, saved.default_agent_id, workspace_default):
         if chosen is None:
             continue
         agent = await db.get(Agent, chosen)
@@ -347,6 +356,9 @@ async def _resolve_agent(
             if started is None:
                 return _Resolution(error="Could not start the configured agent")
             logger.info("Schedule %s starting terminated agent %s", schedule.id, agent.id)
+            return _Resolution(starting=True)
+        if agent.provider is not None and agent.lifecycle == "provisioning":
+            # Someone else began the start: park the run and let it bind on registration.
             return _Resolution(starting=True)
         return _Resolution(error="Configured agent is not connected")
 

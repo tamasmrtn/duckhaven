@@ -9,6 +9,20 @@ class WorkspaceCreate(BaseModel):
     name: str
 
 
+class DefaultAgentOut(BaseModel):
+    """The agent a workspace runs on when a caller names none.
+
+    Visible to every member, whether or not their own agent grants reach it: the
+    workspace default is usable by all of them, so they need its name to see it.
+    """
+
+    id: uuid.UUID
+    name: str
+    provider: str | None = None
+    lifecycle: str | None = None
+    status: str
+
+
 class WorkspaceOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -24,6 +38,10 @@ class WorkspaceOut(BaseModel):
     storage_backend_kind: str | None = None
     # Whether repeated queries may be answered from the result cache.
     result_cache_enabled: bool = True
+    # The compute that runs work nobody pointed at an agent. ``None`` = the server
+    # picks a connected agent (or starts one when elastic compute is on).
+    default_agent_id: uuid.UUID | None = None
+    default_agent: DefaultAgentOut | None = None
 
 
 class WorkspaceUpdate(BaseModel):
@@ -31,6 +49,10 @@ class WorkspaceUpdate(BaseModel):
     description: str | None = None
     # Owner only. Turning it off stops lookups at once; existing entries expire.
     result_cache_enabled: bool | None = None
+    # Owner only. An explicit ``null`` clears it (back to server-picked compute); an
+    # omitted field leaves it alone. Setting it needs ``use`` on an open agent and
+    # ``operate`` on a restricted one.
+    default_agent_id: uuid.UUID | None = None
 
 
 class MemberOut(BaseModel):

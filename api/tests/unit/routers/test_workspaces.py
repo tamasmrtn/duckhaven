@@ -1,5 +1,6 @@
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import select
 
 from api.models.storage_backend import StorageBackend
 from api.models.user import User
@@ -368,3 +369,175 @@ async def test_non_owner_cannot_delete_workspace(
     await _login(auth_client, reader.email)
     resp = await auth_client.delete(f"/workspaces/{slug}")
     assert resp.status_code == 403
+
+
+# --- default compute ---------------------------------------------------------
+
+
+async def _plain_user(db_session, email: str):
+    """A non-admin account: it holds no global agent permission, so its agent tiers
+    come only from open mode and explicit grants."""
+    from api.models.user import User
+    from api.services.auth import hash_password
+
+    u = User(email=email, password_hash=hash_password("pw"), name=email, role="user")
+    db_session.add(u)
+    await db_session.commit()
+    await db_session.refresh(u)
+    return u
+
+
+async def _agent(db_session, name: str, *, access_mode: str = "open"):
+    from api.models.agent import Agent
+
+    a = Agent(name=name, status="healthy", access_mode=access_mode)
+    db_session.add(a)
+    await db_session.commit()
+    await db_session.refresh(a)
+    return a
+
+
+async def test_owner_sets_and_clears_the_default_compute(auth_client: AsyncClient, db_session):
+    agent = await _agent(db_session, "shared")
+    await auth_client.post("/workspaces", json={"slug": "dc-ws", "name": "Ws"})
+
+    assert (await auth_client.get("/workspaces/dc-ws")).json()["default_agent"] is None
+
+    resp = await auth_client.patch("/workspaces/dc-ws", json={"default_agent_id": str(agent.id)})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["default_agent_id"] == str(agent.id)
+    assert resp.json()["default_agent"]["name"] == "shared"
+    # Not connected in this test, so presence reports it unavailable.
+    assert resp.json()["default_agent"]["status"] == "unavailable"
+
+    cleared = await auth_client.patch("/workspaces/dc-ws", json={"default_agent_id": None})
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["default_agent_id"] is None
+    assert cleared.json()["default_agent"] is None
+
+
+async def test_omitting_the_default_compute_leaves_it_unchanged(
+    auth_client: AsyncClient, db_session
+):
+    agent = await _agent(db_session, "keep-me")
+    await auth_client.post("/workspaces", json={"slug": "dc-keep", "name": "Ws"})
+    await auth_client.patch("/workspaces/dc-keep", json={"default_agent_id": str(agent.id)})
+
+    resp = await auth_client.patch("/workspaces/dc-keep", json={"name": "Renamed"})
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["default_agent_id"] == str(agent.id)
+
+
+async def test_an_unknown_default_compute_is_404(auth_client: AsyncClient):
+    import uuid
+
+    await auth_client.post("/workspaces", json={"slug": "dc-404", "name": "Ws"})
+    resp = await auth_client.patch(
+        "/workspaces/dc-404", json={"default_agent_id": str(uuid.uuid4())}
+    )
+    assert resp.status_code == 404
+
+
+async def test_only_an_owner_can_set_the_default_compute(auth_client: AsyncClient, db_session):
+    agent = await _agent(db_session, "shared")
+    writer = await _plain_user(db_session, "dc-writer@test.local")
+    await auth_client.post("/workspaces", json={"slug": "dc-gate", "name": "Ws"})
+    await auth_client.post(
+        "/workspaces/dc-gate/members", json={"user_id": str(writer.id), "role": "writer"}
+    )
+
+    await _login(auth_client, writer.email)
+    resp = await auth_client.patch("/workspaces/dc-gate", json={"default_agent_id": str(agent.id)})
+    assert resp.status_code == 403
+
+
+async def test_an_open_agent_needs_only_use_to_become_the_default(
+    auth_client: AsyncClient, db_session
+):
+    agent = await _agent(db_session, "open-agent")  # open: everyone has `use`
+    owner = await _plain_user(db_session, "dc-open-owner@test.local")
+
+    await _login(auth_client, owner.email)
+    await auth_client.post("/workspaces", json={"slug": "dc-open", "name": "Ws"})
+    resp = await auth_client.patch("/workspaces/dc-open", json={"default_agent_id": str(agent.id)})
+    assert resp.status_code == 200, resp.text
+
+
+async def test_a_restricted_agent_needs_operate_to_become_the_default(
+    auth_client: AsyncClient, db_session
+):
+    from api.models.agent_grant import AgentGrant
+
+    agent = await _agent(db_session, "locked", access_mode="restricted")
+    owner = await _plain_user(db_session, "dc-restricted-owner@test.local")
+    await _login(auth_client, owner.email)
+    await auth_client.post("/workspaces", json={"slug": "dc-restricted", "name": "Ws"})
+
+    # No grant at all: the agent is invisible, so it answers 404 like a missing one.
+    resp = await auth_client.patch(
+        "/workspaces/dc-restricted", json={"default_agent_id": str(agent.id)}
+    )
+    assert resp.status_code == 404
+
+    # `use` is enough to run on it, not to share it with a whole workspace.
+    db_session.add(AgentGrant(agent_id=agent.id, user_id=owner.id, tier="use"))
+    await db_session.commit()
+    resp = await auth_client.patch(
+        "/workspaces/dc-restricted", json={"default_agent_id": str(agent.id)}
+    )
+    assert resp.status_code == 403
+
+    grant = (
+        await db_session.execute(select(AgentGrant).where(AgentGrant.user_id == owner.id))
+    ).scalar_one()
+    grant.tier = "operate"
+    await db_session.commit()
+    resp = await auth_client.patch(
+        "/workspaces/dc-restricted", json={"default_agent_id": str(agent.id)}
+    )
+    assert resp.status_code == 200, resp.text
+
+
+async def test_members_see_the_default_compute_without_a_grant_on_it(
+    auth_client: AsyncClient, db_session
+):
+    agent = await _agent(db_session, "locked-default", access_mode="restricted")
+    reader = await _plain_user(db_session, "dc-reader@test.local")
+    await auth_client.post("/workspaces", json={"slug": "dc-visible", "name": "Ws"})
+    await auth_client.patch("/workspaces/dc-visible", json={"default_agent_id": str(agent.id)})
+    await auth_client.post(
+        "/workspaces/dc-visible/members", json={"user_id": str(reader.id), "role": "reader"}
+    )
+
+    await _login(auth_client, reader.email)
+    resp = await auth_client.get("/workspaces/dc-visible")
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["default_agent"]["name"] == "locked-default"
+
+
+async def test_resaving_an_unchanged_default_is_not_revalidated(
+    auth_client: AsyncClient, db_session
+):
+    """An owner who lost access to the agent after setting it must still be able to
+    save the page; only a *change* of agent is checked."""
+    from api.models.agent_grant import AgentGrant
+
+    agent = await _agent(db_session, "was-mine", access_mode="restricted")
+    owner = await _plain_user(db_session, "dc-lost-access@test.local")
+    db_session.add(AgentGrant(agent_id=agent.id, user_id=owner.id, tier="operate"))
+    await db_session.commit()
+    await _login(auth_client, owner.email)
+    await auth_client.post("/workspaces", json={"slug": "dc-lost", "name": "Ws"})
+    first = await auth_client.patch("/workspaces/dc-lost", json={"default_agent_id": str(agent.id)})
+    assert first.status_code == 200, first.text
+
+    await db_session.delete(
+        (
+            await db_session.execute(select(AgentGrant).where(AgentGrant.user_id == owner.id))
+        ).scalar_one()
+    )
+    await db_session.commit()
+
+    again = await auth_client.patch("/workspaces/dc-lost", json={"default_agent_id": str(agent.id)})
+    assert again.status_code == 200, again.text
+    assert again.json()["default_agent_id"] == str(agent.id)

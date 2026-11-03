@@ -223,6 +223,30 @@ async def assert_can_assign_agent(db: AsyncSession, user: User, agent_id: uuid.U
     await assert_agent_tier(db, user, agent, "use")
 
 
+async def assert_can_set_default_agent(
+    db: AsyncSession, user: User, agent_id: uuid.UUID | None
+) -> Agent | None:
+    """Require the tier that lets ``user`` make ``agent_id`` a workspace's default.
+
+    Making an agent the default gives every member of the workspace ``use`` on it,
+    whatever their own grants. On an ``open`` agent everyone already has ``use``, so
+    that widens nothing and ``use`` is enough. On a ``restricted`` agent it does:
+    a workspace-wide grant is otherwise an agent admin's decision, so the setter
+    needs ``operate``. Clearing the default (``None``) needs nothing from this
+    ladder; the caller has already asserted workspace ownership.
+
+    Returns the agent, or ``None`` when clearing.
+    """
+    if agent_id is None:
+        return None
+    agent = await db.get(Agent, agent_id)
+    if agent is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+    need = "operate" if agent.access_mode == "restricted" else "use"
+    await assert_agent_tier(db, user, agent, need)
+    return agent
+
+
 async def assert_agent_tier(db: AsyncSession, user: User, agent: Agent, need: str) -> str:
     """Require ``need`` on ``agent``, returning the caller's actual tier.
 

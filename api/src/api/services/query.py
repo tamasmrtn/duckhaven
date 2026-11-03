@@ -1081,6 +1081,41 @@ def compute_unavailable_error(decision: ComputeDecision) -> HTTPException:
     )
 
 
+def queue_full_message(scope: str) -> str:
+    where = "this workspace" if scope == "workspace" else "this deployment"
+    return f"Too many queries are already waiting for compute in {where}. Retry shortly."
+
+
+class ComputeQueueFull(AgentUnavailable):
+    """Too many runs are already parked waiting for compute to take them.
+
+    ``scope`` is the cap that was hit: ``workspace`` or ``global``. A subclass of
+    ``AgentUnavailable`` so callers that only know that one keep their generic 503.
+    """
+
+    def __init__(self, scope: str) -> None:
+        super().__init__(queue_full_message(scope))
+        self.scope = scope
+
+
+def compute_queue_full_error(scope: str) -> HTTPException:
+    """429 when this workspace's cap is hit (it is this caller's workspace to drain),
+    503 when the deployment-wide one is (nobody here caused it alone)."""
+    return HTTPException(
+        status_code=(
+            status.HTTP_429_TOO_MANY_REQUESTS
+            if scope == "workspace"
+            else status.HTTP_503_SERVICE_UNAVAILABLE
+        ),
+        detail={
+            "error": "compute_queue_full",
+            "detail": queue_full_message(scope),
+            "scope": scope,
+        },
+        headers={"Retry-After": "10"},
+    )
+
+
 class DefaultComputeUnavailable(AgentUnavailable):
     """The workspace default cannot take the run. A subclass of ``AgentUnavailable``
     so callers that only know that one keep their generic 503."""
@@ -1194,6 +1229,9 @@ async def run_internal_query(
             timeout_s=wait_s,
         )
     assert decision is not None  # an agent-less run always comes from a decision above
+
+    # About to park a run: refuse it if too many already wait.
+    await compute_service.assert_parked_capacity(db, workspace.id)
 
     # RESTART and WAIT target the workspace default: the run names it, so only that
     # agent may take it (`bind_targeted_work`), never whichever pool agent registers.

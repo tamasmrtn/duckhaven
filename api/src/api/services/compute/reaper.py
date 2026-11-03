@@ -187,10 +187,11 @@ async def _fail_stranded_queued(db: AsyncSession, now: datetime) -> int:
 
     Bounding it here rather than at submission covers every one of those causes with one
     rule, and does not risk failing a run that supply was genuinely still arriving for.
-    The budget is the provisioning deadline: once it passes, the agent that would have
-    served this run has been failed too.
+    The budget is ``COMPUTE_QUEUE_WAIT_TIMEOUT_S``, which is the provisioning deadline
+    unless set: once that passes, the agent that would have served this run has been
+    failed too.
     """
-    cutoff = now - timedelta(seconds=settings.elastic_provisioning_deadline_s)
+    cutoff = now - timedelta(seconds=settings.compute_queue_wait_s)
     stranded = (
         (
             await db.execute(

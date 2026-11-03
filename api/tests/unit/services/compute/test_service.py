@@ -4,6 +4,7 @@ import pytest
 import sqlalchemy as sa
 from conftest import seed_workspace
 
+from api.config import settings
 from api.models.agent import Agent
 from api.models.query import Query
 from api.models.user import Credential
@@ -1085,6 +1086,203 @@ async def test_deleting_the_default_agent_clears_the_workspace_default(db_sessio
 
     await db_session.refresh(ws)
     assert ws.default_agent_id is None
+
+
+# ── Backpressure on parked work ───────────────────────────────────────────────
+
+
+async def _park(db, ws, *, origin="elastic", n=1, requested_agent_id=None, started_at=None):
+    from api.models.query import Query
+
+    rows = [
+        Query(
+            workspace_id=ws.id,
+            agent_id=None,
+            requested_agent_id=requested_agent_id,
+            sql=f"SELECT {i}",
+            status="queued",
+            origin=origin,
+            **({} if started_at is None else {"started_at": started_at(i)}),
+        )
+        for i in range(n)
+    ]
+    db.add_all(rows)
+    await db.commit()
+    return rows
+
+
+async def test_parking_is_allowed_below_both_caps(db_session, monkeypatch):
+    monkeypatch.setattr(settings, "compute_queue_max_per_workspace", 3)
+    monkeypatch.setattr(settings, "compute_queue_max_total", 10)
+    ws, _ = await seed_workspace(db_session, user_id=uuid.uuid4())
+    await _park(db_session, ws, n=2)
+
+    await service.assert_parked_capacity(db_session, ws.id)  # does not raise
+
+
+async def test_a_workspace_at_its_cap_is_refused(db_session, monkeypatch):
+    from api.services.query import ComputeQueueFull
+
+    monkeypatch.setattr(settings, "compute_queue_max_per_workspace", 3)
+    monkeypatch.setattr(settings, "compute_queue_max_total", 0)
+    ws, _ = await seed_workspace(db_session, user_id=uuid.uuid4())
+    await _park(db_session, ws, n=3)
+
+    with pytest.raises(ComputeQueueFull) as exc:
+        await service.assert_parked_capacity(db_session, ws.id)
+    assert exc.value.scope == "workspace"
+
+
+async def test_the_deployment_cap_applies_across_workspaces(db_session, monkeypatch):
+    from api.services.query import ComputeQueueFull
+
+    monkeypatch.setattr(settings, "compute_queue_max_per_workspace", 0)
+    monkeypatch.setattr(settings, "compute_queue_max_total", 4)
+    busy, _ = await seed_workspace(db_session, user_id=uuid.uuid4(), slug="busy")
+    quiet, _ = await seed_workspace(db_session, user_id=uuid.uuid4(), slug="quiet")
+    await _park(db_session, busy, n=4)
+
+    with pytest.raises(ComputeQueueFull) as exc:
+        await service.assert_parked_capacity(db_session, quiet.id)
+    assert exc.value.scope == "global"
+
+
+async def test_another_workspaces_runs_do_not_fill_this_ones_cap(db_session, monkeypatch):
+    monkeypatch.setattr(settings, "compute_queue_max_per_workspace", 2)
+    monkeypatch.setattr(settings, "compute_queue_max_total", 0)
+    busy, _ = await seed_workspace(db_session, user_id=uuid.uuid4(), slug="busy")
+    quiet, _ = await seed_workspace(db_session, user_id=uuid.uuid4(), slug="quiet")
+    await _park(db_session, busy, n=5)
+
+    await service.assert_parked_capacity(db_session, quiet.id)  # does not raise
+
+
+async def test_zero_means_unlimited(db_session, monkeypatch):
+    monkeypatch.setattr(settings, "compute_queue_max_per_workspace", 0)
+    monkeypatch.setattr(settings, "compute_queue_max_total", 0)
+    ws, _ = await seed_workspace(db_session, user_id=uuid.uuid4())
+    await _park(db_session, ws, n=50)
+
+    await service.assert_parked_capacity(db_session, ws.id)  # does not raise
+
+
+async def test_scheduled_runs_neither_count_nor_are_refused(db_session, monkeypatch):
+    """The schedules bound them, and a burst of them must not shut interactive users
+    out of the queue."""
+    monkeypatch.setattr(settings, "compute_queue_max_per_workspace", 2)
+    monkeypatch.setattr(settings, "compute_queue_max_total", 2)
+    ws, _ = await seed_workspace(db_session, user_id=uuid.uuid4())
+    await _park(db_session, ws, origin="scheduled", n=10)
+
+    await service.assert_parked_capacity(db_session, ws.id)  # does not raise
+
+
+async def test_runs_with_an_agent_or_already_finished_do_not_count(db_session, monkeypatch):
+    from api.models.query import Query
+
+    monkeypatch.setattr(settings, "compute_queue_max_per_workspace", 1)
+    monkeypatch.setattr(settings, "compute_queue_max_total", 0)
+    ws, _ = await seed_workspace(db_session, user_id=uuid.uuid4())
+    db_session.add_all(
+        [
+            Query(workspace_id=ws.id, agent_id=uuid.uuid4(), sql="SELECT 1", status="queued"),
+            Query(workspace_id=ws.id, agent_id=None, sql="SELECT 2", status="done"),
+            Query(workspace_id=ws.id, agent_id=None, sql="SELECT 3", status="failed"),
+        ]
+    )
+    await db_session.commit()
+
+    await service.assert_parked_capacity(db_session, ws.id)  # does not raise
+
+
+async def test_a_default_compute_run_parked_for_one_agent_counts_as_waiting(
+    db_session, monkeypatch
+):
+    from api.services.query import ComputeQueueFull
+
+    monkeypatch.setattr(settings, "compute_queue_max_per_workspace", 1)
+    monkeypatch.setattr(settings, "compute_queue_max_total", 0)
+    ws, _ = await seed_workspace(db_session, user_id=uuid.uuid4())
+    await _park(db_session, ws, origin=None, requested_agent_id=uuid.uuid4())
+
+    with pytest.raises(ComputeQueueFull):
+        await service.assert_parked_capacity(db_session, ws.id)
+
+
+# ── Binding order ─────────────────────────────────────────────────────────────
+
+
+def _minutes_ago(minutes: int):
+    from datetime import UTC, datetime, timedelta
+
+    return datetime.now(tz=UTC) - timedelta(minutes=minutes)
+
+
+async def test_parked_runs_are_bound_oldest_first(session_factory, elastic_on, monkeypatch):
+    """First come, first served: a burst parked during a cold start is dispatched in
+    the order it arrived."""
+    order: list[str] = []
+
+    async def fake_dispatch(db, query, **kwargs):
+        order.append(query.sql)
+
+    monkeypatch.setattr("api.services.query.dispatch_query", fake_dispatch)
+
+    async with session_factory() as db:
+        ws, _ = await seed_workspace(db, user_id=uuid.uuid4())
+        agent = await _seed_running_elastic_agent(db)
+        # Inserted newest first, so insertion order is the opposite of arrival order.
+        await _park(db, ws, n=4, started_at=lambda i: _minutes_ago(i))
+        assert await service.bind_queued_work(db, agent) == 4
+
+    # SELECT 3 was parked 3 minutes ago, SELECT 0 just now.
+    assert order == ["SELECT 3", "SELECT 2", "SELECT 1", "SELECT 0"]
+
+
+async def test_binding_pages_through_a_backlog_larger_than_one_batch(
+    session_factory, elastic_on, monkeypatch
+):
+    monkeypatch.setattr(settings, "compute_bind_batch_size", 2)
+    order: list[str] = []
+
+    async def fake_dispatch(db, query, **kwargs):
+        order.append(query.sql)
+
+    monkeypatch.setattr("api.services.query.dispatch_query", fake_dispatch)
+
+    async with session_factory() as db:
+        ws, _ = await seed_workspace(db, user_id=uuid.uuid4())
+        agent = await _seed_running_elastic_agent(db)
+        await _park(db, ws, n=7, started_at=lambda i: _minutes_ago(100 - i))
+        assert await service.bind_queued_work(db, agent) == 7
+
+    assert order == [f"SELECT {i}" for i in range(7)]
+
+
+async def test_a_page_of_runs_for_another_pool_does_not_stall_binding(
+    session_factory, elastic_on, monkeypatch
+):
+    """The oldest runs belong to a pool this agent does not serve. They stay parked,
+    so paging by offset would read them again forever; paging by key moves past."""
+    monkeypatch.setattr(settings, "compute_bind_batch_size", 2)
+    dispatched: list[str] = []
+
+    async def fake_dispatch(db, query, **kwargs):
+        dispatched.append(query.sql)
+
+    monkeypatch.setattr("api.services.query.dispatch_query", fake_dispatch)
+
+    async with session_factory() as db:
+        other, _ = await seed_workspace(
+            db, user_id=uuid.uuid4(), slug="other-pool", backend_kind="s3"
+        )
+        mine, _ = await seed_workspace(db, user_id=uuid.uuid4(), slug="my-pool")
+        agent = await _seed_running_elastic_agent(db)  # pool_key "object_store"
+        await _park(db, other, n=5, started_at=lambda i: _minutes_ago(500 - i))
+        await _park(db, mine, n=3, started_at=lambda i: _minutes_ago(10 - i))
+        assert await service.bind_queued_work(db, agent) == 3
+
+    assert dispatched == ["SELECT 0", "SELECT 1", "SELECT 2"]
 
 
 async def test_callers_restarting_a_stopped_agent_together_start_it_once(

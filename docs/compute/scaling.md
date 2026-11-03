@@ -16,6 +16,7 @@ you, up to `ELASTIC_MAX_AGENTS_PER_POOL`.
 | What you see | What it means | What to do |
 |---|---|---|
 | A persistent **waiting** layer in [Agent monitoring](agent-monitoring.md), or `queue full` errors | The agent is saturated | Add an agent, or switch to a profile with more slots if each query still gets enough memory |
+| `compute_queue_full` errors | More queries are waiting for compute to start than the limits allow | Give the workspace a [default compute](elastic-compute.md#a-workspaces-default-compute) that stays up, or raise the caps in [Configuration](../reference/configuration.md) |
 | Queries spill to disk, or fail with out-of-memory errors | Queries need more memory than the agent has | Give the agent's container more memory |
 | An agent shows **Can't serve this workspace** | It lacks an extension a catalog needs | Run an agent on a runtime that has it |
 

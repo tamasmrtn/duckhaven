@@ -665,3 +665,28 @@ def test_a_refusal_for_want_of_compute_is_counted_by_reason():
         )
     )
     assert count("stopped") == before + 1
+
+
+async def test_a_refused_parked_run_is_counted_by_cap(db_session, monkeypatch):
+    from conftest import seed_workspace
+
+    from api.services.compute import service as compute_service
+    from api.services.query import ComputeQueueFull
+
+    def count(scope: str) -> float:
+        return (
+            _value("duckhaven_parked_queries_rejected_total", {"replica_id": RID, "scope": scope})
+            or 0.0
+        )
+
+    monkeypatch.setattr(settings, "compute_queue_max_per_workspace", 1)
+    monkeypatch.setattr(settings, "compute_queue_max_total", 0)
+    ws, _ = await seed_workspace(db_session, user_id=uuid.uuid4())
+    db_session.add(Query(workspace_id=ws.id, agent_id=None, sql="SELECT 1", status="queued"))
+    await db_session.commit()
+
+    before = count("workspace")
+    with pytest.raises(ComputeQueueFull):
+        await compute_service.assert_parked_capacity(db_session, ws.id)
+    assert count("workspace") == before + 1
+    assert count("global") == (count("global"))  # untouched by a workspace refusal

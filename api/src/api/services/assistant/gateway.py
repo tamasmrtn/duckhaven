@@ -220,11 +220,7 @@ class Gateway:
         self._queue_wait_s = (
             queue_wait_s
             if queue_wait_s is not None
-            else (
-                settings.elastic_provisioning_deadline_s
-                if settings.elastic_compute_enabled
-                else 0.0
-            )
+            else (settings.compute_queue_wait_s if settings.elastic_compute_enabled else 0.0)
         )
 
     async def _get(self, path: str, **kwargs) -> httpx.Response:

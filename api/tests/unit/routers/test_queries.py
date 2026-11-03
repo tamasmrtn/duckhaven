@@ -3073,3 +3073,120 @@ async def test_clearing_the_default_restores_the_pool(
     assert resp.status_code == 202, resp.text
     assert resp.json()["origin"] == "elastic"
     assert len(await _provisioned(db_session)) == 2  # the old row plus a new pool agent
+
+
+# --- backpressure on runs parked for compute ---
+
+
+async def test_a_workspace_at_its_parked_cap_gets_429_and_a_retry_after(
+    authed_client: AsyncClient, workspace, db_session, elastic_enabled, monkeypatch
+):
+    from api.config import settings
+
+    monkeypatch.setattr(settings, "compute_queue_max_per_workspace", 1)
+    first = await authed_client.post(
+        f"/workspaces/{workspace.slug}/queries", json={"sql": "SELECT 1"}
+    )
+    assert first.status_code == 202, first.text
+
+    second = await authed_client.post(
+        f"/workspaces/{workspace.slug}/queries", json={"sql": "SELECT 2"}
+    )
+    assert second.status_code == 429
+    body = second.json()
+    assert body["error"] == "compute_queue_full"
+    assert body["details"]["scope"] == "workspace"
+    assert second.headers["retry-after"] == "10"
+
+    # The attempt is in History as a failed run, and it started nothing.
+    rows = {q.sql: q for q in await _queries(db_session)}
+    assert rows["SELECT 1"].status == "queued"
+    assert rows["SELECT 2"].status == "failed"
+    assert body["details"]["query_id"] == str(rows["SELECT 2"].id)
+    assert len(await _provisioned(db_session)) == 1
+
+
+async def test_the_deployment_cap_answers_503(
+    authed_client: AsyncClient, workspace, elastic_enabled, monkeypatch
+):
+    from api.config import settings
+
+    monkeypatch.setattr(settings, "compute_queue_max_per_workspace", 0)
+    monkeypatch.setattr(settings, "compute_queue_max_total", 1)
+    await authed_client.post(f"/workspaces/{workspace.slug}/queries", json={"sql": "SELECT 1"})
+
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/queries", json={"sql": "SELECT 2"}
+    )
+    assert resp.status_code == 503
+    assert resp.json()["error"] == "compute_queue_full"
+    assert resp.json()["details"]["scope"] == "global"
+
+
+async def test_a_run_waiting_on_the_default_counts_toward_the_cap(
+    authed_client: AsyncClient,
+    workspace,
+    db_session,
+    terminated_elastic_agent,
+    elastic_enabled,
+    monkeypatch,
+):
+    from api.config import settings
+
+    monkeypatch.setattr(settings, "compute_queue_max_per_workspace", 1)
+    await _set_default(db_session, workspace, terminated_elastic_agent)
+    first = await authed_client.post(
+        f"/workspaces/{workspace.slug}/queries", json={"sql": "SELECT 1"}
+    )
+    assert first.status_code == 202, first.text
+    await db_session.refresh(terminated_elastic_agent)
+    started = terminated_elastic_agent.instance_id
+
+    # It is now provisioning, so this one would join the start. The queue is full.
+    second = await authed_client.post(
+        f"/workspaces/{workspace.slug}/queries", json={"sql": "SELECT 2"}
+    )
+    assert second.status_code == 429
+    await db_session.refresh(terminated_elastic_agent)
+    assert terminated_elastic_agent.instance_id == started
+
+
+async def test_a_run_that_dispatches_at_once_is_never_refused_for_a_full_queue(
+    authed_client: AsyncClient, workspace, db_session, connected_agent, elastic_enabled, monkeypatch
+):
+    """The cap bounds what waits for compute. Work an agent takes immediately does not
+    wait, so it is not counted and not refused."""
+    from api.config import settings
+    from api.models.query import Query
+
+    monkeypatch.setattr(settings, "compute_queue_max_per_workspace", 1)
+    db_session.add(
+        Query(
+            workspace_id=workspace.id,
+            agent_id=None,
+            sql="SELECT 0",
+            status="queued",
+            origin="elastic",
+        )
+    )
+    await db_session.commit()
+
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/queries", json={"sql": "SELECT 1"}
+    )
+    assert resp.status_code == 202, resp.text
+    assert resp.json()["agent_id"] == str(connected_agent[0].id)
+
+
+async def test_zero_turns_the_parked_caps_off(
+    authed_client: AsyncClient, workspace, elastic_enabled, monkeypatch
+):
+    from api.config import settings
+
+    monkeypatch.setattr(settings, "compute_queue_max_per_workspace", 0)
+    monkeypatch.setattr(settings, "compute_queue_max_total", 0)
+    for i in range(5):
+        resp = await authed_client.post(
+            f"/workspaces/{workspace.slug}/queries", json={"sql": f"SELECT {i}"}
+        )
+        assert resp.status_code == 202, resp.text

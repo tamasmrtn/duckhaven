@@ -183,6 +183,11 @@ STRANDED_WORK_FAILED = Counter(
     "Queries and SQL sessions the reaper failed because no compute came for them in time.",
     ["replica_id", "kind"],
 )
+PARKED_QUERIES_REJECTED = Counter(
+    "duckhaven_parked_queries_rejected",
+    "Queries refused because too many were already waiting for compute, by cap (workspace/global).",
+    ["replica_id", "scope"],
+)
 COMPUTE_UNAVAILABLE = Counter(
     "duckhaven_compute_unavailable",
     "Requests refused because no compute could take them, by reason (the workspace "
@@ -495,6 +500,10 @@ def record_stranded_failed(counts: dict[str, int]) -> None:
     ):
         if counts.get(key):
             STRANDED_WORK_FAILED.labels(settings.replica_id, kind).inc(counts[key])
+
+
+def record_parked_rejected(scope: str) -> None:
+    PARKED_QUERIES_REJECTED.labels(settings.replica_id, scope).inc()
 
 
 def record_compute_unavailable(reason: str | None) -> None:

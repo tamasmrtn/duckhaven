@@ -20,6 +20,7 @@ import logging
 import secrets
 import time
 import uuid
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 
 import sqlalchemy as sa
@@ -497,6 +498,71 @@ async def ensure_result_host(db: AsyncSession, agent: Agent) -> str | None:
     return host
 
 
+async def _parked_oldest_first(db: AsyncSession, *conditions) -> AsyncIterator[Query]:
+    """Parked runs matching ``conditions``, oldest first, a page at a time.
+
+    First come, first served: a burst parked during a cold start is dispatched in the
+    order it arrived, rather than in whatever order the database returns rows. Pages
+    are keyed on ``(started_at, id)``, not offset: each run is claimed, and so leaves
+    the result set, as it is handled, and a run the caller skips (another pool's) would
+    otherwise be read again on every pass. The key is read before the page is
+    yielded, because the caller commits between runs and that expires them.
+    """
+    after: tuple | None = None
+    while True:
+        stmt = (
+            sa.select(Query)
+            .where(*conditions)
+            .order_by(Query.started_at, Query.id)
+            .limit(settings.compute_bind_batch_size)
+        )
+        if after is not None:
+            stmt = stmt.where(sa.tuple_(Query.started_at, Query.id) > after)
+        page = (await db.execute(stmt)).scalars().all()
+        if not page:
+            return
+        after = (page[-1].started_at, page[-1].id)
+        for query in page:
+            yield query
+
+
+async def assert_parked_capacity(db: AsyncSession, workspace_id: uuid.UUID) -> None:
+    """Refuse to park one more run when too many are already waiting for compute.
+
+    Counts runs that are ``queued`` with no agent, per workspace and across the
+    deployment, and raises ``ComputeQueueFull`` once either cap is reached. Scheduled
+    runs neither count nor are refused: the schedules bound them, and a burst of them
+    must not shut interactive users out. Approximate under concurrency, as the counts
+    are not locked.
+    """
+    # Lazy imports break the query <-> compute import cycle at module load.
+    from api.metrics import record_parked_rejected
+    from api.services.query import ComputeQueueFull
+
+    per_workspace = settings.compute_queue_max_per_workspace
+    total = settings.compute_queue_max_total
+    if not per_workspace and not total:
+        return
+    parked = (
+        sa.select(sa.func.count())
+        .select_from(Query)
+        .where(
+            Query.agent_id.is_(None),
+            Query.status == "queued",
+            sa.or_(Query.origin.is_(None), Query.origin != "scheduled"),
+        )
+    )
+    if per_workspace:
+        waiting = (await db.execute(parked.where(Query.workspace_id == workspace_id))).scalar_one()
+        if waiting >= per_workspace:
+            record_parked_rejected("workspace")
+            raise ComputeQueueFull("workspace")
+    if total:
+        if (await db.execute(parked)).scalar_one() >= total:
+            record_parked_rejected("global")
+            raise ComputeQueueFull("global")
+
+
 async def bind_queued_work(db: AsyncSession, agent: Agent) -> int:
     """Dispatch queued, agent-less elastic queries this agent can now serve.
 
@@ -514,30 +580,23 @@ async def bind_queued_work(db: AsyncSession, agent: Agent) -> int:
     # Lazy import breaks the query <-> compute import cycle at module load.
     from api.services.query import dispatch_query
 
-    queued = (
-        (
-            await db.execute(
-                sa.select(Query).where(
-                    Query.agent_id.is_(None),
-                    # `describe`: a column lookup that started compute parks the
-                    # same way (query.run_internal_query).
-                    Query.origin.in_(("elastic", "describe")),
-                    Query.status == "queued",
-                    # A run parked on a named agent (the workspace default) is that
-                    # agent's alone, whichever pool agent happens to register first.
-                    Query.requested_agent_id.is_(None),
-                )
-            )
-        )
-        .scalars()
-        .all()
+    queued = _parked_oldest_first(
+        db,
+        Query.agent_id.is_(None),
+        # `describe`: a column lookup that started compute parks the same way
+        # (query.run_internal_query).
+        Query.origin.in_(("elastic", "describe")),
+        Query.status == "queued",
+        # A run parked on a named agent (the workspace default) is that agent's alone,
+        # whichever pool agent happens to register first.
+        Query.requested_agent_id.is_(None),
     )
 
     bound = 0
     # One lookup per workspace rather than per query: every query for a workspace
     # resolves to the same pool key, and a cold start can park dozens of runs.
     pool_keys: dict[uuid.UUID, str | None] = {}
-    for query in queued:
+    async for query in queued:
         if query.workspace_id not in pool_keys:
             workspace = await db.get(Workspace, query.workspace_id)
             pool_keys[query.workspace_id] = (
@@ -613,7 +672,8 @@ async def bind_pending_sessions(db: AsyncSession, agent: Agent) -> int:
     pending = (
         (
             await db.execute(
-                sa.select(SqlSession).where(
+                sa.select(SqlSession)
+                .where(
                     SqlSession.agent_id.is_(None),
                     SqlSession.status == "pending",
                     sa.or_(
@@ -621,6 +681,7 @@ async def bind_pending_sessions(db: AsyncSession, agent: Agent) -> int:
                         SqlSession.requested_agent_id.is_(None),
                     ),
                 )
+                .order_by(SqlSession.created_at, SqlSession.id)
             )
         )
         .scalars()
@@ -704,22 +765,15 @@ async def bind_targeted_work(db: AsyncSession, agent: Agent) -> int:
     # Lazy import breaks the query <-> compute import cycle at module load.
     from api.services.query import dispatch_query
 
-    parked = (
-        (
-            await db.execute(
-                sa.select(Query).where(
-                    Query.agent_id.is_(None),
-                    Query.status == "queued",
-                    Query.requested_agent_id == agent.id,
-                )
-            )
-        )
-        .scalars()
-        .all()
+    parked = _parked_oldest_first(
+        db,
+        Query.agent_id.is_(None),
+        Query.status == "queued",
+        Query.requested_agent_id == agent.id,
     )
 
     bound = 0
-    for query in parked:
+    async for query in parked:
         claimed = await db.execute(
             sa.update(Query)
             .where(Query.id == query.id, Query.agent_id.is_(None))
@@ -783,23 +837,16 @@ async def bind_scheduled_work(db: AsyncSession, agent: Agent) -> int:
     # Lazy import breaks the query <-> compute import cycle at module load.
     from api.services.query import dispatch_query
 
-    parked = (
-        (
-            await db.execute(
-                sa.select(Query).where(
-                    Query.agent_id.is_(None),
-                    Query.origin == "scheduled",
-                    Query.status == "queued",
-                    Query.schedule_id.isnot(None),
-                )
-            )
-        )
-        .scalars()
-        .all()
+    parked = _parked_oldest_first(
+        db,
+        Query.agent_id.is_(None),
+        Query.origin == "scheduled",
+        Query.status == "queued",
+        Query.schedule_id.isnot(None),
     )
 
     bound = 0
-    for query in parked:
+    async for query in parked:
         schedule = await db.get(Schedule, query.schedule_id)
         if schedule is None:
             continue

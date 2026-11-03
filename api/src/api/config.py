@@ -333,6 +333,30 @@ class Settings(BaseSettings):
     # Cap on concurrent elastic agents per pool_key; ensure_agent will not
     # provision beyond it (a cost guardrail). Phase 1 keeps this at 1.
     elastic_max_agents_per_pool: int = 1
+    # Work parked waiting for compute to take it (queued, no agent yet). A cold start
+    # parks a burst of runs; a stuck client or a looping assistant could park
+    # thousands, each re-read by the reaper and every binder pass. Past either cap a
+    # new run is refused with 429 (this workspace's cap) or 503 (the global one) and a
+    # Retry-After, instead of piling up. 0 means unlimited. Approximate under
+    # concurrency: replicas count independently, so a burst can overshoot a little.
+    compute_queue_max_per_workspace: int = Field(default=100, ge=0)
+    compute_queue_max_total: int = Field(default=500, ge=0)
+    # How long a parked run may wait before the reaper fails it. Unset, it is the
+    # provisioning deadline, which is the longest an agent can be on its way. Below
+    # that, a run can fail while the agent it waits for is still starting.
+    compute_queue_wait_timeout_s: float | None = Field(default=None, gt=0)
+    # How many parked runs are bound per pass when an agent registers, oldest first.
+    # Binding is serial and the agent's own admission queue is 100 deep, so one pass
+    # should not hand it more than it can take.
+    compute_bind_batch_size: int = Field(default=50, ge=1)
+
+    @property
+    def compute_queue_wait_s(self) -> float:
+        """The wait a parked run gets before it is failed, whichever way it is set."""
+        if self.compute_queue_wait_timeout_s is not None:
+            return self.compute_queue_wait_timeout_s
+        return self.elastic_provisioning_deadline_s
+
     # Size used when nothing names one: pool-triggered provisioning, and a restart
     # of an agent whose row predates per-agent sizing. Provider-independent -- an
     # elastic agent is the same container everywhere, and the platform ceiling is

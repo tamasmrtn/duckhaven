@@ -291,6 +291,37 @@ async def test_an_offline_workspace_default_is_reported_by_name(db_session, work
     assert isinstance(exc.value, query_service.AgentUnavailable)
 
 
+async def test_a_describe_is_refused_when_too_many_runs_already_wait(
+    db_session, workspace, user, monkeypatch
+):
+    monkeypatch.setattr(settings, "elastic_compute_enabled", True)
+    monkeypatch.setattr(settings, "compute_queue_max_per_workspace", 1)
+    db_session.add(
+        Query(
+            workspace_id=workspace.id,
+            agent_id=None,
+            sql="SELECT 1",
+            status="queued",
+            origin="elastic",
+        )
+    )
+    await db_session.commit()
+
+    with pytest.raises(query_service.ComputeQueueFull) as exc:
+        await query_service.run_internal_query(
+            db_session,
+            workspace=workspace,
+            user_id=user.id,
+            sql="DESCRIBE SELECT 1",
+            origin="describe",
+            wait_s=0.1,
+        )
+    assert exc.value.scope == "workspace"
+    # Nothing was parked for it, and no compute was started.
+    rows = (await db_session.execute(select(Query))).scalars().all()
+    assert [q.sql for q in rows] == ["SELECT 1"]
+
+
 async def test_without_elastic_compute_no_agent_is_unavailable(db_session, workspace, user):
     with pytest.raises(query_service.AgentUnavailable):
         await query_service.run_internal_query(

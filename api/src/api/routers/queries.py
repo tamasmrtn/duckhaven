@@ -422,6 +422,34 @@ async def _fail_unplaced(
     return error
 
 
+async def _assert_queue_has_room(
+    db: AsyncSession, workspace, user_id: uuid.UUID, body: QueryCreate
+) -> None:
+    """Refuse to park a run when too many already wait for compute.
+
+    Recorded as a failed run, committed before the error is raised, so History shows
+    the attempt as it does for any other run that found no compute.
+    """
+    try:
+        await compute_service.assert_parked_capacity(db, workspace.id)
+    except query_service.ComputeQueueFull as exc:
+        failed = Query(
+            workspace_id=workspace.id,
+            user_id=user_id,
+            sql=body.sql,
+            timeout_s=body.timeout_s,
+            active_catalog=body.catalog,
+            status="failed",
+            error=str(exc),
+            finished_at=datetime.now(UTC),
+        )
+        db.add(failed)
+        await db.commit()
+        error = query_service.compute_queue_full_error(exc.scope)
+        error.detail["query_id"] = str(failed.id)
+        raise error from None
+
+
 async def _stamp_saved_query_run(db: AsyncSession, workspace, saved_query_id) -> None:
     """Record that a saved query was just run.
 
@@ -476,6 +504,7 @@ async def _create_starting_query(
         assert_restartable(agent)
     except RuntimeRetired as exc:
         raise _runtime_retired(exc) from None
+    await _assert_queue_has_room(db, workspace, user_id, body)
     await _stamp_saved_query_run(db, workspace, body.saved_query_id)
     query = Query(
         workspace_id=workspace.id,
@@ -534,6 +563,8 @@ async def _create_elastic_query(
     not picked again here: a second pick could disagree with the first and with the
     cache lookup made from it. With ``allow_scale_out`` false nothing is provisioned.
     """
+    if agent is None:
+        await _assert_queue_has_room(db, workspace, user_id, body)
     await _stamp_saved_query_run(db, workspace, body.saved_query_id)
     query = Query(
         workspace_id=workspace.id,
@@ -740,6 +771,8 @@ async def describe_query(
         ) from exc
     except query_service.DefaultComputeUnavailable as exc:
         raise query_service.compute_unavailable_error(exc.decision) from exc
+    except query_service.ComputeQueueFull as exc:
+        raise query_service.compute_queue_full_error(exc.scope) from exc
     except query_service.AgentUnavailable as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

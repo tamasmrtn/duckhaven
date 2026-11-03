@@ -659,3 +659,51 @@ async def test_stranded_sweep_covers_a_targeted_interactive_run(
 
     async with session_factory() as db:
         assert (await db.get(Query, query_id)).status == "failed"
+
+
+async def test_the_parked_run_wait_has_its_own_setting(session_factory, elastic_on, monkeypatch):
+    """Unset it is the provisioning deadline, as it always was; set, it bounds how long a
+    parked run waits independently of how long an agent may take to come up."""
+    monkeypatch.setattr(settings, "elastic_provisioning_deadline_s", 300.0)
+    monkeypatch.setattr(settings, "compute_queue_wait_timeout_s", 30.0)
+
+    async with session_factory() as db:
+        ws, _ = await seed_workspace(db, user_id=uuid.uuid4())
+        waited = Query(
+            workspace_id=ws.id,
+            agent_id=None,
+            sql="SELECT 1",
+            status="queued",
+            origin="elastic",
+            started_at=_ago(60),
+        )
+        fresh = Query(
+            workspace_id=ws.id,
+            agent_id=None,
+            sql="SELECT 2",
+            status="queued",
+            origin="elastic",
+            started_at=_ago(5),
+        )
+        db.add_all([waited, fresh])
+        await db.commit()
+        waited_id, fresh_id = waited.id, fresh.id
+
+    result = await reaper.run_cycle(session_factory)
+    assert result["stranded_queries_failed"] == 1
+
+    async with session_factory() as db:
+        failed = await db.get(Query, waited_id)
+        assert failed.status == "failed"
+        # The phrase the failure classifier keys on.
+        assert failed.error == "No compute became available for this run."
+        assert (await db.get(Query, fresh_id)).status == "queued"
+
+
+async def test_the_parked_run_wait_defaults_to_the_provisioning_deadline(monkeypatch):
+    monkeypatch.setattr(settings, "elastic_provisioning_deadline_s", 123.0)
+    monkeypatch.setattr(settings, "compute_queue_wait_timeout_s", None)
+    assert settings.compute_queue_wait_s == 123.0
+
+    monkeypatch.setattr(settings, "compute_queue_wait_timeout_s", 45.0)
+    assert settings.compute_queue_wait_s == 45.0

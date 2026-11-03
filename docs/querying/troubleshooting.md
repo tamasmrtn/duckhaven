@@ -80,6 +80,16 @@ The assistant and MCP never start compute, so this is what they report. The answ
 **What to do.** Ask a workspace owner to set a [default compute](../access/workspaces.md#default-compute) in
 **Settings**, or start an agent from **Compute**.
 
+## "Too many queries are already waiting for compute"
+
+**What it means.** More queries are waiting for
+[elastic compute](../compute/elastic-compute.md#work-waiting-for-compute) to start than the limits allow, so this one
+was refused instead of joining the wait. The answer is `compute_queue_full`: **429** when your workspace is at its
+limit, **503** when the whole deployment is. The refused query is recorded as failed.
+
+**What to do.** Retry after the `Retry-After` seconds. If it keeps happening, compute is not starting fast enough for
+the load: ask an operator to keep an agent running, or to raise `COMPUTE_QUEUE_MAX_PER_WORKSPACE`.
+
 ## "Compute is starting; retry shortly."
 
 **What it means.** [Elastic compute](../compute/elastic-compute.md) is starting an agent, and it did not come up within

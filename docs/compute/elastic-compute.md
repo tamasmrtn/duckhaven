@@ -98,6 +98,19 @@ case that cannot park and answer, because a session open is *synchronous*: it ha
 caller can immediately run statements on. It therefore blocks while compute starts, and the caller chooses how that wait
 ends — see [Cold start](../querying/sql-sessions.md#cold-start).
 
+### Work waiting for compute
+
+A query that finds no agent ready is parked `queued` until one takes it. Three limits keep that wait bounded:
+
+- **A cap on how many wait.** A workspace may have `COMPUTE_QUEUE_MAX_PER_WORKSPACE` queries waiting (100 by default),
+  and the deployment `COMPUTE_QUEUE_MAX_TOTAL` (500). Past a cap a new query is refused with `compute_queue_full`:
+  **429** for the workspace cap, **503** for the deployment one, each with a `Retry-After`. The refused attempt is
+  recorded as a failed query. Scheduled runs neither count nor are refused. A query an agent takes at once never waits,
+  so it is never refused.
+- **A limit on how long.** A waiting query is failed after `COMPUTE_QUEUE_WAIT_TIMEOUT_S`, which is the provisioning
+  deadline unless you set it.
+- **An order.** When an agent registers, the waiting queries are dispatched oldest first.
+
 ### A workspace's default compute
 
 A workspace owner can choose one agent as the workspace's [default compute](../access/workspaces.md#default-compute).
@@ -140,6 +153,8 @@ A cold start is time work spends waiting for an agent, and these [metrics](../op
   `scheduled`.
 - `duckhaven_stranded_work_failed_total` counts what the reaper gave up on, and `duckhaven_compute_unavailable_total`
   counts refusals by `reason`: the default compute's state, or `no_compute` when the workspace has none.
+- `duckhaven_parked_queries_rejected_total` counts queries refused because a cap was reached; `scope` is `workspace` or
+  `global`. A steady rate means more work is waiting for compute than the limits allow.
 
 ### Scaling in
 

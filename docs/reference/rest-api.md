@@ -280,7 +280,8 @@ When the workspace has a [default compute](../access/workspaces.md#default-compu
 query runs there, starts it if it is a stopped elastic agent, and otherwise fails with **503** or **422**
 `default_compute_unavailable`; the `details` name the agent and give the `reason`. A call with `scale_out: false`, and
 every call from the assistant account, answers **503** `no_compute_available` when nothing is running and the workspace
-has no default.
+has no default. When too many queries already wait for compute, the call answers **429** or **503** `compute_queue_full`
+with a `Retry-After`; see [Work waiting for compute](../compute/elastic-compute.md#work-waiting-for-compute).
 
 ### Query parameters
 

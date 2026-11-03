@@ -247,6 +247,10 @@ Postgres advisory lock, like the scheduler, so leave it enabled on every replica
 | `ELASTIC_PROVISIONING_DEADLINE_S` | `300` | Fail an agent that never dials home within this window and clean up its instance. |
 | `ELASTIC_REAPER_TICK_S` | `30` | How often the scale-in and leak-reconciliation loop runs. |
 | `ELASTIC_MAX_AGENTS_PER_POOL` | `1` | Cap on concurrent elastic agents per storage shape. A cost guardrail. |
+| `COMPUTE_QUEUE_MAX_PER_WORKSPACE` | `100` | Most queries one workspace may have waiting for compute to start. Past it a new query is refused with `compute_queue_full` (429). `0` is unlimited. Scheduled runs are exempt. |
+| `COMPUTE_QUEUE_MAX_TOTAL` | `500` | The same cap across the whole deployment, answered with 503. `0` is unlimited. Counted without a lock, so replicas can overshoot slightly. |
+| `COMPUTE_QUEUE_WAIT_TIMEOUT_S` | unset | How long a waiting query may wait before it is failed with "No compute became available for this run." Unset, it is `ELASTIC_PROVISIONING_DEADLINE_S`. Below that, a query can fail while its agent is still starting. |
+| `COMPUTE_BIND_BATCH_SIZE` | `50` | How many waiting queries are read per pass when an agent registers. They are dispatched oldest first whatever the size. |
 | `ELASTIC_DEFAULT_CPU` | `2` | vCPU per agent when nothing names a size — pool-triggered provisioning, and restarting an agent whose row predates per-agent sizing. Provider-independent; the admin UI picks explicitly per agent. |
 | `ELASTIC_DEFAULT_MEMORY_GB` | `4` | Memory (GiB) per agent, same. Becomes a real limit the agent reads from its own cgroup to advertise capacity. Fractional values are exact. |
 | `ELASTIC_AGENT_ENV` | `{}` | JSON object of extra environment for every provisioned agent. A static agent's environment is written by whoever runs it; a provisioned one gets only what the backend sets, so this is how you carry over something you tuned — `{"SANDBOX_DISABLED_FILESYSTEMS": "HTTPFileSystem"}`. Applied last, so it can override the backend's own variables. Agent tracing is forwarded automatically from `OTEL_EXPORTER_OTLP_ENDPOINT` and needs no entry here. |

@@ -39,14 +39,17 @@ that names an elastic agent keeps running on that agent's runtime, because a res
 ## What gets picked when nobody chooses
 
 Some work doesn't name an agent: a pool run, a background maintenance probe, the assistant, a query sent without an
-`agent_id`. For that work DuckHaven picks a connected agent that can serve the workspace, and prefers:
+`agent_id`. If the workspace has a [default compute](elastic-compute.md#a-workspaces-default-compute), that work runs on
+it whatever its runtime, except maintenance probes, which ignore it. Otherwise DuckHaven picks a connected agent that
+can serve the workspace, and prefers:
 
 1. the default runtime,
 2. then other generally available runtimes,
 3. then deprecated ones.
 
 An agent on a **beta** runtime is never picked this way. Work reaches it only by naming it, so trying a new DuckDB
-line never changes where anyone else's queries run.
+line never changes where anyone else's queries run. Making a beta agent a workspace's default is naming it, and moves
+that workspace's unnamed work there.
 
 ## Lifecycle
 

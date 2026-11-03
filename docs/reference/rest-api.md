@@ -255,7 +255,8 @@ it exists.
 |---|---|---|
 | `sql` | required | One statement. See [SQL support](sql-support.md) for what is allowed |
 | `catalog` | the workspace's default | The catalog that unqualified table names resolve in |
-| `agent_id` | chosen by the server | Run on this agent; you need the `use` tier on it |
+| `agent_id` | the workspace's default compute, else chosen by the server | Run on this agent; you need the `use` tier on it, unless it is the workspace's default |
+| `scale_out` | `true` | `false` never adds an agent to the elastic pool for this query. A stopped default compute can still be started. It only restricts the call |
 | `timeout_s` | `600` | Cancel the query after this many seconds |
 | `wait_timeout_s` | not sent | Hold the response until the query finishes, up to this many seconds (at most 60) |
 | `parameters` | – | Values for placeholders; see [Query parameters](#query-parameters) |
@@ -274,6 +275,12 @@ connected". The attempt is recorded as a failed query, so it appears in history;
 
 With [elastic compute](../compute/elastic-compute.md) and no agent running, the query is recorded `queued` with a
 `null` `agent_id`, and runs once compute starts. You poll it as usual.
+
+When the workspace has a [default compute](../access/workspaces.md#default-compute) and the call names no agent, the
+query runs there, starts it if it is a stopped elastic agent, and otherwise fails with **503** or **422**
+`default_compute_unavailable`; the `details` name the agent and give the `reason`. A call with `scale_out: false`, and
+every call from the assistant account, answers **503** `no_compute_available` when nothing is running and the workspace
+has no default.
 
 ### Query parameters
 
@@ -382,7 +389,10 @@ table = pa.ipc.open_stream(resp.content).read_all()
 
 A query can be answered from the [result cache](../querying/result-cache.md) instead of running. `use_cache: false`
 opts out on a query, a session statement, or a whole session when sent to `POST …/sql/sessions`. A workspace owner turns
-the cache off for a workspace with `result_cache_enabled` on `PATCH /api/workspaces/{workspace}`.
+the cache off for a workspace with `result_cache_enabled` on `PATCH /api/workspaces/{workspace}`. The same call sets
+`default_agent_id`, the workspace's [default compute](../access/workspaces.md#default-compute); `null` clears it. The
+workspace shows it as `default_agent_id` and `default_agent` (`id`, `name`, `provider`, `lifecycle`, `status`) to every
+member.
 
 | Field | Meaning |
 |---|---|

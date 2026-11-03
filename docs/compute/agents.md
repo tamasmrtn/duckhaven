@@ -12,9 +12,11 @@ WebSocket, so the control plane needs no inbound route to it.
 
 ## Transparent compute
 
-Users pick **which agent runs each query** from the worksheet's engine picker. There is no distributed query planner
-and no cost-based routing — compute is explicit and transparent. Add an agent host when you need more capacity; see
-[Scaling compute](scaling.md).
+Users pick **which agent runs each query** from the worksheet's engine picker. Work that names no agent, such as the
+assistant, MCP and SQL sessions, runs on the workspace's
+[default compute](elastic-compute.md#a-workspaces-default-compute) when its owner set one. There is no distributed
+query planner and no cost-based routing — compute is explicit and transparent. Add an agent host when you need more
+capacity; see [Scaling compute](scaling.md).
 
 ## Cattle that dial home
 

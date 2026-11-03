@@ -54,9 +54,31 @@ after the server or the agent restarted.
 
 ## "agent_id is required"
 
-**What it means.** No agent is connected, elastic compute is off, and the request named no agent.
+**What it means.** No agent is connected, elastic compute is off, the workspace has no default compute, and the request
+named no agent.
 
-**What to do.** Start or connect an agent; see [Add an agent](../compute/add-agent.md).
+**What to do.** Start or connect an agent, or ask a workspace owner to set a
+[default compute](../access/workspaces.md#default-compute); see [Add an agent](../compute/add-agent.md).
+
+## "Default compute '⟨name⟩' …"
+
+**What it means.** The workspace's [default compute](../access/workspaces.md#default-compute) cannot take the work, and
+DuckHaven does not choose another agent. The message names the agent and says why: it is stopped and this request
+cannot start it, still starting, offline, on a retired runtime, or missing an extension a catalog needs. The answer is
+`default_compute_unavailable`; its `reason` field carries the same cause. A reason that retrying can fix is **503** with
+a `Retry-After` header; one it cannot is **422**.
+
+**What to do.** For a 503, retry, or start the agent from **Compute**. For a 422, ask a workspace owner to change the
+default in **Settings**, or fix the agent. See
+[Elastic compute](../compute/elastic-compute.md#a-workspaces-default-compute) for every reason.
+
+## "No compute is running for this workspace"
+
+**What it means.** The request may not start compute, no agent is connected, and the workspace has no default compute.
+The assistant and MCP never start compute, so this is what they report. The answer is **503** `no_compute_available`.
+
+**What to do.** Ask a workspace owner to set a [default compute](../access/workspaces.md#default-compute) in
+**Settings**, or start an agent from **Compute**.
 
 ## "Compute is starting; retry shortly."
 

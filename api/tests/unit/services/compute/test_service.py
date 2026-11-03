@@ -1282,3 +1282,62 @@ async def test_a_page_of_runs_for_another_pool_does_not_stall_binding(
         assert await service.bind_queued_work(db, agent) == 3
 
     assert dispatched == ["SELECT 0", "SELECT 1", "SELECT 2"]
+
+
+async def test_callers_restarting_a_stopped_agent_together_start_it_once(
+    session_factory, elastic_on, null_backend
+):
+    """A default compute is shared, so the first requests after it idles out arrive
+    together, each having loaded the agent while it was still stopped. Only one may
+    provision it; the rest join that start. Eight such callers used to leave eight
+    containers behind for one agent."""
+    from api.services.compute import service
+
+    async with session_factory() as db:
+        agent = await service.provision_elastic_agent(
+            db, name="shared", cpu=1.0, memory_gb=1.0, idle_timeout_s=None
+        )
+        await service.terminate_agent(db, agent, reason="idle")
+        agent_id = agent.id
+    null_backend._instances.clear()
+
+    # Every caller loads the agent before any of them has restarted it.
+    sessions = [session_factory() for _ in range(4)]
+    dbs = [await s.__aenter__() for s in sessions]
+    try:
+        loaded = [await db.get(Agent, agent_id) for db in dbs]
+        assert {a.lifecycle for a in loaded} == {"terminated"}
+
+        results = [await service.restart_elastic_agent(db, a) for db, a in zip(dbs, loaded)]
+    finally:
+        for s in sessions:
+            await s.__aexit__(None, None, None)
+
+    assert all(r is not None for r in results), "a caller that joined the start was told it failed"
+    assert {r.lifecycle for r in results} == {"provisioning"}
+    assert len(null_backend._instances) == 1, "more than one instance was provisioned"
+    assert len({r.instance_id for r in results}) == 1
+
+
+async def test_a_restart_that_lost_the_claim_to_a_failed_start_reports_nothing_started(
+    session_factory, elastic_on, null_backend
+):
+    """If whoever won the claim has since failed too, the loser must not claim success."""
+    from api.services.compute import service
+
+    async with session_factory() as db:
+        agent = await service.provision_elastic_agent(
+            db, name="flaky", cpu=1.0, memory_gb=1.0, idle_timeout_s=None
+        )
+        await service.terminate_agent(db, agent, reason="idle")
+        agent_id = agent.id
+
+    async with session_factory() as stale, session_factory() as other:
+        stale_copy = await stale.get(Agent, agent_id)
+        winner = await other.get(Agent, agent_id)
+        winner.lifecycle = "failed"  # the other caller's start failed after claiming
+        await other.commit()
+        # The stale copy still says terminated; the claim now matches the failed row, so
+        # this is simply a normal restart of a failed agent, not a lost race.
+        restarted = await service.restart_elastic_agent(stale, stale_copy)
+    assert restarted is not None and restarted.lifecycle == "provisioning"

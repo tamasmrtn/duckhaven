@@ -299,18 +299,35 @@ async def restart_elastic_agent(db: AsyncSession, agent: Agent) -> Agent | None:
         return None
     runtime = assert_restartable(agent)
 
+    # Claimed in one statement that only matches a stopped agent. Callers arriving
+    # together (a default compute shared by a workspace, the assistant and MCP all
+    # wake it at once) each loaded the agent while it was still stopped, so the check
+    # above cannot tell them apart; only the first update finds a stopped row. The
+    # rest find it already starting and join that start, instead of each provisioning
+    # a container of their own.
     now = datetime.now(tz=UTC)
-    agent.requested_runtime_id = runtime.id
-    agent.lifecycle = "provisioning"
-    agent.status = "unavailable"
-    # The last instance's report describes that instance, not the next one.
-    agent.capabilities = None
-    agent.provisioned_at = now
-    agent.terminated_at = None
-    agent.last_active_at = None
-    agent.instance_id = _instance_id(agent.id)
+    claimed = await db.execute(
+        sa.update(Agent)
+        .where(Agent.id == agent.id, Agent.lifecycle.in_(("terminated", "failed")))
+        .values(
+            requested_runtime_id=runtime.id,
+            lifecycle="provisioning",
+            status="unavailable",
+            # The last instance's report describes that instance, not the next one.
+            capabilities=None,
+            provisioned_at=now,
+            terminated_at=None,
+            last_active_at=None,
+            instance_id=_instance_id(agent.id),
+        )
+    )
+    if claimed.rowcount == 0:
+        await db.rollback()
+        await db.refresh(agent)
+        return agent if agent.lifecycle in ("provisioning", "running") else None
     record_lifecycle_event(db, agent.id, "provisioning", reason="restart")
     await db.commit()
+    await db.refresh(agent)
     return await _mint_and_provision(
         db,
         agent,

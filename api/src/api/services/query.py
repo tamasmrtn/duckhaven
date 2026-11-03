@@ -1048,7 +1048,9 @@ def compute_unavailable_error(decision: ComputeDecision) -> HTTPException:
     may not add an agent.
     """
     from api.config import settings
+    from api.metrics import record_compute_unavailable
 
+    record_compute_unavailable(decision.reason)
     if decision.via_default and decision.agent is not None:
         permanent = decision.reason in ("incompatible", "runtime_retired")
         return HTTPException(

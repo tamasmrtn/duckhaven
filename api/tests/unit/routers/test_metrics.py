@@ -493,3 +493,175 @@ async def test_polaris_request_metrics_on_transport_error():
         )
         == before + 1
     )
+
+
+# --- compute wait, parked work and refusals --------------------------------------
+
+
+def _wait_count(origin: str, outcome: str) -> float:
+    return (
+        _value(
+            "duckhaven_query_compute_wait_seconds_count",
+            {"replica_id": RID, "origin": origin, "outcome": outcome},
+        )
+        or 0.0
+    )
+
+
+def test_a_wait_for_compute_is_observed_by_origin_and_outcome():
+    from datetime import timedelta
+
+    from api.metrics import record_compute_wait
+
+    before = _wait_count("scheduled", "bound")
+    record_compute_wait("scheduled", "bound", datetime.now(UTC) - timedelta(seconds=30))
+    assert _wait_count("scheduled", "bound") == before + 1
+    # Even an unlabelled origin is a series: interactive runs have no origin at all.
+    before = _wait_count("interactive", "failed")
+    record_compute_wait(None, "failed", datetime.now(UTC) - timedelta(seconds=2))
+    assert _wait_count("interactive", "failed") == before + 1
+
+
+def test_a_naive_submission_time_is_read_as_utc():
+    from api.metrics import record_compute_wait
+
+    before = _wait_count("describe", "bound")
+    record_compute_wait("describe", "bound", datetime.now(UTC).replace(tzinfo=None))
+    assert _wait_count("describe", "bound") == before + 1
+
+
+def test_a_missing_submission_time_observes_nothing():
+    from api.metrics import record_compute_wait
+
+    before = _wait_count("elastic", "bound")
+    record_compute_wait("elastic", "bound", None)
+    assert _wait_count("elastic", "bound") == before
+
+
+async def test_work_that_waited_for_the_default_to_start_is_timed(db_session, monkeypatch):
+    """The wait a cold start puts on interactive work was invisible: the existing
+    histogram counts the agent's admission queue and skips every parked origin."""
+    from conftest import seed_workspace
+
+    from api.services.compute import service as compute_service
+
+    async def fake_dispatch(db, query, **kwargs):
+        return None
+
+    monkeypatch.setattr("api.services.query.dispatch_query", fake_dispatch)
+    ws, _ = await seed_workspace(db_session, user_id=uuid.uuid4())
+    agent = Agent(
+        name="starting",
+        status="healthy",
+        provider="null",
+        lifecycle="running",
+        instance_id="dh-metrics",
+        capabilities={"duckdb_version": "1.5.5", "extensions": ["httpfs"]},
+    )
+    db_session.add(agent)
+    await db_session.flush()
+    db_session.add(
+        Query(
+            workspace_id=ws.id,
+            agent_id=None,
+            requested_agent_id=agent.id,
+            sql="SELECT 1",
+            status="queued",
+        )
+    )
+    await db_session.commit()
+
+    before = _wait_count("interactive", "bound")
+    assert await compute_service.bind_targeted_work(db_session, agent) == 1
+    assert _wait_count("interactive", "bound") == before + 1
+
+
+async def test_parked_queries_are_counted_by_kind_with_the_oldest_age(
+    client: AsyncClient, db_session
+):
+    from datetime import timedelta
+
+    from api.metrics import set_reap_leader
+
+    now = datetime.now(UTC)
+    for origin, requested, age in (
+        ("elastic", None, 120),
+        ("elastic", None, 30),
+        ("describe", None, 10),
+        (None, uuid.uuid4(), 45),
+        ("scheduled", None, 5),
+    ):
+        db_session.add(
+            Query(
+                workspace_id=uuid.uuid4(),
+                agent_id=None,
+                requested_agent_id=requested,
+                sql="SELECT 1",
+                status="queued",
+                origin=origin,
+                started_at=now - timedelta(seconds=age),
+            )
+        )
+    # Not parked: it has an agent, or it is not queued.
+    db_session.add(
+        Query(workspace_id=uuid.uuid4(), agent_id=uuid.uuid4(), sql="SELECT 2", status="queued")
+    )
+    db_session.add(Query(workspace_id=uuid.uuid4(), agent_id=None, sql="SELECT 3", status="done"))
+    await db_session.commit()
+
+    set_reap_leader(True)
+    try:
+        await client.get("/metrics")
+    finally:
+        set_reap_leader(False)
+
+    assert _value("duckhaven_queries_parked", {"kind": "pool"}) == 3
+    assert _value("duckhaven_queries_parked", {"kind": "targeted"}) == 1
+    assert _value("duckhaven_queries_parked", {"kind": "scheduled"}) == 1
+    assert 119 <= _value("duckhaven_queries_parked_oldest_age_seconds", {"kind": "pool"}) < 180
+    assert 44 <= _value("duckhaven_queries_parked_oldest_age_seconds", {"kind": "targeted"}) < 100
+
+
+async def test_parked_queries_are_reported_by_the_reap_leader_only(client: AsyncClient, db_session):
+    """The count is DB-wide; every replica reporting it would multiply it."""
+    db_session.add(Query(workspace_id=uuid.uuid4(), agent_id=None, sql="SELECT 1", status="queued"))
+    await db_session.commit()
+
+    await client.get("/metrics")  # not the leader
+    assert _value("duckhaven_queries_parked", {"kind": "pool"}) is None
+
+
+def test_the_reapers_stranded_counts_are_exported():
+    from api.metrics import record_stranded_failed
+
+    def count(kind: str) -> float:
+        return (
+            _value("duckhaven_stranded_work_failed_total", {"replica_id": RID, "kind": kind}) or 0.0
+        )
+
+    queries, sessions = count("query"), count("session")
+    record_stranded_failed({"stranded_queries_failed": 3, "stranded_sessions_failed": 0, "idle": 9})
+    assert count("query") == queries + 3
+    assert count("session") == sessions  # a zero is not a sample
+
+
+def test_a_refusal_for_want_of_compute_is_counted_by_reason():
+    from api.models.agent import Agent as AgentRow
+    from api.services.query import ComputeDecision, Placement, compute_unavailable_error
+
+    def count(reason: str) -> float:
+        return (
+            _value("duckhaven_compute_unavailable_total", {"replica_id": RID, "reason": reason})
+            or 0.0
+        )
+
+    before = count("stopped")
+    compute_unavailable_error(
+        ComputeDecision(
+            Placement.UNAVAILABLE,
+            AgentRow(id=uuid.uuid4(), name="idle"),
+            via_default=True,
+            reason="stopped",
+        )
+    )
+    assert count("stopped") == before + 1

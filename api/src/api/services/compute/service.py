@@ -28,7 +28,7 @@ from opentelemetry.trace import Status, StatusCode
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.config import settings
-from api.metrics import record_agent_provision
+from api.metrics import record_agent_provision, record_compute_wait
 from api.models.agent import Agent
 from api.models.query import Query, SavedQuery, Schedule
 from api.models.sql_session import SqlSession
@@ -578,8 +578,10 @@ async def bind_queued_work(db: AsyncSession, agent: Agent) -> int:
                 **({} if query.timeout_s is None else {"timeout_s": query.timeout_s}),
             )
             bound += 1
+            record_compute_wait(query.origin, "bound", query.started_at)
         except Exception:
             logger.exception("Failed to bind queued query %s to agent %s", query.id, agent.id)
+            record_compute_wait(query.origin, "failed", query.started_at)
             query.status = "failed"
             query.error = "dispatch failed after provisioning"
             query.finished_at = datetime.now(tz=UTC)
@@ -676,8 +678,10 @@ async def bind_pending_sessions(db: AsyncSession, agent: Agent) -> int:
             if not await dispatch_open_session(db, session, catalogs):
                 raise RuntimeError("agent not connected")
             bound += 1
+            record_compute_wait("sql_session", "bound", session.created_at)
         except Exception:
             logger.exception("Failed to open pending session %s on agent %s", session.id, agent.id)
+            record_compute_wait("sql_session", "failed", session.created_at)
             session.status = "failed"
             session.error = "open dispatch failed after the agent started"
             session.close_reason = "failed"
@@ -737,6 +741,7 @@ async def bind_targeted_work(db: AsyncSession, agent: Agent) -> int:
                 **({} if query.timeout_s is None else {"timeout_s": query.timeout_s}),
             )
             bound += 1
+            record_compute_wait(query.origin, "bound", query.started_at)
         except AgentNotDispatchable as exc:
             # Known only now: a restarted agent advertises nothing until it registers,
             # so the refusal (a missing extension, a runtime that cannot open the
@@ -744,12 +749,14 @@ async def bind_targeted_work(db: AsyncSession, agent: Agent) -> int:
             logger.warning(
                 "Targeted query %s refused by agent %s: %s", query.id, agent.id, exc.detail
             )
+            record_compute_wait(query.origin, "failed", query.started_at)
             query.status = "failed"
             query.error = exc.detail
             query.finished_at = datetime.now(tz=UTC)
             query.agent_id = None
         except Exception:
             logger.exception("Failed to bind targeted query %s to agent %s", query.id, agent.id)
+            record_compute_wait(query.origin, "failed", query.started_at)
             query.status = "failed"
             query.error = "dispatch failed after the agent started"
             query.finished_at = datetime.now(tz=UTC)
@@ -828,8 +835,10 @@ async def bind_scheduled_work(db: AsyncSession, agent: Agent) -> int:
             # the scheduler's own dispatch path.
             await dispatch_query(db, query, principal_id=saved.updated_by if saved else None)
             bound += 1
+            record_compute_wait(query.origin, "bound", query.started_at)
         except Exception:
             logger.exception("Failed to bind scheduled query %s to agent %s", query.id, agent.id)
+            record_compute_wait(query.origin, "failed", query.started_at)
             query.status = "failed"
             query.error = "dispatch failed after the agent started"
             query.finished_at = datetime.now(tz=UTC)

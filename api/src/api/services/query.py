@@ -9,9 +9,10 @@ import tempfile
 import threading
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from enum import StrEnum
 from typing import Any
 
 import duckdb
@@ -829,7 +830,7 @@ def decode_parquet_page(
         os.unlink(path)
 
 
-async def pick_agent_for(
+async def _auto_pick(
     db: AsyncSession,
     workspace: Workspace,
     *,
@@ -907,6 +908,242 @@ async def pick_agent_for(
     return min(ranked, key=lambda ranked_agent: ranked_agent[0])[1]
 
 
+class Placement(StrEnum):
+    """What to do with work that named no agent."""
+
+    USE = "use"  # an agent is connected and can take it now
+    RESTART = "restart"  # the default is a stopped elastic agent: park the run, start it
+    WAIT = "wait"  # the default is already starting: park the run, start nothing
+    SCALE_OUT = "scale_out"  # no default; park the run and add an agent to the elastic pool
+    UNAVAILABLE = "unavailable"  # nothing can take it; ``reason`` says why
+
+
+@dataclass(frozen=True)
+class ComputeDecision:
+    """Where work that named no agent should go, decided once per request.
+
+    ``agent`` is the target for USE, RESTART and WAIT, and the workspace default
+    (when there is one) for UNAVAILABLE. ``via_default`` is true whenever the
+    workspace default decided the outcome. ``refusal`` carries the dispatch error
+    for an ``incompatible`` default so its code and message survive to the response.
+    """
+
+    placement: Placement
+    agent: Agent | None = None
+    via_default: bool = False
+    reason: str | None = None
+    refusal: runtime_service.AgentNotDispatchable | None = None
+
+
+async def resolve_compute(
+    db: AsyncSession,
+    workspace: Workspace,
+    *,
+    principal_id: uuid.UUID | None = None,
+    for_session: bool = False,
+    allow_scale_out: bool = True,
+    allow_start: bool = True,
+    honor_default: bool = True,
+) -> ComputeDecision:
+    """Decide where work that named no agent runs. Read-only: nothing is started.
+
+    With no workspace default this is the old behaviour exactly: auto-pick a
+    connected agent the caller may use, else scale out the elastic pool when that is
+    allowed. With a default it is strict, as both Databricks (a Genie space's
+    warehouse) and Snowflake (an agent tool's warehouse) are: run on the default,
+    start it if it is a stopped elastic agent, join the start already in flight, and
+    otherwise say why not. It never picks another agent and never adds one to the
+    pool, because the owner chose this compute.
+
+    The default skips the caller's own agent grants (that is the embedded grant, see
+    ``agent_access.assert_agent_use``), so the caller must already be a member.
+    ``allow_scale_out=False`` is for callers that must never add an agent (the
+    assistant). ``allow_start=False`` is for background reads that should fail
+    rather than wake compute. ``honor_default=False`` is for housekeeping that has
+    no principal to embed a grant for.
+    """
+    from api.config import settings
+
+    default = (
+        await db.get(Agent, workspace.default_agent_id)
+        if honor_default and workspace.default_agent_id is not None
+        else None
+    )
+    if default is None:
+        agent = await _auto_pick(db, workspace, principal_id=principal_id, for_session=for_session)
+        if agent is not None:
+            return ComputeDecision(Placement.USE, agent)
+        if settings.elastic_compute_enabled and allow_scale_out and allow_start:
+            return ComputeDecision(Placement.SCALE_OUT)
+        return ComputeDecision(Placement.UNAVAILABLE, reason="no_compute")
+
+    def unavailable(reason: str, refusal=None) -> ComputeDecision:
+        return ComputeDecision(
+            Placement.UNAVAILABLE, default, via_default=True, reason=reason, refusal=refusal
+        )
+
+    if await is_agent_connected(db, default.id):
+        catalogs = await resolve_workspace_catalogs(db, workspace.id)
+        try:
+            await runtime_service.check_dispatchable(default, catalogs, for_session=for_session)
+        except runtime_service.AgentNotDispatchable as exc:
+            return unavailable("incompatible", exc)
+        return ComputeDecision(Placement.USE, default, via_default=True)
+    if default.provider is None:
+        return unavailable("disconnected")
+    if not settings.elastic_compute_enabled:
+        return unavailable("elastic_disabled")
+    if default.lifecycle == "provisioning":
+        if not allow_start:
+            return unavailable("starting")
+        return ComputeDecision(Placement.WAIT, default, via_default=True)
+    if default.lifecycle == "terminating":
+        return unavailable("stopping")
+    if default.lifecycle in ("terminated", "failed"):
+        try:
+            runtime_service.assert_restartable(default)
+        except runtime_service.RuntimeRetired:
+            return unavailable("runtime_retired")
+        if not allow_start:
+            return unavailable("stopped")
+        return ComputeDecision(Placement.RESTART, default, via_default=True)
+    return unavailable("disconnected")  # running, but its socket is gone
+
+
+_DEFAULT_UNAVAILABLE_TEXT = {
+    "stopped": "is stopped, and this request cannot start it",
+    "starting": "is still starting; retry shortly",
+    "stopping": "is shutting down; retry shortly",
+    "disconnected": "is not connected",
+    "elastic_disabled": "is not connected, and elastic compute is off so it cannot be started",
+    "runtime_retired": "runs a retired runtime and can no longer be started",
+    "start_failed": "could not be started",
+}
+
+_NO_COMPUTE_TEXT = (
+    "No compute is running for this workspace, and none can be started for this request. "
+    "A workspace owner can set a default compute in Settings."
+)
+
+
+def unavailable_message(decision: ComputeDecision) -> str:
+    """The sentence for an UNAVAILABLE decision, for errors and failed-run rows."""
+    if decision.agent is None or not decision.via_default:
+        return _NO_COMPUTE_TEXT
+    name = decision.agent.name
+    if decision.reason == "incompatible" and decision.refusal is not None:
+        return f"Default compute '{name}' cannot run this workspace: {decision.refusal.detail}"
+    return f"Default compute '{name}' " + _DEFAULT_UNAVAILABLE_TEXT.get(
+        decision.reason or "", "is unavailable"
+    )
+
+
+def compute_unavailable_error(decision: ComputeDecision) -> HTTPException:
+    """The HTTP error for an UNAVAILABLE decision.
+
+    A default that cannot run the workspace (``incompatible``, ``runtime_retired``)
+    is 422, because retrying cannot help; every other default failure is a 503 the
+    caller can retry. With no default the old codes are kept: ``agent_required`` when
+    elastic compute is off, ``no_compute_available`` when it is on but this request
+    may not add an agent.
+    """
+    from api.config import settings
+
+    if decision.via_default and decision.agent is not None:
+        permanent = decision.reason in ("incompatible", "runtime_retired")
+        return HTTPException(
+            status_code=(
+                status.HTTP_422_UNPROCESSABLE_CONTENT
+                if permanent
+                else status.HTTP_503_SERVICE_UNAVAILABLE
+            ),
+            detail={
+                "error": "default_compute_unavailable",
+                "detail": unavailable_message(decision),
+                "agent_id": str(decision.agent.id),
+                "agent_name": decision.agent.name,
+                "reason": decision.reason,
+                "cause": decision.refusal.code if decision.refusal is not None else decision.reason,
+            },
+            headers=None if permanent else {"Retry-After": "5"},
+        )
+    if settings.elastic_compute_enabled:
+        return HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error": "no_compute_available", "detail": _NO_COMPUTE_TEXT},
+            headers={"Retry-After": "5"},
+        )
+    return HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+        detail={"error": "agent_required", "detail": "agent_id is required"},
+    )
+
+
+class DefaultComputeUnavailable(AgentUnavailable):
+    """The workspace default cannot take the run. A subclass of ``AgentUnavailable``
+    so callers that only know that one keep their generic 503."""
+
+    def __init__(self, decision: ComputeDecision) -> None:
+        super().__init__(unavailable_message(decision))
+        self.decision = decision
+
+
+async def no_agent_error(
+    db: AsyncSession, workspace: Workspace, *, principal_id: uuid.UUID | None, fallback: str
+) -> HTTPException:
+    """The 503 for a caller that found no agent to run on.
+
+    Names the workspace default when that is why (so an owner reads "Default compute
+    'x' is stopped", not "no compatible agent"), else ``fallback``. Re-resolves, so it
+    belongs on the failure path only.
+    """
+    decision = await resolve_compute(
+        db, workspace, principal_id=principal_id, allow_scale_out=False, allow_start=False
+    )
+    if decision.via_default and decision.placement is Placement.UNAVAILABLE:
+        return compute_unavailable_error(decision)
+    return HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=fallback)
+
+
+async def no_agent_message(
+    db: AsyncSession, workspace: Workspace, *, principal_id: uuid.UUID | None, fallback: str
+) -> str:
+    """:func:`no_agent_error` for callers that record a message rather than raise."""
+    decision = await resolve_compute(
+        db, workspace, principal_id=principal_id, allow_scale_out=False, allow_start=False
+    )
+    if decision.via_default and decision.placement is Placement.UNAVAILABLE:
+        return unavailable_message(decision)
+    return fallback
+
+
+async def pick_agent_for(
+    db: AsyncSession,
+    workspace: Workspace,
+    *,
+    principal_id: uuid.UUID | None = None,
+    for_session: bool = False,
+    honor_default: bool = True,
+) -> Agent | None:
+    """The connected agent to run on now, or None.
+
+    The workspace default when it has one and it is connected, else the agent
+    ``_auto_pick`` ranks first. For callers that fail rather than start compute
+    (stats, previews, maintenance, exports, DDL). Callers that can start compute use
+    :func:`resolve_compute` and act on the placement.
+    """
+    decision = await resolve_compute(
+        db,
+        workspace,
+        principal_id=principal_id,
+        for_session=for_session,
+        allow_scale_out=False,
+        allow_start=False,
+        honor_default=honor_default,
+    )
+    return decision.agent if decision.placement is Placement.USE else None
+
+
 class ComputeStarting(Exception):
     """No agent could take an internal run in time; compute is starting for it."""
 
@@ -932,11 +1169,17 @@ async def run_internal_query(
     :class:`ComputeStarting` is raised; the compute keeps starting, so a retry
     lands on it. Grant and dispatch errors propagate as from ``dispatch_query``.
     """
-    from api.config import settings
     from api.services.compute import service as compute_service
 
+    decision: ComputeDecision | None = None
     if agent is None:
-        agent = await pick_agent_for(db, workspace, principal_id=user_id)
+        decision = await resolve_compute(db, workspace, principal_id=user_id)
+        if decision.placement is Placement.USE:
+            agent = decision.agent
+        elif decision.placement is Placement.UNAVAILABLE:
+            if decision.via_default:
+                raise DefaultComputeUnavailable(decision)
+            raise AgentUnavailable("No compatible agent is connected")
     if agent is not None:
         return await run_sync_query(
             db,
@@ -948,12 +1191,15 @@ async def run_internal_query(
             active_catalog=active_catalog,
             timeout_s=wait_s,
         )
-    if not settings.elastic_compute_enabled:
-        raise AgentUnavailable("No compatible agent is connected")
+    assert decision is not None  # an agent-less run always comes from a decision above
 
+    # RESTART and WAIT target the workspace default: the run names it, so only that
+    # agent may take it (`bind_targeted_work`), never whichever pool agent registers.
+    target = decision.agent if decision.placement in (Placement.RESTART, Placement.WAIT) else None
     query = Query(
         workspace_id=workspace.id,
         agent_id=None,
+        requested_agent_id=target.id if target is not None else None,
         user_id=user_id,
         sql=sql,
         status="queued",
@@ -962,7 +1208,20 @@ async def run_internal_query(
     )
     db.add(query)
     await db.flush()
-    await compute_service.ensure_agent(db, await compute_service.resolve_pool_key(db, workspace))
+    if target is None:
+        await compute_service.ensure_agent(
+            db, await compute_service.resolve_pool_key(db, workspace)
+        )
+    elif decision.placement is Placement.RESTART:
+        # Committed first: on Docker the agent can register within a second, and the
+        # binder can only claim a row it can see.
+        await db.commit()
+        if await compute_service.restart_elastic_agent(db, target) is None:
+            query.status = "failed"
+            query.error = "Could not start the default compute."
+            query.finished_at = datetime.now(tz=UTC)
+            await db.commit()
+            raise DefaultComputeUnavailable(replace(decision, reason="start_failed"))
     await db.commit()
 
     deadline = asyncio.get_event_loop().time() + wait_s

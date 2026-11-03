@@ -96,7 +96,7 @@ async def run_cycle(
 
         dispatched = 0
         for catalog, ws, schema, table in budget:
-            agent = await pick_agent_for(db, ws)
+            agent = await pick_agent_for(db, ws, honor_default=False)
             if agent is None:
                 # No compatible agent connected; dispatch is fail-fast, so stop
                 # this cycle and try again next tick rather than erroring.

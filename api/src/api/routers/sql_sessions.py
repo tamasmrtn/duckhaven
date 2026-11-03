@@ -57,7 +57,7 @@ from api.services.migration.service import workspace_has_active_migration
 from api.services.paging import paginate
 from api.services.permissions import Permission
 from api.services.polaris import PolarisClient
-from api.services.query import pick_agent_for
+from api.services.query import Placement, compute_unavailable_error, resolve_compute
 from api.services.rbac import has_permission
 from api.services.result_cache import service as result_cache
 from api.services.result_cache import session as session_cache
@@ -146,6 +146,8 @@ async def _start_compute(
     per-pool cap is already held by a row that is provisioning, and that agent will
     bind this session when it registers.
     """
+    if restarting is None and session.requested_agent_id is not None:
+        return True  # waiting on an agent that is already starting
     if restarting is not None:
         if await compute_service.restart_elastic_agent(db, restarting) is None:
             session.status = "failed"
@@ -260,12 +262,24 @@ async def open_session(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Agent not connected"
             )
     else:
-        agent = await pick_agent_for(db, workspace, principal_id=user.id, for_session=True)
-        if agent is None and not settings.elastic_compute_enabled:
+        decision = await resolve_compute(db, workspace, principal_id=user.id, for_session=True)
+        if decision.placement is Placement.USE:
+            agent = decision.agent
+        elif decision.placement is Placement.RESTART:
+            # The workspace default is a stopped elastic agent: park on it and start it.
+            requested_agent_id, restarting, agent = decision.agent.id, decision.agent, None
+        elif decision.placement is Placement.WAIT:
+            # It is already starting: park on it and start nothing.
+            requested_agent_id, agent = decision.agent.id, None
+        elif decision.placement is Placement.UNAVAILABLE:
+            if decision.via_default:
+                raise compute_unavailable_error(decision)
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="No connected agent available",
             )
+        else:
+            agent = None  # SCALE_OUT: pending, and `_start_compute` adds an agent to the pool
 
     if body.catalog is not None:
         active = await resolve_catalog(db, workspace.id, body.catalog)

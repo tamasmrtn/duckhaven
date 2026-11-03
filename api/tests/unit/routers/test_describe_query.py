@@ -226,6 +226,71 @@ async def test_with_no_agent_a_describe_starts_compute_and_gives_up_cleanly(
     assert (parked.origin, parked.status, parked.agent_id) == ("describe", "cancelled", None)
 
 
+async def test_a_stopped_workspace_default_is_restarted_for_a_describe(
+    db_session, workspace, user, monkeypatch
+):
+    from api.models.agent import Agent
+
+    stopped = Agent(
+        name="idle-default", status="unavailable", provider="null", lifecycle="terminated"
+    )
+    db_session.add(stopped)
+    await db_session.flush()
+    workspace.default_agent_id = stopped.id
+    await db_session.commit()
+
+    restarted, pooled = [], []
+
+    async def restart_elastic_agent(db, agent):
+        restarted.append(agent.id)
+        return agent
+
+    async def ensure_agent(db, pool_key):
+        pooled.append(pool_key)
+
+    monkeypatch.setattr(settings, "elastic_compute_enabled", True)
+    monkeypatch.setattr(compute_service, "restart_elastic_agent", restart_elastic_agent)
+    monkeypatch.setattr(compute_service, "ensure_agent", ensure_agent)
+    with pytest.raises(query_service.ComputeStarting):
+        await query_service.run_internal_query(
+            db_session,
+            workspace=workspace,
+            user_id=user.id,
+            sql="DESCRIBE SELECT 1",
+            origin="describe",
+            wait_s=0.3,
+        )
+
+    assert restarted == [stopped.id]
+    assert pooled == []  # the pool is never asked for another agent
+    [parked] = (await db_session.execute(select(Query))).scalars().all()
+    # Named on the row, so only the default can take it, not a pool agent that registers.
+    assert parked.requested_agent_id == stopped.id
+
+
+async def test_an_offline_workspace_default_is_reported_by_name(db_session, workspace, user):
+    from api.models.agent import Agent
+
+    offline = Agent(name="ops-owned", status="unavailable")
+    db_session.add(offline)
+    await db_session.flush()
+    workspace.default_agent_id = offline.id
+    await db_session.commit()
+
+    with pytest.raises(query_service.DefaultComputeUnavailable) as exc:
+        await query_service.run_internal_query(
+            db_session,
+            workspace=workspace,
+            user_id=user.id,
+            sql="DESCRIBE SELECT 1",
+            origin="describe",
+            wait_s=0.1,
+        )
+    assert "ops-owned" in str(exc.value)
+    # Still an AgentUnavailable, so callers that only know that one keep their 503.
+    assert isinstance(exc.value, query_service.AgentUnavailable)
+
+
 async def test_without_elastic_compute_no_agent_is_unavailable(db_session, workspace, user):
     with pytest.raises(query_service.AgentUnavailable):
         await query_service.run_internal_query(

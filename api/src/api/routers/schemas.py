@@ -402,9 +402,11 @@ async def refresh_table_stats(
 
     agent = await query_service.pick_agent_for(db, workspace, principal_id=user.id)
     if agent is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="No compatible agent is connected to refresh stats.",
+        raise await query_service.no_agent_error(
+            db,
+            workspace,
+            principal_id=user.id,
+            fallback="No compatible agent is connected to refresh stats.",
         )
 
     probed = 0
@@ -733,9 +735,11 @@ async def sample_table(
 
     agent = await query_service.pick_agent_for(db, workspace, principal_id=user.id)
     if agent is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="No compatible agent is connected to preview this table.",
+        raise await query_service.no_agent_error(
+            db,
+            workspace,
+            principal_id=user.id,
+            fallback="No compatible agent is connected to preview this table.",
         )
 
     sql = f'SELECT * FROM "{cat.slug}"."{schema}"."{table}" LIMIT {_SAMPLE_LIMIT}'
@@ -788,9 +792,11 @@ async def recount_table(
 
     agent = await query_service.pick_agent_for(db, workspace, principal_id=user.id)
     if agent is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="No compatible agent is connected to recount this table.",
+        raise await query_service.no_agent_error(
+            db,
+            workspace,
+            principal_id=user.id,
+            fallback="No compatible agent is connected to recount this table.",
         )
 
     query = await query_service.run_sync_query(

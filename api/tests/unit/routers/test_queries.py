@@ -2782,3 +2782,294 @@ async def test_tags_outside_the_limits_are_a_422(authed_client, workspace, conne
         json={"sql": "SELECT 1", "agent_id": str(agent.id), "tags": tags},
     )
     assert resp.status_code == 422
+
+
+# --- workspace default compute (agent_id omitted) ---
+
+
+async def _set_default(db_session, workspace, agent) -> None:
+    workspace.default_agent_id = agent.id
+    await db_session.commit()
+
+
+async def _queries(db_session):
+    import sqlalchemy as sa
+
+    from api.models.query import Query
+
+    return (await db_session.execute(sa.select(Query))).scalars().all()
+
+
+async def _provisioned(db_session):
+    import sqlalchemy as sa
+
+    return (
+        (await db_session.execute(sa.select(Agent).where(Agent.provider.is_not(None))))
+        .scalars()
+        .all()
+    )
+
+
+async def test_default_compute_takes_a_run_that_named_no_agent(
+    authed_client: AsyncClient, workspace, db_session, connected_agent
+):
+    agent, mock_ws = connected_agent
+    await _set_default(db_session, workspace, agent)
+
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/queries", json={"sql": "SELECT 1"}
+    )
+    assert resp.status_code == 202, resp.text
+    assert resp.json()["agent_id"] == str(agent.id)
+    assert len(mock_ws.sent) == 1
+
+
+async def test_default_compute_needs_no_grant_even_when_the_agent_is_restricted(
+    authed_client: AsyncClient, workspace, db_session, connected_agent
+):
+    agent, mock_ws = connected_agent
+    agent.access_mode = "restricted"
+    await _set_default(db_session, workspace, agent)
+
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/queries", json={"sql": "SELECT 1"}
+    )
+    assert resp.status_code == 202, resp.text
+    assert resp.json()["agent_id"] == str(agent.id)
+
+    # The same member still cannot name a restricted agent that is not the default.
+    other = Agent(
+        name="other-locked",
+        status="healthy",
+        access_mode="restricted",
+        capabilities={"duckdb_version": "1.5.5", "extensions": ["httpfs"]},
+    )
+    db_session.add(other)
+    await db_session.commit()
+    denied = await authed_client.post(
+        f"/workspaces/{workspace.slug}/queries",
+        json={"sql": "SELECT 1", "agent_id": str(other.id)},
+    )
+    assert denied.status_code == 404
+
+
+async def test_default_compute_is_used_even_when_another_agent_is_connected(
+    authed_client: AsyncClient, workspace, db_session, connected_agent
+):
+    agent, _ = connected_agent
+    rival = Agent(
+        name="rival",
+        status="healthy",
+        capabilities={"duckdb_version": "1.5.5", "extensions": ["httpfs"]},
+    )
+    db_session.add(rival)
+    await db_session.commit()
+    rival_ws = MockWebSocket()
+    registry.register(rival.id, rival_ws)  # type: ignore[arg-type]
+    try:
+        await _set_default(db_session, workspace, rival)
+        resp = await authed_client.post(
+            f"/workspaces/{workspace.slug}/queries", json={"sql": "SELECT 1"}
+        )
+        assert resp.status_code == 202, resp.text
+        assert resp.json()["agent_id"] == str(rival.id)
+        assert len(rival_ws.sent) == 1
+    finally:
+        registry.unregister(rival.id)
+
+
+async def test_a_stopped_elastic_default_is_restarted_and_nothing_else_is_provisioned(
+    authed_client: AsyncClient, workspace, db_session, terminated_elastic_agent, elastic_enabled
+):
+    await _set_default(db_session, workspace, terminated_elastic_agent)
+    old_instance = terminated_elastic_agent.instance_id
+
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/queries", json={"sql": "SELECT 1"}
+    )
+    assert resp.status_code == 202, resp.text
+    assert resp.json()["status"] == "queued"
+
+    (query,) = await _queries(db_session)
+    assert query.requested_agent_id == terminated_elastic_agent.id
+    # Interactive, not a pool run: History must not label it elastic, and the pool
+    # binder must not be able to take it.
+    assert query.origin is None
+    await db_session.refresh(terminated_elastic_agent)
+    assert terminated_elastic_agent.lifecycle == "provisioning"
+    assert terminated_elastic_agent.instance_id != old_instance
+    assert [a.id for a in await _provisioned(db_session)] == [terminated_elastic_agent.id]
+
+
+async def test_a_starting_default_is_joined_not_started_again(
+    authed_client: AsyncClient, workspace, db_session, terminated_elastic_agent, elastic_enabled
+):
+    terminated_elastic_agent.lifecycle = "provisioning"
+    terminated_elastic_agent.terminated_at = None
+    await db_session.commit()
+    await _set_default(db_session, workspace, terminated_elastic_agent)
+    instance = terminated_elastic_agent.instance_id
+
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/queries", json={"sql": "SELECT 1"}
+    )
+    assert resp.status_code == 202, resp.text
+    (query,) = await _queries(db_session)
+    assert query.requested_agent_id == terminated_elastic_agent.id
+    await db_session.refresh(terminated_elastic_agent)
+    assert terminated_elastic_agent.instance_id == instance  # no second start
+    assert len(await _provisioned(db_session)) == 1
+
+
+async def test_a_second_caller_during_the_cold_start_waits_instead_of_failing(
+    authed_client: AsyncClient, workspace, db_session, terminated_elastic_agent, elastic_enabled
+):
+    """The first caller starts the default; the second arrives while it is still
+    provisioning. That used to answer 503 "Agent not connected"."""
+    await _set_default(db_session, workspace, terminated_elastic_agent)
+
+    first = await authed_client.post(
+        f"/workspaces/{workspace.slug}/queries", json={"sql": "SELECT 1"}
+    )
+    await db_session.refresh(terminated_elastic_agent)
+    started_instance = terminated_elastic_agent.instance_id
+    second = await authed_client.post(
+        f"/workspaces/{workspace.slug}/queries", json={"sql": "SELECT 2"}
+    )
+
+    assert (first.status_code, second.status_code) == (202, 202)
+    parked = await _queries(db_session)
+    assert {q.requested_agent_id for q in parked} == {terminated_elastic_agent.id}
+    assert all(q.status == "queued" for q in parked)
+    await db_session.refresh(terminated_elastic_agent)
+    assert terminated_elastic_agent.instance_id == started_instance
+
+
+async def test_an_offline_static_default_is_an_error_naming_it_not_a_fallback(
+    authed_client: AsyncClient, workspace, db_session, connected_agent
+):
+    """Another agent is connected and could run this. The owner chose the default, so
+    the run fails instead of landing somewhere they did not choose."""
+    offline = Agent(name="owned-by-ops", status="unavailable")
+    db_session.add(offline)
+    await db_session.commit()
+    await _set_default(db_session, workspace, offline)
+
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/queries", json={"sql": "SELECT 1"}
+    )
+    assert resp.status_code == 503
+    body = resp.json()
+    assert body["error"] == "default_compute_unavailable"
+    assert body["details"]["agent_name"] == "owned-by-ops"
+    assert body["details"]["reason"] == "disconnected"
+    assert resp.headers["retry-after"] == "5"
+
+    (query,) = await _queries(db_session)
+    assert query.status == "failed"
+    assert query.agent_id == offline.id
+    assert "owned-by-ops" in query.error
+    assert body["details"]["query_id"] == str(query.id)
+
+
+async def test_an_incompatible_default_is_refused_with_the_underlying_cause(
+    authed_client: AsyncClient, workspace, db_session
+):
+    bare = Agent(
+        name="no-httpfs",
+        status="healthy",
+        capabilities={"duckdb_version": "1.5.5", "extensions": []},
+    )
+    db_session.add(bare)
+    await db_session.commit()
+    registry.register(bare.id, MockWebSocket())  # type: ignore[arg-type]
+    try:
+        await _set_default(db_session, workspace, bare)
+        resp = await authed_client.post(
+            f"/workspaces/{workspace.slug}/queries", json={"sql": "SELECT 1"}
+        )
+    finally:
+        registry.unregister(bare.id)
+    assert resp.status_code == 422
+    assert resp.json()["error"] == "default_compute_unavailable"
+    assert resp.json()["details"]["cause"] == "agent_incompatible"
+
+
+async def test_scale_out_false_never_provisions_an_agent(
+    authed_client: AsyncClient, workspace, db_session, elastic_enabled
+):
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/queries",
+        json={"sql": "SELECT 1", "scale_out": False},
+    )
+    assert resp.status_code == 503, resp.text
+    assert resp.json()["error"] == "no_compute_available"
+    assert await _provisioned(db_session) == []
+    (query,) = await _queries(db_session)
+    assert query.status == "failed"
+
+
+async def test_scale_out_false_still_uses_an_agent_that_is_already_up(
+    authed_client: AsyncClient, workspace, connected_agent, elastic_enabled
+):
+    agent, _ = connected_agent
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/queries",
+        json={"sql": "SELECT 1", "scale_out": False},
+    )
+    assert resp.status_code == 202, resp.text
+    assert resp.json()["agent_id"] == str(agent.id)
+
+
+async def test_scale_out_false_may_still_restart_the_default(
+    authed_client: AsyncClient, workspace, db_session, terminated_elastic_agent, elastic_enabled
+):
+    await _set_default(db_session, workspace, terminated_elastic_agent)
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/queries",
+        json={"sql": "SELECT 1", "scale_out": False},
+    )
+    assert resp.status_code == 202, resp.text
+    await db_session.refresh(terminated_elastic_agent)
+    assert terminated_elastic_agent.lifecycle == "provisioning"
+
+
+async def test_the_assistant_account_cannot_add_an_agent_even_if_it_asks_to(
+    client: AsyncClient, workspace, db_session, elastic_enabled
+):
+    from api.services.assistant.identity import ASSISTANT_EMAIL
+
+    assistant = User(
+        email=ASSISTANT_EMAIL,
+        password_hash=hash_password("pw"),
+        name="Assistant",
+        role="user",
+    )
+    db_session.add(assistant)
+    await db_session.flush()
+    db_session.add(WorkspaceMember(workspace_id=workspace.id, user_id=assistant.id, role="writer"))
+    await db_session.commit()
+    await client.post("/auth/login", json={"email": ASSISTANT_EMAIL, "password": "pw"})
+
+    resp = await client.post(
+        f"/workspaces/{workspace.slug}/queries",
+        json={"sql": "SELECT 1", "scale_out": True},  # the flag is ignored for this account
+    )
+    assert resp.status_code == 503, resp.text
+    assert resp.json()["error"] == "no_compute_available"
+    assert await _provisioned(db_session) == []
+
+
+async def test_clearing_the_default_restores_the_pool(
+    authed_client: AsyncClient, workspace, db_session, terminated_elastic_agent, elastic_enabled
+):
+    await _set_default(db_session, workspace, terminated_elastic_agent)
+    workspace.default_agent_id = None
+    await db_session.commit()
+
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/queries", json={"sql": "SELECT 1"}
+    )
+    assert resp.status_code == 202, resp.text
+    assert resp.json()["origin"] == "elastic"
+    assert len(await _provisioned(db_session)) == 2  # the old row plus a new pool agent

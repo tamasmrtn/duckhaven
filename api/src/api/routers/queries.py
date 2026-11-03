@@ -42,6 +42,7 @@ from api.services.agent_access import (
     assert_can_assign_agent,
 )
 from api.services.agent_dispatch import is_agent_connected, send_to_agent
+from api.services.assistant.identity import ASSISTANT_EMAIL
 from api.services.compute import service as compute_service
 from api.services.grants import GrantDenied
 from api.services.migration.service import workspace_has_active_migration
@@ -172,21 +173,36 @@ async def _submit_query(
     # runs its SQL (the assistant, a script) needn't pick one itself.
     catalogs = await resolve_workspace_catalogs(db, workspace.id)
     if body.agent_id is None:
-        # The agent the server would choose, for the cache's context only: on the
-        # elastic path the pool picks again at dispatch time.
-        candidate = await query_service.pick_agent_for(db, workspace, principal_id=user.id)
-        cache = await _cache_lookup(db, workspace, catalogs, body, candidate, polaris)
+        # Decided once: the cache lookup and the dispatch below act on the same answer.
+        # The assistant never adds an agent to the pool, whatever the request says.
+        allow_scale_out = body.scale_out and user.email != ASSISTANT_EMAIL
+        decision = await query_service.resolve_compute(
+            db, workspace, principal_id=user.id, allow_scale_out=allow_scale_out
+        )
+        cache = await _cache_lookup(db, workspace, catalogs, body, decision.agent, polaris)
         if cache.hit:
             return await _serve_cached(db, workspace, user, body, cache, catalogs, polaris)
-        if settings.elastic_compute_enabled:
-            return await _create_elastic_query(db, workspace, user.id, body, cache)
-        agent = candidate
-        if agent is None:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail={"error": "agent_required", "detail": "agent_id is required"},
+        if decision.via_default and decision.placement is not query_service.Placement.UNAVAILABLE:
+            # The workspace default: run it through the named-agent path below, which
+            # already knows how to start a stopped elastic agent or wait for one that
+            # is starting. Its members need no grant of their own on it.
+            agent = decision.agent
+            body.agent_id = agent.id
+        elif decision.placement is query_service.Placement.UNAVAILABLE:
+            raise await _fail_unplaced(db, workspace, user, body, decision)
+        elif settings.elastic_compute_enabled:
+            return await _create_elastic_query(
+                db,
+                workspace,
+                user.id,
+                body,
+                cache,
+                agent=decision.agent,
+                allow_scale_out=allow_scale_out,
             )
-        body.agent_id = agent.id
+        else:
+            agent = decision.agent
+            body.agent_id = agent.id
     else:
         result = await db.execute(select(Agent).where(Agent.id == body.agent_id))
         agent = result.scalar_one_or_none()
@@ -208,6 +224,16 @@ async def _submit_query(
             and agent.lifecycle in ("terminated", "failed")
         ):
             return await _create_starting_query(db, workspace, user.id, body, agent, cache)
+        if (
+            settings.elastic_compute_enabled
+            and agent.provider is not None
+            and agent.lifecycle == "provisioning"
+        ):
+            # Someone else just started it: join that start rather than failing, and
+            # do not start it twice.
+            return await _create_starting_query(
+                db, workspace, user.id, body, agent, cache, restart=False
+            )
         failed = Query(
             workspace_id=workspace.id,
             agent_id=agent.id,
@@ -362,6 +388,40 @@ async def _agent_not_connected(db: AsyncSession, query: Query) -> HTTPException:
     )
 
 
+async def _fail_unplaced(
+    db: AsyncSession,
+    workspace,
+    user: User,
+    body: QueryCreate,
+    decision: query_service.ComputeDecision,
+) -> HTTPException:
+    """Record a run nothing could take as failed, and build the error for it.
+
+    Committed before the error is raised so History shows the attempt, as for an
+    unreachable named agent. ``agent_required`` (elastic off, nothing connected, no
+    default) is the long-standing answer to a caller that named no agent and leaves
+    no row behind, so it is returned as it always was.
+    """
+    error = query_service.compute_unavailable_error(decision)
+    if error.detail["error"] == "agent_required":
+        return error
+    failed = Query(
+        workspace_id=workspace.id,
+        agent_id=decision.agent.id if decision.agent is not None else None,
+        user_id=user.id,
+        sql=body.sql,
+        timeout_s=body.timeout_s,
+        active_catalog=body.catalog,
+        status="failed",
+        error=query_service.unavailable_message(decision),
+        finished_at=datetime.now(UTC),
+    )
+    db.add(failed)
+    await db.commit()
+    error.detail["query_id"] = str(failed.id)
+    return error
+
+
 async def _stamp_saved_query_run(db: AsyncSession, workspace, saved_query_id) -> None:
     """Record that a saved query was just run.
 
@@ -391,8 +451,13 @@ async def _create_starting_query(
     body: QueryCreate,
     agent: Agent,
     cache: result_cache.Lookup,
+    *,
+    restart: bool = True,
 ) -> Query:
     """Park a run for a named elastic agent and start that agent.
+
+    With ``restart=False`` the agent is already starting (another caller began it), so
+    the run only parks and the same binder picks it up when the agent registers.
 
     The mirror of ``_create_elastic_query`` for an explicit target. The run cannot
     be re-routed to whichever pool agent happens to be up — the caller chose this
@@ -431,6 +496,9 @@ async def _create_starting_query(
     # and the binder can only claim a row it can see.
     await db.commit()
 
+    if not restart:
+        logger.info("Query %s waiting for agent %s, which is already starting", query.id, agent.id)
+        return query
     if await compute_service.restart_elastic_agent(db, agent) is None:
         query.status = "failed"
         query.error = "Could not start the configured agent."
@@ -454,13 +522,19 @@ async def _create_elastic_query(
     user_id: uuid.UUID,
     body: QueryCreate,
     cache: result_cache.Lookup,
+    *,
+    agent: Agent | None,
+    allow_scale_out: bool = True,
 ) -> Query:
     """Run against the elastic pool: dispatch now if a compatible agent is up,
-    otherwise park the run ``queued`` and provision one (bound on registration)."""
+    otherwise park the run ``queued`` and provision one (bound on registration).
+
+    ``agent`` is what the caller's decision picked, scoped to agents it may use (or
+    omitting `agent_id` would be a way around a denial on a specific agent). It is
+    not picked again here: a second pick could disagree with the first and with the
+    cache lookup made from it. With ``allow_scale_out`` false nothing is provisioned.
+    """
     await _stamp_saved_query_run(db, workspace, body.saved_query_id)
-    # Scoped to agents the caller may use, or omitting `agent_id` would be a way
-    # around a denial on a specific agent.
-    agent = await query_service.pick_agent_for(db, workspace, principal_id=user_id)
     query = Query(
         workspace_id=workspace.id,
         agent_id=agent.id if agent is not None else None,
@@ -502,6 +576,18 @@ async def _create_elastic_query(
             query.agent_id = None
         else:
             return query
+
+    if not allow_scale_out:
+        decision = query_service.ComputeDecision(
+            query_service.Placement.UNAVAILABLE, reason="no_compute"
+        )
+        query.status = "failed"
+        query.error = query_service.unavailable_message(decision)
+        query.finished_at = datetime.now(UTC)
+        await db.commit()
+        error = query_service.compute_unavailable_error(decision)
+        error.detail["query_id"] = str(query.id)
+        raise error
 
     # No compatible agent connected: coalesced scale-out. The run stays queued
     # (agent_id NULL) until the provisioned agent registers and binds it.
@@ -652,6 +738,8 @@ async def describe_query(
             detail={"error": "compute_starting", "detail": str(exc)},
             headers={"Retry-After": "5"},
         ) from exc
+    except query_service.DefaultComputeUnavailable as exc:
+        raise query_service.compute_unavailable_error(exc.decision) from exc
     except query_service.AgentUnavailable as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

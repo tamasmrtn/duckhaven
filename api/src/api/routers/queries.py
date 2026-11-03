@@ -36,7 +36,11 @@ from api.schemas.query import (
 from api.services import query as query_service
 from api.services import query_history, result_stream, sql_params
 from api.services import sql_metadata as sql_metadata_service
-from api.services.agent_access import assert_agent_tier, assert_can_assign_agent
+from api.services.agent_access import (
+    assert_agent_tier,
+    assert_agent_use,
+    assert_can_assign_agent,
+)
 from api.services.agent_dispatch import is_agent_connected, send_to_agent
 from api.services.compute import service as compute_service
 from api.services.grants import GrantDenied
@@ -191,7 +195,7 @@ async def _submit_query(
         # Before the connectivity probe, so a caller without access learns nothing
         # about the agent's state (and an invisible agent 404s exactly like a
         # missing one).
-        await assert_agent_tier(db, user, agent, "use")
+        await assert_agent_use(db, user, agent, workspace)
         # Before the connectivity probe too: a cached result needs no agent, so a
         # hit is answered even while the chosen agent is down or starting.
         cache = await _cache_lookup(db, workspace, catalogs, body, agent, polaris)
@@ -615,7 +619,7 @@ async def describe_query(
         agent = await db.get(Agent, body.agent_id)
         if agent is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
-        await assert_agent_tier(db, user, agent, "use")
+        await assert_agent_use(db, user, agent, workspace)
         if not await is_agent_connected(db, agent.id):
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -703,7 +707,7 @@ async def get_sql_metadata(
         agent = await db.get(Agent, agent_id)
         if agent is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
-        await assert_agent_tier(db, user, agent, "use")
+        await assert_agent_use(db, user, agent, workspace)
         try:
             await check_dispatchable(agent, await resolve_workspace_catalogs(db, workspace.id))
         except AgentNotDispatchable:
@@ -1173,7 +1177,7 @@ async def create_saved_query(
     await assert_workspace_member(db, workspace.id, user.id, min_role="writer")
     # A default agent is a live dispatch path (the scheduler falls back to it), so
     # it needs the same `use` tier as choosing the agent on a schedule.
-    await assert_can_assign_agent(db, user, body.default_agent_id)
+    await assert_can_assign_agent(db, user, body.default_agent_id, workspace=workspace)
     sq = await _saved_query_named(db, workspace.id, body.name)
     if sq is not None:
         if on_conflict == "error":
@@ -1242,7 +1246,7 @@ async def update_saved_query(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Saved query not found")
     fields = body.model_dump(exclude_unset=True)
     if "default_agent_id" in fields:
-        await assert_can_assign_agent(db, user, fields["default_agent_id"])
+        await assert_can_assign_agent(db, user, fields["default_agent_id"], workspace=workspace)
     if fields.get("name") is not None:
         clash = await _saved_query_named(db, workspace.id, fields["name"], exclude=sq.id)
         if clash is not None:

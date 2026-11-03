@@ -2,6 +2,8 @@
 
 import pytest
 from conftest import seed_workspace
+from fastapi import HTTPException
+from sqlalchemy import select
 
 from api.models.agent import Agent
 from api.models.agent_grant import AgentGrant
@@ -9,6 +11,10 @@ from api.models.user import User
 from api.models.workspace import WorkspaceMember
 from api.services.agent_access import (
     agent_tier,
+    assert_agent_tier,
+    assert_agent_use,
+    assert_can_assign_agent,
+    assert_can_set_default_agent,
     effective_tier,
     load_caller_grants,
     tier_at_least,
@@ -201,3 +207,156 @@ async def test_tier_for_principal_denies_a_deleted_principal(db_session, restric
     import uuid
 
     assert await tier_for_principal(db_session, uuid.uuid4(), restricted_agent) is None
+
+
+# --- the workspace default's embedded grant ----------------------------------
+
+
+async def _set_default(db_session, workspace, agent):
+    workspace.default_agent_id = agent.id if agent is not None else None
+    await db_session.commit()
+    await db_session.refresh(workspace)
+
+
+async def test_a_member_may_use_the_workspace_default_without_a_grant(
+    db_session, member, restricted_agent
+):
+    ws, _ = await seed_workspace(db_session, user_id=member.id, slug="embed", role="reader")
+    await _set_default(db_session, ws, restricted_agent)
+
+    assert await agent_tier(db_session, member, restricted_agent) is None
+    assert await assert_agent_use(db_session, member, restricted_agent, ws) == "use"
+
+
+async def test_a_non_member_gets_nothing_from_the_default(db_session, member, restricted_agent):
+    """The grant is for the workspace's members: a route that forgot to assert
+    membership must not hand it to an outsider."""
+    owner = User(email="o@access.local", password_hash=hash_password("pw"), name="O", role="user")
+    db_session.add(owner)
+    await db_session.commit()
+    ws, _ = await seed_workspace(db_session, user_id=owner.id, slug="private", role="owner")
+    await _set_default(db_session, ws, restricted_agent)
+
+    with pytest.raises(HTTPException) as exc:
+        await assert_agent_use(db_session, member, restricted_agent, ws)
+    assert exc.value.status_code == 404
+
+
+async def test_the_grant_covers_only_the_default_agent(db_session, member, restricted_agent):
+    other = Agent(name="other-locked", status="healthy", access_mode="restricted")
+    db_session.add(other)
+    await db_session.commit()
+    await db_session.refresh(other)
+    ws, _ = await seed_workspace(db_session, user_id=member.id, slug="only-one", role="reader")
+    await _set_default(db_session, ws, restricted_agent)
+
+    with pytest.raises(HTTPException) as exc:
+        await assert_agent_use(db_session, member, other, ws)
+    assert exc.value.status_code == 404
+
+
+async def test_another_workspaces_default_grants_nothing_here(db_session, member, restricted_agent):
+    here, _ = await seed_workspace(db_session, user_id=member.id, slug="here", role="reader")
+    there, _ = await seed_workspace(db_session, user_id=member.id, slug="there", role="reader")
+    await _set_default(db_session, there, restricted_agent)
+
+    with pytest.raises(HTTPException):
+        await assert_agent_use(db_session, member, restricted_agent, here)
+
+
+async def test_the_grant_is_use_only(db_session, member, restricted_agent):
+    ws, _ = await seed_workspace(db_session, user_id=member.id, slug="use-only", role="reader")
+    await _set_default(db_session, ws, restricted_agent)
+
+    # The lifecycle and admin routes keep asking the ladder, which sees no grant.
+    with pytest.raises(HTTPException) as exc:
+        await assert_agent_tier(db_session, member, restricted_agent, "operate")
+    assert exc.value.status_code == 404
+
+
+async def test_clearing_the_default_withdraws_the_grant_at_once(
+    db_session, member, restricted_agent
+):
+    ws, _ = await seed_workspace(db_session, user_id=member.id, slug="withdrawn", role="reader")
+    await _set_default(db_session, ws, restricted_agent)
+    assert await assert_agent_use(db_session, member, restricted_agent, ws) == "use"
+
+    await _set_default(db_session, ws, None)
+    with pytest.raises(HTTPException):
+        await assert_agent_use(db_session, member, restricted_agent, ws)
+
+
+async def test_a_real_higher_tier_is_not_downgraded_by_the_embed(
+    db_session, member, restricted_agent
+):
+    ws, _ = await seed_workspace(db_session, user_id=member.id, slug="higher", role="reader")
+    await _set_default(db_session, ws, restricted_agent)
+    db_session.add(AgentGrant(agent_id=restricted_agent.id, user_id=member.id, tier="operate"))
+    await db_session.commit()
+
+    assert await assert_agent_use(db_session, member, restricted_agent, ws) == "operate"
+
+
+async def test_without_a_workspace_the_old_rule_applies(db_session, member, restricted_agent):
+    with pytest.raises(HTTPException) as exc:
+        await assert_agent_use(db_session, member, restricted_agent, None)
+    assert exc.value.status_code == 404
+
+
+async def test_a_run_owner_keeps_the_default_only_while_a_member(
+    db_session, member, restricted_agent
+):
+    ws, _ = await seed_workspace(db_session, user_id=member.id, slug="owner-run", role="writer")
+    await _set_default(db_session, ws, restricted_agent)
+    assert await tier_for_principal(db_session, member.id, restricted_agent, workspace=ws) == "use"
+
+    await db_session.execute(
+        WorkspaceMember.__table__.delete().where(WorkspaceMember.user_id == member.id)
+    )
+    await db_session.commit()
+    assert await tier_for_principal(db_session, member.id, restricted_agent, workspace=ws) is None
+
+
+async def test_binding_work_to_the_default_needs_no_grant(db_session, member, restricted_agent):
+    ws, _ = await seed_workspace(db_session, user_id=member.id, slug="bind", role="writer")
+    await _set_default(db_session, ws, restricted_agent)
+
+    await assert_can_assign_agent(db_session, member, restricted_agent.id, workspace=ws)
+    with pytest.raises(HTTPException):
+        await assert_can_assign_agent(db_session, member, restricted_agent.id)
+
+
+# --- who may make an agent the default ---------------------------------------
+
+
+async def test_use_is_enough_to_make_an_open_agent_the_default(db_session, member):
+    open_agent = Agent(name="open-one", status="healthy")
+    db_session.add(open_agent)
+    await db_session.commit()
+    await db_session.refresh(open_agent)
+
+    agent = await assert_can_set_default_agent(db_session, member, open_agent.id)
+    assert agent.id == open_agent.id
+
+
+async def test_a_restricted_agent_needs_operate_to_become_the_default(
+    db_session, member, restricted_agent
+):
+    db_session.add(AgentGrant(agent_id=restricted_agent.id, user_id=member.id, tier="use"))
+    await db_session.commit()
+    with pytest.raises(HTTPException) as exc:
+        await assert_can_set_default_agent(db_session, member, restricted_agent.id)
+    assert exc.value.status_code == 403
+
+    grant = (
+        await db_session.execute(select(AgentGrant).where(AgentGrant.user_id == member.id))
+    ).scalar_one()
+    grant.tier = "operate"
+    await db_session.commit()
+    assert (
+        await assert_can_set_default_agent(db_session, member, restricted_agent.id)
+    ).id == restricted_agent.id
+
+
+async def test_clearing_the_default_needs_nothing_from_the_ladder(db_session, member):
+    assert await assert_can_set_default_agent(db_session, member, None) is None

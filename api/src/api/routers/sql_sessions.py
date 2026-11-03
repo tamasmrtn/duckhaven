@@ -48,7 +48,7 @@ from api.schemas.sql_session import (
 from api.services import query as query_service
 from api.services import result_stream, session_credentials, sql_params, staging_presign
 from api.services import statement_policy as policy
-from api.services.agent_access import assert_agent_tier
+from api.services.agent_access import assert_agent_use
 from api.services.agent_dispatch import is_agent_connected
 from api.services.agent_registry import registry
 from api.services.compute import service as compute_service
@@ -229,7 +229,7 @@ async def open_session(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
         # Ahead of the connectivity probe, so a caller without access learns nothing
         # about the agent's state.
-        await assert_agent_tier(db, user, agent, "use")
+        await assert_agent_use(db, user, agent, workspace)
         if await is_agent_connected(db, agent.id):
             try:
                 await check_dispatchable(agent, catalogs, for_session=True)

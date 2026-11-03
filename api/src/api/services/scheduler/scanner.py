@@ -333,7 +333,9 @@ async def _resolve_agent(
         agent = await db.get(Agent, chosen)
         if agent is None:
             return _Resolution(error="Configured agent no longer exists")
-        if not tier_at_least(await tier_for_principal(db, owner_id, agent), "use"):
+        if not tier_at_least(
+            await tier_for_principal(db, owner_id, agent, workspace=workspace), "use"
+        ):
             return _Resolution(error="Schedule owner no longer has access to the configured agent")
         if await is_agent_connected(db, chosen):
             return _Resolution(agent=agent)

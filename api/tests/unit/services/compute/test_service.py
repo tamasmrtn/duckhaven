@@ -6,6 +6,7 @@ from conftest import seed_workspace
 
 from api.config import settings
 from api.models.agent import Agent
+from api.models.query import Query
 from api.models.user import Credential
 from api.services.compute import service
 
@@ -1308,7 +1309,21 @@ async def test_callers_restarting_a_stopped_agent_together_start_it_once(
         loaded = [await db.get(Agent, agent_id) for db in dbs]
         assert {a.lifecycle for a in loaded} == {"terminated"}
 
+        # Each caller has already parked a run in its own session, as a query does.
+        parked = []
+        for db in dbs:
+            run = Query(workspace_id=uuid.uuid4(), sql="SELECT 1", status="queued")
+            db.add(run)
+            await db.commit()
+            parked.append(run)
+
         results = [await service.restart_elastic_agent(db, a) for db, a in zip(dbs, loaded)]
+
+        # Losing the claim must leave the caller's objects usable: reading an attribute
+        # of an expired one lazy-loads, which fails in async code and became a 500.
+        for run in parked:
+            assert run.id is not None
+            assert run.status == "queued"
     finally:
         for s in sessions:
             await s.__aexit__(None, None, None)

@@ -322,7 +322,8 @@ async def restart_elastic_agent(db: AsyncSession, agent: Agent) -> Agent | None:
         )
     )
     if claimed.rowcount == 0:
-        await db.rollback()
+        # Not a rollback: that would expire every object the caller already holds (the
+        # run it just parked), and its next attribute read would fail in async code.
         await db.refresh(agent)
         return agent if agent.lifecycle in ("provisioning", "running") else None
     record_lifecycle_event(db, agent.id, "provisioning", reason="restart")

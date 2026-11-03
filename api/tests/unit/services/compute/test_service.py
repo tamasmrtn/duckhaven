@@ -5,6 +5,7 @@ import sqlalchemy as sa
 from conftest import seed_workspace
 
 from api.models.agent import Agent
+from api.models.query import Query
 from api.models.user import Credential
 from api.services.compute import service
 
@@ -951,3 +952,209 @@ async def test_bind_pending_sessions_fails_a_session_on_an_unsupported_runtime(
         row = await db.get(SqlSession, session_id)
         assert row.status == "failed"
         assert row.error == "runtime_unsupported"
+
+
+# ── Work parked on the workspace default ──────────────────────────────────────
+
+
+async def test_the_pool_binder_leaves_a_run_parked_on_a_named_agent_alone(
+    session_factory, elastic_on, monkeypatch
+):
+    """A describe run parked on the workspace default carries origin "describe", which
+    the pool binder also takes. It must wait for the agent it named, not go to whichever
+    pool agent registers first."""
+    from api.models.query import Query
+
+    async def fake_dispatch(db, query, **kwargs):
+        raise AssertionError("dispatched a run that named another agent")
+
+    monkeypatch.setattr("api.services.query.dispatch_query", fake_dispatch)
+
+    async with session_factory() as db:
+        ws, _ = await seed_workspace(db, user_id=uuid.uuid4())
+        agent = await _seed_running_elastic_agent(db)
+        db.add(
+            Query(
+                workspace_id=ws.id,
+                agent_id=None,
+                requested_agent_id=uuid.uuid4(),
+                sql="DESCRIBE SELECT 1",
+                status="queued",
+                origin="describe",
+            )
+        )
+        await db.commit()
+        assert await service.bind_queued_work(db, agent) == 0
+
+
+async def test_a_targeted_run_the_restarted_agent_refuses_fails_with_the_reason(
+    session_factory, elastic_on, monkeypatch
+):
+    """A restarted agent advertises nothing until it registers, so an incompatibility
+    only shows now. The requester is waiting on exactly that answer."""
+    from api.models.query import Query
+    from api.services.runtimes import AgentNotDispatchable
+
+    async def refusing_dispatch(db, query, **kwargs):
+        raise AgentNotDispatchable("agent_incompatible", "Agent 'e' is missing 'httpfs'.")
+
+    monkeypatch.setattr("api.services.query.dispatch_query", refusing_dispatch)
+
+    async with session_factory() as db:
+        ws, _ = await seed_workspace(db, user_id=uuid.uuid4())
+        agent = await _seed_running_elastic_agent(db)
+        db.add(
+            Query(
+                workspace_id=ws.id,
+                agent_id=None,
+                requested_agent_id=agent.id,
+                sql="SELECT 1",
+                status="queued",
+            )
+        )
+        await db.commit()
+        assert await service.bind_targeted_work(db, agent) == 0
+
+    async with session_factory() as db:
+        query = (await db.execute(sa.select(Query))).scalars().one()
+        assert query.status == "failed"
+        assert query.error == "Agent 'e' is missing 'httpfs'."
+        assert query.agent_id is None
+
+
+async def test_bind_scheduled_work_finds_a_run_parked_on_the_workspace_default(
+    session_factory, elastic_on, monkeypatch
+):
+    """A schedule and saved query that name no agent run on the workspace default, so
+    that is who its parked run waits for."""
+    from api.models.query import Query, SavedQuery, Schedule
+    from api.models.user import User
+    from api.services.auth import hash_password
+
+    dispatched: list = []
+
+    async def fake_dispatch(db, query, **kwargs):
+        dispatched.append(query.id)
+
+    monkeypatch.setattr("api.services.query.dispatch_query", fake_dispatch)
+
+    async with session_factory() as db:
+        user = User(email="s@x.local", password_hash=hash_password("pw"), name="S", role="user")
+        db.add(user)
+        await db.flush()
+        ws, _ = await seed_workspace(db, user_id=user.id)
+        agent = await _seed_running_elastic_agent(db, pool_key=None)
+        ws.default_agent_id = agent.id
+        saved = SavedQuery(
+            workspace_id=ws.id,
+            name="nightly",
+            sql="SELECT 1",
+            created_by=user.id,
+            updated_by=user.id,
+        )
+        db.add(saved)
+        await db.flush()
+        schedule = Schedule(
+            workspace_id=ws.id, saved_query_id=saved.id, cron="0 * * * *", created_by=user.id
+        )
+        db.add(schedule)
+        await db.flush()
+        db.add(
+            Query(
+                workspace_id=ws.id,
+                agent_id=None,
+                sql="SELECT 1",
+                status="queued",
+                origin="scheduled",
+                schedule_id=schedule.id,
+            )
+        )
+        await db.commit()
+        assert await service.bind_scheduled_work(db, agent) == 1
+
+    assert len(dispatched) == 1
+
+
+async def test_deleting_the_default_agent_clears_the_workspace_default(db_session, elastic_on):
+    ws, _ = await seed_workspace(db_session, user_id=uuid.uuid4())
+    agent = await _seed_running_elastic_agent(db_session)
+    ws.default_agent_id = agent.id
+    await db_session.commit()
+
+    await service.delete_agent(db_session, agent)
+
+    await db_session.refresh(ws)
+    assert ws.default_agent_id is None
+
+
+async def test_callers_restarting_a_stopped_agent_together_start_it_once(
+    session_factory, elastic_on, null_backend
+):
+    """A default compute is shared, so the first requests after it idles out arrive
+    together, each having loaded the agent while it was still stopped. Only one may
+    provision it; the rest join that start. Eight such callers used to leave eight
+    containers behind for one agent."""
+    from api.services.compute import service
+
+    async with session_factory() as db:
+        agent = await service.provision_elastic_agent(
+            db, name="shared", cpu=1.0, memory_gb=1.0, idle_timeout_s=None
+        )
+        await service.terminate_agent(db, agent, reason="idle")
+        agent_id = agent.id
+    null_backend._instances.clear()
+
+    # Every caller loads the agent before any of them has restarted it.
+    sessions = [session_factory() for _ in range(4)]
+    dbs = [await s.__aenter__() for s in sessions]
+    try:
+        loaded = [await db.get(Agent, agent_id) for db in dbs]
+        assert {a.lifecycle for a in loaded} == {"terminated"}
+
+        # Each caller has already parked a run in its own session, as a query does.
+        parked = []
+        for db in dbs:
+            run = Query(workspace_id=uuid.uuid4(), sql="SELECT 1", status="queued")
+            db.add(run)
+            await db.commit()
+            parked.append(run)
+
+        results = [await service.restart_elastic_agent(db, a) for db, a in zip(dbs, loaded)]
+
+        # Losing the claim must leave the caller's objects usable: reading an attribute
+        # of an expired one lazy-loads, which fails in async code and became a 500.
+        for run in parked:
+            assert run.id is not None
+            assert run.status == "queued"
+    finally:
+        for s in sessions:
+            await s.__aexit__(None, None, None)
+
+    assert all(r is not None for r in results), "a caller that joined the start was told it failed"
+    assert {r.lifecycle for r in results} == {"provisioning"}
+    assert len(null_backend._instances) == 1, "more than one instance was provisioned"
+    assert len({r.instance_id for r in results}) == 1
+
+
+async def test_a_restart_that_lost_the_claim_to_a_failed_start_reports_nothing_started(
+    session_factory, elastic_on, null_backend
+):
+    """If whoever won the claim has since failed too, the loser must not claim success."""
+    from api.services.compute import service
+
+    async with session_factory() as db:
+        agent = await service.provision_elastic_agent(
+            db, name="flaky", cpu=1.0, memory_gb=1.0, idle_timeout_s=None
+        )
+        await service.terminate_agent(db, agent, reason="idle")
+        agent_id = agent.id
+
+    async with session_factory() as stale, session_factory() as other:
+        stale_copy = await stale.get(Agent, agent_id)
+        winner = await other.get(Agent, agent_id)
+        winner.lifecycle = "failed"  # the other caller's start failed after claiming
+        await other.commit()
+        # The stale copy still says terminated; the claim now matches the failed row, so
+        # this is simply a normal restart of a failed agent, not a lost race.
+        restarted = await service.restart_elastic_agent(stale, stale_copy)
+    assert restarted is not None and restarted.lifecycle == "provisioning"

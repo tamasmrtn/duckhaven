@@ -34,7 +34,7 @@ everything:
     storage_kinds: [s3, adls_gen2]
     catalog_kinds: [iceberg_polaris, ducklake]
     elastic_enabled: true
-    agent_count: 3
+    default_compute: {name: analytics, elastic: true}
     can_write: true
 
 # "Is the cheaper model good enough here?" — run it against with-docs. Names a

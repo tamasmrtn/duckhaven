@@ -177,7 +177,7 @@ async def test_a_turn_survives_every_advisory_lookup_failing(
     async def boom(self, *args, **kwargs):
         raise GatewayError("upstream is unavailable")
 
-    for method in ("list_semantic_models", "storage_kinds", "count_agents"):
+    for method in ("list_semantic_models", "storage_kinds", "workspace_compute"):
         monkeypatch.setattr(Gateway, method, boom)
     ws, _catalog, conv = await _seed(db_session, sa_role="reader")
     captured: list[str] = []
@@ -281,6 +281,49 @@ async def test_read_only_assistant_refuses_write(client, db_session, factory):
         tool_calls = (await db.execute(select(AssistantToolCall))).scalars().all()
         assert tool_calls[0].tool == "run_sql"
         assert tool_calls[0].status == "denied"  # ModelRetry refusal recorded
+
+
+async def _tool_status(db_session, factory, ws, conv, sql: str) -> str:
+    """Run one scripted ``run_sql`` call through the real agent, hooks and loopback API,
+    and return the status the audit trail recorded for it."""
+    responses = [tool_step("run_sql", {"sql": sql}), text_step("I could not run it.")]
+    with get_agent().override(model=scripted_model(responses)):
+        await _run_stream(factory, ws, conv, "run it")
+    async with factory() as db:
+        (call,) = (await db.execute(select(AssistantToolCall))).scalars().all()
+    return call.status
+
+
+async def test_no_compute_is_recorded_as_an_error_not_a_denial(client, db_session, factory):
+    ws, _catalog, conv = await _seed(db_session, sa_role="reader")
+    assert await _tool_status(db_session, factory, ws, conv, "SELECT 1") == "error"
+
+
+async def test_the_sql_guard_refusing_a_statement_is_recorded_as_a_denial(
+    client, db_session, factory
+):
+    ws, _catalog, conv = await _seed(db_session, sa_role="reader")
+    # The guard refuses it because it exposes storage credentials: a policy decision.
+    status = await _tool_status(db_session, factory, ws, conv, "SELECT * FROM duckdb_secrets()")
+    assert status == "denied"
+
+
+async def test_the_assistant_adds_no_agent_when_there_is_no_compute(
+    client, db_session, factory, monkeypatch
+):
+    """The original report: with elastic compute on and nothing running, a question
+    to the assistant provisioned a new agent. It now fails as an error and starts
+    nothing."""
+    from api.config import settings
+    from api.models.agent import Agent
+
+    monkeypatch.setattr(settings, "elastic_compute_enabled", True)
+    ws, _catalog, conv = await _seed(db_session, sa_role="reader")
+
+    assert await _tool_status(db_session, factory, ws, conv, "SELECT 1") == "error"
+
+    async with factory() as db:
+        assert (await db.execute(select(Agent))).scalars().all() == []
 
 
 async def test_stream_turn_emits_tokens_and_done(client, db_session, factory):

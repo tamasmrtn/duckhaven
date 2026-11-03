@@ -48,6 +48,17 @@ on a restricted one. On an open agent a grant can raise someone, to `operate` sa
 When you create elastic compute, the **New compute** dialog asks who can use it. Choose **Only people I grant access**
 for an agent meant to be reserved, rather than restricting it after it starts taking work.
 
+## A workspace's default compute
+
+A workspace owner can make an agent the workspace's [default compute](workspaces.md#default-compute). That gives every
+member of the workspace the `use` tier on that one agent, for work in that workspace, without a grant. It works on a
+restricted agent too, which is its purpose: a team agent that the assistant and every member can run on.
+
+It grants `use` only. It never reaches `operate` or `admin`, another agent, or the same agent from another workspace,
+and it ends as soon as the owner clears or changes the default. Because it opens a restricted agent to a whole
+workspace, setting one needs the `operate` tier on that agent. The agent's **Access** tab lists the workspaces that use
+it as their default. Make an agent a default only if you would let every member of that workspace use it.
+
 ## Granting to a person or a workspace
 
 A grant names either a **user** — a person or a service account — or a **workspace**. A workspace grant reaches every

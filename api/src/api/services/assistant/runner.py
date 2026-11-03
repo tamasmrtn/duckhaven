@@ -37,7 +37,7 @@ from api.config import settings
 from api.models.assistant import AssistantConversation
 from api.services.assistant.access import service_account_can_write
 from api.services.assistant.agent import get_agent
-from api.services.assistant.deps import AssistantDeps
+from api.services.assistant.deps import AssistantDeps, DefaultCompute
 from api.services.assistant.gateway import Gateway, GatewayError
 from api.services.assistant.identity import (
     AssistantIdentityError,
@@ -226,11 +226,11 @@ async def _turn_context(
             )
             # Independent lookups, so they run concurrently; the turn waits on
             # all of them before the model sees anything.
-            published, storage_kinds, catalog_kinds, agent_count = await asyncio.gather(
+            published, storage_kinds, catalog_kinds, compute = await asyncio.gather(
                 _advisory("semantic models", gateway.list_semantic_models()),
                 _advisory("storage kinds", gateway.storage_kinds()),
                 _advisory("catalog kinds", gateway.catalog_kinds()),
-                _advisory("agent count", gateway.count_agents()),
+                _advisory("workspace compute", gateway.workspace_compute()),
             )
 
             yield AssistantDeps(
@@ -246,7 +246,9 @@ async def _turn_context(
                 catalog_kinds=catalog_kinds,
                 elastic_enabled=settings.elastic_compute_enabled,
                 docs_enabled=settings.assistant_docs_enabled,
-                agent_count=agent_count,
+                default_compute=(
+                    DefaultCompute(compute["name"], compute["elastic"]) if compute else None
+                ),
                 docs_search=_docs_search(session_factory),
             )
 

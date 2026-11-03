@@ -348,6 +348,14 @@ class AgentGrantPrincipalOut(BaseModel):
     is_service_account: bool = False
 
 
+class AgentDefaultWorkspaceOut(BaseModel):
+    """A workspace that runs on an agent by default."""
+
+    id: uuid.UUID
+    slug: str
+    name: str
+
+
 class AgentAccessOut(BaseModel):
     """Everything the agent's Access tab renders, in one response.
 
@@ -359,3 +367,7 @@ class AgentAccessOut(BaseModel):
     access_mode: str
     grants: list[AgentGrantOut]
     principals: list[AgentGrantPrincipalOut]
+    # Workspaces that use this agent as their default compute. Every member of each
+    # can run on the agent whether or not a grant reaches them, so an admin reading
+    # who may use it needs this alongside the grants.
+    default_for_workspaces: list[AgentDefaultWorkspaceOut] = []

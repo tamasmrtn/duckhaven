@@ -27,6 +27,7 @@ from api.routers.admin.service_accounts import SERVICE_ACCOUNT_PROVIDER
 from api.schemas.agent import (
     AgentAccessModeUpdate,
     AgentAccessOut,
+    AgentDefaultWorkspaceOut,
     AgentGrantOut,
     AgentGrantPrincipalOut,
 )
@@ -74,11 +75,25 @@ async def _payload(db: AsyncSession, agent: Agent) -> AgentAccessOut:
         )
         for u in users
     ] + [AgentGrantPrincipalOut(kind="workspace", id=w.id, name=w.name) for w in workspaces]
+    default_for = (
+        (
+            await db.execute(
+                select(Workspace)
+                .where(Workspace.default_agent_id == agent.id)
+                .order_by(Workspace.name)
+            )
+        )
+        .scalars()
+        .all()
+    )
     return AgentAccessOut(
         agent_id=agent.id,
         access_mode=agent.access_mode,
         grants=grants,
         principals=principals,
+        default_for_workspaces=[
+            AgentDefaultWorkspaceOut(id=w.id, slug=w.slug, name=w.name) for w in default_for
+        ],
     )
 
 

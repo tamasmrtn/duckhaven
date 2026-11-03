@@ -5,6 +5,7 @@ import {
   findWorkspace,
   removeWorkspace,
 } from "../fixtures/workspaces";
+import { AGENTS } from "../fixtures/agents";
 import { nextId } from "../lib/seed";
 import { httpError } from "../lib/errors";
 import type { WorkspaceMemberRole } from "@/types/workspace";
@@ -44,11 +45,28 @@ export const workspaceHandlers = [
       name?: string;
       description?: string;
       result_cache_enabled?: boolean;
+      default_agent_id?: string | null;
     };
     if (body.name != null) ws.name = body.name;
     if (body.description != null) ws.description = body.description;
     if (body.result_cache_enabled != null)
       ws.result_cache_enabled = body.result_cache_enabled;
+    // An explicit null clears it, as on the real API; an omitted field does not.
+    if ("default_agent_id" in body) {
+      const agent = AGENTS.find((a) => a.id === body.default_agent_id);
+      if (body.default_agent_id != null && !agent)
+        return httpError(404, "Agent not found");
+      ws.default_agent_id = agent?.id ?? null;
+      ws.default_agent = agent
+        ? {
+            id: agent.id,
+            name: agent.name,
+            provider: agent.provider ?? null,
+            lifecycle: agent.lifecycle ?? null,
+            status: agent.status,
+          }
+        : null;
+    }
     return HttpResponse.json(ws);
   }),
 

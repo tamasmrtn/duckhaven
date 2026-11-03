@@ -174,22 +174,34 @@ If storage access fails, say the vended credential or the trust configuration is
 at fault; never suggest putting keys in a query."""
 
 
+# What the assistant is told about compute. Exactly one of these (or nothing) applies:
+# the workspace's default compute, an elastic deployment whose workspace has none, or
+# the deployment-wide note when the workspace's own state could not be read.
+#
+# The assistant never picks an engine and never adds one: it runs on the workspace's
+# default compute, and a stopped elastic default starts on its first query. Only the
+# name goes in, not the status, so the instructions do not change between turns.
+DEFAULT_COMPUTE_PROMPT = """\
+
+Queries in this workspace run on its default compute, '{name}'. You cannot choose
+a different engine or start new compute."""
+
+DEFAULT_ELASTIC_SUFFIX = """ It stops when idle and starts again on the next
+query, so the first one can wait a minute or more; that is expected behaviour
+rather than a fault."""
+
+NO_DEFAULT_PROMPT = """\
+
+This deployment has elastic compute, but this workspace has no default compute.
+If no compute is running you cannot start any: tell the user that a workspace
+owner can set a default compute in Settings."""
+
 ELASTIC_PROMPT = """\
 
-This deployment has elastic compute: agents are provisioned on demand and
-terminated when idle. A query may wait while one starts. If the user asks why a
-query is queued or why an agent went away, that is expected behaviour rather
-than a fault."""
-
-
-# No count: fleet size changes between turns, and a number in the instructions
-# would be stale by the time the model acted on it. What the assistant needs is
-# that there is more than one, which is what makes the choice worth mentioning.
-FLEET_PROMPT = """\
-
-Several compute agents are available. The user picks which one runs each query
-from the worksheet's engine picker — there is no cost-based routing or query
-planner choosing between them."""
+This deployment has elastic compute: agents start on demand and stop when idle,
+so a query may wait while one starts. You cannot start compute yourself. If the
+user asks why a query was queued or why an agent went away, that is expected
+behaviour rather than a fault."""
 
 
 # The bundled object store is the default and needs no explanation; every
@@ -241,24 +253,29 @@ def _ducklake_block(deps: AssistantDeps) -> str | None:
     return DUCKLAKE_PROMPT
 
 
-def _elastic_block(deps: AssistantDeps) -> str | None:
-    return ELASTIC_PROMPT if deps.elastic_enabled else None
+def _compute_name(name: str) -> str:
+    """An agent name as it goes into the instructions: admin-chosen, so one line, bounded."""
+    return " ".join(name.replace("'", "").split())[:64]
 
 
-def _fleet_block(deps: AssistantDeps) -> str | None:
-    # One agent is the ordinary case and needs no explanation — there is nothing
-    # for a worksheet to choose between.
-    if not deps.agent_count or deps.agent_count < 2:
-        return None
-    return FLEET_PROMPT
+def _compute_block(deps: AssistantDeps) -> str | None:
+    compute = deps.default_compute
+    if compute is None:
+        # The workspace could not be read: say only what the deployment guarantees.
+        return ELASTIC_PROMPT if deps.elastic_enabled else None
+    if compute.name is None:
+        return NO_DEFAULT_PROMPT if deps.elastic_enabled else None
+    text = DEFAULT_COMPUTE_PROMPT.format(name=_compute_name(compute.name))
+    if compute.elastic and deps.elastic_enabled:
+        text += DEFAULT_ELASTIC_SUFFIX
+    return text
 
 
 _INJECTORS = (
     _semantic_block,
     _storage_block,
     _ducklake_block,
-    _elastic_block,
-    _fleet_block,
+    _compute_block,
 )
 
 

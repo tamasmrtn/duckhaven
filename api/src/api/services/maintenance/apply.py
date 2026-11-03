@@ -89,9 +89,11 @@ async def start_apply(
 
     agent = await query_service.pick_agent_for(db, workspace, principal_id=user.id)
     if agent is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="No compatible agent is connected to run maintenance.",
+        raise await query_service.no_agent_error(
+            db,
+            workspace,
+            principal_id=user.id,
+            fallback="No compatible agent is connected to run maintenance.",
         )
 
     query = Query(

@@ -100,23 +100,49 @@ def test_translate_other_codes(code, prefix):
 
 
 @respx.mock
-async def test_count_agents_counts_only_the_ones_that_can_run_a_query():
-    """``GET /agents`` lists registered agents, reporting disconnected ones as
-    ``unavailable``. Counting rows would tell the prompt a fleet exists that
-    cannot take a query — and on an elastic deployment terminated agents are kept
-    for reuse, so the row count grows while the usable fleet stays at one."""
-    respx.get("http://assistant.internal/agents").mock(
+async def test_workspace_compute_reads_the_default_from_the_workspace():
+    """Not from ``GET /agents``: that list is filtered by the service account's own
+    agent grants, so it says nothing about which agent a query will be sent to."""
+    respx.get("http://assistant.internal/workspaces/ws").mock(
         return_value=httpx.Response(
             200,
-            json=[
-                {"id": "a", "status": "healthy"},
-                {"id": "b", "status": "unavailable"},
-                {"id": "c", "status": "healthy"},
-            ],
+            json={
+                "slug": "ws",
+                "default_agent": {"id": "a", "name": "analytics", "provider": "docker"},
+            },
         )
     )
     async with httpx.AsyncClient(base_url="http://assistant.internal") as client:
-        assert await _gateway(client=client).count_agents() == 2
+        assert await _gateway(client=client).workspace_compute() == {
+            "name": "analytics",
+            "elastic": True,
+        }
+
+
+@respx.mock
+async def test_workspace_compute_marks_a_static_default_as_not_elastic():
+    respx.get("http://assistant.internal/workspaces/ws").mock(
+        return_value=httpx.Response(
+            200, json={"default_agent": {"id": "a", "name": "ops", "provider": None}}
+        )
+    )
+    async with httpx.AsyncClient(base_url="http://assistant.internal") as client:
+        assert await _gateway(client=client).workspace_compute() == {
+            "name": "ops",
+            "elastic": False,
+        }
+
+
+@respx.mock
+async def test_workspace_compute_without_a_default_says_so():
+    respx.get("http://assistant.internal/workspaces/ws").mock(
+        return_value=httpx.Response(200, json={"slug": "ws", "default_agent": None})
+    )
+    async with httpx.AsyncClient(base_url="http://assistant.internal") as client:
+        assert await _gateway(client=client).workspace_compute() == {
+            "name": None,
+            "elastic": False,
+        }
 
 
 # --- lineage ------------------------------------------------------------------
@@ -304,6 +330,141 @@ def test_translate_says_plainly_when_no_agent_can_run_sql():
     assert str(err) == "No compute agent is currently available to run SQL."
 
 
+def test_translate_reads_the_apis_error_envelope():
+    """The API answers ``{"error", "message", "details"}``. Reading only the older
+    ``detail`` shapes would hand the model the bare code instead of the sentence."""
+    err = _translate(
+        _status_error(
+            403,
+            {
+                "error": "grant_denied",
+                "message": "Not authorized (reader) on c.s.t",
+                "details": None,
+            },
+        )
+    )
+    assert "Not authorized (reader) on c.s.t" in str(err)
+
+
+def test_translate_tells_the_model_it_cannot_start_compute():
+    err = _translate(
+        _status_error(
+            503,
+            {"error": "no_compute_available", "message": "No compute is running.", "details": None},
+        )
+    )
+    assert "cannot start any" in str(err)
+    assert "default compute" in str(err)
+
+
+def test_translate_names_the_default_compute_that_is_unavailable():
+    err = _translate(
+        _status_error(
+            503,
+            {
+                "error": "default_compute_unavailable",
+                "message": "Default compute 'ops' is not connected",
+                "details": {"agent_name": "ops", "reason": "disconnected"},
+            },
+        )
+    )
+    assert "Default compute 'ops' is not connected" in str(err)
+    assert "cannot choose a different engine" in str(err)
+
+
+def test_translate_a_full_queue_asks_the_user_to_retry():
+    err = _translate(
+        _status_error(
+            429, {"error": "compute_queue_full", "message": "queue is full", "details": None}
+        )
+    )
+    assert "try again shortly" in str(err)
+
+
+@respx.mock
+async def test_run_sql_never_asks_the_server_to_add_an_agent():
+    submitted = respx.post("http://assistant.internal/workspaces/ws/queries").mock(
+        return_value=httpx.Response(202, json={"id": "q1", "status": "done"})
+    )
+    respx.get("http://assistant.internal/queries/q1/rows").mock(
+        return_value=httpx.Response(200, json={"columns": [], "rows": [], "total": 0})
+    )
+    async with httpx.AsyncClient(base_url="http://assistant.internal") as client:
+        await _gateway(client=client).run_sql("SELECT 1", catalog=None, timeout_s=5)
+
+    assert json.loads(submitted.calls.last.request.content)["scale_out"] is False
+
+
+@respx.mock
+async def test_a_cold_start_does_not_eat_the_querys_own_timeout(monkeypatch):
+    """The agent starts the execution clock only once the run is bound, so the wait
+    for compute is budgeted on top of ``timeout_s``, not inside it."""
+    monkeypatch.setattr("api.services.assistant.gateway._POLL_INTERVAL_S", 0.01)
+    respx.post("http://assistant.internal/workspaces/ws/queries").mock(
+        return_value=httpx.Response(202, json={"id": "q1", "status": "queued"})
+    )
+    states = iter(["queued"] * 12 + ["done"])
+    respx.get("http://assistant.internal/queries/q1").mock(
+        side_effect=lambda request: httpx.Response(200, json={"id": "q1", "status": next(states)})
+    )
+    respx.get("http://assistant.internal/queries/q1/rows").mock(
+        return_value=httpx.Response(200, json={"columns": [], "rows": [], "total": 0})
+    )
+    async with httpx.AsyncClient(base_url="http://assistant.internal") as client:
+        page = await _gateway(client=client, queue_wait_s=5.0).run_sql(
+            "SELECT 1", catalog=None, timeout_s=0.05
+        )
+    assert page["status"] == "done"
+
+
+@respx.mock
+async def test_without_a_queue_wait_the_query_times_out_at_its_own_budget(monkeypatch):
+    monkeypatch.setattr("api.services.assistant.gateway._POLL_INTERVAL_S", 0.01)
+    respx.post("http://assistant.internal/workspaces/ws/queries").mock(
+        return_value=httpx.Response(202, json={"id": "q1", "status": "queued"})
+    )
+    respx.get("http://assistant.internal/queries/q1").mock(
+        return_value=httpx.Response(200, json={"id": "q1", "status": "queued"})
+    )
+    respx.delete("http://assistant.internal/queries/q1").mock(return_value=httpx.Response(204))
+    async with httpx.AsyncClient(base_url="http://assistant.internal") as client:
+        with pytest.raises(GatewayError, match="timed out"):
+            await _gateway(client=client, queue_wait_s=0.0).run_sql(
+                "SELECT 1", catalog=None, timeout_s=0.05
+            )
+
+
+@respx.mock
+async def test_a_run_that_waited_for_compute_says_how_long(monkeypatch):
+    monkeypatch.setattr("api.services.assistant.gateway._POLL_INTERVAL_S", 0.01)
+    monkeypatch.setattr("api.services.assistant.gateway._WAITED_NOTE_AFTER_S", 0.0)
+    respx.post("http://assistant.internal/workspaces/ws/queries").mock(
+        return_value=httpx.Response(202, json={"id": "q1", "status": "queued"})
+    )
+    respx.get("http://assistant.internal/queries/q1").mock(
+        return_value=httpx.Response(200, json={"id": "q1", "status": "done"})
+    )
+    respx.get("http://assistant.internal/queries/q1/rows").mock(
+        return_value=httpx.Response(200, json={"columns": [], "rows": [], "total": 0})
+    )
+    async with httpx.AsyncClient(base_url="http://assistant.internal") as client:
+        page = await _gateway(client=client).run_sql("SELECT 1", catalog=None, timeout_s=5)
+    assert "queued_for_s" in page
+
+
+@respx.mock
+async def test_a_run_that_started_at_once_reports_no_wait():
+    respx.post("http://assistant.internal/workspaces/ws/queries").mock(
+        return_value=httpx.Response(202, json={"id": "q1", "status": "done"})
+    )
+    respx.get("http://assistant.internal/queries/q1/rows").mock(
+        return_value=httpx.Response(200, json={"columns": [], "rows": [], "total": 0})
+    )
+    async with httpx.AsyncClient(base_url="http://assistant.internal") as client:
+        page = await _gateway(client=client).run_sql("SELECT 1", catalog=None, timeout_s=5)
+    assert "queued_for_s" not in page
+
+
 @respx.mock
 async def test_run_sql_waits_on_the_server_instead_of_polling():
     """A query that finishes inside the wait costs one call, not a stream of polls."""
@@ -408,3 +569,76 @@ def test_metric_tags_fit_the_servers_value_limit():
     assert tags["semantic.model"] == "sales"
     assert tags["semantic.metrics"].startswith("metric_0,metric_1,")
     assert len(tags["semantic.metrics"]) == 256
+
+
+@pytest.mark.parametrize(
+    ("code", "body", "kind"),
+    [
+        (403, {"error": "grant_denied", "message": "Not authorized", "details": None}, "denied"),
+        (
+            404,
+            {"error": "not_found", "message": "Table x does not exist", "details": None},
+            "denied",
+        ),
+        (
+            422,
+            {"error": "sql_not_allowed", "message": "ATTACH is denied", "details": None},
+            "denied",
+        ),
+        (422, {"error": "statement_not_allowed", "message": "no", "details": None}, "denied"),
+        (
+            409,
+            {"error": "catalog_read_only", "message": "read-only window", "details": None},
+            "denied",
+        ),
+        (
+            422,
+            {"error": "agent_required", "message": "agent_id is required", "details": None},
+            "error",
+        ),
+        (503, {"error": "no_compute_available", "message": "none", "details": None}, "error"),
+        (
+            503,
+            {"error": "default_compute_unavailable", "message": "stopped", "details": None},
+            "error",
+        ),
+        (429, {"error": "compute_queue_full", "message": "full", "details": None}, "error"),
+        (503, {"error": "unavailable", "message": "Agent not connected", "details": None}, "error"),
+        (409, {"error": "conflict", "message": "name taken", "details": None}, "error"),
+        (500, {"error": "internal_error", "message": "boom", "details": None}, "error"),
+    ],
+)
+def test_translate_classifies_a_refusal_apart_from_a_failure(code, body, kind):
+    """A compute outage is not the platform saying no, and the audit trail must not
+    record it as if it were."""
+    assert _translate(_status_error(code, body)).kind == kind
+
+
+def test_a_gateway_error_is_a_failure_unless_it_says_otherwise():
+    assert GatewayError("something broke").kind == "error"
+    assert GatewayError("no", kind="denied").kind == "denied"
+    assert str(GatewayError("something broke")) == "something broke"
+
+
+@respx.mock
+async def test_paging_someone_elses_query_is_a_refusal():
+    respx.get("http://assistant.internal/queries/q1").mock(
+        return_value=httpx.Response(200, json={"id": "q1", "user_id": "someone-else"})
+    )
+    async with httpx.AsyncClient(base_url="http://assistant.internal") as client:
+        with pytest.raises(GatewayError) as exc:
+            await _gateway(client=client).get_query_result("q1", cursor=None, limit=10)
+    assert exc.value.kind == "denied"
+
+
+@respx.mock
+async def test_a_query_that_fails_is_a_failure_not_a_refusal():
+    respx.post("http://assistant.internal/workspaces/ws/queries").mock(
+        return_value=httpx.Response(
+            202, json={"id": "q1", "status": "failed", "error": "Binder Error"}
+        )
+    )
+    async with httpx.AsyncClient(base_url="http://assistant.internal") as client:
+        with pytest.raises(GatewayError) as exc:
+            await _gateway(client=client).run_sql("SELECT x", catalog=None, timeout_s=5)
+    assert exc.value.kind == "error"

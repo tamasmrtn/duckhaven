@@ -67,6 +67,10 @@ signed in has `use`; on a `restricted` agent, `use` needs a grant too.
 A grant on a workspace reaches every member and is capped at `operate`. Holding `agents:manage` gives `admin` on every
 agent.
 
+A workspace's [default compute](../access/agent-access.md#a-workspaces-default-compute) gives every member of that
+workspace `use` on that agent for work in that workspace. Setting one needs `use` on an open agent and `operate` on a
+restricted one.
+
 ## Related
 
 - [How access works](../access/how-access-works.md) — how the layers combine.

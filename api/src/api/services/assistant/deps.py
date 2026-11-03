@@ -24,6 +24,18 @@ class ToolCallRecord:
     started: float | None = None
 
 
+@dataclass(frozen=True)
+class DefaultCompute:
+    """What the instructions need to know about the workspace's compute.
+
+    ``name`` is None when the workspace has no default. ``elastic`` is whether that
+    agent is started on demand, which is what makes a slow first query expected.
+    """
+
+    name: str | None
+    elastic: bool = False
+
+
 @dataclass
 class AssistantDeps:
     """Injected into every tool via ``RunContext.deps``."""
@@ -57,10 +69,9 @@ class AssistantDeps:
     # reading module-level settings behind the caller's back.
     elastic_enabled: bool = False
     docs_enabled: bool = True
-    # How many compute agents are connected and dispatchable. None when the lookup
-    # failed; the fleet paragraph is omitted below two, where there is nothing to
-    # choose between.
-    agent_count: int | None = None
+    # The compute this workspace runs on. None when the lookup failed, in which case
+    # the instructions say only what the deployment guarantees.
+    default_compute: DefaultCompute | None = None
     # Ranked documentation search, bound to the runner's session factory.
     #
     # A single narrow capability rather than a database session: documentation is

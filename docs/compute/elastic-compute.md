@@ -37,6 +37,9 @@ specific agent — over the API, omit `agent_id`):
 3. When the provisioned agent dials home (~tens of seconds later), it picks up the parked queries and
    runs them. The client just polls the run as usual — no request is held open for the cold start.
 
+A workspace that has a [default compute](#a-workspaces-default-compute) skips the pool: its work runs on that agent,
+and DuckHaven never adds a pool agent for it.
+
 An agent is matched to demand by its **pool key** — the set of storage-backend kinds it supports — so
 one provisioned agent serves every workspace with the same storage shape.
 
@@ -94,6 +97,49 @@ Restarting an agent deliberately, with no work to justify it, still needs `opera
 case that cannot park and answer, because a session open is *synchronous*: it has to hand back something the
 caller can immediately run statements on. It therefore blocks while compute starts, and the caller chooses how that wait
 ends — see [Cold start](../querying/sql-sessions.md#cold-start).
+
+### A workspace's default compute
+
+A workspace owner can choose one agent as the workspace's [default compute](../access/workspaces.md#default-compute).
+Work that names no agent runs there: an API call without `agent_id`, a [SQL session](../querying/sql-sessions.md), a
+describe, the assistant and MCP, and a schedule or saved query that has no agent of its own.
+
+The default can be a static agent or an elastic one. A stopped elastic default is started the way naming it would
+start it, and the work waits for it. If it is already starting, the work waits for that start instead of beginning a
+second one.
+
+The default is strict. DuckHaven never runs the work on another agent, and never adds a pool agent for a workspace
+that has a default. When the default cannot take the work, the request fails with `default_compute_unavailable`, and
+the message names the agent and says why:
+
+| Reason | Meaning | Status |
+|---|---|---|
+| `stopped`, `starting`, `stopping` | An elastic default the request may not start, or that is shutting down | 503, retry |
+| `disconnected` | A static agent that is offline, or an elastic one that lost its connection while running | 503 |
+| `elastic_disabled` | An elastic default while elastic compute is off | 503 |
+| `start_failed` | The backend could not start it | 503 |
+| `incompatible` | It lacks an extension a catalog needs, or its runtime cannot open a catalog | 422 |
+| `runtime_retired` | Its runtime is retired, so it can never start | 422 |
+
+The assistant and MCP never add a pool agent, with or without a default. They can start a stopped default. With no
+default and nothing connected, they get `no_compute_available`. Any API caller can ask for the same by sending
+`scale_out: false` with the query.
+
+Clearing the default restores the pool behaviour described above.
+
+### Watching the wait
+
+A cold start is time work spends waiting for an agent, and these [metrics](../operations/monitoring.md) show it:
+
+- `duckhaven_query_compute_wait_seconds` times work from submission to the moment an agent takes it. `origin` is the
+  kind of run: `interactive` for a worksheet or API call, `elastic` for a pool run, `describe`, `scheduled` or
+  `sql_session`. `outcome` is `bound` or `failed`. It includes the cold start, which
+  `duckhaven_query_queue_wait_seconds` (the agent's admission queue) does not.
+- `duckhaven_queries_parked` and `duckhaven_queries_parked_oldest_age_seconds` show what is waiting at each Prometheus
+  scrape. `kind` is `pool` (any pool agent may take it), `targeted` (waiting for one named agent, such as a default
+  compute) or `scheduled`.
+- `duckhaven_stranded_work_failed_total` counts what the reaper gave up on, and `duckhaven_compute_unavailable_total`
+  counts refusals by `reason`: the default compute's state, or `no_compute` when the workspace has none.
 
 ### Scaling in
 

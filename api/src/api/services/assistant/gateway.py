@@ -29,6 +29,8 @@ from api.config import settings
 # Query statuses that mean the run has stopped (mirrors the scheduler's terminal set).
 _TERMINAL = {"done", "failed", "cancelled"}
 _POLL_INTERVAL_S = 0.25
+# A query that sat queued at least this long gets its wait reported to the model.
+_WAITED_NOTE_AFTER_S = 10.0
 
 
 def _aggregated_columns(sql: str) -> dict[tuple[str | None, str, str], set[str]]:
@@ -90,38 +92,95 @@ def metric_tags(model: str, metrics: list[str]) -> dict[str, str]:
 
 
 class GatewayError(Exception):
-    """A governed REST call failed. The message is safe to surface to the model."""
+    """A governed REST call failed. The message is safe to surface to the model.
+
+    ``kind`` is how the audit trail records the failure: ``denied`` when the platform
+    refused on policy (access, the SQL guard), ``error`` for anything else, such as a
+    query that failed, a timeout, or no compute to run on. They answer different
+    questions, "what was this assistant stopped from doing?" and "what went wrong?",
+    so a compute outage must not read as a denial.
+    """
+
+    def __init__(self, message: str = "", *, kind: str = "error") -> None:
+        super().__init__(message)
+        self.kind = kind
 
 
-def _error_code(resp: httpx.Response) -> str | None:
-    """The ``error`` code of a governed error response, if it carries one."""
+def _error_parts(resp: httpx.Response) -> tuple[str | None, str]:
+    """The ``error`` code and the human message of an error response.
+
+    The API answers in one envelope (``error``, ``message``, ``details``), but a
+    FastAPI-native ``{"detail": ...}`` and the older ``{"error", "detail"}`` pair both
+    still turn up, so all three are read. Without the envelope case the model would
+    be handed the bare code in place of the sentence that explains it.
+    """
     try:
         body = resp.json()
     except ValueError:
-        return None
-    detail = body.get("detail") if isinstance(body, dict) else None
-    return detail.get("error") if isinstance(detail, dict) else None
+        return None, resp.text
+    if not isinstance(body, dict):
+        return None, str(body)
+    nested = body.get("detail")
+    if isinstance(nested, dict):  # {"detail": {"error": ..., "detail": ...}}
+        body = nested
+    code = body.get("error") if isinstance(body.get("error"), str) else None
+    message = body.get("message") or body.get("detail") or code or str(body)
+    return code, str(message)
+
+
+# Error codes that mean the platform refused the request on policy. Anything else the
+# API answers is some other kind of failure.
+_POLICY_REFUSALS = frozenset(
+    {
+        "sql_not_allowed",
+        "statement_not_allowed",
+        "grant_denied",
+        "agent_forbidden",
+        "catalog_read_only",
+    }
+)
 
 
 def _translate(exc: httpx.HTTPStatusError) -> GatewayError:
-    """Map a governed error response to a concise, model-friendly message."""
+    """Map a governed error response to a model-friendly message, and classify it.
+
+    A 404 counts as a refusal because the API answers it for objects the caller may
+    not see, so "missing" and "hidden" cannot be told apart from here.
+    """
+    error, _ = _error_parts(exc.response)
+    translated = _describe(exc)
+    if exc.response.status_code in (403, 404) or error in _POLICY_REFUSALS:
+        translated.kind = "denied"
+    return translated
+
+
+def _describe(exc: httpx.HTTPStatusError) -> GatewayError:
+    """The concise sentence the model is shown for a governed error response."""
     resp = exc.response
-    detail: object = None
-    try:
-        body = resp.json()
-        detail = body.get("detail", body) if isinstance(body, dict) else body
-    except ValueError:
-        detail = resp.text
-    # sql_guard / grants wrap detail as {"error": ..., "detail": ...}.
-    if isinstance(detail, dict):
-        detail = detail.get("detail") or detail.get("error") or str(detail)
+    error, detail = _error_parts(resp)
     code = resp.status_code
     if code == 403:
         return GatewayError(f"Access denied: {detail}")
     if code == 404:
         return GatewayError(f"Not found (or not accessible): {detail}")
-    if code == 422 and _error_code(resp) == "agent_required":
+    if error == "agent_required":
         return GatewayError("No compute agent is currently available to run SQL.")
+    if error == "no_compute_available":
+        return GatewayError(
+            "No compute is running for this workspace and I cannot start any. Tell the user "
+            "that a workspace owner can set a default compute in Settings, or that compute "
+            "needs starting."
+        )
+    if error == "default_compute_unavailable":
+        return GatewayError(
+            f"{detail}. I cannot choose a different engine; tell the user which compute is "
+            "unavailable and why."
+        )
+    if error == "compute_queue_full":
+        return GatewayError(
+            "Compute is saturated and not accepting more waiting queries. Ask the user to "
+            "try again shortly."
+        )
     if code == 422:
         return GatewayError(f"Not allowed: {detail}")
     if code == 409:
@@ -143,6 +202,7 @@ class Gateway:
         byte_cap: int,
         service_account_id: str,
         tags: dict[str, str] | None = None,
+        queue_wait_s: float | None = None,
     ) -> None:
         self._client = client
         self._ws = workspace_slug
@@ -154,6 +214,18 @@ class Gateway:
         # Sent with every query this gateway runs, so History can tell whose
         # conversation or which MCP client a run came from.
         self._tags = tags or {}
+        # How long a query may wait for compute to start before it runs. Added to the
+        # execution timeout rather than carved out of it: the agent starts that clock
+        # only once the run is bound, so a cold start must not eat the query's budget.
+        self._queue_wait_s = (
+            queue_wait_s
+            if queue_wait_s is not None
+            else (
+                settings.elastic_provisioning_deadline_s
+                if settings.elastic_compute_enabled
+                else 0.0
+            )
+        )
 
     async def _get(self, path: str, **kwargs) -> httpx.Response:
         resp = await self._client.get(path, **kwargs)
@@ -203,17 +275,19 @@ class Gateway:
         kinds = {c.get("kind") for c in resp.json()}
         return tuple(sorted(k for k in kinds if k))
 
-    async def count_agents(self) -> int:
-        """How many compute agents are connected and dispatchable right now.
+    async def workspace_compute(self) -> dict:
+        """The compute this workspace runs on, for prompt context.
 
-        Counts by reported status, not rows: ``GET /agents`` lists every agent the
-        service account may target — including ones that are registered but not
-        currently connected, which it reports as ``unavailable`` — and on an
-        elastic deployment terminated agents are retained for reuse, so a row
-        count would keep growing while the usable fleet stayed at one.
+        ``{"name": <agent name or None>, "elastic": <can it be started on demand>}``.
+        Read from the workspace itself, not from ``GET /agents``: that list is
+        filtered by the service account's own agent grants and says nothing about
+        which agent a query will actually be sent to.
         """
-        resp = await self._get("/agents")
-        return sum(1 for agent in resp.json() if agent.get("status") == "healthy")
+        resp = await self._get(f"/workspaces/{self._ws}")
+        agent = resp.json().get("default_agent")
+        if not agent:
+            return {"name": None, "elastic": False}
+        return {"name": agent["name"], "elastic": agent.get("provider") is not None}
 
     async def list_schemas(self, catalog: str) -> list[str]:
         resp = await self._get(f"/workspaces/{self._ws}/catalogs/{catalog}/schemas")
@@ -507,12 +581,14 @@ class Gateway:
         added to the gateway's own for this query. Raises :class:`GatewayError`
         with a model-friendly message on any governed rejection or failure.
         """
-        # No agent_id: the server picks one the way it does for any caller that
-        # doesn't care which — compatible with the workspace, on the default
-        # runtime first, never a beta one — and starts compute when elastic.
+        # No agent_id: the server runs it on the workspace's default compute, or
+        # picks a connected agent when there is none, and starts a stopped default.
+        # `scale_out: false` is the rule that the assistant never adds an agent to
+        # the elastic pool; the server enforces it for this account regardless.
         body: dict[str, object] = {
             "sql": sql,
             "timeout_s": timeout_s,
+            "scale_out": False,
             # The server holds the call until the query finishes, up to its cap,
             # so most queries cost this one request; slower ones are polled below.
             "wait_timeout_s": min(timeout_s, settings.sql_statement_max_wait_timeout_s),
@@ -522,7 +598,8 @@ class Gateway:
         if self._tags or tags:
             body["tags"] = {**self._tags, **(tags or {})}
         loop = asyncio.get_running_loop()
-        deadline = loop.time() + timeout_s
+        submitted_at = loop.time()
+        deadline = submitted_at + timeout_s + self._queue_wait_s
         # A turn cancelled during this call cannot cancel the query, whose id is
         # not known yet: it runs on to its timeout_s, and its result goes unread.
         resp = await self._client.post(f"/workspaces/{self._ws}/queries", json=body)
@@ -534,12 +611,13 @@ class Gateway:
         query_id = query["id"]
 
         status = query["status"]
+        parked = status == "queued"
         try:
             while status not in _TERMINAL:
                 if loop.time() > deadline:
                     # Don't leave the query running on the agent to stack up.
                     await self._cancel_query(query_id)
-                    raise GatewayError(f"Query timed out after {timeout_s:.0f}s.")
+                    raise GatewayError(f"Query timed out after {loop.time() - submitted_at:.0f}s.")
                 await asyncio.sleep(_POLL_INTERVAL_S)
                 query = (await self._get(f"/queries/{query_id}")).json()
                 status = query["status"]
@@ -557,6 +635,11 @@ class Gateway:
         page = await self._fetch_page(query_id, cursor=None, limit=self._row_cap)
         page["query_id"] = query_id
         page["status"] = status
+        waited = loop.time() - submitted_at
+        if parked and waited >= _WAITED_NOTE_AFTER_S:
+            # Compute was probably starting. Said so the model can tell the user why
+            # this answer was slow instead of leaving them to wonder.
+            page["queued_for_s"] = round(waited)
 
         # Advisory, not a gate. Free SQL is a legitimate use of this assistant, so
         # hand-written aggregation is never refused — but when the workspace has
@@ -589,7 +672,9 @@ class Gateway:
         # not something a conversation should be able to pull results from.
         record = (await self._get(f"/queries/{query_id}")).json()
         if str(record.get("user_id")) != self._service_account_id:
-            raise GatewayError("I can only page results of queries I ran in this conversation.")
+            raise GatewayError(
+                "I can only page results of queries I ran in this conversation.", kind="denied"
+            )
         page = await self._fetch_page(query_id, cursor=cursor, limit=min(limit, self._row_cap))
         page["query_id"] = query_id
         return page

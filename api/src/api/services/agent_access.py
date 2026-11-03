@@ -54,7 +54,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.models.agent import Agent
 from api.models.agent_grant import AgentGrant
 from api.models.user import User
-from api.models.workspace import WorkspaceMember
+from api.models.workspace import Workspace, WorkspaceMember
 from api.services.permissions import Permission
 from api.services.rbac import has_permission
 
@@ -180,16 +180,48 @@ async def agent_tier(db: AsyncSession, user: User, agent: Agent) -> str | None:
     return (await visible_tiers(db, user, [agent])).get(agent.id)
 
 
-async def tier_for_principal(db: AsyncSession, principal_id: uuid.UUID, agent: Agent) -> str | None:
+async def is_workspace_default_for(
+    db: AsyncSession, user_id: uuid.UUID, workspace: Workspace | None, agent_id: uuid.UUID
+) -> bool:
+    """True when ``agent_id`` is ``workspace``'s default compute and ``user_id`` is a member.
+
+    The embedded grant: a workspace's default agent is usable by every member of that
+    workspace, whatever their own grants. Read from the workspace row each time, never
+    cached, so clearing or changing the default withdraws it on the next request.
+    Membership is checked here rather than trusted from the caller, so a route that
+    forgets to assert it cannot hand the grant to an outsider.
+    """
+    if workspace is None or workspace.default_agent_id != agent_id:
+        return False
+    member = await db.execute(
+        select(WorkspaceMember.user_id).where(
+            WorkspaceMember.workspace_id == workspace.id, WorkspaceMember.user_id == user_id
+        )
+    )
+    return member.first() is not None
+
+
+async def tier_for_principal(
+    db: AsyncSession,
+    principal_id: uuid.UUID,
+    agent: Agent,
+    *,
+    workspace: Workspace | None = None,
+) -> str | None:
     """``agent_tier`` for a principal known only by id (an unattended run's owner).
 
     A principal that no longer exists has no access — the caller sees None and fails
-    the run rather than dispatching as nobody.
+    the run rather than dispatching as nobody. Pass ``workspace`` when the run belongs
+    to one: its default agent is then usable by the principal while they remain a
+    member, with no grant of their own.
     """
     user = await db.get(User, principal_id)
     if user is None:
         return None
-    return await agent_tier(db, user, agent)
+    tier = await agent_tier(db, user, agent)
+    if tier is None and await is_workspace_default_for(db, principal_id, workspace, agent.id):
+        return "use"
+    return tier
 
 
 async def usable_agents(
@@ -207,20 +239,69 @@ async def usable_agents(
     return [a for a in agents if tier_at_least(tiers.get(a.id), "use")]
 
 
-async def assert_can_assign_agent(db: AsyncSession, user: User, agent_id: uuid.UUID | None) -> None:
+async def assert_can_assign_agent(
+    db: AsyncSession,
+    user: User,
+    agent_id: uuid.UUID | None,
+    *,
+    workspace: Workspace | None = None,
+) -> None:
     """Require ``use`` on an agent a caller is *binding to future work*.
 
     The check behind a schedule's ``agent_id`` and a saved query's
     ``default_agent_id``: both name an agent that something will later dispatch to,
     so the person choosing it must be allowed to use it. ``None`` (auto-select) is
-    always allowed — the selection is filtered at dispatch instead.
+    always allowed — the selection is filtered at dispatch instead. Pass
+    ``workspace`` for work that lives in one, so its default compute can be chosen
+    by any member.
     """
     if agent_id is None:
         return
     agent = await db.get(Agent, agent_id)
     if agent is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
-    await assert_agent_tier(db, user, agent, "use")
+    await assert_agent_use(db, user, agent, workspace)
+
+
+async def assert_agent_use(
+    db: AsyncSession, user: User, agent: Agent, workspace: Workspace | None
+) -> str:
+    """Require ``use`` on ``agent`` for work in ``workspace``, returning the tier.
+
+    ``assert_agent_tier(..., "use")`` plus the embedded grant: the workspace's default
+    agent is usable by its members with no grant of their own, which is what lets the
+    assistant's service account and a member without a grant run on a restricted
+    default. Only ``use`` is embedded, and only on that one agent, so nothing here
+    reaches ``operate`` or the admin routes, which keep calling ``assert_agent_tier``.
+    """
+    tier = await agent_tier(db, user, agent)
+    if tier is None and await is_workspace_default_for(db, user.id, workspace, agent.id):
+        return "use"
+    return await assert_agent_tier(db, user, agent, "use")
+
+
+async def assert_can_set_default_agent(
+    db: AsyncSession, user: User, agent_id: uuid.UUID | None
+) -> Agent | None:
+    """Require the tier that lets ``user`` make ``agent_id`` a workspace's default.
+
+    Making an agent the default gives every member of the workspace ``use`` on it,
+    whatever their own grants. On an ``open`` agent everyone already has ``use``, so
+    that widens nothing and ``use`` is enough. On a ``restricted`` agent it does:
+    a workspace-wide grant is otherwise an agent admin's decision, so the setter
+    needs ``operate``. Clearing the default (``None``) needs nothing from this
+    ladder; the caller has already asserted workspace ownership.
+
+    Returns the agent, or ``None`` when clearing.
+    """
+    if agent_id is None:
+        return None
+    agent = await db.get(Agent, agent_id)
+    if agent is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found")
+    need = "operate" if agent.access_mode == "restricted" else "use"
+    await assert_agent_tier(db, user, agent, need)
+    return agent
 
 
 async def assert_agent_tier(db: AsyncSession, user: User, agent: Agent, need: str) -> str:

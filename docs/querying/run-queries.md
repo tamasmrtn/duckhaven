@@ -41,9 +41,10 @@ The agent chip at the left of the toolbar shows where the next run goes. Open it
 Each agent shows its runtime and DuckDB version, such as *DuckDB 1.5 · v1.5.5*, and a **Beta** mark on a beta runtime.
 With the `operate` tier on an elastic agent, its **⋯** menu can start or stop it.
 
-A worksheet keeps the agent it last ran on. When that agent cannot take a run, DuckHaven picks one: the agent you last
-used in the workspace, else the first healthy agent that can serve it, else a stopped elastic agent it can start. It
-prefers the default runtime and never picks a beta one; you choose a beta agent yourself.
+A worksheet keeps the agent it last ran on. When that agent cannot take a run, DuckHaven picks one: the workspace's
+[default compute](../access/workspaces.md#default-compute) if it has one, else the agent you last used in the
+workspace, else the first healthy agent that can serve it, else a stopped elastic agent it can start. It prefers the
+default runtime and never picks a beta one; you choose a beta agent yourself.
 
 The **catalog** chip beside it sets the catalog that names without a catalog resolve in. It starts on the workspace's
 default.

@@ -37,6 +37,25 @@ An owner changes a workspace from **Settings** → **Workspace**, in the user me
   conversations are deleted. Its catalogs are **not**: the workspace is detached from them, and their data stays
   available to any other workspace that attaches them.
 
+## Default compute
+
+An owner can choose one [agent](../compute/agents.md) as the workspace's **default compute** from **Settings** →
+**Workspace**. It runs everything in the workspace that names no agent: the assistant, MCP, SQL sessions, describes,
+and schedules or saved queries that have no agent of their own. A worksheet with no agent of its own starts on it.
+
+Every member of the workspace can run on the default, whether or not a grant reaches them. Data access is unchanged:
+catalog grants and row and column rules still apply to each person. Setting it needs the `use` tier on an `open`
+agent, and the `operate` tier on a [restricted](../access/agent-access.md#open-and-restricted-agents) one, because it
+opens that agent to the whole workspace.
+
+The default is the workspace's, not the person's who set it. It keeps working if they later lose access to the agent,
+so check who can reach an agent before making it a default. Agent admins see the workspaces that use an agent on its
+**Access** tab.
+
+If the default is a stopped [elastic agent](../compute/elastic-compute.md), running anything starts it. If it cannot
+run the work, the request fails and names the agent and the reason; DuckHaven does not choose another. Clearing the
+default returns the workspace to automatic choice. Deleting the agent clears it too.
+
 ## Related
 
 - [Catalogs](../data/catalogs.md) — what a workspace attaches.

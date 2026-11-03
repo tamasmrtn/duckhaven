@@ -1178,6 +1178,53 @@ async def test_open_with_a_terminated_agent_restarts_it_and_parks(
     assert terminated_agent.instance_id != old_instance
 
 
+async def test_open_with_a_stopped_workspace_default_restarts_it_and_parks(
+    authed_client, db_session, workspace, terminated_agent, enabled, elastic_enabled
+):
+    """No agent named: the workspace default is started, never a new pool agent."""
+    import sqlalchemy as sa
+
+    workspace.default_agent_id = terminated_agent.id
+    await db_session.commit()
+    old_instance = terminated_agent.instance_id
+
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/sql/sessions",
+        json={"wait_timeout_s": 0, "on_wait_timeout": "continue"},
+    )
+    assert resp.status_code == 202, resp.text
+
+    session = (await db_session.execute(sa.select(SqlSession))).scalars().one()
+    assert (session.status, session.agent_id) == ("pending", None)
+    assert session.requested_agent_id == terminated_agent.id
+    await db_session.refresh(terminated_agent)
+    assert terminated_agent.lifecycle == "provisioning"
+    assert terminated_agent.instance_id != old_instance
+    assert len([a for a in await _agent_rows(db_session) if a.provider is not None]) == 1
+
+
+async def test_open_joins_a_workspace_default_that_is_already_starting(
+    authed_client, db_session, workspace, terminated_agent, enabled, elastic_enabled
+):
+    import sqlalchemy as sa
+
+    terminated_agent.lifecycle = "provisioning"
+    terminated_agent.terminated_at = None
+    workspace.default_agent_id = terminated_agent.id
+    await db_session.commit()
+    instance = terminated_agent.instance_id
+
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/sql/sessions",
+        json={"wait_timeout_s": 0, "on_wait_timeout": "continue"},
+    )
+    assert resp.status_code == 202, resp.text
+    session = (await db_session.execute(sa.select(SqlSession))).scalars().one()
+    assert session.requested_agent_id == terminated_agent.id
+    await db_session.refresh(terminated_agent)
+    assert terminated_agent.instance_id == instance  # started once, not twice
+
+
 async def test_open_with_a_terminated_agent_needs_only_use_tier(
     authed_client, db_session, workspace, terminated_agent, enabled, elastic_enabled
 ):

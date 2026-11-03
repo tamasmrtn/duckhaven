@@ -28,7 +28,7 @@ from opentelemetry.trace import Status, StatusCode
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.config import settings
-from api.metrics import record_agent_provision
+from api.metrics import record_agent_provision, record_compute_wait
 from api.models.agent import Agent
 from api.models.query import Query, SavedQuery, Schedule
 from api.models.sql_session import SqlSession
@@ -253,6 +253,25 @@ async def delete_agent(db: AsyncSession, agent: Agent) -> None:
     await db.execute(
         sa.update(Worksheet).where(Worksheet.agent_id == agent.id).values(agent_id=None)
     )
+    # A workspace default is cleared explicitly, not left to the FK's SET NULL: those
+    # workspaces fall back to server-picked compute, which is worth a log line.
+    cleared = (
+        (await db.execute(sa.select(Workspace.slug).where(Workspace.default_agent_id == agent.id)))
+        .scalars()
+        .all()
+    )
+    if cleared:
+        await db.execute(
+            sa.update(Workspace)
+            .where(Workspace.default_agent_id == agent.id)
+            .values(default_agent_id=None)
+        )
+        logger.warning(
+            "Deleted agent %s was the default compute of workspace(s) %s; they now pick compute "
+            "automatically",
+            agent.id,
+            ", ".join(sorted(cleared)),
+        )
     await db.execute(
         sa.update(TableMetadata)
         .where(TableMetadata.last_write_agent_id == agent.id)
@@ -279,18 +298,36 @@ async def restart_elastic_agent(db: AsyncSession, agent: Agent) -> Agent | None:
         return None
     runtime = assert_restartable(agent)
 
+    # Claimed in one statement that only matches a stopped agent. Callers arriving
+    # together (a default compute shared by a workspace, the assistant and MCP all
+    # wake it at once) each loaded the agent while it was still stopped, so the check
+    # above cannot tell them apart; only the first update finds a stopped row. The
+    # rest find it already starting and join that start, instead of each provisioning
+    # a container of their own.
     now = datetime.now(tz=UTC)
-    agent.requested_runtime_id = runtime.id
-    agent.lifecycle = "provisioning"
-    agent.status = "unavailable"
-    # The last instance's report describes that instance, not the next one.
-    agent.capabilities = None
-    agent.provisioned_at = now
-    agent.terminated_at = None
-    agent.last_active_at = None
-    agent.instance_id = _instance_id(agent.id)
+    claimed = await db.execute(
+        sa.update(Agent)
+        .where(Agent.id == agent.id, Agent.lifecycle.in_(("terminated", "failed")))
+        .values(
+            requested_runtime_id=runtime.id,
+            lifecycle="provisioning",
+            status="unavailable",
+            # The last instance's report describes that instance, not the next one.
+            capabilities=None,
+            provisioned_at=now,
+            terminated_at=None,
+            last_active_at=None,
+            instance_id=_instance_id(agent.id),
+        )
+    )
+    if claimed.rowcount == 0:
+        # Not a rollback: that would expire every object the caller already holds (the
+        # run it just parked), and its next attribute read would fail in async code.
+        await db.refresh(agent)
+        return agent if agent.lifecycle in ("provisioning", "running") else None
     record_lifecycle_event(db, agent.id, "provisioning", reason="restart")
     await db.commit()
+    await db.refresh(agent)
     return await _mint_and_provision(
         db,
         agent,
@@ -504,6 +541,9 @@ async def bind_queued_work(db: AsyncSession, agent: Agent) -> int:
                     # same way (query.run_internal_query).
                     Query.origin.in_(("elastic", "describe")),
                     Query.status == "queued",
+                    # A run parked on a named agent (the workspace default) is that
+                    # agent's alone, whichever pool agent happens to register first.
+                    Query.requested_agent_id.is_(None),
                 )
             )
         )
@@ -556,8 +596,10 @@ async def bind_queued_work(db: AsyncSession, agent: Agent) -> int:
                 **({} if query.timeout_s is None else {"timeout_s": query.timeout_s}),
             )
             bound += 1
+            record_compute_wait(query.origin, "bound", query.started_at)
         except Exception:
             logger.exception("Failed to bind queued query %s to agent %s", query.id, agent.id)
+            record_compute_wait(query.origin, "failed", query.started_at)
             query.status = "failed"
             query.error = "dispatch failed after provisioning"
             query.finished_at = datetime.now(tz=UTC)
@@ -654,8 +696,10 @@ async def bind_pending_sessions(db: AsyncSession, agent: Agent) -> int:
             if not await dispatch_open_session(db, session, catalogs):
                 raise RuntimeError("agent not connected")
             bound += 1
+            record_compute_wait("sql_session", "bound", session.created_at)
         except Exception:
             logger.exception("Failed to open pending session %s on agent %s", session.id, agent.id)
+            record_compute_wait("sql_session", "failed", session.created_at)
             session.status = "failed"
             session.error = "open dispatch failed after the agent started"
             session.close_reason = "failed"
@@ -715,8 +759,22 @@ async def bind_targeted_work(db: AsyncSession, agent: Agent) -> int:
                 **({} if query.timeout_s is None else {"timeout_s": query.timeout_s}),
             )
             bound += 1
+            record_compute_wait(query.origin, "bound", query.started_at)
+        except AgentNotDispatchable as exc:
+            # Known only now: a restarted agent advertises nothing until it registers,
+            # so the refusal (a missing extension, a runtime that cannot open the
+            # catalog) is the answer the requester is waiting for.
+            logger.warning(
+                "Targeted query %s refused by agent %s: %s", query.id, agent.id, exc.detail
+            )
+            record_compute_wait(query.origin, "failed", query.started_at)
+            query.status = "failed"
+            query.error = exc.detail
+            query.finished_at = datetime.now(tz=UTC)
+            query.agent_id = None
         except Exception:
             logger.exception("Failed to bind targeted query %s to agent %s", query.id, agent.id)
+            record_compute_wait(query.origin, "failed", query.started_at)
             query.status = "failed"
             query.error = "dispatch failed after the agent started"
             query.finished_at = datetime.now(tz=UTC)
@@ -767,6 +825,11 @@ async def bind_scheduled_work(db: AsyncSession, agent: Agent) -> int:
         if target is None and schedule.saved_query_id is not None:
             saved = await db.get(SavedQuery, schedule.saved_query_id)
             target = saved.default_agent_id if saved is not None else None
+        if target is None:
+            # The same order the scheduler resolves it by: schedule, saved query,
+            # then the workspace default.
+            workspace = await db.get(Workspace, schedule.workspace_id)
+            target = workspace.default_agent_id if workspace is not None else None
         if target != agent.id:
             continue
 
@@ -790,8 +853,10 @@ async def bind_scheduled_work(db: AsyncSession, agent: Agent) -> int:
             # the scheduler's own dispatch path.
             await dispatch_query(db, query, principal_id=saved.updated_by if saved else None)
             bound += 1
+            record_compute_wait(query.origin, "bound", query.started_at)
         except Exception:
             logger.exception("Failed to bind scheduled query %s to agent %s", query.id, agent.id)
+            record_compute_wait(query.origin, "failed", query.started_at)
             query.status = "failed"
             query.error = "dispatch failed after the agent started"
             query.finished_at = datetime.now(tz=UTC)

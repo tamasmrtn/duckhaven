@@ -165,21 +165,23 @@ async def update_workspace(
     name: str | None,
     description: str | None | _Unset = UNSET,
     result_cache_enabled: bool | None = None,
+    default_agent_id: uuid.UUID | None | _Unset = UNSET,
 ) -> Workspace:
     """Rename and/or re-describe a workspace. Slug is not renameable here — it
     is the routable `/$ws/...` segment, and rescoping it risks breaking
     bookmarks and shared links.
 
-    ``description`` defaults to ``UNSET`` (leave unchanged) rather than
-    ``None``, so an explicit null in the request can still clear a
-    previously-set description instead of being indistinguishable from
-    "field omitted"."""
+    ``description`` and ``default_agent_id`` default to ``UNSET`` (leave
+    unchanged) rather than ``None``, so an explicit null in the request can still
+    clear them instead of being indistinguishable from "field omitted"."""
     if name is not None:
         workspace.name = name
     if description is not UNSET:
         workspace.description = description
     if result_cache_enabled is not None:
         workspace.result_cache_enabled = result_cache_enabled
+    if default_agent_id is not UNSET:
+        workspace.default_agent_id = default_agent_id
     await db.commit()
     await db.refresh(workspace)
     return workspace

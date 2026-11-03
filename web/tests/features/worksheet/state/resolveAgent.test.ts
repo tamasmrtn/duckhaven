@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { resolveWorksheetAgent } from "@/features/worksheet/state/resolveAgent";
 import type { Agent } from "@/types/agent";
+import type { DefaultAgent } from "@/types/workspace";
 
 function agent(id: string, over: Partial<Agent> = {}): Agent {
   return {
@@ -46,7 +47,10 @@ describe("resolveWorksheetAgent", () => {
       ...base,
       agents: [offline("test-agent-1"), agent("ducklake-bench")],
     });
-    expect(result).toMatchObject({ agentId: "ducklake-bench", source: "healthy" });
+    expect(result).toMatchObject({
+      agentId: "ducklake-bench",
+      source: "healthy",
+    });
   });
 
   it("keeps the worksheet's own agent while it is usable", () => {
@@ -120,7 +124,11 @@ describe("resolveWorksheetAgent", () => {
     const result = resolveWorksheetAgent({
       ...base,
       agents: [
-        agent("gone", { status: "unavailable", provider: "null", lifecycle: "running" }),
+        agent("gone", {
+          status: "unavailable",
+          provider: "null",
+          lifecycle: "running",
+        }),
       ],
     });
     expect(result).toEqual({ agentId: null, reason: "none-compatible" });
@@ -144,9 +152,15 @@ describe("resolveWorksheetAgent", () => {
     const result = resolveWorksheetAgent({
       ...base,
       backends: ["adls_gen2"],
-      agents: [agent("s3-only"), agent("azure", {
-        capabilities: { ...agent("azure").capabilities!, extensions: ["httpfs", "azure"] },
-      })],
+      agents: [
+        agent("s3-only"),
+        agent("azure", {
+          capabilities: {
+            ...agent("azure").capabilities!,
+            extensions: ["httpfs", "azure"],
+          },
+        }),
+      ],
     });
     expect(result).toMatchObject({ agentId: "azure" });
   });
@@ -229,6 +243,102 @@ describe("resolveWorksheetAgent", () => {
         ],
       });
       expect(result).toMatchObject({ agentId: "default" });
+    });
+  });
+
+  describe("a workspace default compute", () => {
+    const wsDefault = (over: Partial<DefaultAgent> = {}): DefaultAgent => ({
+      id: "team",
+      name: "team",
+      provider: null,
+      lifecycle: null,
+      status: "healthy",
+      ...over,
+    });
+
+    it("beats the last-used and the healthy agents", () => {
+      const result = resolveWorksheetAgent({
+        ...base,
+        lastUsedAgentId: "a",
+        workspaceDefault: wsDefault(),
+        agents: [agent("a"), agent("team")],
+      });
+      expect(result).toMatchObject({
+        agentId: "team",
+        source: "workspace-default",
+        willStart: false,
+      });
+    });
+
+    it("yields to the worksheet's own agent while that is usable", () => {
+      const result = resolveWorksheetAgent({
+        ...base,
+        worksheetAgentId: "b",
+        workspaceDefault: wsDefault(),
+        agents: [agent("b"), agent("team")],
+      });
+      expect(result).toMatchObject({ agentId: "b", source: "worksheet" });
+    });
+
+    it("is chosen when the member's own agent list does not hold it", () => {
+      // The default is usable by every member without a grant, and the list
+      // holds only agents they have one on, so it can be missing from it.
+      const result = resolveWorksheetAgent({
+        ...base,
+        workspaceDefault: wsDefault(),
+        agents: [],
+      });
+      expect(result).toMatchObject({
+        agentId: "team",
+        source: "workspace-default",
+      });
+    });
+
+    it("is kept even when it is down, as the server does not substitute", () => {
+      const result = resolveWorksheetAgent({
+        ...base,
+        workspaceDefault: wsDefault({ status: "unavailable" }),
+        agents: [agent("a")],
+      });
+      expect(result).toMatchObject({ agentId: "team" });
+    });
+
+    it("starts a stopped elastic default for the run", () => {
+      const result = resolveWorksheetAgent({
+        ...base,
+        workspaceDefault: wsDefault({
+          status: "unavailable",
+          provider: "null",
+          lifecycle: "terminated",
+        }),
+        agents: [],
+      });
+      expect(result).toMatchObject({ agentId: "team", willStart: true });
+    });
+
+    it("does not start a default that is already starting", () => {
+      const result = resolveWorksheetAgent({
+        ...base,
+        workspaceDefault: wsDefault({
+          status: "unavailable",
+          provider: "null",
+          lifecycle: "provisioning",
+        }),
+        agents: [],
+      });
+      expect(result).toMatchObject({ agentId: "team", willStart: false });
+    });
+
+    it("changes nothing for a workspace without one", () => {
+      const result = resolveWorksheetAgent({
+        ...base,
+        workspaceDefault: null,
+        agents: [agent("a")],
+      });
+      expect(result).toMatchObject({ agentId: "a", source: "healthy" });
+      expect(
+        resolveWorksheetAgent({ ...base, workspaceDefault: null, agents: [] }),
+      ).toEqual({ agentId: null, reason: "no-agents" });
     });
   });
 });

@@ -12,7 +12,10 @@ import { cn } from "@/utils";
 import { ApiError } from "@/api/client";
 import { useMe } from "@/queries/auth";
 import { useTheme } from "@/hooks/useTheme";
+import { useAgents } from "@/queries/agents";
+import { useCatalogs } from "@/queries/catalogs";
 import { useWorkspace, useWorkspaceMembers } from "@/queries/workspaces";
+import { agentAvailability } from "@/types/agent";
 import {
   useUpdateWorkspace,
   useDeleteWorkspace,
@@ -159,6 +162,8 @@ function WorkspaceSettings({ ws }: { ws: string }) {
         </div>
       </div>
 
+      <DefaultCompute ws={ws} isOwner={isOwner} />
+
       <div className="space-y-2 border-t border-[var(--border-subtle)] pt-6">
         <p className="text-sm font-medium text-text-primary">Danger zone</p>
         <p className="text-sm text-text-tertiary">
@@ -186,6 +191,105 @@ function WorkspaceSettings({ ws }: { ws: string }) {
           void navigate({ to: "/welcome" });
         }}
       />
+    </div>
+  );
+}
+
+const NO_DEFAULT = "";
+
+function availabilityHint(kind: string): string {
+  if (kind === "startable") return " — stopped, starts on use";
+  if (kind === "running") return "";
+  return " — unavailable";
+}
+
+function DefaultCompute({ ws, isOwner }: { ws: string; isOwner: boolean }) {
+  const { data: workspace } = useWorkspace(ws);
+  const { data: agents = [] } = useAgents();
+  const { data: catalogs = [] } = useCatalogs(ws);
+  const update = useUpdateWorkspace(ws);
+  if (!workspace) return null;
+
+  const needs = {
+    catalogKinds: catalogs.map((c) => c.kind),
+    backends: workspace.storage_backend_kind
+      ? [workspace.storage_backend_kind]
+      : [],
+  };
+  // What the owner may use. An agent that cannot serve this workspace is left
+  // out; the server refuses it too, and the list is only worth choosing from if
+  // every entry can work.
+  const options = agents
+    .map((agent) => ({ agent, kind: agentAvailability(agent, needs).kind }))
+    .filter(({ kind }) => kind !== "incompatible");
+  const current = workspace.default_agent_id ?? NO_DEFAULT;
+  // The current default may be one this owner has no grant on (someone else set
+  // it); keep it selectable so the control shows the truth.
+  const currentMissing =
+    current !== NO_DEFAULT &&
+    !options.some(({ agent }) => agent.id === current);
+
+  async function change(value: string) {
+    try {
+      await update.mutateAsync({
+        default_agent_id: value === NO_DEFAULT ? null : value,
+      });
+      toast.success(
+        value === NO_DEFAULT
+          ? "Default compute cleared"
+          : "Default compute updated",
+      );
+    } catch (err) {
+      toast.error(
+        err instanceof ApiError
+          ? err.message
+          : "Failed to update the default compute",
+      );
+    }
+  }
+
+  return (
+    <div className="space-y-2 border-t border-[var(--border-subtle)] pt-6">
+      <Label htmlFor="ws-default-compute" className="text-sm font-medium">
+        Default compute
+      </Label>
+      <select
+        id="ws-default-compute"
+        value={current}
+        disabled={!isOwner || update.isPending}
+        onChange={(e) => void change(e.target.value)}
+        className="h-7 w-full rounded border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-2 text-sm text-text-primary disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        <option value={NO_DEFAULT}>None — pick automatically</option>
+        {currentMissing && workspace.default_agent && (
+          <option value={workspace.default_agent.id}>
+            {workspace.default_agent.name}
+          </option>
+        )}
+        {options.map(({ agent, kind }) => (
+          <option key={agent.id} value={agent.id}>
+            {agent.name}
+            {availabilityHint(kind)}
+            {agent.access_mode === "restricted" ? " (restricted)" : ""}
+          </option>
+        ))}
+      </select>
+      <p className="text-xs text-text-tertiary">
+        The assistant, MCP, SQL sessions and any query that names no agent run
+        here. Every member of the workspace can use it, whether or not they have
+        access to the agent. If it is stopped, running anything starts it; if it
+        cannot run the work, the request fails instead of using another agent.
+      </p>
+      {isOwner && (
+        <p className="text-xs text-text-tertiary">
+          Making a restricted agent the default needs the operate tier on it.
+        </p>
+      )}
+      {!isOwner && (
+        <p className="text-xs text-text-tertiary">
+          Only a workspace owner can change the default compute.
+        </p>
+      )}
     </div>
   );
 }

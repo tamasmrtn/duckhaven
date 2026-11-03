@@ -20,6 +20,7 @@ import time
 import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 
 import sqlalchemy as sa
 from prometheus_client import (
@@ -163,6 +164,29 @@ AGENTS_REAPED = Counter(
     "duckhaven_agents_reaped",
     "Elastic agents torn down by the reaper, by reason "
     "(idle/max_lifetime/provisioning_timeout/orphan/dead_row).",
+    ["replica_id", "reason"],
+)
+
+COMPUTE_WAIT_SECONDS = Histogram(
+    "duckhaven_query_compute_wait_seconds",
+    "Time work waited for compute before it was handed to an agent, from submission to "
+    "binding, by origin and outcome (bound/failed). Covers every kind of work that can "
+    "wait for an agent to start, which duckhaven_query_queue_wait_seconds (the agent's "
+    "admission queue, interactive queries only) does not.",
+    ["replica_id", "origin", "outcome"],
+    # Cold starts are tens of seconds; the top bucket sits above the provisioning
+    # deadline so a run that waited it out lands somewhere finite.
+    buckets=(1, 2.5, 5, 10, 20, 30, 45, 60, 90, 120, 180, 300, 600),
+)
+STRANDED_WORK_FAILED = Counter(
+    "duckhaven_stranded_work_failed",
+    "Queries and SQL sessions the reaper failed because no compute came for them in time.",
+    ["replica_id", "kind"],
+)
+COMPUTE_UNAVAILABLE = Counter(
+    "duckhaven_compute_unavailable",
+    "Requests refused because no compute could take them, by reason (the workspace "
+    "default's state, or no_compute when the workspace has none).",
     ["replica_id", "reason"],
 )
 
@@ -449,6 +473,34 @@ def record_agents_reaped(counts: dict[str, int]) -> None:
             AGENTS_REAPED.labels(settings.replica_id, reason).inc(count)
 
 
+def record_compute_wait(origin: str | None, outcome: str, since: datetime | None) -> None:
+    """Observe how long a piece of work waited for compute before an agent took it.
+
+    ``since`` is when it was submitted. A naive timestamp (SQLite in tests) is read as UTC.
+    """
+    if since is None:
+        return
+    if since.tzinfo is None:
+        since = since.replace(tzinfo=UTC)
+    COMPUTE_WAIT_SECONDS.labels(settings.replica_id, origin or "interactive", outcome).observe(
+        max((datetime.now(UTC) - since).total_seconds(), 0.0)
+    )
+
+
+def record_stranded_failed(counts: dict[str, int]) -> None:
+    """Count what the reaper failed for want of compute (it only logged these)."""
+    for key, kind in (
+        ("stranded_queries_failed", "query"),
+        ("stranded_sessions_failed", "session"),
+    ):
+        if counts.get(key):
+            STRANDED_WORK_FAILED.labels(settings.replica_id, kind).inc(counts[key])
+
+
+def record_compute_unavailable(reason: str | None) -> None:
+    COMPUTE_UNAVAILABLE.labels(settings.replica_id, reason or "unknown").inc()
+
+
 # ── HTTP middleware ───────────────────────────────────────────────────────────
 
 
@@ -487,6 +539,8 @@ class _Snapshot:
     sql_sessions_active: int = 0
     # (provider, lifecycle) -> count; None when this replica isn't the reap leader.
     agent_lifecycles: dict[tuple[str, str], int] | None = None
+    # kind -> (count, age in seconds of the oldest); None when not the reap leader.
+    parked: dict[str, tuple[int, float]] | None = None
 
 
 _snapshot = _Snapshot()
@@ -515,6 +569,25 @@ class _ScrapeCollector:
             for (provider, lifecycle), count in sorted(snap.agent_lifecycles.items()):
                 fam.add_metric([provider, lifecycle], count)
             yield fam
+        if snap.parked is not None:
+            parked = GaugeMetricFamily(
+                "duckhaven_queries_parked",
+                "Queries waiting for compute to take them (queued, no agent yet), by kind: "
+                "pool (any pool agent may take it), targeted (waiting for one named agent) "
+                "or scheduled (reap leader only).",
+                labels=["kind"],
+            )
+            oldest = GaugeMetricFamily(
+                "duckhaven_queries_parked_oldest_age_seconds",
+                "Age of the longest-waiting parked query, by kind (reap leader only).",
+                labels=["kind"],
+            )
+            for kind in ("pool", "targeted", "scheduled"):
+                count, age = snap.parked.get(kind, (0, 0.0))
+                parked.add_metric([kind], count)
+                oldest.add_metric([kind], age)
+            yield parked
+            yield oldest
         if snap.pool:
             for key, doc in (
                 ("size", "Configured connection pool size."),
@@ -764,6 +837,33 @@ async def _collect_agent_lifecycles(db: AsyncSession) -> dict[tuple[str, str], i
     return {(provider, lifecycle or "unknown"): count for provider, lifecycle, count in rows}
 
 
+async def _collect_parked_queries(db: AsyncSession) -> dict[str, tuple[int, float]]:
+    """Queries parked for compute, by kind, with the age of the oldest of each.
+
+    DB-wide: a run parked by one replica is bound by whichever one the agent dials.
+    """
+    from api.models.query import Query
+
+    targeted = Query.requested_agent_id.is_not(None)
+    rows = (
+        await db.execute(
+            sa.select(Query.origin, targeted, sa.func.count(), sa.func.min(Query.started_at))
+            .where(Query.agent_id.is_(None), Query.status == "queued")
+            .group_by(Query.origin, targeted)
+        )
+    ).all()
+    now = datetime.now(UTC)
+    out: dict[str, tuple[int, float]] = {}
+    for origin, is_targeted, count, oldest in rows:
+        kind = "scheduled" if origin == "scheduled" else "targeted" if is_targeted else "pool"
+        if oldest is not None and oldest.tzinfo is None:
+            oldest = oldest.replace(tzinfo=UTC)
+        age = max((now - oldest).total_seconds(), 0.0) if oldest is not None else 0.0
+        seen_count, seen_age = out.get(kind, (0, 0.0))
+        out[kind] = (seen_count + count, max(seen_age, age))
+    return out
+
+
 async def _collect_sql_sessions_active(db: AsyncSession) -> int:
     from api.models.sql_session import SqlSession
 
@@ -784,5 +884,6 @@ async def render(db: AsyncSession) -> tuple[bytes, str]:
             maintenance=await _collect_maintenance(db) if is_scan_leader() else None,
             sql_sessions_active=await _collect_sql_sessions_active(db),
             agent_lifecycles=await _collect_agent_lifecycles(db) if is_reap_leader() else None,
+            parked=await _collect_parked_queries(db) if is_reap_leader() else None,
         )
         return generate_latest(REGISTRY), CONTENT_TYPE_LATEST

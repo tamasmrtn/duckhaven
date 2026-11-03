@@ -22,6 +22,12 @@ class Workspace(Base):
     result_cache_enabled: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True, server_default=true()
     )
+    # The agent that runs work when a caller names none (the assistant, MCP, describe,
+    # sessions). Members get ``use`` on exactly this agent for this workspace's requests,
+    # whatever its access mode. Cleared when the agent is deleted.
+    default_agent_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("agents.id", ondelete="SET NULL"), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

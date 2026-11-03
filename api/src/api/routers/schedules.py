@@ -125,7 +125,7 @@ async def create_schedule(
     # You may only point a schedule at an agent you could run on yourself. This is
     # the fast feedback path; the same check runs again at dispatch against the
     # schedule's creator, so revoking access later stops the runs too.
-    await assert_can_assign_agent(db, user, body.agent_id)
+    await assert_can_assign_agent(db, user, body.agent_id, workspace=workspace)
     now = datetime.now(tz=UTC)
     schedule = Schedule(
         workspace_id=workspace.id,
@@ -170,7 +170,7 @@ async def update_schedule(
     if "cron" in fields:
         _validate_cron_or_422(fields["cron"])
     if "agent_id" in fields:
-        await assert_can_assign_agent(db, user, fields["agent_id"])
+        await assert_can_assign_agent(db, user, fields["agent_id"], workspace=workspace)
     if fields.get("enabled") and schedule.saved_query_id is not None:
         await _assert_schedulable_or_422(db, schedule.saved_query_id)
     for key, value in fields.items():

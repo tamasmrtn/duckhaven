@@ -28,6 +28,7 @@ import {
 } from "@/components/ui/popover";
 import type { Catalog } from "@/types/catalog";
 import type { BackendKind } from "@/types/storage-backend";
+import type { DefaultAgent } from "@/types/workspace";
 import { CatalogSelect } from "./CatalogSelect";
 import type { SyncStatus } from "./state/worksheetSync";
 
@@ -80,6 +81,7 @@ interface WorksheetToolbarProps {
   pickerOpen: boolean;
   onPickerOpenChange: (open: boolean) => void;
   workspaceBackend?: BackendKind;
+  defaultAgent?: DefaultAgent | null;
   catalogs: Catalog[];
   catalog: string | undefined;
   onCatalogChange: (slug: string) => void;
@@ -113,6 +115,7 @@ export function WorksheetToolbar(props: WorksheetToolbarProps) {
     pickerOpen,
     onPickerOpenChange,
     workspaceBackend,
+    defaultAgent,
     catalogs,
     catalog,
     onCatalogChange,
@@ -144,6 +147,7 @@ export function WorksheetToolbar(props: WorksheetToolbarProps) {
         open={pickerOpen}
         onOpenChange={onPickerOpenChange}
         workspaceBackend={workspaceBackend}
+        defaultAgent={defaultAgent}
         workspaceCatalogKinds={catalogs.map((c) => c.kind)}
         // The API starts a stopped elastic agent for a worksheet run.
         allowTerminatedElastic

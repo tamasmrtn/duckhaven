@@ -142,7 +142,15 @@ async def _dispatch(db: AsyncSession, export: CatalogExport) -> None:
     agent = await query_service.pick_agent_for(db, workspace, principal_id=export.created_by)
     if agent is None:
         await _finish(
-            db, export, STATUS_FAILED, "No agent able to serve both catalog kinds is connected."
+            db,
+            export,
+            STATUS_FAILED,
+            await query_service.no_agent_message(
+                db,
+                workspace,
+                principal_id=export.created_by,
+                fallback="No agent able to serve both catalog kinds is connected.",
+            ),
         )
         return
 

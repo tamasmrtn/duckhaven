@@ -59,6 +59,10 @@ class QueryCreate(BaseModel):
     # elastic compute, a run with none connected parks queued and one is
     # provisioned on demand.
     agent_id: uuid.UUID | None = None
+    # False means this run must never add an agent to the elastic pool. It does not
+    # stop a stopped workspace default being started, and it grants nothing: it can
+    # only restrict the caller. The assistant and MCP always send false.
+    scale_out: bool = True
     timeout_s: float = 600.0
     # When the run originates from a saved query, its id is sent so the backend
     # can stamp the saved query's last_run_at.

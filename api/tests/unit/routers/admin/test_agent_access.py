@@ -272,3 +272,26 @@ async def test_tier3_grantee_can_administer_only_their_agent(
     assert (
         await plain_client.post("/admin/agents/elastic", json={"cpu": 2, "memory_gb": 4})
     ).status_code == 403
+
+
+async def test_the_access_payload_lists_the_workspaces_that_default_to_the_agent(
+    admin_client: AsyncClient, db_session, admin: User, agent: Agent
+):
+    """Every member of these workspaces can run on the agent whether or not a grant
+    reaches them, so an admin reading who may use it needs to see them."""
+    used, _ = await seed_workspace(db_session, user_id=admin.id, slug="uses-it", name="Uses It")
+    await seed_workspace(db_session, user_id=admin.id, slug="does-not", name="Does Not")
+    used.default_agent_id = agent.id
+    await db_session.commit()
+
+    body = (await admin_client.get(f"/admin/agents/{agent.id}/access")).json()
+    assert [(w["slug"], w["name"]) for w in body["default_for_workspaces"]] == [
+        ("uses-it", "Uses It")
+    ]
+
+
+async def test_an_agent_that_is_nobodys_default_lists_no_workspaces(
+    admin_client: AsyncClient, agent: Agent
+):
+    body = (await admin_client.get(f"/admin/agents/{agent.id}/access")).json()
+    assert body["default_for_workspaces"] == []

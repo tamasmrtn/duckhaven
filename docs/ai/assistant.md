@@ -58,6 +58,9 @@ than as a shared service account.
   write (INSERT/UPDATE/DELETE/DDL) must be **approved by a human** before it runs (see below).
 - It has no access to DuckHaven's control-plane database, to Polaris directly, or to the compute agents directly. It
   only ever calls DuckHaven's own REST API.
+- It cannot add compute. It runs on the workspace's
+  [default compute](../compute/elastic-compute.md#a-workspaces-default-compute) and starts that agent if it is
+  stopped, but never adds an agent to the elastic pool.
 - It cannot use a draft or broken semantic definition. Only *published* models reach it, and a definition whose column
   is gone is withheld: the assistant says a metric is defined but broken rather than substituting its own calculation.
 - It cannot draw a chart or any other visualisation; it gives the numbers, which you can chart in a worksheet.
@@ -85,7 +88,10 @@ table cell tried to talk it into running something it shouldn't (a *prompt injec
 what the service account was already allowed to do — and every attempt is recorded.
 
 On top of that server-side boundary, the assistant adds an **audit and UX layer**: every tool call is logged with its
-arguments and outcome, and a proposed write is paused for human approval rather than executed.
+arguments and outcome, and a proposed write is paused for human approval rather than executed. The outcome is `ok`;
+`denied`, when DuckHaven refused the call on policy, such as access, the SQL guard or a read-only assistant; `error`,
+when it failed for any other reason, such as a failed query, a timeout or no compute to run on; or `approval_required`,
+for a write waiting for a person.
 
 ## Identity
 
@@ -176,9 +182,11 @@ not cover the question rather than inventing an answer, which is the behaviour t
 The assistant's instructions are assembled per turn from what the workspace actually has, so it is told about a feature
 only where that feature is in use. A workspace with published [semantic models](../metadata/semantic-layer.md) is told
 to prefer them; one whose catalogs sit on [external storage](../data/storage-backends.md) is told that credentials are
-vended per query and never static; a deployment running [elastic compute](../compute/elastic-compute.md) is told that a
-query may wait while an agent starts; and a workspace with more than one [agent](../compute/agents.md) is told a
-worksheet chooses between them.
+vended per query and never static; a workspace with a [default compute](../access/workspaces.md#default-compute) is
+told its name and that the assistant can neither pick another engine nor start new compute, and, when that agent is
+elastic, that the first query after it idles out can wait a minute or more; and a deployment running
+[elastic compute](../compute/elastic-compute.md) whose workspace has no default is told it cannot start compute and
+should point the user to the workspace owner.
 
 A workspace using none of these is told nothing about any of them — not that they are switched off. That is
 deliberate: the instructions stay short, and an assistant that has never heard of a feature cannot offer it to

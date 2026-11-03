@@ -173,7 +173,7 @@ async def create_worksheet(
     """Create a worksheet owned by the caller. An open one is appended as the last tab."""
     workspace = await _workspace_for_member(db, ws, user)
     await _assert_saved_query_in_workspace(db, workspace, body.saved_query_id)
-    await assert_can_assign_agent(db, user, body.agent_id)
+    await assert_can_assign_agent(db, user, body.agent_id, workspace=workspace)
     sheet = Worksheet(
         workspace_id=workspace.id,
         owner_id=user.id,
@@ -253,7 +253,7 @@ async def update_worksheet(
     if "last_query_id" in fields:
         await _assert_query_in_workspace(db, workspace, fields["last_query_id"])
     if "agent_id" in fields:
-        await assert_can_assign_agent(db, user, fields["agent_id"])
+        await assert_can_assign_agent(db, user, fields["agent_id"], workspace=workspace)
     if fields.get("is_open") is True and not sheet.is_open and "tab_position" not in fields:
         fields["tab_position"] = await _next_position(db, workspace, user)
 

@@ -99,6 +99,10 @@ the conventional `_total` suffix in the exposition (for example `duckhaven_queri
 | `duckhaven_agent_provisions_total` | counter | `replica_id`, `provider`, `runtime`, `outcome` | Elastic provisioning attempts (`outcome`: `success`/`failure`). |
 | `duckhaven_agent_provisioning_seconds` | histogram | `replica_id`, `provider`, `runtime` | Time the backend took to create the instance, not the full cold start. Successes only. |
 | `duckhaven_agents_reaped_total` | counter | `replica_id`, `reason` | Elastic agents torn down by the reaper (`reason`: `idle`/`max_lifetime`/`provisioning_timeout`/`orphan`/`dead_row`). |
+| `duckhaven_query_compute_wait_seconds` | histogram | `replica_id`, `origin`, `outcome` | Wait for compute, cold start included ([labels](../compute/elastic-compute.md#watching-the-wait)). |
+| `duckhaven_queries_parked`, `…_oldest_age_seconds` | gauge | `kind` | Queries waiting for an agent, and the longest wait (reap leader only). |
+| `duckhaven_stranded_work_failed_total` | counter | `replica_id`, `kind` | Work failed for want of compute. |
+| `duckhaven_compute_unavailable_total` | counter | `replica_id`, `reason` | Requests refused for want of compute. |
 | `duckhaven_db_pool_size` | gauge | `replica_id`, `pool` | Configured connection-pool size. `pool` is `main` or `ducklake`, the latter only once a DuckLake catalog has been browsed. |
 | `duckhaven_db_pool_checked_out` | gauge | (same) | Connections checked out. Saturating the `ducklake` pool reads as slow browsing, not slow queries. |
 | `duckhaven_db_pool_overflow` | gauge | (same) | Connections beyond the configured pool size. |

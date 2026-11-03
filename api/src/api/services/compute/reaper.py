@@ -29,7 +29,12 @@ import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.config import settings
-from api.metrics import record_agents_reaped, record_sql_session_closed, set_reap_leader
+from api.metrics import (
+    record_agents_reaped,
+    record_sql_session_closed,
+    record_stranded_failed,
+    set_reap_leader,
+)
 from api.models.agent import Agent
 from api.models.query import Query
 from api.models.sql_session import SqlSession
@@ -411,6 +416,7 @@ async def run_tick(session_factory: async_sessionmaker[AsyncSession]) -> dict[st
             return None
         result = await run_cycle(session_factory)
         record_agents_reaped(result)
+        record_stranded_failed(result)
         return result
 
 

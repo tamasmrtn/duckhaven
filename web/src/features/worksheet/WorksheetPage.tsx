@@ -90,10 +90,27 @@ export function WorksheetPage() {
   const resolution = resolveWorksheetAgent({
     agents,
     worksheetAgentId: sheet?.agent_id ?? null,
+    workspaceDefault: workspace?.default_agent ?? null,
     lastUsedAgentId: loadLastUsedAgent(ws),
     ...needs,
   });
   const agent = agents.find((a) => a.id === resolution.agentId);
+  // The workspace default is usable by every member, so a member whose own agent
+  // list does not hold it still sees what their run goes to.
+  const defaultAgent = workspace?.default_agent;
+  const shownAgent = agent
+    ? {
+        name: agent.name,
+        status: agent.status,
+        running: agentAvailability(agent, needs).kind === "running",
+      }
+    : defaultAgent && defaultAgent.id === resolution.agentId
+      ? {
+          name: defaultAgent.name,
+          status: defaultAgent.status,
+          running: defaultAgent.status === "healthy",
+        }
+      : null;
   // Autocomplete lists the functions of the DuckDB the next run will use:
   // agents on different runtimes run different versions. A stopped agent can't
   // answer, so the server picks one meanwhile.
@@ -352,6 +369,7 @@ export function WorksheetPage() {
             pickerOpen={pickerOpen}
             onPickerOpenChange={setPickerOpen}
             workspaceBackend={workspace?.storage_backend_kind ?? undefined}
+            defaultAgent={workspace?.default_agent ?? null}
             catalogs={catalogs}
             catalog={catalog}
             onCatalogChange={(slug) =>
@@ -500,20 +518,20 @@ export function WorksheetPage() {
 
       {/* Status bar */}
       <div className="flex h-7 items-center gap-4 border-t border-[var(--border-subtle)] bg-[var(--bg-surface)] px-3 text-2xs text-text-secondary shrink-0">
-        {agent && (
+        {shownAgent && (
           <span className="flex items-center gap-1.5">
             <span
               className={cn(
                 "size-1.5 rounded-full",
-                agentAvailability(agent, needs).kind === "running"
+                shownAgent.running
                   ? "bg-[var(--status-success)]"
                   : "bg-[var(--text-tertiary)]",
               )}
               role="img"
-              aria-label={agent.status}
-              title={agent.status}
+              aria-label={shownAgent.status}
+              title={shownAgent.status}
             />
-            {agent.name}
+            {shownAgent.name}
           </span>
         )}
         <span className="text-[var(--border-strong)]">·</span>
@@ -547,7 +565,7 @@ export function WorksheetPage() {
             const kind = agentAvailability(a, needs).kind;
             return kind === "running" || kind === "startable";
           })}
-          initialAgentId={resolution.agentId}
+          initialAgentId={agent ? resolution.agentId : null}
           onSaved={(saved) => {
             sheets.setMeta(sheet.id, { saved_query_id: saved.id });
             sheets.rename(sheet.id, saved.name);

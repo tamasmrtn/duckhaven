@@ -83,7 +83,7 @@ Each message has an entry in [Troubleshoot sign-in and access](../access/trouble
 | `sql_not_allowed` | 422 | The statement type is not allowed, such as `ATTACH`, `INSTALL` or `SET`. See [SQL support](sql-support.md). |
 | `statement_not_allowed` | 422 | The same check in a [SQL session](../querying/sql-sessions.md), which allows a few more statements. |
 | `invalid_parameters` | 422 | The [query parameters](sql-support.md#query-parameters) do not fit the placeholders. |
-| `agent_required` | 422 | `agent_id is required`: no agent is connected and elastic compute is off. Start an agent or name one. |
+| `agent_required` | 422 | `agent_id is required`: no agent is connected, elastic compute is off, and the workspace has no default compute. Start an agent, name one, or set a default compute. |
 | `catalog_read_only` | 409 | A [storage migration](../data/migrate-catalog-storage.md) is running, so writes are refused. Reads still work. |
 | `not_describable` | 422 | [Describe](rest-api.md#describing-a-query) cannot type this statement: several statements, a `DESCRIBE`/`SHOW`/`PRAGMA`, or SQL that does not bind. |
 | `too_many_tables` | 422 | The [metadata report](rest-api.md#workspace-metadata) with columns matched more than 1,000 tables. Narrow it with `catalog`, `schema` or `table`. |
@@ -96,6 +96,8 @@ Each message has an entry in [Troubleshoot sign-in and access](../access/trouble
 |---|---|---|
 | `compute_starting` | 503 | `Compute is starting; retry shortly.` [Elastic compute](../compute/elastic-compute.md) is starting an agent. Retry after the `Retry-After` header; the retry lands on the same agent. |
 | `compute_unavailable` | 503 | `Could not start compute for this session.` or `Could not start the configured agent.` Check the compute backend. |
+| `default_compute_unavailable` | 503, 422 | The workspace's default compute cannot take the work. The `reason` field says why: `stopped`, `starting`, `stopping`, `disconnected`, `elastic_disabled` or `start_failed` (503, retry or start it), `incompatible` or `runtime_retired` (422, retrying cannot help). `agent_name` names the agent and `cause` carries the underlying code. A workspace owner can change or clear the default in **Settings**. |
+| `no_compute_available` | 503 | No compute is running for the workspace, and this request may not start any. Sent when a caller sets `scale_out` to `false`, as the assistant and MCP do, and the workspace has no default compute. A workspace owner can set one in **Settings**. |
 | `agent_incompatible` | 422 | The agent lacks an extension a catalog needs. The message names the extension and the catalog. |
 | `runtime_retired` | 409, 422 | The agent runs a [runtime](../compute/runtimes.md) that is retired. Create an agent on a supported runtime. |
 | `runtime_unsupported` | 422 | The agent is not running a supported runtime. The message names the runtime it reports. |

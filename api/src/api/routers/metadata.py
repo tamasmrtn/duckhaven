@@ -211,6 +211,8 @@ async def _describe(
             detail={"error": "compute_starting", "detail": str(exc)},
             headers={"Retry-After": "5"},
         ) from exc
+    except query_service.DefaultComputeUnavailable as exc:
+        raise query_service.compute_unavailable_error(exc.decision) from exc
     except query_service.AgentUnavailable as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

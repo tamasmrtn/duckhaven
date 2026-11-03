@@ -148,9 +148,9 @@ A cold start is time work spends waiting for an agent, and these [metrics](../op
   kind of run: `interactive` for a worksheet or API call, `elastic` for a pool run, `describe`, `scheduled` or
   `sql_session`. `outcome` is `bound` or `failed`. It includes the cold start, which
   `duckhaven_query_queue_wait_seconds` (the agent's admission queue) does not.
-- `duckhaven_queries_parked` and `duckhaven_queries_parked_oldest_age_seconds` show what is waiting right now. `kind`
-  is `pool` (any pool agent may take it), `targeted` (waiting for one named agent, such as a default compute) or
-  `scheduled`.
+- `duckhaven_queries_parked` and `duckhaven_queries_parked_oldest_age_seconds` show what is waiting at each Prometheus
+  scrape. `kind` is `pool` (any pool agent may take it), `targeted` (waiting for one named agent, such as a default
+  compute) or `scheduled`.
 - `duckhaven_stranded_work_failed_total` counts what the reaper gave up on, and `duckhaven_compute_unavailable_total`
   counts refusals by `reason`: the default compute's state, or `no_compute` when the workspace has none.
 - `duckhaven_parked_queries_rejected_total` counts queries refused because a cap was reached; `scope` is `workspace` or

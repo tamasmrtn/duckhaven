@@ -71,6 +71,48 @@ async function openPicker() {
   return user
 }
 
+describe('AgentPicker workspace default', () => {
+  const DEFAULT = {
+    id: RUNNING.id,
+    name: RUNNING.name,
+    provider: 'azure_aci',
+    lifecycle: 'running',
+    status: 'healthy',
+  }
+
+  it('marks the workspace default in the list', async () => {
+    server.use(http.get('/api/agents', () => HttpResponse.json([STATIC_DOWN, RUNNING])))
+    renderPicker({ defaultAgent: DEFAULT })
+    await openPicker()
+
+    const row = (await screen.findByText('warehouse-a')).closest('[cmdk-item]') as HTMLElement
+    expect(within(row).getByText('Default')).toBeInTheDocument()
+  })
+
+  it('marks no row when the workspace has no default', async () => {
+    server.use(http.get('/api/agents', () => HttpResponse.json([RUNNING])))
+    renderPicker({ defaultAgent: null })
+    await openPicker()
+
+    await screen.findByText('warehouse-a')
+    expect(screen.queryByText('Default')).not.toBeInTheDocument()
+  })
+
+  it('shows the default in the chip when the caller has no grant on it', async () => {
+    // Every member can run on the workspace default, so it need not be in the
+    // list of agents the caller holds a grant on.
+    server.use(http.get('/api/agents', () => HttpResponse.json([])))
+    renderPicker({
+      value: 'team-restricted',
+      defaultAgent: { ...DEFAULT, id: 'team-restricted', name: 'team-restricted' },
+    })
+
+    const chip = await screen.findByRole('combobox', { name: 'Compute agent' })
+    expect(within(chip).getByText('team-restricted')).toBeInTheDocument()
+    expect(within(chip).getByText('Default')).toBeInTheDocument()
+  })
+})
+
 describe('AgentPicker search and grouping', () => {
   it('finds an agent by name, not only by id', async () => {
     // Regression: the search matched the agent's UUID, so typing its name

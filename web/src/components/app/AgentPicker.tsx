@@ -50,6 +50,7 @@ import {
   type Agent,
   type AgentAvailability,
 } from "@/types/agent";
+import type { DefaultAgent } from "@/types/workspace";
 import type { CatalogKind } from "@/types/catalog";
 import type { BackendKind } from "@/types/storage-backend";
 import { cn } from "@/utils";
@@ -71,6 +72,12 @@ interface AgentPickerProps {
   allowTerminatedElastic?: boolean;
   // The workspace slug, for the "Manage compute" link in the footer.
   ws?: string;
+  /**
+   * The workspace's default compute. Marked in the list, and shown in the chip
+   * when the caller's own agent list does not hold it: every member can run on
+   * the default without a grant, so it need not be in that list.
+   */
+  defaultAgent?: DefaultAgent | null;
   // Controlled open state, so a caller can open the picker (e.g. "Switch agent").
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
@@ -127,14 +134,24 @@ function memoryGb(agent: Agent): number | null {
   );
 }
 
+function DefaultBadge() {
+  return (
+    <span className="shrink-0 rounded bg-[var(--bg-elevated)] px-1.5 text-2xs text-text-secondary">
+      Default
+    </span>
+  );
+}
+
 function AgentRow({
   agent,
   availability,
   duplicateName,
+  isDefault = false,
 }: {
   agent: Agent;
   availability: AgentAvailability;
   duplicateName: boolean;
+  isDefault?: boolean;
 }) {
   const gb = memoryGb(agent);
   const cores = agent.capabilities?.cores ?? agent.requested_cpu;
@@ -153,6 +170,7 @@ function AgentRow({
           {agent.name}
         </span>
         <RuntimeBadge agent={agent} className="shrink-0" />
+        {isDefault && <DefaultBadge />}
         {duplicateName && (
           <span className="shrink-0 font-mono text-2xs text-text-tertiary">
             {agent.capabilities?.host ?? agent.id.slice(0, 8)}
@@ -194,6 +212,7 @@ export function AgentPicker({
   workspaceCatalogKinds,
   allowTerminatedElastic = false,
   ws,
+  defaultAgent,
   open: controlledOpen,
   onOpenChange,
 }: AgentPickerProps) {
@@ -308,6 +327,13 @@ export function AgentPicker({
                   </span>
                 )}
               </span>
+            ) : defaultAgent && defaultAgent.id === value ? (
+              <span className="flex min-w-0 items-center gap-1.5">
+                <span className="truncate" title={defaultAgent.name}>
+                  {defaultAgent.name}
+                </span>
+                <DefaultBadge />
+              </span>
             ) : (
               <span className="text-text-tertiary">Select agent…</span>
             )}
@@ -361,6 +387,7 @@ export function AgentPicker({
                             agent={agent}
                             availability={avail}
                             duplicateName={duplicateNames.has(agent.name)}
+                            isDefault={agent.id === defaultAgent?.id}
                           />
                           {agent.id === value && (
                             <Check

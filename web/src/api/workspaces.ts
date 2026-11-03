@@ -19,6 +19,8 @@ export const workspacesApi = {
       name?: string;
       description?: string;
       result_cache_enabled?: boolean;
+      // null clears it, back to automatic choice.
+      default_agent_id?: string | null;
     },
   ) => patch<Workspace>(`/workspaces/${ws}`, data),
 

@@ -64,6 +64,122 @@ describe("SettingsPage — Workspace tab", () => {
     await waitFor(() => expect(sent).toEqual({ result_cache_enabled: false }));
   });
 
+  it("sets the default compute from the agents the owner can use", async () => {
+    let sent: Record<string, unknown> | null = null;
+    server.use(
+      http.patch("/api/workspaces/:ws", async ({ request }) => {
+        sent = (await request.json()) as Record<string, unknown>;
+        return HttpResponse.json({
+          id: "ws-1",
+          slug: "acme-analytics",
+          name: "acme-analytics",
+          description: null,
+          default_catalog: "acme_analytics",
+          storage_backend_id: "sb-1",
+          storage_backend_kind: "s3",
+          default_agent_id: "ag-1",
+          default_agent: {
+            id: "ag-1",
+            name: "agent-a",
+            provider: null,
+            lifecycle: null,
+            status: "healthy",
+          },
+          created_at: "2026-01-01T00:00:00Z",
+        });
+      }),
+    );
+    const user = userEvent.setup();
+    renderWithProviders({ initialRoute: ROUTE });
+
+    const select = (await screen.findByLabelText(
+      "Default compute",
+    )) as HTMLSelectElement;
+    expect(select.value).toBe("");
+    await waitFor(() =>
+      expect(
+        within(select).getByRole("option", { name: /agent-a/ }),
+      ).toBeInTheDocument(),
+    );
+    await user.selectOptions(select, "ag-1");
+
+    await waitFor(() => expect(sent).toEqual({ default_agent_id: "ag-1" }));
+  });
+
+  it("clears the default compute with an explicit null", async () => {
+    let sent: Record<string, unknown> | null = null;
+    server.use(
+      http.get("/api/workspaces/:ws", () =>
+        HttpResponse.json({
+          id: "ws-1",
+          slug: "acme-analytics",
+          name: "acme-analytics",
+          description: null,
+          default_catalog: "acme_analytics",
+          storage_backend_id: "sb-1",
+          storage_backend_kind: "s3",
+          default_agent_id: "ag-1",
+          default_agent: {
+            id: "ag-1",
+            name: "agent-a",
+            provider: null,
+            lifecycle: null,
+            status: "healthy",
+          },
+          created_at: "2026-01-01T00:00:00Z",
+        }),
+      ),
+      http.patch("/api/workspaces/:ws", async ({ request }) => {
+        sent = (await request.json()) as Record<string, unknown>;
+        return HttpResponse.json({ id: "ws-1", slug: "acme-analytics" });
+      }),
+    );
+    const user = userEvent.setup();
+    renderWithProviders({ initialRoute: ROUTE });
+
+    const select = (await screen.findByLabelText(
+      "Default compute",
+    )) as HTMLSelectElement;
+    await waitFor(() => expect(select.value).toBe("ag-1"));
+    await user.selectOptions(select, "");
+
+    await waitFor(() => expect(sent).toEqual({ default_agent_id: null }));
+  });
+
+  it("shows a default the owner has no grant on instead of hiding it", async () => {
+    server.use(
+      http.get("/api/workspaces/:ws", () =>
+        HttpResponse.json({
+          id: "ws-1",
+          slug: "acme-analytics",
+          name: "acme-analytics",
+          description: null,
+          default_catalog: "acme_analytics",
+          storage_backend_id: "sb-1",
+          storage_backend_kind: "s3",
+          default_agent_id: "not-in-my-list",
+          default_agent: {
+            id: "not-in-my-list",
+            name: "team-restricted",
+            provider: null,
+            lifecycle: null,
+            status: "healthy",
+          },
+          created_at: "2026-01-01T00:00:00Z",
+        }),
+      ),
+    );
+    renderWithProviders({ initialRoute: ROUTE });
+
+    const select = (await screen.findByLabelText(
+      "Default compute",
+    )) as HTMLSelectElement;
+    await waitFor(() => expect(select.value).toBe("not-in-my-list"));
+    expect(
+      within(select).getByRole("option", { name: "team-restricted" }),
+    ).toBeInTheDocument();
+  });
+
   it("requires typing the workspace name to confirm delete", async () => {
     const user = userEvent.setup();
     const { router } = renderWithProviders({ initialRoute: ROUTE });
@@ -101,6 +217,7 @@ describe("SettingsPage — Workspace tab", () => {
     expect(
       screen.getByRole("button", { name: /delete workspace/i }),
     ).toBeDisabled();
+    expect(await screen.findByLabelText("Default compute")).toBeDisabled();
   });
 });
 

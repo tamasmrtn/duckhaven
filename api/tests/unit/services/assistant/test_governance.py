@@ -159,3 +159,48 @@ class TestDocsSearchDetail:
         )
 
         assert record.detail is None
+
+
+class TestRetryStatus:
+    """A tool turns a failed gateway call into a ModelRetry, so every governed failure
+    reaches the hook the same way; the cause says whether it was a refusal."""
+
+    @staticmethod
+    def _refused(cause: Exception | None):
+        from pydantic_ai import ModelRetry
+        from pydantic_ai.exceptions import ToolRetryError
+        from pydantic_ai.messages import RetryPromptPart
+
+        retry = ModelRetry(str(cause) if cause else "refused")
+        retry.__cause__ = cause
+        err = ToolRetryError(
+            RetryPromptPart(content="x", tool_name="run_sql", tool_call_id="call-1")
+        )
+        err.__cause__ = retry
+
+        async def handler(_args):
+            raise err
+
+        return handler
+
+    async def _status(self, cause):
+        ctx = _ctx()
+        try:
+            await _run_audit(ctx, tool_name="run_sql", args={}, handler=self._refused(cause))
+        except Exception:  # noqa: BLE001 - the hook re-raises for the framework
+            pass
+        return ctx.deps.records["call-1"].status
+
+    async def test_a_policy_refusal_is_denied(self):
+        from api.services.assistant.gateway import GatewayError
+
+        assert await self._status(GatewayError("Access denied", kind="denied")) == "denied"
+
+    async def test_a_failure_is_an_error_not_a_denial(self):
+        from api.services.assistant.gateway import GatewayError
+
+        assert await self._status(GatewayError("No compute is running")) == "error"
+
+    async def test_a_refusal_the_tool_raised_itself_is_denied(self):
+        # No gateway call behind it: a write refused to a read-only assistant.
+        assert await self._status(None) == "denied"

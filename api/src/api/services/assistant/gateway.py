@@ -92,7 +92,18 @@ def metric_tags(model: str, metrics: list[str]) -> dict[str, str]:
 
 
 class GatewayError(Exception):
-    """A governed REST call failed. The message is safe to surface to the model."""
+    """A governed REST call failed. The message is safe to surface to the model.
+
+    ``kind`` is how the audit trail records the failure: ``denied`` when the platform
+    refused on policy (access, the SQL guard), ``error`` for anything else, such as a
+    query that failed, a timeout, or no compute to run on. They answer different
+    questions, "what was this assistant stopped from doing?" and "what went wrong?",
+    so a compute outage must not read as a denial.
+    """
+
+    def __init__(self, message: str = "", *, kind: str = "error") -> None:
+        super().__init__(message)
+        self.kind = kind
 
 
 def _error_parts(resp: httpx.Response) -> tuple[str | None, str]:
@@ -117,8 +128,34 @@ def _error_parts(resp: httpx.Response) -> tuple[str | None, str]:
     return code, str(message)
 
 
+# Error codes that mean the platform refused the request on policy. Anything else the
+# API answers is some other kind of failure.
+_POLICY_REFUSALS = frozenset(
+    {
+        "sql_not_allowed",
+        "statement_not_allowed",
+        "grant_denied",
+        "agent_forbidden",
+        "catalog_read_only",
+    }
+)
+
+
 def _translate(exc: httpx.HTTPStatusError) -> GatewayError:
-    """Map a governed error response to a concise, model-friendly message."""
+    """Map a governed error response to a model-friendly message, and classify it.
+
+    A 404 counts as a refusal because the API answers it for objects the caller may
+    not see, so "missing" and "hidden" cannot be told apart from here.
+    """
+    error, _ = _error_parts(exc.response)
+    translated = _describe(exc)
+    if exc.response.status_code in (403, 404) or error in _POLICY_REFUSALS:
+        translated.kind = "denied"
+    return translated
+
+
+def _describe(exc: httpx.HTTPStatusError) -> GatewayError:
+    """The concise sentence the model is shown for a governed error response."""
     resp = exc.response
     error, detail = _error_parts(resp)
     code = resp.status_code
@@ -631,7 +668,9 @@ class Gateway:
         # not something a conversation should be able to pull results from.
         record = (await self._get(f"/queries/{query_id}")).json()
         if str(record.get("user_id")) != self._service_account_id:
-            raise GatewayError("I can only page results of queries I ran in this conversation.")
+            raise GatewayError(
+                "I can only page results of queries I ran in this conversation.", kind="denied"
+            )
         page = await self._fetch_page(query_id, cursor=cursor, limit=min(limit, self._row_cap))
         page["query_id"] = query_id
         return page

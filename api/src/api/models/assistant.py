@@ -106,7 +106,9 @@ class AssistantToolCall(Base):
     )
     tool: Mapped[str] = mapped_column(String(100), nullable=False)
     args: Mapped[dict | None] = mapped_column(_Json, nullable=True)
-    # "ok" | "error" | "denied" | "approval_required"
+    # "ok" | "error" | "denied" | "approval_required". "denied" is the platform
+    # refusing on policy (access, the SQL guard, a read-only assistant); "error" is
+    # any other failure (a failed query, a timeout, no compute available).
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="ok")
     detail: Mapped[str | None] = mapped_column(Text, nullable=True)
     # The real Query row a run_sql call produced, when applicable.

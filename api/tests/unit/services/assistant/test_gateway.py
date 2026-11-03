@@ -569,3 +569,76 @@ def test_metric_tags_fit_the_servers_value_limit():
     assert tags["semantic.model"] == "sales"
     assert tags["semantic.metrics"].startswith("metric_0,metric_1,")
     assert len(tags["semantic.metrics"]) == 256
+
+
+@pytest.mark.parametrize(
+    ("code", "body", "kind"),
+    [
+        (403, {"error": "grant_denied", "message": "Not authorized", "details": None}, "denied"),
+        (
+            404,
+            {"error": "not_found", "message": "Table x does not exist", "details": None},
+            "denied",
+        ),
+        (
+            422,
+            {"error": "sql_not_allowed", "message": "ATTACH is denied", "details": None},
+            "denied",
+        ),
+        (422, {"error": "statement_not_allowed", "message": "no", "details": None}, "denied"),
+        (
+            409,
+            {"error": "catalog_read_only", "message": "read-only window", "details": None},
+            "denied",
+        ),
+        (
+            422,
+            {"error": "agent_required", "message": "agent_id is required", "details": None},
+            "error",
+        ),
+        (503, {"error": "no_compute_available", "message": "none", "details": None}, "error"),
+        (
+            503,
+            {"error": "default_compute_unavailable", "message": "stopped", "details": None},
+            "error",
+        ),
+        (429, {"error": "compute_queue_full", "message": "full", "details": None}, "error"),
+        (503, {"error": "unavailable", "message": "Agent not connected", "details": None}, "error"),
+        (409, {"error": "conflict", "message": "name taken", "details": None}, "error"),
+        (500, {"error": "internal_error", "message": "boom", "details": None}, "error"),
+    ],
+)
+def test_translate_classifies_a_refusal_apart_from_a_failure(code, body, kind):
+    """A compute outage is not the platform saying no, and the audit trail must not
+    record it as if it were."""
+    assert _translate(_status_error(code, body)).kind == kind
+
+
+def test_a_gateway_error_is_a_failure_unless_it_says_otherwise():
+    assert GatewayError("something broke").kind == "error"
+    assert GatewayError("no", kind="denied").kind == "denied"
+    assert str(GatewayError("something broke")) == "something broke"
+
+
+@respx.mock
+async def test_paging_someone_elses_query_is_a_refusal():
+    respx.get("http://assistant.internal/queries/q1").mock(
+        return_value=httpx.Response(200, json={"id": "q1", "user_id": "someone-else"})
+    )
+    async with httpx.AsyncClient(base_url="http://assistant.internal") as client:
+        with pytest.raises(GatewayError) as exc:
+            await _gateway(client=client).get_query_result("q1", cursor=None, limit=10)
+    assert exc.value.kind == "denied"
+
+
+@respx.mock
+async def test_a_query_that_fails_is_a_failure_not_a_refusal():
+    respx.post("http://assistant.internal/workspaces/ws/queries").mock(
+        return_value=httpx.Response(
+            202, json={"id": "q1", "status": "failed", "error": "Binder Error"}
+        )
+    )
+    async with httpx.AsyncClient(base_url="http://assistant.internal") as client:
+        with pytest.raises(GatewayError) as exc:
+            await _gateway(client=client).run_sql("SELECT x", catalog=None, timeout_s=5)
+    assert exc.value.kind == "error"

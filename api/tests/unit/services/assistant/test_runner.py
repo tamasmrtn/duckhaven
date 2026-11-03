@@ -177,7 +177,7 @@ async def test_a_turn_survives_every_advisory_lookup_failing(
     async def boom(self, *args, **kwargs):
         raise GatewayError("upstream is unavailable")
 
-    for method in ("list_semantic_models", "storage_kinds", "count_agents"):
+    for method in ("list_semantic_models", "storage_kinds", "workspace_compute"):
         monkeypatch.setattr(Gateway, method, boom)
     ws, _catalog, conv = await _seed(db_session, sa_role="reader")
     captured: list[str] = []

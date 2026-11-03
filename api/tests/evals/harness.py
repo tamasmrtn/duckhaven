@@ -30,7 +30,7 @@ from pydantic_ai.usage import UsageLimits
 
 from api.config import settings
 from api.services.assistant.agent import _build_model
-from api.services.assistant.deps import AssistantDeps
+from api.services.assistant.deps import AssistantDeps, DefaultCompute
 from api.services.assistant.prompts import build_instructions
 from api.services.assistant.tools import build_toolset
 
@@ -126,6 +126,13 @@ def _arm_settings(arm: ArmConfig):
             setattr(settings, name, value)
 
 
+def _default_compute(spec: dict | None) -> DefaultCompute | None:
+    """An arm's ``default_compute: {name, elastic}`` as the runner would have read it."""
+    if spec is None:
+        return None
+    return DefaultCompute(spec.get("name"), bool(spec.get("elastic", False)))
+
+
 def deps_for(arm: ArmConfig, *, gateway: Any = None, docs_search: Any = None) -> AssistantDeps:
     """The dependencies the runner would have built for this arm's workspace."""
     return AssistantDeps(
@@ -139,7 +146,7 @@ def deps_for(arm: ArmConfig, *, gateway: Any = None, docs_search: Any = None) ->
         catalog_kinds=tuple(arm.workspace.get("catalog_kinds", ()) or ()) or None,
         elastic_enabled=arm.workspace.get("elastic_enabled", False),
         docs_enabled=arm.docs_enabled,
-        agent_count=arm.workspace.get("agent_count"),
+        default_compute=_default_compute(arm.workspace.get("default_compute")),
         docs_search=docs_search,
     )
 

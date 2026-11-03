@@ -24,6 +24,7 @@ from pydantic_ai.models.function import FunctionModel
 
 from api.config import settings
 from api.services.assistant import prompts
+from api.services.assistant.deps import DefaultCompute
 from api.services.assistant.knowledge import generate
 from api.services.assistant.knowledge.loader import load_index
 from tests.evals import metrics
@@ -296,7 +297,7 @@ def test_the_everything_arm_carries_the_workspace_it_claims_to():
     assert deps.storage_kinds == ("s3", "adls_gen2")
     assert deps.catalog_kinds == ("iceberg_polaris", "ducklake")
     assert deps.elastic_enabled is True
-    assert deps.agent_count == 3
+    assert deps.default_compute == DefaultCompute("analytics", True)
 
 
 # ── The harness plumbing ──────────────────────────────────────────────────────

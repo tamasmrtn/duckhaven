@@ -370,9 +370,9 @@ class EvalGateway:
         self._record("storage_kinds")
         return ("object_store",)
 
-    async def count_agents(self) -> int:
-        self._record("count_agents")
-        return 1
+    async def workspace_compute(self) -> dict:
+        self._record("workspace_compute")
+        return {"name": None, "elastic": False}
 
     # ── SQL ───────────────────────────────────────────────────────────────────
     async def run_sql(self, sql: str, *, catalog, timeout_s, tags=None) -> dict:

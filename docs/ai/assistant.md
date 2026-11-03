@@ -88,7 +88,10 @@ table cell tried to talk it into running something it shouldn't (a *prompt injec
 what the service account was already allowed to do — and every attempt is recorded.
 
 On top of that server-side boundary, the assistant adds an **audit and UX layer**: every tool call is logged with its
-arguments and outcome, and a proposed write is paused for human approval rather than executed.
+arguments and outcome, and a proposed write is paused for human approval rather than executed. The outcome is `ok`;
+`denied`, when DuckHaven refused the call on policy, such as access, the SQL guard or a read-only assistant; `error`,
+when it failed for any other reason, such as a failed query, a timeout or no compute to run on; or `approval_required`,
+for a write waiting for a person.
 
 ## Identity
 

@@ -29,6 +29,7 @@ from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.tools import RunContext, ToolDefinition
 
 from api.services.assistant.deps import AssistantDeps, ToolCallRecord
+from api.services.assistant.gateway import GatewayError
 from api.services.grants import GrantDenied, extract_table_refs
 
 # Discoverability aid, not an exhaustive lineage list — cap the chips a response
@@ -67,6 +68,23 @@ def _linked_tables(sql: str, default_catalog: str | None) -> list[dict] | None:
     return tables or None
 
 
+def _retry_status(exc: ToolRetryError) -> str:
+    """How a refused or failed tool call is recorded: ``denied`` or ``error``.
+
+    A tool turns a failed gateway call into a ``ModelRetry`` so the model can adapt,
+    so every governed failure reaches this hook the same way and only its cause says
+    which it was. ``denied`` is the platform refusing on policy; a query that failed,
+    a timeout or no compute to run on is an ``error``. A retry the tool raised itself,
+    with no gateway call behind it (a write refused to a read-only assistant), is a
+    refusal and stays ``denied``.
+    """
+    retry = exc.__cause__
+    gateway_error = getattr(retry, "__cause__", None)
+    if isinstance(gateway_error, GatewayError):
+        return gateway_error.kind
+    return "denied"
+
+
 async def _audit(
     ctx: RunContext[AssistantDeps],
     *,
@@ -90,7 +108,7 @@ async def _audit(
     except ToolRetryError as exc:
         # A ModelRetry raised inside a tool (e.g. a refused write or a governed
         # error the tool translated) reaches the wrap hook wrapped as this.
-        record.status = "denied"
+        record.status = _retry_status(exc)
         record.detail = str(exc)
         record.latency_ms = int((time.monotonic() - record.started) * 1000)
         raise

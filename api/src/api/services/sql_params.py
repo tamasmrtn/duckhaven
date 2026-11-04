@@ -159,8 +159,10 @@ def _assign(placeholders: list[_Placeholder], parameters: list[Any] | dict[str, 
 
 
 def _refuse_positional_clauses(sql: str, placeholders: list[_Placeholder]) -> None:
-    """DuckDB rejects a parameter in ORDER BY or GROUP BY, and a literal there means
-    "column number N" instead: refuse rather than change the query's meaning.
+    """DuckDB rejects a parameter in ORDER BY or GROUP BY, and a literal that is a
+    whole item there means "column number N" instead: refuse rather than change the
+    query's meaning. Inside an expression (`CASE WHEN n > ?`, `substr(s, ?, ?)`) a
+    literal is a value, so a placeholder there is allowed.
 
     Checked on a copy with each placeholder swapped for a marker name. When sqlglot
     cannot parse that copy the check is skipped: it guards against a silent change
@@ -176,13 +178,36 @@ def _refuse_positional_clauses(sql: str, placeholders: list[_Placeholder]) -> No
     for tree in trees:
         if tree is None:
             continue
-        for clause in (*tree.find_all(exp.Order), *tree.find_all(exp.Group)):
-            for column in clause.find_all(exp.Column):
-                if column.name.startswith("__dh_param_"):
-                    raise InvalidParameters(
-                        "Placeholders are not allowed in ORDER BY or GROUP BY: a value "
-                        "there would be read as a column position."
-                    )
+        if any(_is_placeholder(item) for item in _clause_items(tree)):
+            raise InvalidParameters(
+                "A placeholder cannot be a whole ORDER BY or GROUP BY item: a value "
+                "there would be read as a column position."
+            )
+
+
+def _clause_items(tree: exp.Expression):
+    """Every item an ORDER BY or GROUP BY lists, including those inside grouping sets,
+    ROLLUP and CUBE, where DuckDB reads a number as a column position too."""
+    for order in tree.find_all(exp.Order):
+        for item in order.expressions:
+            yield item.this if isinstance(item, exp.Ordered) else item
+    for group in tree.find_all(exp.Group):
+        pending = list(group.expressions)
+        while pending:
+            item = pending.pop()
+            if isinstance(item, exp.GroupingSets | exp.Rollup | exp.Cube | exp.Tuple):
+                pending.extend(item.expressions)
+            elif isinstance(item, exp.Paren):
+                pending.append(item.this)
+            else:
+                yield item
+
+
+def _is_placeholder(node: exp.Expression) -> bool:
+    """A marker on its own: `-?` and `((?))` are still a position once rendered."""
+    while isinstance(node, exp.Paren | exp.Neg):
+        node = node.this
+    return isinstance(node, exp.Column) and node.name.startswith("__dh_param_")
 
 
 def _quote(text: str) -> str:

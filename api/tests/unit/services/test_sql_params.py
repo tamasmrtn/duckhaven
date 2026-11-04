@@ -106,14 +106,59 @@ def test_types_outside_the_grammar_are_refused(type_text):
         ("SELECT $a", [1], "as an object"),
         ("SELECT $a", {"a": 1, "b": 2}, "unused: \\['b'\\]"),
         ("SELECT ?; SELECT ?", [1, 2], "exactly one statement"),
-        ("SELECT * FROM t ORDER BY ?", [1], "ORDER BY or GROUP BY"),
-        ("SELECT count(*) FROM t GROUP BY ?", [1], "ORDER BY or GROUP BY"),
+        ("SELECT * FROM t ORDER BY ?", [1], "ORDER BY or GROUP BY item"),
+        ("SELECT count(*) FROM t GROUP BY ?", [1], "ORDER BY or GROUP BY item"),
         ("SELECT ?", [float("nan")], "NaN"),
     ],
 )
 def test_misfits_say_what_to_fix(sql, parameters, message):
     with pytest.raises(InvalidParameters, match=message):
         render(sql, parameters)
+
+
+_ROWS = (
+    "(VALUES (1, 'ab', TIMESTAMP '2026-01-01 10:00'), (2, 'ac', TIMESTAMP '2026-01-02 11:00'))"
+    " v(n, s, ts)"
+)
+
+
+@pytest.mark.parametrize(
+    ("sql", "parameters", "expected"),
+    [
+        (f"SELECT n FROM {_ROWS} ORDER BY CASE WHEN n > ? THEN 0 ELSE 1 END LIMIT 1", [1], (2,)),
+        (f"SELECT n FROM {_ROWS} ORDER BY n * ? LIMIT 1", [-1], (2,)),
+        (
+            f"SELECT substr(s, $1, $2) AS k, count(*) FROM {_ROWS} GROUP BY substr(s, $1, $2)",
+            [1, 1],
+            ("a", 2),
+        ),
+        (
+            f"SELECT time_bucket(?, ts) AS b, count(*) FROM {_ROWS} GROUP BY time_bucket(?, ts)",
+            [TypedParameter(type="INTERVAL", value="1 month")] * 2,
+            (dt.datetime(2026, 1, 1), 2),
+        ),
+    ],
+)
+def test_a_placeholder_inside_an_order_or_group_expression_is_a_value(sql, parameters, expected):
+    """Only a placeholder that is the whole item would be read as a column position."""
+    assert _run(sql, parameters) == expected
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT * FROM t ORDER BY (?)",
+        "SELECT * FROM t ORDER BY n, -? DESC",
+        "SELECT n, count(*) FROM t GROUP BY $1",
+        "SELECT n, count(*) FROM t GROUP BY GROUPING SETS ((?), (n))",
+        "SELECT n, count(*) FROM t GROUP BY ROLLUP (n, ?)",
+        "SELECT n, count(*) FROM t GROUP BY CUBE ((n, ?))",
+        "SELECT row_number() OVER (ORDER BY ?) FROM t",
+    ],
+)
+def test_a_placeholder_that_is_a_whole_order_or_group_item_is_refused(sql):
+    with pytest.raises(InvalidParameters, match="ORDER BY or GROUP BY"):
+        render(sql, [1])
 
 
 def test_without_parameters_the_sql_is_untouched():

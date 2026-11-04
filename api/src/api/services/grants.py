@@ -384,6 +384,50 @@ def statement_refs(stmt: exp.Expression) -> list[TableRef]:
     return refs
 
 
+# DuckDB's Postgres-compatible catalog, a third door onto the same listing:
+# `pg_tables`, `pg_class` and `pg_attribute` span every attached catalog (verified
+# live on DuckDB 1.5). `pg_catalog` is on DuckDB's search path, so these names
+# also resolve unqualified, landing in the active catalog, which the grant check
+# skips when it is open. The views DuckDB 1.5 defines in `pg_catalog`.
+_PG_CATALOG_SCHEMA = "pg_catalog"
+_PG_CATALOG_VIEWS = frozenset(
+    {
+        "pg_am",
+        "pg_attrdef",
+        "pg_attribute",
+        "pg_class",
+        "pg_collation",
+        "pg_constraint",
+        "pg_database",
+        "pg_depend",
+        "pg_description",
+        "pg_enum",
+        "pg_index",
+        "pg_indexes",
+        "pg_namespace",
+        "pg_prepared_statements",
+        "pg_proc",
+        "pg_sequence",
+        "pg_sequences",
+        "pg_settings",
+        "pg_tables",
+        "pg_tablespace",
+        "pg_type",
+        "pg_views",
+    }
+)
+
+
+def _reads_pg_catalog(table: exp.Table, ctes: set[str]) -> bool:
+    """Whether ``table`` names DuckDB's pg_catalog: by schema, or by a bare view
+    name the search path resolves to it. A bare name that a CTE defines is the
+    CTE; a qualified one (`s.pg_class`) is an ordinary table."""
+    if table.db:
+        return table.db.lower() == _PG_CATALOG_SCHEMA
+    name = table.name.lower()
+    return name in _PG_CATALOG_VIEWS and name not in ctes
+
+
 # DuckDB meta table-functions that enumerate catalog objects. They are a second
 # door onto the same listing as `information_schema` (verified live: both span
 # every attached catalog), and `extract_table_refs` cannot see them — a table
@@ -540,12 +584,16 @@ def metadata_enumeration_reason(sql: str, scoped_slugs: list[str] | None = None)
     for stmt in statements:
         if stmt is None:
             continue
+        ctes = {cte.alias_or_name.lower() for cte in stmt.find_all(exp.CTE)}
         for table in stmt.find_all(exp.Table):
             if table.db and table.db.lower() in METADATA_SCHEMAS:
                 # Matched on the schema, so this catches both the bare
                 # `information_schema.tables` and dbt-duckdb's
                 # `system.information_schema.tables` spelling.
                 return f"`{table.db}.{table.name}` cannot be queried. {hint}"
+            if _reads_pg_catalog(table, ctes):
+                qualified = f"{table.db}.{table.name}" if table.db else table.name
+                return f"`{qualified}` cannot be queried. {hint}"
         for fn in stmt.find_all(exp.Anonymous):
             name = function_name(fn)
             if name in _CATALOG_META_FUNCTIONS:

@@ -290,6 +290,20 @@ def test_row_reading_refs_are_not_metadata_only(sql):
         "PRAGMA \"table_info\"('cat.s.t')",
         # Any statement in a multi-statement body is enough.
         "SELECT 1; SELECT * FROM duckdb_tables()",
+        # DuckDB's Postgres-compatible catalog spans every attachment too: from an
+        # open catalog, pg_tables and pg_attribute list a scoped one's tables and
+        # columns (verified live on DuckDB 1.5).
+        "SELECT * FROM pg_catalog.pg_tables",
+        "SELECT * FROM system.pg_catalog.pg_tables",
+        "SELECT * FROM PG_CATALOG.PG_CLASS",
+        "SELECT attname FROM pg_catalog.pg_attribute",
+        # pg_catalog is on DuckDB's search path, so the bare names resolve to it.
+        "SELECT schemaname, tablename FROM pg_tables",
+        "SELECT relname FROM pg_class",
+        "SELECT a.attname FROM pg_attribute a JOIN pg_class c ON a.attrelid = c.oid",
+        "SELECT nspname FROM pg_namespace",
+        'SELECT * FROM "pg_views"',
+        "SELECT * FROM cat.s.t WHERE EXISTS (SELECT 1 FROM pg_indexes)",
     ],
 )
 def test_metadata_enumeration_is_rejected(sql):
@@ -313,6 +327,10 @@ def test_metadata_enumeration_is_rejected(sql):
         "SELECT snapshots, settings FROM cat.s.t",
         "SELECT * FROM cat.s.settings",
         "SELECT * FROM cat.s.table_info",
+        # A qualified table, or a CTE, that happens to share a pg_catalog view name.
+        "SELECT * FROM cat.s.pg_tables",
+        "SELECT * FROM s.pg_class",
+        "WITH pg_tables AS (SELECT 1 AS x) SELECT * FROM pg_tables",
     ],
 )
 def test_ordinary_statements_are_not_enumeration(sql):

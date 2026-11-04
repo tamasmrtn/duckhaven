@@ -101,6 +101,8 @@ What you cannot do is ask the query engine to list objects for you. These are re
   `system.information_schema.…` spelling
 - the `duckdb_tables()`, `duckdb_schemas()`, `duckdb_columns()` and `duckdb_views()` family, with `duckdb_indexes()`,
   `duckdb_sequences()` and `duckdb_dependencies()`
+- DuckDB's Postgres-compatible catalog: `pg_catalog.pg_tables`, `pg_class`, `pg_attribute`, `pg_namespace` and the
+  other `pg_catalog` views, written with or without the `pg_catalog.` prefix
 - `SHOW TABLES`, `SHOW ALL TABLES`, `PRAGMA show_tables`, `PRAGMA show_tables_expanded` and `PRAGMA database_list`
 - `PRAGMA table_info(…)`, and every function that names its table only inside a string: `pragma_table_info()`,
   `pragma_show()`, `pragma_storage_info()`, and `iceberg_snapshots()` / `iceberg_metadata()`. Use `DESCRIBE` instead,

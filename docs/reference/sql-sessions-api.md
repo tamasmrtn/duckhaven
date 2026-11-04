@@ -109,6 +109,7 @@ curl -s -X POST "$DH/api/sql/sessions/$SESSION/statements" \
 | Field | Default | Meaning |
 |---|---|---|
 | `sql` | required | One or more statements the [policy](sql-support.md#allowed-statements) allows |
+| `id` | chosen by the server | A UUID for the statement's query, so you can cancel it while this call waits. An id already in use is a **409** `query_id_conflict` |
 | `timeout_s` | `600` | Cancel the statement after this many seconds |
 | `wait_timeout_s` | `SQL_STATEMENT_WAIT_TIMEOUT_S` (10) | How long to wait for it to finish. `0` never waits. Above `SQL_STATEMENT_MAX_WAIT_TIMEOUT_S` (60) is a **422** |
 | `first_page_limit` | `SQL_STATEMENT_FIRST_PAGE_LIMIT` (200) | Rows to return as `first_page`. `0` returns none. Above 200 is a **422** |

@@ -83,6 +83,7 @@ Each message has an entry in [Troubleshoot sign-in and access](../access/trouble
 | `sql_not_allowed` | 422 | The statement type is not allowed, such as `ATTACH`, `INSTALL` or `SET`. See [SQL support](sql-support.md). |
 | `statement_not_allowed` | 422 | The same check in a [SQL session](../querying/sql-sessions.md), which allows a few more statements. |
 | `invalid_parameters` | 422 | The [query parameters](sql-support.md#query-parameters) do not fit the placeholders. |
+| `query_id_conflict` | 409 | `A query with id ⟨id⟩ already exists.` The `id` you chose names an earlier run, often your own submit retried after its answer was lost. Read that run with `GET /api/queries/{query_id}`, or send a new UUID. |
 | `agent_required` | 422 | `agent_id is required`: no agent is connected, elastic compute is off, and the workspace has no default compute. Start an agent, name one, or set a default compute. |
 | `catalog_read_only` | 409 | A [storage migration](../data/migrate-catalog-storage.md) is running, so writes are refused. Reads still work. |
 | `not_describable` | 422 | [Describe](rest-api.md#describing-a-query) cannot type this statement: several statements, a `DESCRIBE`/`SHOW`/`PRAGMA`, or SQL that does not bind. |

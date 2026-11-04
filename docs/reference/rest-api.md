@@ -254,6 +254,7 @@ it exists.
 | Field | Default | Meaning |
 |---|---|---|
 | `sql` | required | One statement. See [SQL support](sql-support.md) for what is allowed |
+| `id` | chosen by the server | A UUID for the run. Knowing it up front lets you cancel or read the query while this call still waits. An id already in use is a **409** `query_id_conflict` |
 | `catalog` | the workspace's default | The catalog that unqualified table names resolve in |
 | `agent_id` | the workspace's default compute, else chosen by the server | Run on this agent; you need the `use` tier on it, unless it is the workspace's default |
 | `scale_out` | `true` | `false` never adds an agent to the elastic pool for this query. A stopped default compute can still be started. It only restricts the call |

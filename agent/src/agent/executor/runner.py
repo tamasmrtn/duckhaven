@@ -1101,7 +1101,9 @@ def _attach_catalogs(
     if active is None and catalogs:
         active = catalogs[0]
     if active is not None:
-        schema = (active.get("default_schema") or _DEFAULT_NAMESPACE).replace('"', '""')
+        # `use_schema` is a schema the caller chose: `USE`d, never created.
+        schema = active.get("use_schema") or active.get("default_schema") or _DEFAULT_NAMESPACE
+        schema = schema.replace('"', '""')
         aslug = active["slug"].replace('"', '""')
         conn.execute(f'USE "{aslug}"."{schema}"')
 

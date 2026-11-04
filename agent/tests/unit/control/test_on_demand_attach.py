@@ -104,6 +104,13 @@ def test_capabilities_advertise_on_demand_attach():
     assert "on_demand_attach" in ch._PROTOCOL_FEATURES
 
 
+def test_capabilities_advertise_use_schema():
+    """The control plane only sends a chosen schema to agents that say so."""
+    import agent.control.channel as ch
+
+    assert "use_schema" in ch._PROTOCOL_FEATURES
+
+
 async def test_the_estimate_key_is_the_workspace_not_what_is_attached_so_far():
     state = await _open(_admission(), workspace_catalogs=["lake", "other"])
     assert state.catalogs == frozenset({"lake", "other"})

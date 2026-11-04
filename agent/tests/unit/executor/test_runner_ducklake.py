@@ -160,6 +160,22 @@ def test_a_mixed_workspace_attaches_both_kinds():
     assert runner._ICEBERG_SECRET in text
 
 
+def test_a_chosen_schema_is_used_but_never_created():
+    """`use_schema` is where the caller asked names to resolve, and grants were
+    checked there; creating it would let any read make a schema."""
+    conn = FakeConn()
+    runner._attach_catalogs(
+        conn,
+        catalogs=[{**_ducklake_catalog(), "use_schema": "marts"}],
+        active_catalog="raw",
+        polaris=_POLARIS,
+    )
+    text = conn.sql_text()
+    assert 'USE "raw"."marts"' in text
+    assert 'CREATE SCHEMA IF NOT EXISTS "raw"."analytics"' in text
+    assert "marts" not in text.replace('USE "raw"."marts"', "")
+
+
 def test_an_iceberg_only_workspace_is_attached_exactly_as_before():
     """The Iceberg path is unchanged."""
     conn = FakeConn()

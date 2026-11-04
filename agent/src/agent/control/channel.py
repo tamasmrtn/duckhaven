@@ -123,7 +123,7 @@ _session_open_executor = _make_pool_getter("dh-open")
 
 # Control-plane protocol features this agent implements, advertised so the API can
 # gate on them without a version number (see duckhaven_shared.schemas).
-_PROTOCOL_FEATURES = ["statement_ack", "on_demand_attach", "exact_hugeint"]
+_PROTOCOL_FEATURES = ["statement_ack", "on_demand_attach", "exact_hugeint", "use_schema"]
 
 
 def _spawn(coro) -> asyncio.Task:

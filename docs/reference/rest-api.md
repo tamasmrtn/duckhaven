@@ -255,6 +255,7 @@ it exists.
 |---|---|---|
 | `sql` | required | One statement. See [SQL support](sql-support.md) for what is allowed |
 | `catalog` | the workspace's default | The catalog that unqualified table names resolve in |
+| `schema` | `analytics` | The schema in `catalog` that unqualified table names resolve in. An agent too old to support it answers **422** `agent_incompatible` |
 | `agent_id` | the workspace's default compute, else chosen by the server | Run on this agent; you need the `use` tier on it, unless it is the workspace's default |
 | `scale_out` | `true` | `false` never adds an agent to the elastic pool for this query. A stopped default compute can still be started. It only restricts the call |
 | `timeout_s` | `600` | Cancel the query after this many seconds |

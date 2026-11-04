@@ -131,6 +131,7 @@ These request fields are optional. A server without them ignores the field, so a
 | `parameters` | `POST …/queries`, `POST …/statements` | [Placeholders](rest-api.md#query-parameters). A server without it fails the statement for missing values |
 | `tags` | `POST …/queries`, `POST …/statements` | [Labels on the run](rest-api.md#client-and-tags) |
 | `use_cache` | `POST …/queries`, sessions, statements | Skip the [result cache](rest-api.md#result-cache-fields) |
+| `schema` | `POST …/queries` | [Resolve unqualified names in that schema](rest-api.md#submitting-a-query). A server without it resolves them in `analytics`, so qualify the names when the server may be older |
 
 A **202** from `POST …/sql/sessions`, or a **200** from `POST …/queries`, is itself the sign that the server supports
 the matching field.

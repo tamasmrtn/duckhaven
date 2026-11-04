@@ -334,6 +334,7 @@ async def test_bind_queued_work_replays_the_requested_catalog_and_timeout(
                 origin="elastic",
                 timeout_s=42.0,
                 active_catalog="sales",
+                active_schema="marts",
             )
         )
         await db.commit()
@@ -341,6 +342,7 @@ async def test_bind_queued_work_replays_the_requested_catalog_and_timeout(
         assert await service.bind_queued_work(db, agent) == 1
 
     assert captured["active_catalog"] == "sales"
+    assert captured["active_schema"] == "marts"
     assert captured["timeout_s"] == 42.0
 
 
@@ -832,6 +834,7 @@ async def test_bind_targeted_work_dispatches_a_parked_run(session_factory, elast
                 status="queued",
                 timeout_s=42.0,
                 active_catalog="test_ws",
+                active_schema="marts",
             )
         )
         await db.commit()
@@ -841,6 +844,7 @@ async def test_bind_targeted_work_dispatches_a_parked_run(session_factory, elast
     # Replays what the requester actually asked for.
     assert captured["timeout_s"] == 42.0
     assert captured["active_catalog"] == "test_ws"
+    assert captured["active_schema"] == "marts"
 
     async with session_factory() as db:
         query = (await db.execute(sa.select(Query))).scalars().one()

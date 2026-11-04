@@ -146,6 +146,7 @@ async def dispatch_query(
     *,
     timeout_s: float = 600.0,
     active_catalog: str | None = None,
+    active_schema: str | None = None,
     principal_id: uuid.UUID | None = None,
     stats_for: dict[str, str] | None = None,
     health_for: dict[str, object] | None = None,
@@ -170,7 +171,7 @@ async def dispatch_query(
     # agent missing an extension, or on a runtime that isn't trusted with work,
     # never receives it however the query reached it.
     agent = await db.get(Agent, query.agent_id)
-    await runtime_service.check_dispatchable(agent, catalogs)
+    await runtime_service.check_dispatchable(agent, catalogs, use_schema=active_schema is not None)
     query.runtime_id = runtime_service.runtime_id_of(agent)
 
     # The agent ATTACHes catalogs under their slugs and `USE`s the active one.
@@ -180,6 +181,8 @@ async def dispatch_query(
     # Recorded so reading the result later re-checks grants where names resolved,
     # not wherever the workspace default happens to point by then.
     query.active_catalog = active_catalog
+    if active_schema is not None:
+        query.active_schema = active_schema
 
     # Scoped-catalog grant check: reject before dispatch if the principal lacks
     # tier on any referenced object. No-op unless a catalog is in scoped mode.
@@ -190,6 +193,7 @@ async def dispatch_query(
         query.sql,
         active_catalog,
         catalogs,
+        active_schema=active_schema,
     )
     payload: dict[str, object] = {
         "query_id": str(query.id),
@@ -202,6 +206,13 @@ async def dispatch_query(
     probed = [t["catalog"] for t in (stats_for, health_for, maintain_for) if t and t.get("catalog")]
     attach = statement_catalogs(query.sql, catalogs, active_catalog, also=probed)
     payload.update(await dispatch_catalogs(agent, catalogs, attach))
+    if active_schema is not None:
+        # `USE`d in place of the active catalog's `default_schema`, which the agent
+        # also creates on a DuckLake attach: a chosen schema must never be created.
+        # `statement_catalogs` always attaches the active catalog.
+        for descriptor in payload["catalogs"]:
+            if descriptor["slug"] == active_catalog:
+                descriptor["use_schema"] = active_schema
     if stats_for is not None:
         # Ask the agent to also compute true table stats for this table.
         payload["stats_for"] = stats_for

@@ -652,6 +652,7 @@ async def bind_queued_work(db: AsyncSession, agent: Agent) -> int:
                 query,
                 principal_id=query.user_id,
                 active_catalog=query.active_catalog,
+                active_schema=query.active_schema,
                 **({} if query.timeout_s is None else {"timeout_s": query.timeout_s}),
             )
             bound += 1
@@ -810,6 +811,7 @@ async def bind_targeted_work(db: AsyncSession, agent: Agent) -> int:
                 query,
                 principal_id=query.user_id,
                 active_catalog=query.active_catalog,
+                active_schema=query.active_schema,
                 **({} if query.timeout_s is None else {"timeout_s": query.timeout_s}),
             )
             bound += 1

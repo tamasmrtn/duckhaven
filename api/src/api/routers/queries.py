@@ -248,7 +248,7 @@ async def _submit_query(
     # Checked here, before a query row exists, so a refusal leaves nothing behind.
     # dispatch_query applies the same check on every other path.
     try:
-        await check_dispatchable(agent, catalogs)
+        await check_dispatchable(agent, catalogs, use_schema=body.schema_name is not None)
     except AgentNotDispatchable as exc:
         raise _not_dispatchable(exc) from None
 
@@ -269,6 +269,7 @@ async def _submit_query(
             query,
             timeout_s=body.timeout_s,
             active_catalog=body.catalog,
+            active_schema=body.schema_name,
         )
     except GrantDenied as exc:
         raise HTTPException(
@@ -298,7 +299,7 @@ async def _cache_lookup(
     default = await get_default_catalog(db, workspace.id)
     current = body.catalog or (default.slug if default is not None else catalogs[0].slug)
     context = result_cache.context_for(
-        agent, current_catalog=current, current_schema=DEFAULT_SCHEMA
+        agent, current_catalog=current, current_schema=body.schema_name or DEFAULT_SCHEMA
     )
     return await result_cache.lookup(
         db,
@@ -518,6 +519,7 @@ async def _create_starting_query(
         # default catalog and timeout.
         timeout_s=body.timeout_s,
         active_catalog=body.catalog,
+        active_schema=body.schema_name,
     )
     cache.stamp(query)
     db.add(query)
@@ -580,6 +582,7 @@ async def _create_elastic_query(
         # table names resolved somewhere the user had not chosen.
         timeout_s=body.timeout_s,
         active_catalog=body.catalog,
+        active_schema=body.schema_name,
     )
     cache.stamp(query)
     db.add(query)
@@ -588,7 +591,11 @@ async def _create_elastic_query(
     if agent is not None:
         try:
             await query_service.dispatch_query(
-                db, query, timeout_s=body.timeout_s, active_catalog=body.catalog
+                db,
+                query,
+                timeout_s=body.timeout_s,
+                active_catalog=body.catalog,
+                active_schema=body.schema_name,
             )
         except GrantDenied as exc:
             raise HTTPException(

@@ -102,8 +102,8 @@ class Query(Base):
     # actually resolved names in, which reading the result re-checks grants against.
     active_catalog: Mapped[str | None] = mapped_column(String(255), nullable=True)
     # The schema unqualified names resolved in. Set for session statements, whose
-    # session can `USE` another schema; null means the workspace default schema,
-    # which is where every one-shot run resolves.
+    # session can `USE` another schema, and for one-shot runs that chose one; null
+    # means the workspace default schema.
     active_schema: Mapped[str | None] = mapped_column(String(255), nullable=True)
     # Who sent the run: the first product token of the caller's User-Agent
     # (`dbt-duckhaven/1.2.0`), or the session's for a session statement. Null for

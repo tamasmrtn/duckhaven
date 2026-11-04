@@ -70,6 +70,18 @@ class QueryCreate(BaseModel):
     # The worksheet's active catalog (slug) — `USE`d for unqualified table names.
     # When omitted the workspace's default catalog is used.
     catalog: str | None = None
+    # Sent as `schema`, the name BaseModel reserves: the schema in `catalog` that
+    # unqualified table names resolve in.
+    schema_name: str | None = Field(
+        default=None,
+        validation_alias="schema",
+        min_length=1,
+        max_length=255,
+        description=(
+            "The schema unqualified table names resolve in, within `catalog`. "
+            "Omitted, they resolve in `analytics`."
+        ),
+    )
     # Whether the run may be answered from the result cache when nothing it reads
     # has changed since an identical query ran. False always executes ("re-run
     # without cache"), and the result still refreshes the cache.

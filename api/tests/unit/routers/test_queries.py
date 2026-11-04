@@ -2744,6 +2744,99 @@ async def test_the_wait_is_capped(authed_client, workspace, connected_agent):
     assert resp.status_code == 422
 
 
+# --- a query id chosen by the caller -------------------------------------------
+
+
+async def test_a_run_takes_the_id_its_caller_chose(authed_client, workspace, connected_agent):
+    import json
+
+    agent, mock_ws = connected_agent
+    chosen = str(uuid.uuid4())
+    resp = await _submit(authed_client, workspace, agent, id=chosen)
+    assert resp.status_code == 202
+    assert resp.json()["id"] == chosen
+    # The agent runs it under that id, so a cancel by that id reaches it.
+    assert json.loads(mock_ws.sent[-1])["payload"]["query_id"] == chosen
+    assert (await authed_client.get(f"/queries/{chosen}")).json()["id"] == chosen
+
+
+async def test_an_id_already_used_is_refused(authed_client, workspace, connected_agent):
+    agent, mock_ws = connected_agent
+    chosen = str(uuid.uuid4())
+    assert (await _submit(authed_client, workspace, agent, id=chosen)).status_code == 202
+    sent = len(mock_ws.sent)
+
+    resp = await _submit(authed_client, workspace, agent, id=chosen, sql="SELECT 2")
+    assert resp.status_code == 409
+    assert resp.json()["error"] == "query_id_conflict"
+    # Refused before anything ran, and the first run is untouched.
+    assert len(mock_ws.sent) == sent
+    assert (await authed_client.get(f"/queries/{chosen}")).json()["sql"] == "SELECT 1"
+
+
+async def test_a_run_can_be_cancelled_by_its_chosen_id_while_its_submit_waits(
+    authed_client, workspace, connected_agent, monkeypatch
+):
+    """The point of choosing the id: a client blocked in `wait_timeout_s` can still
+    stop the run from elsewhere, and the held call answers with the cancelled row.
+
+    The held call is parked at the start of its wait until the cancel has committed:
+    the test sessions share one in-memory SQLite connection, so a poll's rollback
+    landing mid-cancel would undo it, which no real database does."""
+    import asyncio
+
+    from api.services.sql_sessions import service as sql_session_service
+
+    agent, _ws = connected_agent
+    chosen = str(uuid.uuid4())
+    parked, cancelled = asyncio.Event(), asyncio.Event()
+    real_wait = sql_session_service.await_query_done
+
+    async def wait_after_cancel(db, query, timeout_s, **kwargs):
+        parked.set()
+        await asyncio.wait_for(cancelled.wait(), timeout=5)
+        return await real_wait(db, query, timeout_s, **kwargs)
+
+    monkeypatch.setattr(sql_session_service, "await_query_done", wait_after_cancel)
+
+    async def cancel_while_held():
+        await parked.wait()
+        assert (await authed_client.delete(f"/queries/{chosen}")).status_code == 204
+        cancelled.set()
+
+    canceller = asyncio.create_task(cancel_while_held())
+    resp = await _submit(authed_client, workspace, agent, id=chosen, wait_timeout_s=5)
+    await canceller
+    assert resp.status_code == 200
+    assert resp.json()["id"] == chosen
+    assert resp.json()["status"] == "cancelled"
+
+
+async def test_a_cache_hit_keeps_the_chosen_id(
+    authed_client, workspace, connected_agent, monkeypatch
+):
+    from api.routers import queries as queries_router
+    from api.services.result_cache import service as result_cache
+
+    async def hit(db, workspace, catalogs, body, agent, polaris):
+        return result_cache.Lookup(status=result_cache.HIT)
+
+    async def serve(db, cache, query, **kwargs):
+        query.status = "done"
+        db.add(query)
+        await db.commit()
+        return query
+
+    monkeypatch.setattr(queries_router, "_cache_lookup", hit)
+    monkeypatch.setattr(result_cache, "serve_hit", serve)
+    agent, mock_ws = connected_agent
+    chosen = str(uuid.uuid4())
+    resp = await _submit(authed_client, workspace, agent, id=chosen)
+    assert resp.json()["id"] == chosen
+    assert resp.json()["status"] == "done"
+    assert mock_ws.sent == []
+
+
 # --- who sent a run, and why ---------------------------------------------------
 
 

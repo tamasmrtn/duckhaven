@@ -118,6 +118,11 @@ async def create_query(
     return query
 
 
+def _run_id(body: QueryCreate) -> uuid.UUID:
+    """The id a run's row gets: the caller's, when it chose one."""
+    return body.id or uuid.uuid4()
+
+
 async def _submit_query(
     ws: str,
     body: QueryCreate,
@@ -130,6 +135,7 @@ async def _submit_query(
     if workspace is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Workspace not found")
     await assert_workspace_member(db, workspace.id, user.id)
+    await query_service.refuse_taken_query_id(db, body.id)
     # Values for placeholders become literals here, before any check reads the SQL:
     # from this line on the statement is exactly the one that runs.
     body.sql = sql_params.render_for_request(body.sql, body.parameters)
@@ -235,6 +241,7 @@ async def _submit_query(
                 db, workspace, user.id, body, agent, cache, restart=False
             )
         failed = Query(
+            id=_run_id(body),
             workspace_id=workspace.id,
             agent_id=agent.id,
             user_id=user.id,
@@ -255,6 +262,7 @@ async def _submit_query(
     await _stamp_saved_query_run(db, workspace, body.saved_query_id)
 
     query = Query(
+        id=_run_id(body),
         workspace_id=workspace.id,
         agent_id=body.agent_id,
         user_id=user.id,
@@ -325,6 +333,7 @@ async def _serve_cached(
     row that points at the run whose result it reuses. Nothing is dispatched."""
     await _stamp_saved_query_run(db, workspace, body.saved_query_id)
     query = Query(
+        id=_run_id(body),
         workspace_id=workspace.id,
         user_id=user.id,
         sql=body.sql,
@@ -406,6 +415,7 @@ async def _fail_unplaced(
     if error.detail["error"] == "agent_required":
         return error
     failed = Query(
+        id=_run_id(body),
         workspace_id=workspace.id,
         agent_id=decision.agent.id if decision.agent is not None else None,
         user_id=user.id,
@@ -434,6 +444,7 @@ async def _assert_queue_has_room(
         await compute_service.assert_parked_capacity(db, workspace.id)
     except query_service.ComputeQueueFull as exc:
         failed = Query(
+            id=_run_id(body),
             workspace_id=workspace.id,
             user_id=user_id,
             sql=body.sql,
@@ -507,6 +518,7 @@ async def _create_starting_query(
     await _assert_queue_has_room(db, workspace, user_id, body)
     await _stamp_saved_query_run(db, workspace, body.saved_query_id)
     query = Query(
+        id=_run_id(body),
         workspace_id=workspace.id,
         agent_id=None,
         requested_agent_id=agent.id,
@@ -567,6 +579,7 @@ async def _create_elastic_query(
         await _assert_queue_has_room(db, workspace, user_id, body)
     await _stamp_saved_query_run(db, workspace, body.saved_query_id)
     query = Query(
+        id=_run_id(body),
         workspace_id=workspace.id,
         agent_id=agent.id if agent is not None else None,
         user_id=user_id,
@@ -652,6 +665,7 @@ async def _set_concurrency(
     frame = Frame(type=FrameType.SET_CONCURRENCY, payload={"profile": profile})
     await send_to_agent(db, body.agent_id, frame.model_dump_json())
     query = Query(
+        id=_run_id(body),
         workspace_id=workspace_id,
         agent_id=body.agent_id,
         user_id=user.id,

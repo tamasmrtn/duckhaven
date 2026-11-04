@@ -324,6 +324,31 @@ async def test_statement_success_creates_session_query(
     assert query.session_id == session.id
 
 
+async def test_statement_takes_the_id_its_caller_chose(
+    authed_client, db_session, workspace, agent, user, enabled, monkeypatch
+):
+    session = await _open_session_row(db_session, workspace, agent, user)
+    dispatched = []
+
+    async def fake_exec(db, sess, query, timeout_s, catalogs):
+        dispatched.append(query.id)
+        return True
+
+    monkeypatch.setattr(session_service, "dispatch_exec_statement", fake_exec)
+    chosen = uuid.uuid4()
+    url = f"/sql/sessions/{session.id}/statements"
+
+    resp = await authed_client.post(url, json={"sql": "SELECT 1", "id": str(chosen)})
+    assert resp.status_code == 202, resp.text
+    assert resp.json()["id"] == str(chosen)
+    assert dispatched == [chosen]
+
+    again = await authed_client.post(url, json={"sql": "SELECT 2", "id": str(chosen)})
+    assert again.status_code == 409
+    assert again.json()["error"] == "query_id_conflict"
+    assert dispatched == [chosen]
+
+
 async def test_statement_persists_its_timeout_budget(
     authed_client, db_session, workspace, agent, user, enabled, monkeypatch
 ):

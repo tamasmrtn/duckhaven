@@ -591,6 +591,7 @@ async def run_statement(
             status_code=status.HTTP_409_CONFLICT,
             detail={"error": "session_not_open", "detail": f"session is {session.status}"},
         )
+    await query_service.refuse_taken_query_id(db, body.id)
     # Placeholder values become literals before the statement policy and grant
     # check read the SQL, so they check exactly what runs.
     body.sql = sql_params.render_for_request(body.sql, body.parameters)
@@ -654,6 +655,7 @@ async def run_statement(
     )
     if cache.hit:
         hit = Query(
+            id=body.id or uuid.uuid4(),
             workspace_id=session.workspace_id,
             user_id=session.user_id,
             sql=body.sql,
@@ -681,6 +683,7 @@ async def run_statement(
         return await _with_first_page(db, hit, body)
 
     query = Query(
+        id=body.id or uuid.uuid4(),
         workspace_id=session.workspace_id,
         agent_id=session.agent_id,
         user_id=session.user_id,

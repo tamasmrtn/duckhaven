@@ -51,9 +51,16 @@ PARAMETERS_DESCRIPTION = (
     "it runs: a list for `?`, `?1` or `$1`, an object for `$name`."
 )
 
+QUERY_ID_DESCRIPTION = (
+    "A UUID you choose for the run, so you know its id before this call returns and "
+    "can cancel or read it while the call is still waiting. Omitted, the server picks "
+    "one. An id already used answers 409 `query_id_conflict`."
+)
+
 
 class QueryCreate(BaseModel):
     sql: str
+    id: uuid.UUID | None = Field(default=None, description=QUERY_ID_DESCRIPTION)
     # A specific agent (the worksheet engine picker), or omitted to let the server
     # choose: a compatible connected agent on the default runtime first. With
     # elastic compute, a run with none connected parks queued and one is

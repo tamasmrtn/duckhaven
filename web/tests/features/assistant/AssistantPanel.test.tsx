@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { screen, waitFor, within } from "@testing-library/react";
+import { describe, it, expect, vi, afterEach } from "vitest";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { renderWithProviders } from "@tests/utils";
@@ -844,5 +844,111 @@ describe("AssistantPanel", () => {
         screen.queryByText(/Assistant proposed changes/),
       ).not.toBeInTheDocument(),
     );
+  });
+
+  describe("following the stream", () => {
+    afterEach(() => vi.restoreAllMocks());
+
+    // jsdom has no layout, so give the thread's scroller a geometry and tell
+    // the panel it moved: `fromBottom` px short of the end of 2000px of content.
+    function scrollThreadTo(fromBottom: number) {
+      const panel = screen.getByRole("complementary", {
+        name: "AI assistant",
+      });
+      const viewport = panel.querySelector<HTMLElement>(
+        "[data-radix-scroll-area-viewport]",
+      )!;
+      Object.defineProperty(viewport, "scrollHeight", {
+        value: 2000,
+        configurable: true,
+      });
+      Object.defineProperty(viewport, "clientHeight", {
+        value: 500,
+        configurable: true,
+      });
+      Object.defineProperty(viewport, "scrollTop", {
+        value: 2000 - 500 - fromBottom,
+        configurable: true,
+      });
+      fireEvent.scroll(viewport);
+    }
+
+    async function startTurn() {
+      const stream = drivenStream();
+      const user = userEvent.setup();
+      renderWithProviders({ initialRoute: ROUTE });
+      await openPanel(user);
+      await screen.findByText("There are 42 events in the events table.");
+      await user.type(screen.getByLabelText("Message"), "tell me everything");
+      await user.click(screen.getByRole("button", { name: "Send" }));
+      await waitFor(() => expect(stream.push).toBeDefined());
+      return { stream, user };
+    }
+
+    it("jumps to the newest text instantly, not with a smooth animation", async () => {
+      const scroll = vi.spyOn(Element.prototype, "scrollIntoView");
+      const { stream } = await startTurn();
+
+      scroll.mockClear();
+      stream.push({ type: "token", text: "First part." });
+      await screen.findByText("First part.");
+
+      expect(scroll).toHaveBeenCalled();
+      for (const [options] of scroll.mock.calls) {
+        expect(options).not.toMatchObject({ behavior: "smooth" });
+      }
+    });
+
+    it("leaves a reader who scrolled up where they are while tokens arrive", async () => {
+      const scroll = vi.spyOn(Element.prototype, "scrollIntoView");
+      const { stream } = await startTurn();
+      stream.push({ type: "token", text: "First part." });
+      await screen.findByText("First part.");
+
+      scrollThreadTo(900);
+      scroll.mockClear();
+      stream.push({ type: "token", text: " Second part." });
+      await screen.findByText("First part. Second part.");
+
+      expect(scroll).not.toHaveBeenCalled();
+    });
+
+    it("follows the stream again once the reader scrolls back to the bottom", async () => {
+      const scroll = vi.spyOn(Element.prototype, "scrollIntoView");
+      const { stream } = await startTurn();
+      stream.push({ type: "token", text: "First part." });
+      await screen.findByText("First part.");
+
+      scrollThreadTo(900);
+      scrollThreadTo(10);
+      scroll.mockClear();
+      stream.push({ type: "token", text: " Second part." });
+      await screen.findByText("First part. Second part.");
+
+      expect(scroll).toHaveBeenCalled();
+    });
+
+    it("scrolls to the new turn when the reader sends from higher up", async () => {
+      const scroll = vi.spyOn(Element.prototype, "scrollIntoView");
+      const { stream, user } = await startTurn();
+      stream.push({ type: "token", text: "First part." });
+      await screen.findByText("First part.");
+      stream.push({
+        type: "done",
+        message_id: "msg-1",
+        usage: { input: 1, output: 1 },
+      });
+      stream.finish();
+      await screen.findByRole("button", { name: "Regenerate" });
+
+      scrollThreadTo(900);
+      const second = drivenStream();
+      scroll.mockClear();
+      await user.type(screen.getByLabelText("Message"), "and another thing");
+      await user.click(screen.getByRole("button", { name: "Send" }));
+      await waitFor(() => expect(second.push).toBeDefined());
+
+      await waitFor(() => expect(scroll).toHaveBeenCalled());
+    });
   });
 });

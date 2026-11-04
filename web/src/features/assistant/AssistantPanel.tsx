@@ -37,6 +37,11 @@ import { useAssistantChat } from "./useAssistantChat";
 const chipClass =
   "rounded-full border border-[var(--border-subtle)] px-3 py-1 text-xs text-text-secondary hover:border-[var(--brand-slate-blue)] hover:text-text-primary";
 
+// How far from the bottom (px) the thread can sit and still count as following
+// the stream. Covers a table or code block landing in one render, which makes
+// the content taller than the scroll position for a moment.
+const FOLLOW_THRESHOLD_PX = 64;
+
 const GENERIC_STARTER_PROMPTS = [
   "What data do I have access to?",
   "Help me write a SQL query.",
@@ -134,9 +139,31 @@ export function AssistantPanel({ ws }: { ws: string }) {
   >(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
+  // Whether the thread is following the newest content. A reader who scrolls up
+  // to look back at a long answer while it is still streaming has left it, and
+  // must not be pulled back down on every token.
+  const followingRef = useRef(true);
+  const onThreadScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    const el = e.currentTarget;
+    followingRef.current =
+      el.scrollHeight - el.scrollTop - el.clientHeight <= FOLLOW_THRESHOLD_PX;
+  };
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [detail?.transcript.length, chat.streamingText, chat.liveTools.length]);
+    followingRef.current = true;
+  }, [effectiveId]);
+  useEffect(() => {
+    // Instant, not smooth: this runs on every streamed token, and a smooth
+    // scroll restarted that often never settles — it trails the growing bottom
+    // in stops and starts.
+    if (followingRef.current) {
+      bottomRef.current?.scrollIntoView({ block: "end" });
+    }
+  }, [
+    detail?.transcript.length,
+    chat.pendingUserMessage,
+    chat.streamingText,
+    chat.liveTools.length,
+  ]);
   useEffect(() => {
     // Focus (not send) so the user can review or redact before it goes to
     // the model — the seed text is a raw engine error, which can echo data.
@@ -155,6 +182,8 @@ export function AssistantPanel({ ws }: { ws: string }) {
       setPicked(conv.id);
       id = conv.id;
     }
+    // Sending is a request to see the answer arrive, wherever the thread was.
+    followingRef.current = true;
     chat.send(prompt, id);
     setDraft("");
   };
@@ -254,7 +283,10 @@ export function AssistantPanel({ ws }: { ws: string }) {
           />
         </div>
       ) : (
-        <ScrollArea className="flex-1">
+        <ScrollArea
+          className="flex-1"
+          viewportProps={{ onScroll: onThreadScroll }}
+        >
           <div className="flex flex-col gap-3 p-3">
             {threadLoadError ? (
               <p className="text-sm text-destructive" role="alert">

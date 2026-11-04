@@ -1368,6 +1368,53 @@ async def test_cancel_query_agent_not_connected(
     assert resp.json()["status"] == "cancelled"
 
 
+@pytest.mark.parametrize(
+    ("final_status", "error"),
+    [("done", None), ("failed", "Binder Error: no such column"), ("cancelled", None)],
+)
+async def test_cancelling_a_finished_query_changes_nothing(
+    authed_client: AsyncClient,
+    workspace: Workspace,
+    connected_agent,
+    db_session,
+    final_status,
+    error,
+):
+    """A cancel that arrives after the run finished, such as a Stop racing the
+    result, must leave the run as it ended. Overwriting a `done` row with
+    `cancelled` made its result unreadable (`/result` answers 409)."""
+    from datetime import UTC, datetime, timedelta
+
+    from api.models.query import Query
+
+    agent, mock_ws = connected_agent
+    finished = datetime.now(UTC) - timedelta(seconds=5)
+    query = Query(
+        workspace_id=workspace.id,
+        agent_id=agent.id,
+        sql="SELECT 1",
+        status=final_status,
+        error=error,
+        row_count=1 if final_status == "done" else None,
+        started_at=finished - timedelta(seconds=1),
+        finished_at=finished,
+    )
+    db_session.add(query)
+    await db_session.commit()
+    await db_session.refresh(query)
+
+    resp = await authed_client.delete(f"/queries/{query.id}")
+    assert resp.status_code == 204
+
+    body = (await authed_client.get(f"/queries/{query.id}")).json()
+    assert body["status"] == final_status
+    assert body["error"] == error
+    # The test database hands timestamps back naive; they are stored as UTC.
+    assert datetime.fromisoformat(body["finished_at"]).replace(tzinfo=UTC) == finished
+    # Nothing is running, so there is nothing to ask the agent to stop.
+    assert mock_ws.sent == []
+
+
 async def test_create_saved_query_reader_role_rejected(
     authed_client: AsyncClient, workspace: Workspace, db_session
 ):

@@ -20,8 +20,15 @@ async def test_version_ok(client: AsyncClient):
     resp = await client.get("/version")
     assert resp.status_code == 200
     body = resp.json()
-    assert body.keys() == {"version", "api_version"}
+    assert body.keys() == {"version", "api_version", "features"}
     assert body["api_version"] == API_VERSION
+
+
+async def test_version_names_the_features_a_client_must_check_for(client: AsyncClient):
+    """`schema` on a one-shot query is ignored by a server without it, so a client
+    has to ask before it sends one."""
+    resp = await client.get("/version")
+    assert "query_schema" in resp.json()["features"]
 
 
 async def test_version_reflects_app_version(client: AsyncClient, monkeypatch: pytest.MonkeyPatch):

@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from api.config import settings
 from api.schemas.query import (
     PARAMETERS_DESCRIPTION,
+    QUERY_ID_DESCRIPTION,
     TAGS_DESCRIPTION,
     ParameterValue,
     Tags,
@@ -97,6 +98,7 @@ MAX_FIRST_PAGE_LIMIT = 200
 
 class SqlStatementCreate(BaseModel):
     sql: str
+    id: uuid.UUID | None = Field(default=None, description=QUERY_ID_DESCRIPTION)
     timeout_s: float = 600.0
     # How long the call may block waiting for the statement to finish. None takes
     # the server default (sql_statement_wait_timeout_s); 0 never blocks and answers

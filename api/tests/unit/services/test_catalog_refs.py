@@ -80,6 +80,10 @@ def test_the_catalogs_a_statement_names_are_attached(sql, expected):
         "DESCRIBE",
         "PRAGMA show_tables",
         "PRAGMA database_list",
+        # The listing views resolve bare, through DuckDB's search path.
+        "SELECT tablename FROM pg_tables",
+        "SELECT name FROM sqlite_master",
+        "SELECT database_name FROM pragma_database_list",
     ],
 )
 def test_a_listing_attaches_the_whole_workspace(sql):

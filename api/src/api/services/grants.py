@@ -384,6 +384,82 @@ def statement_refs(stmt: exp.Expression) -> list[TableRef]:
     return refs
 
 
+# DuckDB's Postgres-compatible catalog, a third door onto the same listing:
+# `pg_tables`, `pg_class` and `pg_attribute` span every attached catalog (verified
+# live on DuckDB 1.5). `pg_catalog` is on DuckDB's search path, so these names
+# also resolve unqualified, landing in the active catalog, which the grant check
+# skips when it is open. These are the views DuckDB 1.5 defines in `pg_catalog`.
+_PG_CATALOG_SCHEMA = "pg_catalog"
+PG_CATALOG_VIEWS = frozenset(
+    {
+        "pg_am",
+        "pg_attrdef",
+        "pg_attribute",
+        "pg_class",
+        "pg_collation",
+        "pg_constraint",
+        "pg_database",
+        "pg_depend",
+        "pg_description",
+        "pg_enum",
+        "pg_index",
+        "pg_indexes",
+        "pg_namespace",
+        "pg_prepared_statements",
+        "pg_proc",
+        "pg_sequence",
+        "pg_sequences",
+        "pg_settings",
+        "pg_tables",
+        "pg_tablespace",
+        "pg_type",
+        "pg_views",
+    }
+)
+
+# Views DuckDB defines in `system.main` that list the same objects. They resolve
+# bare (`FROM duckdb_tables`, no parentheses), as `main.sqlite_master`, or as
+# `system.main.…`, and each spans every attached catalog (verified live on
+# DuckDB 1.5). The `duckdb_*` ones share their names with the meta functions.
+SYSTEM_MAIN_LISTING_VIEWS = frozenset(
+    {
+        "duckdb_columns",
+        "duckdb_constraints",
+        "duckdb_databases",
+        "duckdb_indexes",
+        "duckdb_schemas",
+        "duckdb_tables",
+        "duckdb_views",
+        "pragma_database_list",
+        "sqlite_master",
+        "sqlite_schema",
+        "sqlite_temp_master",
+        "sqlite_temp_schema",
+    }
+)
+
+
+def _reads_system_listing(table: exp.Table) -> bool:
+    """Whether ``table`` resolves to one of DuckDB's built-in listing views.
+
+    Any table in a ``pg_catalog`` schema does; otherwise only a name that is
+    unqualified, or qualified with ``main`` or a system catalog, can reach them.
+    A bare name is refused even where a CTE of the same name would shadow it:
+    sqlglot does not resolve CTE scopes, and a CTE that reads the view it is
+    named after (``WITH pg_tables AS (SELECT * FROM pg_tables)``) still lists
+    every catalog. The guard fails closed rather than guess which one is meant.
+    """
+    schema = table.db.lower()
+    if schema == _PG_CATALOG_SCHEMA:
+        return True
+    if table.catalog and table.catalog.lower() not in SYSTEM_CATALOGS:
+        return False
+    name = table.name.lower()
+    if not schema:
+        return name in PG_CATALOG_VIEWS or name in SYSTEM_MAIN_LISTING_VIEWS
+    return schema == "main" and name in SYSTEM_MAIN_LISTING_VIEWS
+
+
 # DuckDB meta table-functions that enumerate catalog objects. They are a second
 # door onto the same listing as `information_schema` (verified live: both span
 # every attached catalog), and `extract_table_refs` cannot see them — a table
@@ -541,11 +617,12 @@ def metadata_enumeration_reason(sql: str, scoped_slugs: list[str] | None = None)
         if stmt is None:
             continue
         for table in stmt.find_all(exp.Table):
-            if table.db and table.db.lower() in METADATA_SCHEMAS:
-                # Matched on the schema, so this catches both the bare
-                # `information_schema.tables` and dbt-duckdb's
-                # `system.information_schema.tables` spelling.
-                return f"`{table.db}.{table.name}` cannot be queried. {hint}"
+            # `information_schema` is matched on the schema, so this catches both the bare
+            # `information_schema.tables` and dbt-duckdb's
+            # `system.information_schema.tables` spelling.
+            if (table.db and table.db.lower() in METADATA_SCHEMAS) or _reads_system_listing(table):
+                qualified = ".".join(p for p in (table.catalog, table.db, table.name) if p)
+                return f"`{qualified}` cannot be queried. {hint}"
         for fn in stmt.find_all(exp.Anonymous):
             name = function_name(fn)
             if name in _CATALOG_META_FUNCTIONS:

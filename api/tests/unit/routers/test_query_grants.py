@@ -266,6 +266,28 @@ async def test_enumeration_denied_from_the_open_catalog_of_a_mixed_workspace(
     assert scoped_cat.slug in body["message"]
 
 
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT schemaname, tablename FROM pg_tables",
+        "SELECT * FROM pg_catalog.pg_tables",
+        "SELECT a.attname FROM pg_attribute a JOIN pg_class c ON a.attrelid = c.oid",
+    ],
+)
+async def test_pg_catalog_denied_from_the_open_catalog_of_a_mixed_workspace(
+    authed_client, mixed_ws, connected_agent, sql
+):
+    """DuckDB's pg_catalog views list every attached catalog's tables and columns,
+    like information_schema. Bare names resolve to them through the search path,
+    which put them in the open active catalog, whose refs the grant check skips."""
+    ws, _open_cat, scoped_cat = mixed_ws
+    resp = await _run(authed_client, ws, connected_agent, sql)
+    assert resp.status_code == 403
+    body = resp.json()
+    assert body["error"] == "grant_denied"
+    assert scoped_cat.slug in body["message"]
+
+
 async def test_open_catalog_of_a_mixed_workspace_still_queryable(
     authed_client, mixed_ws, connected_agent
 ):

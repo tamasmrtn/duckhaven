@@ -76,9 +76,9 @@ one the query needed: `reader` to read, `writer` to change.
 
 ## "Enumerating metadata is not available in a scoped catalog…"
 
-**What it means.** The query asks the engine to list objects — `information_schema`, `SHOW TABLES`, `duckdb_tables()`
-and similar — in a workspace where at least one catalog is scoped. The message names the scoped catalog, even when you
-were working in an open one.
+**What it means.** The query asks the engine to list objects — `information_schema`, `SHOW TABLES`, `duckdb_tables()`,
+`pg_catalog` views such as `pg_tables`, and similar — in a workspace where at least one catalog is scoped. The message
+names the scoped catalog, even when you were working in an open one.
 
 **What to do.** Browse the catalog tree, or use `DESCRIBE ⟨catalog⟩.⟨schema⟩.⟨table⟩` for columns. For tools that need
 `information_schema`, see [Scoped access](scoped-access.md#the-rejection-covers-the-whole-workspace).

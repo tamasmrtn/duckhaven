@@ -24,6 +24,7 @@ from collections.abc import Iterable
 from api.models.agent import Agent
 from api.models.catalog import Catalog
 from api.services.agent_capabilities import agent_supports_feature
+from api.services.grants import PG_CATALOG_VIEWS, SYSTEM_MAIN_LISTING_VIEWS
 from api.services.session_credentials import build_catalog_attach
 
 # The agent protocol feature that says it attaches catalogs on demand.
@@ -33,18 +34,21 @@ _WORD = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 # Words that mean a statement lists objects across every attached catalog. Those
 # listings are only complete with everything attached, so such a statement
-# attaches the whole workspace, as every statement used to.
-_ENUMERATION_WORDS = frozenset(
-    {
-        "information_schema",
-        "pg_catalog",
-        "sqlite_master",
-        "sqlite_schema",
-        "show_tables",
-        "show_tables_expanded",
-        "show_databases",
-        "database_list",
-    }
+# attaches the whole workspace, as every statement used to. The listing views
+# are the ones the grant gate refuses in a scoped workspace.
+_ENUMERATION_WORDS = (
+    frozenset(
+        {
+            "information_schema",
+            "pg_catalog",
+            "show_tables",
+            "show_tables_expanded",
+            "show_databases",
+            "database_list",
+        }
+    )
+    | PG_CATALOG_VIEWS
+    | SYSTEM_MAIN_LISTING_VIEWS
 )
 # `SHOW TABLES`, `SHOW ALL TABLES`, `SHOW DATABASES`, and a bare `DESCRIBE`/`SHOW`.
 _LISTING_STATEMENT = re.compile(r"(?:\A|;)\s*(?:show\b|describe\s*(?:;|\Z))", re.IGNORECASE)

@@ -3573,3 +3573,60 @@ async def test_zero_turns_the_parked_caps_off(
             f"/workspaces/{workspace.slug}/queries", json={"sql": f"SELECT {i}"}
         )
         assert resp.status_code == 202, resp.text
+
+
+async def test_direct_agent_run_in_a_non_default_catalog_keeps_its_lineage_there(
+    authed_client: AsyncClient, workspace, db_session, user: User, connected_agent
+):
+    """The chosen catalog must reach the row on the named-agent path, or lineage
+    resolves the statement's unqualified names against the workspace default and
+    records the edge against a catalog the query never ran in."""
+    import sqlalchemy as sa
+
+    from api.models.catalog import Catalog, WorkspaceCatalog
+    from api.models.lineage import LineageEdge
+    from api.models.query import Query
+    from api.services.lineage.ingest import record_execution_lineage
+
+    agent, _ws = connected_agent
+    workspace_id = workspace.id
+    default = (await db_session.execute(sa.select(Catalog))).scalars().one()
+    other = Catalog(
+        slug="finance",
+        name="Finance",
+        polaris_name="finance",
+        storage_backend_id=default.storage_backend_id,
+        created_by=user.id,
+    )
+    db_session.add(other)
+    await db_session.flush()
+    other_id = other.id
+    db_session.add(
+        WorkspaceCatalog(
+            workspace_id=workspace_id, catalog_id=other_id, is_default=False, attached_by=user.id
+        )
+    )
+    await db_session.commit()
+
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/queries",
+        json={
+            "sql": "CREATE TABLE accounting.summary AS SELECT * FROM accounting.invoices",
+            "agent_id": str(agent.id),
+            "catalog": "finance",
+        },
+    )
+    assert resp.status_code == 202, resp.text
+
+    query = (
+        (await db_session.execute(sa.select(Query).execution_options(populate_existing=True)))
+        .scalars()
+        .one()
+    )
+    assert query.active_catalog == "finance"
+
+    await record_execution_lineage(db_session, query)
+    await db_session.commit()
+    (edge,) = (await db_session.execute(sa.select(LineageEdge))).scalars().all()
+    assert edge.source_catalog_id == other_id
+    assert edge.target_catalog_id == other_id

@@ -104,23 +104,24 @@ async def create_query(
 
     Send `wait_timeout_s` to block until the run finishes, up to that many seconds:
     the answer is then 200 with the finished query, or 202 if it is still going."""
-    query = await _submit_query(ws, body, db, user, polaris)
-    # Who sent it and why, stamped once here rather than on each way a run can
-    # start. Committed before any wait, which re-reads the row.
-    query.client_name, query.client_version = parse_user_agent(request.headers.get("user-agent"))
-    query.tags = body.tags
-    await db.commit()
+    try:
+        query = await _submit_query(ws, body, db, user, polaris)
+        # Who sent it and why, stamped once here rather than on each way a run can
+        # start. Committed before any wait, which re-reads the row.
+        query.client_name, query.client_version = parse_user_agent(
+            request.headers.get("user-agent")
+        )
+        query.tags = body.tags
+        await db.commit()
+    except IntegrityError:
+        await query_service.refuse_raced_query_id(db, body.id)
+        raise
     if body.wait_timeout_s is not None:
         if body.wait_timeout_s > 0 and query.status in ("queued", "running"):
             await sql_session_service.await_query_done(db, query, body.wait_timeout_s)
         if query.status not in ("queued", "running"):
             response.status_code = status.HTTP_200_OK
     return query
-
-
-def _run_id(body: QueryCreate) -> uuid.UUID:
-    """The id a run's row gets: the caller's, when it chose one."""
-    return body.id or uuid.uuid4()
 
 
 async def _submit_query(
@@ -241,7 +242,7 @@ async def _submit_query(
                 db, workspace, user.id, body, agent, cache, restart=False
             )
         failed = Query(
-            id=_run_id(body),
+            id=body.id,
             workspace_id=workspace.id,
             agent_id=agent.id,
             user_id=user.id,
@@ -262,7 +263,7 @@ async def _submit_query(
     await _stamp_saved_query_run(db, workspace, body.saved_query_id)
 
     query = Query(
-        id=_run_id(body),
+        id=body.id,
         workspace_id=workspace.id,
         agent_id=body.agent_id,
         user_id=user.id,
@@ -333,7 +334,7 @@ async def _serve_cached(
     row that points at the run whose result it reuses. Nothing is dispatched."""
     await _stamp_saved_query_run(db, workspace, body.saved_query_id)
     query = Query(
-        id=_run_id(body),
+        id=body.id,
         workspace_id=workspace.id,
         user_id=user.id,
         sql=body.sql,
@@ -415,7 +416,7 @@ async def _fail_unplaced(
     if error.detail["error"] == "agent_required":
         return error
     failed = Query(
-        id=_run_id(body),
+        id=body.id,
         workspace_id=workspace.id,
         agent_id=decision.agent.id if decision.agent is not None else None,
         user_id=user.id,
@@ -444,7 +445,7 @@ async def _assert_queue_has_room(
         await compute_service.assert_parked_capacity(db, workspace.id)
     except query_service.ComputeQueueFull as exc:
         failed = Query(
-            id=_run_id(body),
+            id=body.id,
             workspace_id=workspace.id,
             user_id=user_id,
             sql=body.sql,
@@ -518,7 +519,7 @@ async def _create_starting_query(
     await _assert_queue_has_room(db, workspace, user_id, body)
     await _stamp_saved_query_run(db, workspace, body.saved_query_id)
     query = Query(
-        id=_run_id(body),
+        id=body.id,
         workspace_id=workspace.id,
         agent_id=None,
         requested_agent_id=agent.id,
@@ -579,7 +580,7 @@ async def _create_elastic_query(
         await _assert_queue_has_room(db, workspace, user_id, body)
     await _stamp_saved_query_run(db, workspace, body.saved_query_id)
     query = Query(
-        id=_run_id(body),
+        id=body.id,
         workspace_id=workspace.id,
         agent_id=agent.id if agent is not None else None,
         user_id=user_id,
@@ -665,7 +666,7 @@ async def _set_concurrency(
     frame = Frame(type=FrameType.SET_CONCURRENCY, payload={"profile": profile})
     await send_to_agent(db, body.agent_id, frame.model_dump_json())
     query = Query(
-        id=_run_id(body),
+        id=body.id,
         workspace_id=workspace_id,
         agent_id=body.agent_id,
         user_id=user.id,

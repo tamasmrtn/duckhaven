@@ -21,6 +21,7 @@ from typing import Annotated
 import sqlalchemy as sa
 from fastapi import APIRouter, Depends, HTTPException, Path, Request, Response, status
 from fastapi import Query as QueryParam
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.config import settings
@@ -655,7 +656,7 @@ async def run_statement(
     )
     if cache.hit:
         hit = Query(
-            id=body.id or uuid.uuid4(),
+            id=body.id,
             workspace_id=session.workspace_id,
             user_id=session.user_id,
             sql=body.sql,
@@ -674,6 +675,9 @@ async def run_statement(
             hit = await result_cache.serve_hit(
                 db, cache, hit, principal_id=session.user_id, catalogs=catalogs, polaris=polaris
             )
+        except IntegrityError:
+            await query_service.refuse_raced_query_id(db, body.id)
+            raise
         except GrantDenied as exc:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -683,7 +687,7 @@ async def run_statement(
         return await _with_first_page(db, hit, body)
 
     query = Query(
-        id=body.id or uuid.uuid4(),
+        id=body.id,
         workspace_id=session.workspace_id,
         agent_id=session.agent_id,
         user_id=session.user_id,
@@ -713,7 +717,13 @@ async def run_statement(
     # flush()ed row is invisible to that connection under read-committed
     # isolation, so the ack would silently no-op and the row would never leave
     # `queued` until QUERY_DONE arrives.
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        # The session lock serialises statements on this session, not another
+        # session or a one-shot run sending the same id.
+        await query_service.refuse_raced_query_id(db, body.id)
+        raise
 
     # Listening before dispatch, so a completion however fast is not missed, and
     # the wait need not read back a row this request has just committed as queued.

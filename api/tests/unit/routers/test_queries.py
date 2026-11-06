@@ -2791,6 +2791,218 @@ async def test_the_wait_is_capped(authed_client, workspace, connected_agent):
     assert resp.status_code == 422
 
 
+# --- a query id chosen by the caller -------------------------------------------
+
+
+async def test_a_run_takes_the_id_its_caller_chose(authed_client, workspace, connected_agent):
+    import json
+
+    agent, mock_ws = connected_agent
+    chosen = str(uuid.uuid4())
+    resp = await _submit(authed_client, workspace, agent, id=chosen)
+    assert resp.status_code == 202
+    assert resp.json()["id"] == chosen
+    # The agent runs it under that id, so a cancel by that id reaches it.
+    assert json.loads(mock_ws.sent[-1])["payload"]["query_id"] == chosen
+    assert (await authed_client.get(f"/queries/{chosen}")).json()["id"] == chosen
+
+
+async def test_an_id_already_used_is_refused(authed_client, workspace, connected_agent):
+    agent, mock_ws = connected_agent
+    chosen = str(uuid.uuid4())
+    assert (await _submit(authed_client, workspace, agent, id=chosen)).status_code == 202
+    sent = len(mock_ws.sent)
+
+    resp = await _submit(authed_client, workspace, agent, id=chosen, sql="SELECT 2")
+    assert resp.status_code == 409
+    assert resp.json()["error"] == "query_id_conflict"
+    # Refused before anything ran, and the first run is untouched.
+    assert len(mock_ws.sent) == sent
+    assert (await authed_client.get(f"/queries/{chosen}")).json()["sql"] == "SELECT 1"
+
+
+async def test_a_run_can_be_cancelled_by_its_chosen_id_while_its_submit_waits(
+    authed_client, workspace, connected_agent, monkeypatch
+):
+    """The point of choosing the id: a client blocked in `wait_timeout_s` can still
+    stop the run from elsewhere, and the held call answers with the cancelled row.
+
+    The held call is parked at the start of its wait until the cancel has committed:
+    the test sessions share one in-memory SQLite connection, so a poll's rollback
+    landing mid-cancel would undo it, which no real database does."""
+    import asyncio
+
+    from api.services.sql_sessions import service as sql_session_service
+
+    agent, _ws = connected_agent
+    chosen = str(uuid.uuid4())
+    parked, cancelled = asyncio.Event(), asyncio.Event()
+    real_wait = sql_session_service.await_query_done
+
+    async def wait_after_cancel(db, query, timeout_s, **kwargs):
+        parked.set()
+        await asyncio.wait_for(cancelled.wait(), timeout=5)
+        return await real_wait(db, query, timeout_s, **kwargs)
+
+    monkeypatch.setattr(sql_session_service, "await_query_done", wait_after_cancel)
+
+    async def cancel_while_held():
+        await parked.wait()
+        assert (await authed_client.delete(f"/queries/{chosen}")).status_code == 204
+        cancelled.set()
+
+    canceller = asyncio.create_task(cancel_while_held())
+    resp = await _submit(authed_client, workspace, agent, id=chosen, wait_timeout_s=5)
+    await canceller
+    assert resp.status_code == 200
+    assert resp.json()["id"] == chosen
+    assert resp.json()["status"] == "cancelled"
+
+
+async def test_a_cache_hit_keeps_the_chosen_id(
+    authed_client, workspace, connected_agent, monkeypatch
+):
+    from api.routers import queries as queries_router
+    from api.services.result_cache import service as result_cache
+
+    async def hit(db, workspace, catalogs, body, agent, polaris):
+        return result_cache.Lookup(status=result_cache.HIT)
+
+    async def serve(db, cache, query, **kwargs):
+        query.status = "done"
+        db.add(query)
+        await db.commit()
+        return query
+
+    monkeypatch.setattr(queries_router, "_cache_lookup", hit)
+    monkeypatch.setattr(result_cache, "serve_hit", serve)
+    agent, mock_ws = connected_agent
+    chosen = str(uuid.uuid4())
+    resp = await _submit(authed_client, workspace, agent, id=chosen)
+    assert resp.json()["id"] == chosen
+    assert resp.json()["status"] == "done"
+    assert mock_ws.sent == []
+
+
+async def test_an_id_that_is_not_a_uuid_is_a_422(authed_client, workspace, connected_agent):
+    agent, mock_ws = connected_agent
+    resp = await _submit(authed_client, workspace, agent, id="run-1")
+    assert resp.status_code == 422
+    assert mock_ws.sent == []
+
+
+async def test_a_refused_attempt_still_spends_its_chosen_id(authed_client, workspace, agent):
+    """A 503 records the failed attempt under the chosen id, so it can be read
+    back; a retry must send a new id, and reusing the old one is a 409."""
+    chosen = str(uuid.uuid4())
+    resp = await _submit(authed_client, workspace, agent, id=chosen)
+    assert resp.status_code == 503
+    assert resp.json()["details"]["query_id"] == chosen
+    assert (await authed_client.get(f"/queries/{chosen}")).json()["status"] == "failed"
+
+    again = await _submit(authed_client, workspace, agent, id=chosen)
+    assert again.status_code == 409
+    assert again.json()["error"] == "query_id_conflict"
+
+
+async def test_a_parked_elastic_run_takes_the_chosen_id(authed_client, workspace, elastic_enabled):
+    chosen = str(uuid.uuid4())
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/queries", json={"sql": "SELECT 1", "id": chosen}
+    )
+    assert resp.status_code == 202
+    assert resp.json()["id"] == chosen
+    assert resp.json()["origin"] == "elastic"
+
+
+async def test_a_run_waiting_for_its_agent_to_start_takes_the_chosen_id(
+    authed_client, workspace, terminated_elastic_agent, elastic_enabled
+):
+    chosen = str(uuid.uuid4())
+    resp = await _submit(authed_client, workspace, terminated_elastic_agent, id=chosen)
+    assert resp.status_code == 202
+    assert resp.json()["id"] == chosen
+    assert resp.json()["status"] == "queued"
+
+
+async def test_a_control_command_takes_the_chosen_id(
+    authed_client, workspace, connected_agent, db_session, user
+):
+    agent, _ws = connected_agent
+    db_session.add(AgentGrant(agent_id=agent.id, user_id=user.id, tier="operate"))
+    await db_session.commit()
+    chosen = str(uuid.uuid4())
+    resp = await _submit(
+        authed_client, workspace, agent, id=chosen, sql="SET duckhaven_concurrency = 'single'"
+    )
+    assert resp.status_code == 202
+    assert resp.json()["id"] == chosen
+
+
+async def test_an_id_another_workspace_used_is_refused_but_not_shown(
+    authed_client, workspace, connected_agent, db_session
+):
+    """Ids are unique across the server, so another workspace's run blocks the id
+    too; the 409 says only that it is taken, and reading it stays forbidden."""
+    from api.models.query import Query
+
+    stranger = User(
+        email="stranger@queries.local",
+        password_hash=hash_password("pw"),
+        name="Stranger",
+        role="user",
+    )
+    db_session.add(stranger)
+    await db_session.commit()
+    elsewhere, _catalog = await seed_workspace(db_session, user_id=stranger.id, slug="elsewhere")
+    chosen = uuid.uuid4()
+    db_session.add(
+        Query(
+            id=chosen,
+            workspace_id=elsewhere.id,
+            user_id=stranger.id,
+            sql="SELECT secret",
+            status="done",
+        )
+    )
+    await db_session.commit()
+
+    agent, mock_ws = connected_agent
+    resp = await _submit(authed_client, workspace, agent, id=str(chosen))
+    assert resp.status_code == 409
+    assert "SELECT secret" not in resp.text
+    assert mock_ws.sent == []
+    assert (await authed_client.get(f"/queries/{chosen}")).status_code == 403
+
+
+async def test_a_concurrent_submit_of_the_same_id_is_a_409_not_a_500(
+    authed_client, workspace, connected_agent, db_session, user, monkeypatch
+):
+    """Two submits of one id can both pass the up-front check; the database then
+    refuses the second insert, and that refusal answers as the same 409."""
+    from api.models.query import Query
+    from api.services import query as query_service
+
+    agent, mock_ws = connected_agent
+    chosen = uuid.uuid4()
+    # The other submit's row, committed after this one checked.
+    db_session.add(Query(id=chosen, workspace_id=workspace.id, user_id=user.id, sql="SELECT 0"))
+    await db_session.commit()
+    real_check = query_service.refuse_taken_query_id
+    checks = []
+
+    async def check_before_the_other_commit(db, query_id):
+        checks.append(query_id)
+        if len(checks) > 1:
+            await real_check(db, query_id)
+
+    monkeypatch.setattr(query_service, "refuse_taken_query_id", check_before_the_other_commit)
+    resp = await _submit(authed_client, workspace, agent, id=str(chosen))
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["error"] == "query_id_conflict"
+    assert mock_ws.sent == []
+
+
 # --- who sent a run, and why ---------------------------------------------------
 
 

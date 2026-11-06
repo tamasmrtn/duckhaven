@@ -324,6 +324,107 @@ async def test_statement_success_creates_session_query(
     assert query.session_id == session.id
 
 
+async def test_statement_takes_the_id_its_caller_chose(
+    authed_client, db_session, workspace, agent, user, enabled, monkeypatch
+):
+    session = await _open_session_row(db_session, workspace, agent, user)
+    dispatched = []
+
+    async def fake_exec(db, sess, query, timeout_s, catalogs):
+        dispatched.append(query.id)
+        return True
+
+    monkeypatch.setattr(session_service, "dispatch_exec_statement", fake_exec)
+    chosen = uuid.uuid4()
+    url = f"/sql/sessions/{session.id}/statements"
+
+    resp = await authed_client.post(url, json={"sql": "SELECT 1", "id": str(chosen)})
+    assert resp.status_code == 202, resp.text
+    assert resp.json()["id"] == str(chosen)
+    assert dispatched == [chosen]
+
+    again = await authed_client.post(url, json={"sql": "SELECT 2", "id": str(chosen)})
+    assert again.status_code == 409
+    assert again.json()["error"] == "query_id_conflict"
+    assert dispatched == [chosen]
+
+
+async def test_statement_can_be_cancelled_by_its_chosen_id_while_it_waits(
+    authed_client, db_session, workspace, agent, user, enabled, monkeypatch
+):
+    """The held call answers with the cancelled row. It is parked at the start of
+    its wait until the cancel commits: the test sessions share one in-memory SQLite
+    connection, so a poll's rollback landing mid-cancel would undo it."""
+    import asyncio
+
+    session = await _open_session_row(db_session, workspace, agent, user)
+
+    async def fake_exec(db, sess, query, timeout_s, catalogs):
+        return True
+
+    monkeypatch.setattr(session_service, "dispatch_exec_statement", fake_exec)
+    parked, cancelled = asyncio.Event(), asyncio.Event()
+    real_wait = session_service.await_query_done
+
+    async def wait_after_cancel(db, query, timeout_s, **kwargs):
+        parked.set()
+        await asyncio.wait_for(cancelled.wait(), timeout=5)
+        return await real_wait(db, query, timeout_s, **kwargs)
+
+    monkeypatch.setattr(session_service, "await_query_done", wait_after_cancel)
+    chosen = str(uuid.uuid4())
+
+    async def cancel_while_held():
+        await parked.wait()
+        assert (await authed_client.delete(f"/queries/{chosen}")).status_code == 204
+        cancelled.set()
+
+    canceller = asyncio.create_task(cancel_while_held())
+    resp = await authed_client.post(
+        f"/sql/sessions/{session.id}/statements",
+        json={"sql": "SELECT 1", "id": chosen, "wait_timeout_s": 5},
+    )
+    await canceller
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["id"] == chosen
+    assert resp.json()["status"] == "cancelled"
+
+
+async def test_statement_racing_another_submit_for_its_id_is_a_409(
+    authed_client, db_session, workspace, agent, user, enabled, monkeypatch
+):
+    """The session lock orders statements on one session only; a one-shot run or
+    another session taking the id first fails this insert, which answers 409."""
+    from api.services import query as query_service
+
+    session = await _open_session_row(db_session, workspace, agent, user)
+    dispatched = []
+
+    async def fake_exec(db, sess, query, timeout_s, catalogs):
+        dispatched.append(query.id)
+        return True
+
+    monkeypatch.setattr(session_service, "dispatch_exec_statement", fake_exec)
+    chosen = uuid.uuid4()
+    db_session.add(Query(id=chosen, workspace_id=workspace.id, user_id=user.id, sql="SELECT 0"))
+    await db_session.commit()
+    real_check = query_service.refuse_taken_query_id
+    checks = []
+
+    async def check_before_the_other_commit(db, query_id):
+        checks.append(query_id)
+        if len(checks) > 1:
+            await real_check(db, query_id)
+
+    monkeypatch.setattr(query_service, "refuse_taken_query_id", check_before_the_other_commit)
+    resp = await authed_client.post(
+        f"/sql/sessions/{session.id}/statements", json={"sql": "SELECT 1", "id": str(chosen)}
+    )
+    assert resp.status_code == 409, resp.text
+    assert resp.json()["error"] == "query_id_conflict"
+    assert dispatched == []
+
+
 async def test_statement_persists_its_timeout_budget(
     authed_client, db_session, workspace, agent, user, enabled, monkeypatch
 ):

@@ -1126,6 +1126,37 @@ def compute_queue_full_error(scope: str) -> HTTPException:
     )
 
 
+async def refuse_taken_query_id(db: AsyncSession, query_id: uuid.UUID | None) -> None:
+    """409 when a caller-chosen query id already names a run, in any workspace: ids
+    are unique across the server.
+
+    Checked before any row is written, so a client retrying a submit whose answer it
+    never got learns the run exists, rather than starting a second."""
+    if query_id is None:
+        return
+    if await db.scalar(select(sa.exists().where(Query.id == query_id))):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error": "query_id_conflict",
+                "detail": f"A query with id {query_id} already exists.",
+            },
+        )
+
+
+async def refuse_raced_query_id(db: AsyncSession, query_id: uuid.UUID | None) -> None:
+    """After an insert failed its constraints: 409 when a concurrent submit took the
+    caller-chosen ``query_id`` between :func:`refuse_taken_query_id` and the insert.
+
+    Two submits of one id pass the first check together; the database refuses the
+    second insert. Returns when the failure was something else, for the caller to
+    re-raise."""
+    if query_id is None:
+        return
+    await db.rollback()
+    await refuse_taken_query_id(db, query_id)
+
+
 class DefaultComputeUnavailable(AgentUnavailable):
     """The workspace default cannot take the run. A subclass of ``AgentUnavailable``
     so callers that only know that one keep their generic 503."""

@@ -270,6 +270,10 @@ Without `wait_timeout_s` the call answers **202** at once with the query, `queue
 
 `has_result` says whether a finished query has rows to read: `false` for DDL and DML, `null` until the query is done.
 
+`DELETE /api/queries/{query_id}` cancels a query that is `queued` or `running`, stops it on the agent, and answers
+**204**. A query that has already finished keeps its status and its result; cancelling it changes nothing and still
+answers **204**, so a cancel that loses a race with the result is harmless.
+
 Naming an agent that is offline, and that the API cannot start, answers **503** `unavailable` with "Agent not
 connected". The attempt is recorded as a failed query, so it appears in history; its id is in `details.query_id`.
 

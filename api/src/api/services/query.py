@@ -466,6 +466,19 @@ async def _upsert_table_stats(db: AsyncSession, query_id: uuid.UUID, frame: Fram
 
 
 async def cancel_query(db: AsyncSession, query: Query) -> None:
+    """Stop a queued or running query; a finished one is left as it ended.
+
+    One conditional statement, not a read then a write, so a cancel racing the
+    run's completion cannot turn a `done` row into `cancelled` and orphan its
+    result."""
+    result = await db.execute(
+        sa.update(Query)
+        .where(Query.id == query.id, Query.status.in_(("queued", "running")))
+        .values(status="cancelled", finished_at=datetime.now(tz=UTC))
+    )
+    await db.commit()
+    if result.rowcount == 0:
+        return
     if query.agent_id:
         frame = Frame(
             type=FrameType.CANCEL_QUERY,
@@ -473,9 +486,6 @@ async def cancel_query(db: AsyncSession, query: Query) -> None:
         )
         # Best-effort: routes to the owning replica, or no-ops if disconnected.
         await send_to_agent(db, query.agent_id, frame.model_dump_json())
-    query.status = "cancelled"
-    query.finished_at = datetime.now(tz=UTC)
-    await db.commit()
     if query.origin is None:
         record_query_completion("cancelled", None, None)
 

@@ -38,12 +38,14 @@ first column is checked by a unit test against the agent's settings, so the list
 ## Admission and concurrency
 
 The agent reads its memory budget from its container's cgroup (`memory.max`), or the host's memory, less a headroom.
-There is no setting for the budget itself: size the container and the agent follows. See
+There is no setting for the budget itself: size the container and the agent follows. The container's process limit
+(`pids.max`) is read the same way and caps open connections. See
 [Query execution](../querying/query-execution.md#admission-control-and-concurrency).
 
 | Variable | Default | Meaning |
 |---|---|---|
 | `MAX_CONCURRENCY_PROFILE` | `auto` | How queries share memory: `auto` sizes each from its plan; `single`, `equal_2`, `decaying_2` and `decaying_3` are fixed slot ladders. Can be changed while the agent runs with the [concurrency command](sql-support.md#concurrency-control-command) |
+| `PIDS_RESERVE` | `64` | Threads the container's process limit (`pids.max`) keeps for the agent itself. The rest, divided by the DuckDB worker threads each connection keeps, caps how many connections the agent holds open; more wait. See [Query execution](../querying/query-execution.md#when-the-agent-is-full). No effect without a process limit |
 | `MEMORY_HEADROOM_FRACTION` | `0.10` | Share of memory held back from queries, so DuckDB's overshoot cannot trigger the out-of-memory killer |
 | `MAX_QUEUE_DEPTH` | `100` | Queries that may wait; one more fails with `queue full` |
 | `QUEUED_TIMEOUT_S` | `0` (off) | Fail a query that waits longer than this with `queued timeout` |
@@ -54,7 +56,8 @@ There is no setting for the budget itself: size the container and the agent foll
 
 ### The `auto` estimator
 
-Under `auto`, the agent runs `EXPLAIN` before each query and reserves memory from the plan's estimate.
+Under `auto`, the agent runs `EXPLAIN` before each query and reserves memory from the plan's estimate. It skips the
+`EXPLAIN` when the agent already holds as many open connections as its process limit allows (see `PIDS_RESERVE`).
 
 | Variable | Default | Meaning |
 |---|---|---|

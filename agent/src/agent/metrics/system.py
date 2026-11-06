@@ -72,6 +72,18 @@ def _read_cgroup_memory_limit(base: Path) -> int | None:
     return limit if limit > 0 else None
 
 
+def _read_cgroup_pids_limit(base: Path) -> int | None:
+    """cgroup v2 ``pids.max`` (processes and threads), or ``None`` when unlimited / absent."""
+    try:
+        raw = (base / "pids.max").read_text().strip()
+    except OSError:
+        return None
+    if raw == "max":
+        return None
+    limit = int(raw)
+    return limit if limit > 0 else None
+
+
 def _read_int(path: Path) -> int | None:
     """A single-integer cgroup file, or ``None`` when absent or unreadable."""
     try:
@@ -134,6 +146,15 @@ def effective_memory_bytes(base: Path = _CGROUP_BASE) -> int:
     """
     limit = _read_cgroup_memory_limit(base)
     return limit if limit is not None else psutil.virtual_memory().total
+
+
+def effective_pids_limit(base: Path = _CGROUP_BASE) -> int | None:
+    """The cgroup's ``pids.max``, or ``None`` when the container has no limit.
+
+    Every thread counts against it, DuckDB's workers included, so it caps how many
+    connections the agent can keep (see ``Admission``).
+    """
+    return _read_cgroup_pids_limit(base)
 
 
 def cpu_capability(base: Path = _CGROUP_BASE) -> dict[str, object]:

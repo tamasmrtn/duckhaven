@@ -157,6 +157,20 @@ container's CPU quota is the real limit on how much CPU an agent can use, and th
 between concurrent queries, so handing one query fewer threads than the agent has cores only makes that query slower
 without leaving anything extra for anyone else.
 
+What bounds threads is the number of **open connections**. Each connection, a held SQL session or a running query,
+keeps one fewer DuckDB worker thread than the agent has cores alive for as long as it is open, idle or not, and every
+thread counts against the container's process limit (the cgroup's `pids.max`). An agent that runs past that limit
+crashes and drops every session on it, so admission caps open connections at the limit, less `PIDS_RESERVE` for the
+agent's own threads, divided by that worker count. With the default limit of 512 that is 89 connections on a 6-core
+agent and 19 on a 24-core one. A connection past the cap **waits** in the same queue as one waiting for memory, and a
+session open that waits longer than `SESSION_QUEUED_TIMEOUT_S` fails with an error that names the cap. A container with
+no process limit, or an agent with one core, has no cap.
+
+A query under the `auto` profile opens its connection to run `EXPLAIN` before it is admitted, so that connection counts
+against the cap too. When the cap leaves no room for it, the agent skips the `EXPLAIN`, sizes the query with
+`ESTIMATE_FALLBACK_BUCKET` as it does for a query it cannot estimate, and opens the connection once the query is
+admitted.
+
 !!! note "Sessions keep their cache between statements"
     A [SQL session](sql-sessions.md) hands its *required* memory back after each statement but keeps its elastic
     grant, so consecutive statements against the same tables do not re-read them from object storage. An idle session

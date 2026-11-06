@@ -451,7 +451,9 @@ async def _prepare_and_estimate(sql: str, **attach_kwargs) -> tuple[object | Non
     return conn, estimate
 
 
-def _build_request(estimate: int | None, admission: Admission) -> ReservationRequest:
+def _build_request(
+    estimate: int | None, admission: Admission, *, holds_slot: bool = False
+) -> ReservationRequest:
     """Map an estimate (or the fallback bucket) to a reservation request.
 
     Only the *memory* side comes from the bucket. Threads used to be scaled by the
@@ -463,7 +465,9 @@ def _build_request(estimate: int | None, admission: Admission) -> ReservationReq
         mem = int(frac * admission.budget_bytes)
     else:
         mem, _, _ = bucket_for(estimate, admission.budget_bytes, BUCKET_FRACTIONS)
-    return ReservationRequest(memory_bytes=mem, threads=admission.threads_for_statement())
+    return ReservationRequest(
+        memory_bytes=mem, threads=admission.threads_for_statement(), holds_slot=holds_slot
+    )
 
 
 def _elastic_target(admission: Admission, required_bytes: int) -> int:
@@ -1196,19 +1200,32 @@ async def _handle_dispatch(ws, payload: dict, results_dir: Path, admission: Admi
     # same connection is then reused for execution + profiling. Static profiles
     # take a fixed ladder slot and let the runner open its own connection.
     conn = None
+    # A connection opened ahead of the reservation already holds its DuckDB
+    # workers, so it takes an open-connection slot first. With none free the
+    # estimate is skipped and the query takes the fallback bucket, as it does when
+    # an estimate fails; its connection opens once it is admitted.
+    slot = False
     try:
         if admission.is_auto:
-            conn, estimate = await _prepare_and_estimate(
-                sql,
-                catalogs=catalogs,
-                active_catalog=active_catalog,
-                polaris=polaris,
-                disabled_filesystems=settings.sandbox_disabled_filesystems,
-                lock_config=settings.sandbox_lock_configuration,
-                **preload,
-            )
+            estimate = None
+            slot = admission.try_open_slot()
+            if slot:
+                conn, estimate = await _prepare_and_estimate(
+                    sql,
+                    catalogs=catalogs,
+                    active_catalog=active_catalog,
+                    polaris=polaris,
+                    disabled_filesystems=settings.sandbox_disabled_filesystems,
+                    lock_config=settings.sandbox_lock_configuration,
+                    **preload,
+                )
+                if conn is None:
+                    admission.drop_slot()
+                    slot = False
             wait_started = time.monotonic()
-            reservation: Reservation = await admission.acquire(_build_request(estimate, admission))
+            request = _build_request(estimate, admission, holds_slot=slot)
+            slot = False  # `acquire` owns it from here, whatever the outcome
+            reservation: Reservation = await admission.acquire(request)
             # One-shot dispatch is the module docstring's own motivating
             # scenario (a cold object-storage scan re-reading its Parquet with
             # no file cache) — without this it got none of the elastic top-up
@@ -1243,6 +1260,9 @@ async def _handle_dispatch(ws, payload: dict, results_dir: Path, admission: Admi
             conn.close()
         _in_flight.pop(query_id, None)
         raise
+    finally:
+        if slot:  # cancelled while opening the estimate connection
+            admission.drop_slot()
 
     # Time spent in the admission queue only: the EXPLAIN estimate before it is
     # planning, not waiting for capacity.
@@ -1414,6 +1434,7 @@ async def run_control_channel(
         # every session's idle baseline, so it has to be honoured.
         floor_bytes=settings.estimate_floor_bytes,
         ceiling_fraction=settings.estimate_ceiling_fraction,
+        pids_reserve=settings.pids_reserve,
     )
 
     while True:

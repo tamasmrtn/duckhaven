@@ -106,7 +106,8 @@ reproduces the static agent's sandbox in every provisioned container:
 - read-only root filesystem, with a `tmpfs` on `/tmp` and a private volume for results
 - `no-new-privileges`
 - all Linux capabilities dropped
-- a pids cap, and a concrete memory limit for the agent's cgroup-aware sizing to read
+- a pids cap and a concrete memory limit, both of which the agent's cgroup-aware sizing reads: memory sets its budget
+  and the pids cap sets how many connections it holds open
 
 This matters because the API's [statement policy](../querying/sql-sessions.md#statement-policy), not a hard SQL
 allowlist, governs what reaches DuckDB — so the agent is contained at the OS layer instead. Anything

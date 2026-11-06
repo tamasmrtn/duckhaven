@@ -388,9 +388,9 @@ def statement_refs(stmt: exp.Expression) -> list[TableRef]:
 # `pg_tables`, `pg_class` and `pg_attribute` span every attached catalog (verified
 # live on DuckDB 1.5). `pg_catalog` is on DuckDB's search path, so these names
 # also resolve unqualified, landing in the active catalog, which the grant check
-# skips when it is open. The views DuckDB 1.5 defines in `pg_catalog`.
+# skips when it is open. These are the views DuckDB 1.5 defines in `pg_catalog`.
 _PG_CATALOG_SCHEMA = "pg_catalog"
-_PG_CATALOG_VIEWS = frozenset(
+PG_CATALOG_VIEWS = frozenset(
     {
         "pg_am",
         "pg_attrdef",
@@ -417,15 +417,47 @@ _PG_CATALOG_VIEWS = frozenset(
     }
 )
 
+# Views DuckDB defines in `system.main` that list the same objects. They resolve
+# bare (`FROM duckdb_tables`, no parentheses), as `main.sqlite_master`, or as
+# `system.main.…`, and each spans every attached catalog (verified live on
+# DuckDB 1.5). The `duckdb_*` ones share their names with the meta functions.
+SYSTEM_MAIN_LISTING_VIEWS = frozenset(
+    {
+        "duckdb_columns",
+        "duckdb_constraints",
+        "duckdb_databases",
+        "duckdb_indexes",
+        "duckdb_schemas",
+        "duckdb_tables",
+        "duckdb_views",
+        "pragma_database_list",
+        "sqlite_master",
+        "sqlite_schema",
+        "sqlite_temp_master",
+        "sqlite_temp_schema",
+    }
+)
 
-def _reads_pg_catalog(table: exp.Table, ctes: set[str]) -> bool:
-    """Whether ``table`` names DuckDB's pg_catalog: by schema, or by a bare view
-    name the search path resolves to it. A bare name that a CTE defines is the
-    CTE; a qualified one (`s.pg_class`) is an ordinary table."""
-    if table.db:
-        return table.db.lower() == _PG_CATALOG_SCHEMA
+
+def _reads_system_listing(table: exp.Table) -> bool:
+    """Whether ``table`` resolves to one of DuckDB's built-in listing views.
+
+    Any table in a ``pg_catalog`` schema does; otherwise only a name that is
+    unqualified, or qualified with ``main`` or a system catalog, can reach them.
+    A bare name is refused even where a CTE of the same name would shadow it:
+    sqlglot does not resolve CTE scopes, and a CTE that reads the view it is
+    named after (``WITH pg_tables AS (SELECT * FROM pg_tables)``) still lists
+    every catalog. The guard fails closed rather than guess which one is meant.
+    """
+    schema = table.db.lower()
+    if schema == _PG_CATALOG_SCHEMA:
+        return True
+    if table.catalog and table.catalog.lower() not in SYSTEM_CATALOGS:
+        return False
     name = table.name.lower()
-    return name in _PG_CATALOG_VIEWS and name not in ctes
+    if not schema:
+        return name in PG_CATALOG_VIEWS or name in SYSTEM_MAIN_LISTING_VIEWS
+    return schema == "main" and name in SYSTEM_MAIN_LISTING_VIEWS
 
 
 # DuckDB meta table-functions that enumerate catalog objects. They are a second
@@ -584,15 +616,12 @@ def metadata_enumeration_reason(sql: str, scoped_slugs: list[str] | None = None)
     for stmt in statements:
         if stmt is None:
             continue
-        ctes = {cte.alias_or_name.lower() for cte in stmt.find_all(exp.CTE)}
         for table in stmt.find_all(exp.Table):
-            if table.db and table.db.lower() in METADATA_SCHEMAS:
-                # Matched on the schema, so this catches both the bare
-                # `information_schema.tables` and dbt-duckdb's
-                # `system.information_schema.tables` spelling.
-                return f"`{table.db}.{table.name}` cannot be queried. {hint}"
-            if _reads_pg_catalog(table, ctes):
-                qualified = f"{table.db}.{table.name}" if table.db else table.name
+            # `information_schema` is matched on the schema, so this catches both the bare
+            # `information_schema.tables` and dbt-duckdb's
+            # `system.information_schema.tables` spelling.
+            if (table.db and table.db.lower() in METADATA_SCHEMAS) or _reads_system_listing(table):
+                qualified = ".".join(p for p in (table.catalog, table.db, table.name) if p)
                 return f"`{qualified}` cannot be queried. {hint}"
         for fn in stmt.find_all(exp.Anonymous):
             name = function_name(fn)

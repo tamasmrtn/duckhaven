@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import duckdb
 import pytest
 
 from api.models.catalog_grant import CatalogGrant
 from api.services.grants import (
+    PG_CATALOG_VIEWS,
+    SYSTEM_MAIN_LISTING_VIEWS,
     GrantDenied,
     access_tier,
     extract_table_refs,
@@ -304,6 +307,24 @@ def test_row_reading_refs_are_not_metadata_only(sql):
         "SELECT nspname FROM pg_namespace",
         'SELECT * FROM "pg_views"',
         "SELECT * FROM cat.s.t WHERE EXISTS (SELECT 1 FROM pg_indexes)",
+        # DuckDB folds a quoted identifier's case when resolving it.
+        'SELECT * FROM "PG_Tables"',
+        # A CTE named after a view does not hide the view it reads, at the top
+        # level or nested: both of these list every attached catalog.
+        "WITH pg_tables AS (SELECT * FROM pg_tables) SELECT tablename FROM pg_tables",
+        "WITH x AS (SELECT * FROM (WITH pg_tables AS (SELECT 1 AS y) SELECT y FROM pg_tables)) "
+        "SELECT tablename FROM pg_tables",
+        # So the guard refuses the name even when a CTE would shadow it.
+        "WITH pg_tables AS (SELECT 1 AS x) SELECT * FROM pg_tables",
+        # The SQLite-compatible listing and the `duckdb_*` views, which resolve
+        # without parentheses: both live in `system.main` and span every catalog.
+        "SELECT name FROM sqlite_master",
+        "SELECT name FROM main.sqlite_master",
+        "SELECT name FROM system.main.sqlite_master",
+        "SELECT name FROM sqlite_schema",
+        "SELECT table_name FROM duckdb_tables",
+        "SELECT table_name FROM main.duckdb_columns",
+        "SELECT database_name FROM pragma_database_list",
     ],
 )
 def test_metadata_enumeration_is_rejected(sql):
@@ -327,14 +348,31 @@ def test_metadata_enumeration_is_rejected(sql):
         "SELECT snapshots, settings FROM cat.s.t",
         "SELECT * FROM cat.s.settings",
         "SELECT * FROM cat.s.table_info",
-        # A qualified table, or a CTE, that happens to share a pg_catalog view name.
+        # A qualified table that happens to share a listing view's name.
         "SELECT * FROM cat.s.pg_tables",
         "SELECT * FROM s.pg_class",
-        "WITH pg_tables AS (SELECT 1 AS x) SELECT * FROM pg_tables",
+        "SELECT * FROM cat.main.sqlite_master",
+        "SELECT * FROM s.duckdb_tables",
+        # The names DuckDB lists no catalog objects under stay callable.
+        "SELECT * FROM duckdb_types()",
     ],
 )
 def test_ordinary_statements_are_not_enumeration(sql):
     assert metadata_enumeration_reason(sql) is None
+
+
+def test_the_refused_views_match_the_ones_duckdb_defines():
+    """A DuckDB upgrade that adds a listing view should fail here, not leak."""
+    views = duckdb.connect().sql(
+        "SELECT schema_name, view_name FROM duckdb_views() "
+        "WHERE internal AND schema_name IN ('main', 'pg_catalog')"
+    )
+    defined = {schema: set() for schema in ("main", "pg_catalog")}
+    for schema, view in views.fetchall():
+        defined[schema].add(view)
+    assert defined["pg_catalog"] == PG_CATALOG_VIEWS
+    # Neither lists catalog objects: types and the connection's own log lines.
+    assert defined["main"] - {"duckdb_types", "duckdb_logs"} == SYSTEM_MAIN_LISTING_VIEWS
 
 
 def test_enumeration_check_fails_closed_on_unparseable_sql():

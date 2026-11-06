@@ -256,6 +256,7 @@ it exists.
 | `sql` | required | One statement. See [SQL support](sql-support.md) for what is allowed |
 | `id` | chosen by the server | A UUID for the run. Knowing it up front lets you cancel or read the query while this call still waits. Ids are unique across the server, so send a random (version 4) UUID. A refused attempt still spends its id: retry with a new one. An id already in use is a **409** `query_id_conflict` |
 | `catalog` | the workspace's default | The catalog that unqualified table names resolve in |
+| `schema` | `analytics` | The schema in `catalog` that unqualified table names resolve in. It is never created: a schema that does not exist fails the run. In a scoped catalog you need a grant on the catalog, the schema or a table in it, or the call answers **403** `grant_denied`; grants match the name exactly, so `MARTS` does not use a grant on `marts`. An agent too old to support it answers **422** `agent_incompatible` |
 | `agent_id` | the workspace's default compute, else chosen by the server | Run on this agent; you need the `use` tier on it, unless it is the workspace's default |
 | `scale_out` | `true` | `false` never adds an agent to the elastic pool for this query. A stopped default compute can still be started. It only restricts the call |
 | `timeout_s` | `600` | Cancel the query after this many seconds |

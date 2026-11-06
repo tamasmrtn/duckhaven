@@ -775,6 +775,33 @@ async def assert_query_access(
         context = context_after(stmt, context)
 
 
+async def assert_chosen_schema_reachable(
+    db: AsyncSession,
+    workspace_id: uuid.UUID,
+    principal_id: uuid.UUID | None,
+    catalog_slug: str,
+    schema: str,
+    catalogs: list[Catalog],
+) -> None:
+    """Refuse a chosen schema in a scoped catalog that none of the principal's grants
+    reaches, whether or not it exists.
+
+    The agent's ``USE`` of the schema fails when it does not exist, so without this
+    a statement naming no table (``SELECT 1``) would tell a narrow grantee which
+    schemas exist, which the grant-filtered listings hide. The refusal reads the
+    same either way. Reaching it is what :func:`schema_visible` allows: a grant on
+    the catalog, the schema, or a table in it. Open catalogs are not checked."""
+    catalog = next((c for c in catalogs if c.slug == catalog_slug), None)
+    if catalog is None or catalog.id not in await scoped_catalog_ids(db, workspace_id, [catalog]):
+        return
+    if principal_id is None:
+        raise GrantDenied("A scoped catalog requires an authenticated principal")
+    if await _member_role(db, workspace_id, principal_id) is None or not schema_visible(
+        await load_grants(db, principal_id, catalog.id), schema
+    ):
+        raise GrantDenied(f"Not authorized on schema {catalog.slug}.{schema}")
+
+
 # Settings that move where unqualified names resolve. The session statement policy
 # admits both (`statement_policy._ALLOWED_SET_NAMES`).
 _NAME_SETTINGS = frozenset({"schema", "search_path"})

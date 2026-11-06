@@ -19,13 +19,14 @@ curl -s "$DH/api/version"
 ```
 
 ```json
-{"version": "0.0.0-dev", "api_version": 3}
+{"version": "0.0.0-dev", "api_version": 3, "features": ["query_schema"]}
 ```
 
 | Field | Meaning |
 |---|---|
 | `version` | The release the server was built from, such as `0.8.0`. A local build reports `0.0.0-dev`. Quote it in bug reports. |
 | `api_version` | The contract version. A client checks this to decide how to read responses. |
+| `features` | Optional additions that an older server would silently ignore rather than refuse. A client checks for one before relying on it. A server without the field has none of them. |
 
 A server that answers **404** predates the endpoint (v0.4.0 and older). Treat it as older than `api_version` 1.
 
@@ -132,6 +133,7 @@ These request fields are optional. A server without them ignores the field, so a
 | `tags` | `POST …/queries`, `POST …/statements` | [Labels on the run](rest-api.md#client-and-tags) |
 | `use_cache` | `POST …/queries`, sessions, statements | Skip the [result cache](rest-api.md#result-cache-fields) |
 | `id` | `POST …/queries`, `POST …/statements` | [Choose the run's id](rest-api.md#submitting-a-query). A server without it picks its own, so use the `id` in the response |
+| `schema` | `POST …/queries` | [Resolve unqualified names in that schema](rest-api.md#submitting-a-query). A server without it resolves them in `analytics`, so send it only when `features` lists `query_schema` |
 
 A **202** from `POST …/sql/sessions`, or a **200** from `POST …/queries`, is itself the sign that the server supports
 the matching field.

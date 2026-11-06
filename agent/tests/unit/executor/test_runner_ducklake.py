@@ -160,6 +160,52 @@ def test_a_mixed_workspace_attaches_both_kinds():
     assert runner._ICEBERG_SECRET in text
 
 
+def test_a_chosen_schema_is_used_but_never_created():
+    """`use_schema` is where the caller asked names to resolve, and grants were
+    checked there; creating it would let any read make a schema."""
+    conn = FakeConn()
+    runner._attach_catalogs(
+        conn,
+        catalogs=[{**_ducklake_catalog(), "use_schema": "marts"}],
+        active_catalog="raw",
+        polaris=_POLARIS,
+    )
+    text = conn.sql_text()
+    assert 'USE "raw"."marts"' in text
+    assert 'CREATE SCHEMA IF NOT EXISTS "raw"."analytics"' in text
+    assert "marts" not in text.replace('USE "raw"."marts"', "")
+
+
+class _NoSuchSchemaConn(FakeConn):
+    def execute(self, sql: str, params: list | None = None):
+        if sql.startswith("USE "):
+            raise runner.duckdb.CatalogException('No catalog + schema named "raw.typo" found.')
+        return super().execute(sql, params)
+
+
+def test_a_chosen_schema_that_cannot_be_used_fails_the_query():
+    """Carrying on would leave names in the in-memory default, where an unqualified
+    write reports success and keeps nothing."""
+    with pytest.raises(runner.ChosenSchemaUnusable, match="raw.typo"):
+        runner._attach_catalogs(
+            _NoSuchSchemaConn(),
+            catalogs=[{**_ducklake_catalog(), "use_schema": "typo"}],
+            active_catalog="raw",
+            polaris=_POLARIS,
+        )
+
+
+def test_the_default_schema_failing_to_resolve_is_left_as_before():
+    """Only a chosen schema fails loudly; the default path keeps its old behaviour."""
+    with pytest.raises(runner.duckdb.CatalogException):
+        runner._attach_catalogs(
+            _NoSuchSchemaConn(),
+            catalogs=[_ducklake_catalog()],
+            active_catalog="raw",
+            polaris=_POLARIS,
+        )
+
+
 def test_an_iceberg_only_workspace_is_attached_exactly_as_before():
     """The Iceberg path is unchanged."""
     conn = FakeConn()

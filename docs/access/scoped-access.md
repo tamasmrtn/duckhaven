@@ -78,6 +78,10 @@ including scheduled runs.
 - **Ambiguous two-part names count both ways.** `sales.leads` means the `sales` schema of the active catalog, unless a
   catalog called `sales` is attached, in which case the engine reads `sales.main.leads`. The check cannot know which the
   engine will choose, so it requires access to both.
+- **One-shot runs are checked where they resolve.** A run sent to `POST /queries` checks an unqualified name in the
+  `catalog` and `schema` it sent, or the workspace default catalog and `analytics` when it sent neither. A `schema` in a
+  scoped catalog also needs a grant on the catalog, the schema or a table in it, whether or not the schema exists, so
+  the answer never reveals which schemas exist.
 - **SQL sessions follow their context.** In a [SQL session](../querying/sql-sessions.md), an unqualified name is checked
   in the catalog and schema the session is in, which a `USE` or `SET` can change (see
   [Grants follow the session's context](../querying/sql-sessions.md#grants-follow-the-sessions-context)).

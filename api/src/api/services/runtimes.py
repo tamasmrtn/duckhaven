@@ -27,7 +27,11 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal
 
 from api.config import settings
-from api.services.agent_capabilities import agent_supports_catalog, missing_extension
+from api.services.agent_capabilities import (
+    agent_supports_catalog,
+    agent_supports_feature,
+    missing_extension,
+)
 from duckhaven_shared import runtimes
 from duckhaven_shared.runtimes import Runtime
 
@@ -41,6 +45,9 @@ if TYPE_CHECKING:
 # retired: a curated runtime that is no longer served.
 RuntimeState = Literal["pending", "ok", "inferred", "mismatch", "unrecognized", "retired"]
 DISPATCHABLE_STATES = frozenset({"ok", "inferred"})
+
+# The agent protocol feature that says it `USE`s a descriptor's `use_schema`.
+USE_SCHEMA = "use_schema"
 
 
 class AgentNotDispatchable(ValueError):
@@ -131,6 +138,7 @@ def assert_dispatchable(
     catalogs: list,
     *,
     for_session: bool = False,
+    use_schema: bool = False,
     ducklake_formats: Mapping[str, str | None] | None = None,
 ) -> None:
     """Raise ``AgentNotDispatchable`` unless this agent may run work for these catalogs.
@@ -173,6 +181,14 @@ def assert_dispatchable(
             f"Agent '{agent.name}' could not lock its DuckDB configuration, "
             "so it cannot hold a SQL session.",
         )
+    if use_schema and not agent_supports_feature(agent.capabilities, USE_SCHEMA):
+        # An older agent would ignore the schema and resolve names in its default,
+        # somewhere other than where the grants were checked.
+        raise AgentNotDispatchable(
+            "agent_incompatible",
+            f"Agent '{agent.name}' is too old to resolve table names in a chosen schema. "
+            "Update the agent, or qualify the table names and leave out `schema`.",
+        )
 
 
 def _assert_ducklake_formats(
@@ -211,7 +227,9 @@ def _assert_ducklake_formats(
             )
 
 
-async def check_dispatchable(agent: Agent, catalogs: list, *, for_session: bool = False) -> None:
+async def check_dispatchable(
+    agent: Agent, catalogs: list, *, for_session: bool = False, use_schema: bool = False
+) -> None:
     """``assert_dispatchable`` with the DuckLake catalogs' formats looked up."""
     from api.services.catalog_backends.ducklake import catalog_formats
 
@@ -219,6 +237,7 @@ async def check_dispatchable(agent: Agent, catalogs: list, *, for_session: bool 
         agent,
         catalogs,
         for_session=for_session,
+        use_schema=use_schema,
         ducklake_formats=await catalog_formats(catalogs),
     )
 

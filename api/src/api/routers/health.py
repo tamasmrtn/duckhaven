@@ -28,12 +28,18 @@ router = APIRouter()
 # not per release (the release/build version is settings.app_version).
 API_VERSION = 3
 
+# Additions a client must know about before relying on them, because a server without
+# one ignores the field silently instead of refusing it. Added to, never removed from.
+FEATURES = ("query_schema",)
+
 
 class VersionOut(BaseModel):
     # Release/build version (git tag) — provenance, "what build is running".
     version: str
     # API contract version — negotiated compatibility, bumped only on breaks.
     api_version: int
+    # Optional additions a client cannot detect otherwise; see FEATURES.
+    features: list[str]
 
 
 @router.get("/version")
@@ -43,8 +49,14 @@ async def version() -> VersionOut:
     `version` moves with every release and identifies the build; `api_version` is
     a single integer bumped only when a change breaks the contract on the wire.
     A server old enough to lack this endpoint returns 404 -- treat that as the
-    oldest supported version."""
-    return VersionOut(version=settings.app_version, api_version=API_VERSION)
+    oldest supported version.
+
+    `features` names the optional additions an older server would silently ignore,
+    so a client checks for one before relying on it. `query_schema`: one-shot
+    queries honour `schema`."""
+    return VersionOut(
+        version=settings.app_version, api_version=API_VERSION, features=list(FEATURES)
+    )
 
 
 @router.get("/healthz")

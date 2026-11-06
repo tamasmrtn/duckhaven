@@ -334,6 +334,7 @@ async def test_bind_queued_work_replays_the_requested_catalog_and_timeout(
                 origin="elastic",
                 timeout_s=42.0,
                 active_catalog="sales",
+                active_schema="marts",
             )
         )
         await db.commit()
@@ -341,6 +342,7 @@ async def test_bind_queued_work_replays_the_requested_catalog_and_timeout(
         assert await service.bind_queued_work(db, agent) == 1
 
     assert captured["active_catalog"] == "sales"
+    assert captured["active_schema"] == "marts"
     assert captured["timeout_s"] == 42.0
 
 
@@ -832,6 +834,7 @@ async def test_bind_targeted_work_dispatches_a_parked_run(session_factory, elast
                 status="queued",
                 timeout_s=42.0,
                 active_catalog="test_ws",
+                active_schema="marts",
             )
         )
         await db.commit()
@@ -841,10 +844,54 @@ async def test_bind_targeted_work_dispatches_a_parked_run(session_factory, elast
     # Replays what the requester actually asked for.
     assert captured["timeout_s"] == 42.0
     assert captured["active_catalog"] == "test_ws"
+    assert captured["active_schema"] == "marts"
 
     async with session_factory() as db:
         query = (await db.execute(sa.select(Query))).scalars().one()
         assert query.agent_id == agent.id
+
+
+@pytest.mark.parametrize("targeted", [False, True])
+async def test_a_parked_run_with_a_schema_fails_cleanly_on_an_agent_too_old_for_it(
+    session_factory, elastic_on, monkeypatch, targeted
+):
+    """A parked run skips the router's agent check (a stopped agent reports no
+    capabilities), so an agent without `use_schema` only refuses it on replay: the
+    run fails with that reason and is not attributed to the agent."""
+    from api.models.query import Query
+    from api.services import runtimes
+    from api.services.compute import service
+
+    async def dispatch(db, query, **kwargs):
+        agent = await db.get(Agent, query.agent_id)
+        runtimes.assert_dispatchable(agent, [], use_schema=kwargs["active_schema"] is not None)
+
+    monkeypatch.setattr("api.services.query.dispatch_query", dispatch)
+
+    async with session_factory() as db:
+        ws, _ = await seed_workspace(db, user_id=uuid.uuid4())
+        agent = await _seed_running_elastic_agent(db, pool_key=None if targeted else "object_store")
+        db.add(
+            Query(
+                workspace_id=ws.id,
+                agent_id=None,
+                requested_agent_id=agent.id if targeted else None,
+                sql="SELECT 1",
+                status="queued",
+                origin=None if targeted else "elastic",
+                active_catalog="test_ws",
+                active_schema="marts",
+            )
+        )
+        await db.commit()
+        bind = service.bind_targeted_work if targeted else service.bind_queued_work
+        assert await bind(db, agent) == 0
+
+    async with session_factory() as db:
+        query = (await db.execute(sa.select(Query))).scalars().one()
+        assert query.status == "failed"
+        assert "too old to resolve table names in a chosen schema" in query.error
+        assert query.agent_id is None
 
 
 async def test_bind_targeted_work_ignores_runs_for_another_agent(

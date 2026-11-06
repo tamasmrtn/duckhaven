@@ -36,6 +36,15 @@ search_path, time zone, timezone)`, or a `COPY` or file read outside the session
 **What to do.** See [Troubleshoot sign-in and
 access](../access/troubleshooting.md#not-authorized-reader-on-catalogschematable).
 
+## "SET schema: No catalog + schema named "⟨catalog⟩.⟨schema⟩" found."
+
+**What it means.** The run sent a `schema` that does not exist in its `catalog`. DuckHaven never creates a schema a run
+names, so the run fails rather than resolving its table names somewhere else. A similar message, `Catalog "⟨catalog⟩"
+could not be attached, so schema "⟨schema⟩" cannot be used`, means the catalog itself could not be reached.
+
+**What to do.** Check the spelling against the catalog tree, create the schema first, or qualify the table names and
+leave `schema` out.
+
 ## "Agent not connected"
 
 **What it means.** The agent the worksheet runs on is offline, and DuckHaven cannot start it. The run is recorded as

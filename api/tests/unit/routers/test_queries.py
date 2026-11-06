@@ -304,6 +304,128 @@ async def test_dispatch_rejects_agent_missing_extension(
     assert mock_ws.sent == []
 
 
+async def test_a_chosen_schema_is_where_unqualified_names_resolve(
+    authed_client: AsyncClient, db_session, workspace, connected_agent
+):
+    """Sent as the active catalog's `use_schema`, which the agent `USE`s. Its
+    `default_schema` stays, because the agent creates that one on a DuckLake attach
+    and a schema someone typed must never be created."""
+    import json
+
+    from api.models.query import Query
+
+    agent, mock_ws = connected_agent
+    agent.capabilities = {**agent.capabilities, "protocol_features": ["use_schema"]}
+    db_session.add(agent)
+    await db_session.commit()
+
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/queries",
+        json={"sql": "SELECT * FROM orders", "agent_id": str(agent.id), "schema": "marts"},
+    )
+    assert resp.status_code == 202, resp.text
+
+    payload = json.loads(mock_ws.sent[-1])["payload"]
+    (active,) = [c for c in payload["catalogs"] if c["slug"] == payload["active_catalog"]]
+    assert active["use_schema"] == "marts"
+    assert active["default_schema"] == "analytics"
+    row = await db_session.get(Query, uuid.UUID(resp.json()["id"]))
+    assert row.active_schema == "marts"
+
+
+async def test_without_a_schema_the_dispatch_is_unchanged(
+    authed_client: AsyncClient, workspace, connected_agent
+):
+    import json
+
+    agent, mock_ws = connected_agent
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/queries",
+        json={"sql": "SELECT 1", "agent_id": str(agent.id)},
+    )
+    assert resp.status_code == 202, resp.text
+    payload = json.loads(mock_ws.sent[-1])["payload"]
+    assert all("use_schema" not in c for c in payload["catalogs"])
+
+
+async def test_an_agent_too_old_for_a_chosen_schema_is_refused(
+    authed_client: AsyncClient, workspace, connected_agent
+):
+    """It would ignore the schema and resolve names in its default: somewhere other
+    than where the grants were checked."""
+    agent, mock_ws = connected_agent
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/queries",
+        json={"sql": "SELECT * FROM orders", "agent_id": str(agent.id), "schema": "marts"},
+    )
+    assert resp.status_code == 422
+    assert resp.json()["error"] == "agent_incompatible"
+    assert mock_ws.sent == []
+
+
+async def test_an_empty_schema_is_invalid(authed_client: AsyncClient, workspace, connected_agent):
+    agent, _ = connected_agent
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/queries",
+        json={"sql": "SELECT 1", "agent_id": str(agent.id), "schema": ""},
+    )
+    assert resp.status_code == 422
+    assert resp.json()["error"] == "validation_error"
+
+
+@pytest.mark.parametrize("field", ["schema", "catalog"])
+@pytest.mark.parametrize("name", ["mar\x00ts", "marts\n"])
+async def test_a_name_with_a_control_character_is_invalid(
+    authed_client: AsyncClient, workspace, connected_agent, field, name
+):
+    """A NUL byte would otherwise reach Postgres, which refuses it in text."""
+    agent, mock_ws = connected_agent
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/queries",
+        json={"sql": "SELECT 1", "agent_id": str(agent.id), field: name},
+    )
+    assert resp.status_code == 422
+    assert mock_ws.sent == []
+
+
+async def test_a_run_refused_for_a_missing_agent_records_its_schema(
+    authed_client: AsyncClient, workspace, agent, db_session
+):
+    """The failed row keeps where its names were to resolve, as a run does."""
+    from api.models.query import Query
+
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/queries",
+        json={"sql": "SELECT 1", "agent_id": str(agent.id), "schema": "marts"},
+    )
+    assert resp.status_code == 503
+    run = await db_session.get(Query, uuid.UUID(resp.json()["details"]["query_id"]))
+    assert run.status == "failed"
+    assert run.active_schema == "marts"
+
+
+async def test_the_result_cache_keys_on_the_chosen_schema(
+    authed_client: AsyncClient, workspace, connected_agent, monkeypatch
+):
+    """The same SQL in two schemas reads two tables, so it must not share a result."""
+    from api.routers import queries as queries_router
+
+    seen = []
+
+    async def lookup(db, **kwargs):
+        seen.append(kwargs["context"].current_schema)
+        return queries_router.result_cache.Lookup(status=queries_router.result_cache.BYPASS)
+
+    monkeypatch.setattr(queries_router.result_cache, "lookup", lookup)
+    agent, _ = connected_agent
+    for extra in ({"schema": "marts"}, {}):
+        await authed_client.post(
+            f"/workspaces/{workspace.slug}/queries",
+            json={"sql": "SELECT 1", "agent_id": str(agent.id), **extra},
+        )
+    assert seen == ["marts", "analytics"]
+
+
 # --- workspace query history ---
 
 
@@ -2085,6 +2207,7 @@ async def test_targeted_terminated_agent_records_catalog_and_timeout(
             "agent_id": str(terminated_elastic_agent.id),
             "timeout_s": 42.0,
             "catalog": "test_ws",
+            "schema": "marts",
         },
     )
     assert resp.status_code == 202
@@ -2092,6 +2215,7 @@ async def test_targeted_terminated_agent_records_catalog_and_timeout(
     query = (await db_session.execute(sa.select(Query))).scalars().one()
     assert query.timeout_s == 42.0
     assert query.active_catalog == "test_ws"
+    assert query.active_schema == "marts"
 
 
 async def test_targeted_offline_static_agent_still_503s(

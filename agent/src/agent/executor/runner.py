@@ -1055,6 +1055,30 @@ def attach_catalog(
     return True
 
 
+class ChosenSchemaUnusable(Exception):
+    """The schema a caller chose for unqualified names cannot be `USE`d.
+
+    Unlike a catalog that fails to attach, this fails the query: carrying on would
+    leave names resolving in the in-memory default, where an unqualified write
+    reports success and keeps nothing."""
+
+
+def _assert_chosen_schema_in_use(conn: duckdb.DuckDBPyConnection, chosen: dict[str, Any]) -> None:
+    """Fail unless names now resolve in the chosen catalog and schema.
+
+    Covers every way the `USE` can be skipped: the catalog failed to attach, its
+    extension failed to load, or no catalog was attached at all."""
+    where = conn.execute("SELECT current_database(), current_schema()").fetchone()
+    want = (chosen["slug"], chosen["use_schema"])
+    if where is None or tuple(str(part).lower() for part in where) != tuple(
+        part.lower() for part in want
+    ):
+        conn.close()
+        raise ChosenSchemaUnusable(
+            f'Catalog "{want[0]}" could not be attached, so schema "{want[1]}" cannot be used.'
+        )
+
+
 def _attach_catalogs(
     conn: duckdb.DuckDBPyConnection,
     *,
@@ -1093,6 +1117,12 @@ def _attach_catalogs(
             _attach_one(conn, cat, endpoint)
         except Exception as exc:  # noqa: BLE001 - one bad catalog must not fail the query
             logger.warning("ATTACH failed for catalog %s: %s", slug, exc)
+            if cat.get("use_schema"):
+                # ...unless names were to resolve in it.
+                raise ChosenSchemaUnusable(
+                    f'Catalog "{slug}" could not be attached, so schema '
+                    f'"{cat["use_schema"]}" cannot be used: {exc}'
+                ) from exc
             continue
         if slug == active_catalog:
             active = cat
@@ -1101,9 +1131,17 @@ def _attach_catalogs(
     if active is None and catalogs:
         active = catalogs[0]
     if active is not None:
-        schema = (active.get("default_schema") or _DEFAULT_NAMESPACE).replace('"', '""')
+        # `use_schema` is a schema the caller chose: `USE`d, never created.
+        use_schema = active.get("use_schema")
+        schema = use_schema or active.get("default_schema") or _DEFAULT_NAMESPACE
+        schema = schema.replace('"', '""')
         aslug = active["slug"].replace('"', '""')
-        conn.execute(f'USE "{aslug}"."{schema}"')
+        try:
+            conn.execute(f'USE "{aslug}"."{schema}"')
+        except duckdb.Error as exc:
+            if use_schema is None:
+                raise
+            raise ChosenSchemaUnusable(str(exc)) from exc
 
 
 # Filesystem names DuckDB actually registers (core + the httpfs/azure extensions
@@ -1289,6 +1327,7 @@ def open_and_attach(
     the sandbox always happen here, for this caller.
     """
     catalogs = catalogs or []
+    chosen = next((cat for cat in catalogs if cat.get("use_schema")), None)
     backend_kinds = {(cat.get("backend") or {}).get("kind") for cat in catalogs}
     backend_kinds |= set(preload_backend_kinds)
     catalog_kinds = {cat.get("kind", "iceberg_polaris") for cat in catalogs}
@@ -1320,8 +1359,13 @@ def open_and_attach(
                 polaris=polaris or {},
                 trace_headers=trace_headers,
             )
+        except ChosenSchemaUnusable:
+            conn.close()
+            raise
         except Exception as exc:  # noqa: BLE001
             logger.warning("Catalog ATTACH failed: %s", exc)
+    if chosen is not None:
+        _assert_chosen_schema_in_use(conn, chosen)
     if preload_catalog_kinds:
         # Initialises secret storage, which reads the local filesystem, while it
         # still can: a later `attach_catalog` creates its secrets after the latch.

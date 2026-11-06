@@ -164,6 +164,32 @@ async def test_unqualified_names_are_checked_in_the_chosen_schema(
     assert resp.json()["error"] == "grant_denied"
 
 
+@pytest.mark.parametrize("schema", ["hr_secret", "no_such_schema"])
+async def test_a_chosen_schema_no_grant_reaches_is_refused_whether_or_not_it_exists(
+    authed_client, scoped_ws, connected_agent, db_session, user, schema
+):
+    """A statement naming no table passes the per-table check, and the agent's `USE`
+    fails only when the schema does not exist: without a grant check on the schema
+    itself, that difference would list schemas the grantee cannot see."""
+    ws, cat = scoped_ws
+    connected_agent.capabilities = {
+        **connected_agent.capabilities,
+        "protocol_features": ["use_schema"],
+    }
+    db_session.add(connected_agent)
+    _grant(db_session, user, cat, "reader", schema="marts", table="orders")
+    await db_session.commit()
+    url = f"/workspaces/{ws.slug}/queries"
+    body = {"sql": "SELECT 1", "agent_id": str(connected_agent.id)}
+
+    resp = await authed_client.post(url, json={**body, "schema": schema})
+    assert resp.status_code == 403
+    assert resp.json()["error"] == "grant_denied"
+    assert resp.json()["message"] == f"Not authorized on schema {cat.slug}.{schema}"
+    # A table grant inside the schema is enough to use it.
+    assert (await authed_client.post(url, json={**body, "schema": "marts"})).status_code == 202
+
+
 async def test_join_denied_if_any_table_lacks_reader(
     authed_client, scoped_ws, connected_agent, db_session, user
 ):

@@ -241,6 +241,7 @@ async def _submit_query(
             sql=body.sql,
             timeout_s=body.timeout_s,
             active_catalog=body.catalog,
+            active_schema=body.schema_name,
         )
         db.add(failed)
         raise await _agent_not_connected(db, failed)

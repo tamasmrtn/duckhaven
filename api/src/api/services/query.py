@@ -195,6 +195,15 @@ async def dispatch_query(
         catalogs,
         active_schema=active_schema,
     )
+    if active_schema is not None:
+        await grant_service.assert_chosen_schema_reachable(
+            db,
+            workspace.id,
+            principal_id if principal_id is not None else query.user_id,
+            active_catalog,
+            active_schema,
+            catalogs,
+        )
     payload: dict[str, object] = {
         "query_id": str(query.id),
         "sql": query.sql,

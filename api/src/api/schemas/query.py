@@ -12,6 +12,9 @@ from pydantic import (
 )
 
 TAG_KEY = r"^[A-Za-z0-9_.:-]{1,64}$"
+# A name stored on the run: Postgres text refuses a NUL byte outright, and no
+# catalog or schema name has a control character in it.
+NO_CONTROL_CHARACTERS = r"^[^\x00-\x1f\x7f]*$"
 MAX_TAGS = 20
 TAGS_DESCRIPTION = (
     "Free-form labels for the run, recorded on it and shown in History: at most 20, "
@@ -69,7 +72,7 @@ class QueryCreate(BaseModel):
     saved_query_id: uuid.UUID | None = None
     # The worksheet's active catalog (slug) — `USE`d for unqualified table names.
     # When omitted the workspace's default catalog is used.
-    catalog: str | None = None
+    catalog: str | None = Field(default=None, pattern=NO_CONTROL_CHARACTERS)
     # Sent as `schema`, the name BaseModel reserves: the schema in `catalog` that
     # unqualified table names resolve in.
     schema_name: str | None = Field(
@@ -77,6 +80,7 @@ class QueryCreate(BaseModel):
         validation_alias="schema",
         min_length=1,
         max_length=255,
+        pattern=NO_CONTROL_CHARACTERS,
         description=(
             "The schema unqualified table names resolve in, within `catalog`. "
             "Omitted, they resolve in `analytics`."

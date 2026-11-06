@@ -373,6 +373,37 @@ async def test_an_empty_schema_is_invalid(authed_client: AsyncClient, workspace,
     assert resp.json()["error"] == "validation_error"
 
 
+@pytest.mark.parametrize("field", ["schema", "catalog"])
+@pytest.mark.parametrize("name", ["mar\x00ts", "marts\n"])
+async def test_a_name_with_a_control_character_is_invalid(
+    authed_client: AsyncClient, workspace, connected_agent, field, name
+):
+    """A NUL byte would otherwise reach Postgres, which refuses it in text."""
+    agent, mock_ws = connected_agent
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/queries",
+        json={"sql": "SELECT 1", "agent_id": str(agent.id), field: name},
+    )
+    assert resp.status_code == 422
+    assert mock_ws.sent == []
+
+
+async def test_a_run_refused_for_a_missing_agent_records_its_schema(
+    authed_client: AsyncClient, workspace, agent, db_session
+):
+    """The failed row keeps where its names were to resolve, as a run does."""
+    from api.models.query import Query
+
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/queries",
+        json={"sql": "SELECT 1", "agent_id": str(agent.id), "schema": "marts"},
+    )
+    assert resp.status_code == 503
+    run = await db_session.get(Query, uuid.UUID(resp.json()["details"]["query_id"]))
+    assert run.status == "failed"
+    assert run.active_schema == "marts"
+
+
 async def test_the_result_cache_keys_on_the_chosen_schema(
     authed_client: AsyncClient, workspace, connected_agent, monkeypatch
 ):

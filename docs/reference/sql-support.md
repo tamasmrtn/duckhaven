@@ -247,8 +247,10 @@ anything the same SQL with literals could not, and a repeated query with the sam
 cache. History records this rendered statement.
 
 The request is refused with **422** `invalid_parameters` when the parameters do not fit: more than one statement, mixed
-placeholder styles, a missing or unused value, a type outside the list above, or a placeholder in `ORDER BY` or
-`GROUP BY`, where DuckDB would read a value as a column position.
+placeholder styles, a missing or unused value, a type outside the list above, or a placeholder that is a whole
+`ORDER BY` or `GROUP BY` item, such as `ORDER BY ?`, where DuckDB would read a value as a column position. A
+placeholder inside an expression there is a value and is allowed: `ORDER BY CASE WHEN n > ? THEN 0 END` or
+`GROUP BY time_bucket(?, ts)`.
 
 ## Time-travel syntax
 

@@ -18,6 +18,9 @@ DuckHaven API, which checks it and passes it to the agent over the agent's own o
     hardened agent described under [Sandboxing](#sandboxing), which the bundled agent is, because sessions accept more
     statements than queries do. Any workspace member can open a session.
 
+A single query that only needs its unqualified names to resolve in another schema does not need a session: send
+`catalog` and `schema` with it on [`POST /queries`](../reference/rest-api.md#submitting-a-query).
+
 To use sessions from a tool, see [Connect dbt](connect-dbt.md) and [Load data with dlt](load-data-with-dlt.md). The
 endpoints and fields are in the [SQL sessions API](../reference/sql-sessions-api.md).
 

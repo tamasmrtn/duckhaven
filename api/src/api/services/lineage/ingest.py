@@ -575,16 +575,17 @@ async def workspace_catalog_context(db: AsyncSession, workspace_id: uuid.UUID) -
 def _active_catalog(query: Query, context: WorkspaceCatalogs) -> str | None:
     """The catalog unqualified names in this query resolved against.
 
-    ``queries.active_catalog`` records only what the *caller* asked for, and is
-    NULL whenever the request omitted it — every scheduled run, and any client
-    that does not send one. The agent still resolved those names against
-    something, so lineage has to resolve them the same way or it silently
-    records nothing for the most ordinary statement there is
+    ``dispatch_query`` records the catalog it sent the agent on every query it
+    dispatches, applying the workspace default when the caller named none, so
+    for those queries this is just that column. It can still be NULL on a row
+    that predates that, or that was never dispatched. The agent resolved those
+    names against something, so lineage has to resolve them the same way or it
+    silently records nothing for the most ordinary statement there is
     (``CREATE TABLE b AS SELECT * FROM a`` with no catalog prefix).
 
-    Deliberately the same fallback ``dispatch_query`` applies before it builds
-    the agent payload — workspace default, then the first attached catalog — so
-    a name means the same thing to the graph as it did to the engine.
+    The fallback is deliberately the one ``dispatch_query`` applies — workspace
+    default, then the first attached catalog — so a name means the same thing
+    to the graph as it did to the engine.
     """
     if query.active_catalog:
         return query.active_catalog

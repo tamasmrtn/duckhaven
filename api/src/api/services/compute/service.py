@@ -657,6 +657,17 @@ async def bind_queued_work(db: AsyncSession, agent: Agent) -> int:
             )
             bound += 1
             record_compute_wait(query.origin, "bound", query.started_at)
+        except AgentNotDispatchable as exc:
+            # Known only now, as for a targeted run: the refusal (an agent too old
+            # for a chosen schema, a missing extension) is the answer to report.
+            logger.warning(
+                "Queued query %s refused by agent %s: %s", query.id, agent.id, exc.detail
+            )
+            record_compute_wait(query.origin, "failed", query.started_at)
+            query.status = "failed"
+            query.error = exc.detail
+            query.finished_at = datetime.now(tz=UTC)
+            query.agent_id = None
         except Exception:
             logger.exception("Failed to bind queued query %s to agent %s", query.id, agent.id)
             record_compute_wait(query.origin, "failed", query.started_at)

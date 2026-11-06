@@ -193,3 +193,15 @@ def test_interval_and_rebase(tmp_path, monkeypatch):
     assert s.interval_s == 1.0
     assert s.cpu_percent == 50.0
     assert s.cpu_seconds_total == 100.5
+
+
+def test_effective_pids_limit_reads_the_cgroup(tmp_path):
+    """pids.max counts processes and threads; a number is the limit."""
+    (tmp_path / "pids.max").write_text("512\n")
+    assert sysm.effective_pids_limit(base=tmp_path) == 512
+
+
+def test_effective_pids_limit_is_none_when_unlimited_or_unreadable(tmp_path):
+    assert sysm.effective_pids_limit(base=tmp_path) is None  # no pids.max
+    (tmp_path / "pids.max").write_text("max\n")
+    assert sysm.effective_pids_limit(base=tmp_path) is None

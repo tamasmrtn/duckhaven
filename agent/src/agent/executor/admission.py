@@ -36,6 +36,13 @@ Thread count is deliberately **not** derived from either tier. DuckDB threads ar
 not a partitionable resource on a cgroup-capped agent — the CPU quota is the cap,
 and the OS timeshares within it — so every statement is given the agent's full
 core count (see ``threads_for_statement``).
+
+What bounds threads is the number of *open connections*. Each DuckDB database keeps
+``threads - 1`` workers alive for as long as it exists, idle or not, and every
+thread counts against the container's pids limit; past it the agent process dies
+and takes every session with it. So the pids limit sets a ceiling on live
+reservations, and the overflow waits in the same FIFO queue as a memory shortfall
+(see ``_max_connections``).
 """
 
 from __future__ import annotations
@@ -46,7 +53,7 @@ from collections import deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
-from agent.metrics.system import effective_cores, effective_memory_bytes
+from agent.metrics.system import effective_cores, effective_memory_bytes, effective_pids_limit
 from duckhaven_shared.concurrency import CONCURRENCY_PROFILES, DEFAULT_PROFILE
 
 logger = logging.getLogger(__name__)
@@ -136,13 +143,18 @@ class Admission:
         ceiling_fraction: float = 1.0,
         mem_bytes_provider=None,
         cores_provider=None,
+        pids_provider=None,
+        pids_reserve: int = 0,
     ) -> None:
         # Resolved at call time (not as default args) so the cgroup-aware helpers
         # are the single source of truth and stay monkeypatchable in tests.
         mem_bytes_provider = mem_bytes_provider or effective_memory_bytes
         cores_provider = cores_provider or effective_cores
+        pids_provider = pids_provider or effective_pids_limit
         self._budget = max(1, int(mem_bytes_provider() * (1 - headroom)))
         self._cores = max(1, cores_provider())
+        self._pids_limit = pids_provider()
+        self._max_connections = self._connection_ceiling(self._pids_limit, pids_reserve)
         self._max_queue_depth = max_queue_depth
         self._queued_timeout_s = queued_timeout_s
         # Bounds for ``auto`` reservations so an estimate can never oversubscribe
@@ -173,6 +185,37 @@ class Admission:
         # a fixed check order; see `_release_promote`.
         self._promote_growth_first = False
         self.set_profile(profile)
+
+    def _connection_ceiling(self, pids_limit: int | None, reserve: int) -> int | None:
+        """How many connections the pids limit lets the agent keep open, or ``None``
+        when nothing bounds them (no limit, or one worker-less core).
+
+        Every connection runs ``threads_for_statement()`` threads, so it keeps one
+        fewer worker alive besides the thread that runs the statement. Never below
+        one: a limit too small for even a single connection must queue work, not
+        refuse all of it forever.
+        """
+        workers = self.threads_for_statement() - 1
+        if pids_limit is None or workers <= 0:
+            return None
+        return max(1, (pids_limit - reserve) // workers)
+
+    @property
+    def max_connections(self) -> int | None:
+        """The pids-derived ceiling on open connections, or ``None`` if unbounded."""
+        return self._max_connections
+
+    def _at_connection_limit(self) -> bool:
+        return self._max_connections is not None and self._running >= self._max_connections
+
+    def _limit_note(self) -> str:
+        """Why a refusal happened, when the pids limit is what is holding work back."""
+        if not self._at_connection_limit():
+            return ""
+        return (
+            f"; the agent is holding its limit of {self._max_connections} open connections "
+            f"(its process limit is {self._pids_limit})"
+        )
 
     # -- profile -----------------------------------------------------------
 
@@ -271,6 +314,8 @@ class Admission:
 
     def _admit_from_free(self, request: ReservationRequest | None) -> Reservation | None:
         """Admit strictly out of uncommitted budget, without reclaiming anything."""
+        if self._at_connection_limit():
+            return None
         free = self._free()
         if request is not None:
             clamped = self._clamp(request.memory_bytes)
@@ -475,7 +520,7 @@ class Admission:
             return reservation
 
         if len(self._waiters) >= self._max_queue_depth:
-            raise QueueFull("admission queue is full")
+            raise QueueFull(f"admission queue is full{self._limit_note()}")
 
         timeout_s = self._queued_timeout_s if queued_timeout_s is None else queued_timeout_s
         waiter: asyncio.Future = asyncio.get_running_loop().create_future()
@@ -495,7 +540,7 @@ class Admission:
             elif waiter.done() and not waiter.cancelled():
                 self.release(waiter.result())
             if isinstance(exc, TimeoutError):
-                raise QueuedTimeout("exceeded queued timeout") from exc
+                raise QueuedTimeout(f"exceeded queued timeout{self._limit_note()}") from exc
             raise
 
     def try_amend(self, reservation: Reservation, request: ReservationRequest) -> bool:

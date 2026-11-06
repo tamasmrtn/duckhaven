@@ -20,6 +20,8 @@ CORES = 6
 
 
 def _admission(profile="decaying_3", **kwargs):
+    # No pids limit unless a test sets one, so the host's cgroup never decides.
+    kwargs.setdefault("pids_provider", lambda: None)
     return Admission(
         profile=profile,
         headroom=0.0,
@@ -819,3 +821,90 @@ async def test_committed_never_exceeds_budget_under_random_churn():
         adm.release(res)
     assert adm.committed_fraction == 0.0
     assert adm.growth_waiting == 0, "a waiter leaked out of the growth queue"
+
+
+# -- connection ceiling from the pids limit ------------------------------
+#
+# Each connection keeps `threads - 1` = CORES - 1 = 5 DuckDB workers alive for as
+# long as it exists, and every thread counts against the container's pids limit.
+
+
+def _pids_bound(pids, reserve=0, **kwargs):
+    return _auto(pids_provider=lambda: pids, pids_reserve=reserve, **kwargs)
+
+
+def test_ceiling_is_what_is_left_after_the_reserve_divided_by_workers():
+    # (100 - 20) // 5 workers = 16 connections.
+    assert _pids_bound(100, reserve=20).max_connections == 16
+
+
+@pytest.mark.parametrize(
+    ("pids", "reserve", "cores"),
+    [
+        (None, 0, CORES),  # no pids limit
+        (100, 0, 1),  # one core: a connection keeps no worker threads
+    ],
+)
+def test_nothing_bounds_connections_without_a_limit_or_workers(pids, reserve, cores):
+    adm = Admission(
+        profile="auto",
+        mem_bytes_provider=lambda: BUDGET,
+        cores_provider=lambda: cores,
+        pids_provider=lambda: pids,
+        pids_reserve=reserve,
+    )
+    assert adm.max_connections is None
+
+
+def test_a_limit_too_small_for_one_connection_still_allows_one():
+    assert _pids_bound(10, reserve=64).max_connections == 1
+
+
+async def test_connections_past_the_ceiling_wait_even_with_memory_free():
+    adm = _pids_bound(15)  # 3 connections
+    held = [await adm.acquire(_req(1)) for _ in range(3)]
+    assert adm.running_count == 3
+    assert adm._free() > 0  # memory is not what holds the fourth back
+
+    pending = asyncio.create_task(adm.acquire(_req(1)))
+    await asyncio.sleep(0)
+    assert adm.queued_count == 1
+    assert not pending.done()
+
+    adm.release(held[0])
+    await asyncio.sleep(0)
+    assert (await pending).memory_bytes == 1
+    assert adm.running_count == 3
+
+
+async def test_the_ceiling_counts_static_slots_and_auto_reservations_alike():
+    adm = _admission(profile="decaying_3", pids_provider=lambda: 5)  # 1 connection
+    first = await adm.acquire()
+    assert adm._try_admit() is None
+    adm.release(first)
+    assert adm._try_admit() is not None
+
+
+async def test_a_refusal_at_the_ceiling_names_the_limit():
+    adm = _pids_bound(10, max_queue_depth=1, queued_timeout_s=0.05)  # 2 connections
+    await adm.acquire(_req(1))
+    await adm.acquire(_req(1))
+
+    with pytest.raises(QueuedTimeout, match="limit of 2 open connections.*process limit is 10"):
+        await adm.acquire(_req(1))
+
+    waiting = asyncio.create_task(adm.acquire(_req(1)))
+    await asyncio.sleep(0)
+    with pytest.raises(QueueFull, match="limit of 2 open connections"):
+        await adm.acquire(_req(1))
+    waiting.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await waiting
+
+
+async def test_a_memory_refusal_does_not_blame_the_pids_limit():
+    adm = _pids_bound(1000, queued_timeout_s=0.05)  # far from the ceiling
+    await adm.acquire(_req(BUDGET))  # takes all the memory
+    with pytest.raises(QueuedTimeout) as exc:
+        await adm.acquire(_req(1))
+    assert "connections" not in str(exc.value)

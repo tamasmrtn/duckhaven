@@ -58,6 +58,11 @@ class Settings(BaseSettings):
     memory_headroom_fraction: float = 0.10
     max_queue_depth: int = 100
     queued_timeout_s: float = 0.0
+    # Threads and processes the container's pids limit keeps for the agent itself
+    # (event loop, executors, result server, telemetry, extension loading) before
+    # any DuckDB worker. Admission divides what is left among open connections, since
+    # each holds `threads - 1` DuckDB workers for as long as it lives.
+    pids_reserve: int = 64
     # What a held SQL session reserves while it is idle: enough for the attached
     # connection's own footprint, not for the heaviest query it might ever run.
     # Under `auto` each statement grows the reservation to its own estimate and

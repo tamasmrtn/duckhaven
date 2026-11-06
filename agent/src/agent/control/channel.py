@@ -1414,6 +1414,7 @@ async def run_control_channel(
         # every session's idle baseline, so it has to be honoured.
         floor_bytes=settings.estimate_floor_bytes,
         ceiling_fraction=settings.estimate_ceiling_fraction,
+        pids_reserve=settings.pids_reserve,
     )
 
     while True:

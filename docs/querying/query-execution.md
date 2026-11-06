@@ -166,6 +166,11 @@ agent and 19 on a 24-core one. A connection past the cap **waits** in the same q
 session open that waits longer than `SESSION_QUEUED_TIMEOUT_S` fails with an error that names the cap. A container with
 no process limit, or an agent with one core, has no cap.
 
+A query under the `auto` profile opens its connection to run `EXPLAIN` before it is admitted, so that connection counts
+against the cap too. When the cap leaves no room for it, the agent skips the `EXPLAIN`, sizes the query with
+`ESTIMATE_FALLBACK_BUCKET` as it does for a query it cannot estimate, and opens the connection once the query is
+admitted.
+
 !!! note "Sessions keep their cache between statements"
     A [SQL session](sql-sessions.md) hands its *required* memory back after each statement but keeps its elastic
     grant, so consecutive statements against the same tables do not re-read them from object storage. An idle session

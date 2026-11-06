@@ -56,7 +56,8 @@ There is no setting for the budget itself: size the container and the agent foll
 
 ### The `auto` estimator
 
-Under `auto`, the agent runs `EXPLAIN` before each query and reserves memory from the plan's estimate.
+Under `auto`, the agent runs `EXPLAIN` before each query and reserves memory from the plan's estimate. It skips the
+`EXPLAIN` when the agent already holds as many open connections as its process limit allows (see `PIDS_RESERVE`).
 
 | Variable | Default | Meaning |
 |---|---|---|

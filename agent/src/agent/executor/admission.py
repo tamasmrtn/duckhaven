@@ -43,6 +43,11 @@ thread counts against the container's pids limit; past it the agent process dies
 and takes every session with it. So the pids limit sets a ceiling on live
 reservations, and the overflow waits in the same FIFO queue as a memory shortfall
 (see ``_max_connections``).
+
+A one-shot query under ``auto`` opens its connection *before* it asks for a
+reservation, to estimate with, and keeps it while it waits. That connection already
+holds its workers, so it takes a **slot** first (``try_open_slot``) and hands it to
+``acquire`` with the request, which turns it into the reservation.
 """
 
 from __future__ import annotations
@@ -80,6 +85,10 @@ class ReservationRequest:
 
     memory_bytes: int
     threads: int
+    # The caller already holds an open-connection slot (``try_open_slot``) for the
+    # connection it opened to size this request. ``acquire`` takes it over: it
+    # becomes the reservation, or is given back if the request fails.
+    holds_slot: bool = False
 
 
 @dataclass
@@ -155,6 +164,8 @@ class Admission:
         self._cores = max(1, cores_provider())
         self._pids_limit = pids_provider()
         self._max_connections = self._connection_ceiling(self._pids_limit, pids_reserve)
+        # Connections opened ahead of their reservation (``try_open_slot``).
+        self._pending_slots = 0
         self._max_queue_depth = max_queue_depth
         self._queued_timeout_s = queued_timeout_s
         # Bounds for ``auto`` reservations so an estimate can never oversubscribe
@@ -205,12 +216,43 @@ class Admission:
         """The pids-derived ceiling on open connections, or ``None`` if unbounded."""
         return self._max_connections
 
-    def _at_connection_limit(self) -> bool:
-        return self._max_connections is not None and self._running >= self._max_connections
+    def _at_connection_limit(self, request: ReservationRequest | None = None) -> bool:
+        """Whether every connection the pids limit allows is taken, by reservations
+        and by connections opened ahead of theirs. A request that holds a slot does
+        not count against itself."""
+        if self._max_connections is None:
+            return False
+        others = self._running + self._pending_slots - (1 if request and request.holds_slot else 0)
+        return others >= self._max_connections
 
-    def _limit_note(self) -> str:
+    def try_open_slot(self) -> bool:
+        """Take a connection slot for a connection about to be opened ahead of its
+        reservation, or return False when none is free.
+
+        Synchronous on purpose: the check and the claim cannot be interleaved with
+        another caller's. Pass ``holds_slot=True`` on the request to ``acquire`` to
+        hand the slot over; call ``drop_slot`` if the connection is never admitted
+        and ``acquire`` is never reached.
+        """
+        if self._at_connection_limit():
+            return False
+        self._pending_slots += 1
+        return True
+
+    def drop_slot(self) -> None:
+        """Give back a slot taken by ``try_open_slot`` that never reached ``acquire``."""
+        self._pending_slots -= 1
+        self._release_promote()
+
+    def _give_back_slot(self, request: ReservationRequest | None) -> None:
+        """Give back the slot a failed ``acquire`` was holding, if it still is."""
+        if request is not None and request.holds_slot:
+            request.holds_slot = False
+            self.drop_slot()
+
+    def _limit_note(self, request: ReservationRequest | None = None) -> str:
         """Why a refusal happened, when the pids limit is what is holding work back."""
-        if not self._at_connection_limit():
+        if not self._at_connection_limit(request):
             return ""
         return (
             f"; the agent is holding its limit of {self._max_connections} open connections "
@@ -314,7 +356,7 @@ class Admission:
 
     def _admit_from_free(self, request: ReservationRequest | None) -> Reservation | None:
         """Admit strictly out of uncommitted budget, without reclaiming anything."""
-        if self._at_connection_limit():
+        if self._at_connection_limit(request):
             return None
         free = self._free()
         if request is not None:
@@ -322,6 +364,10 @@ class Admission:
             if clamped <= free:
                 self._committed += clamped
                 self._running += 1
+                if request.holds_slot:
+                    # The connection it was opened on is now this reservation's.
+                    request.holds_slot = False
+                    self._pending_slots -= 1
                 return Reservation(None, clamped, request.threads)
             return None
         for slot in self._slots:  # descending by size
@@ -359,6 +405,9 @@ class Admission:
         reservation = self._admit_from_free(request)
         if reservation is not None:
             return reservation
+        if self._at_connection_limit(request):
+            # Memory is not what is missing, so reclaiming cache would only hurt.
+            return None
         if self._reclaim_elastic(self._shortfall(request)) > 0:
             reservation = self._admit_from_free(request)
             if reservation is None:
@@ -520,7 +569,9 @@ class Admission:
             return reservation
 
         if len(self._waiters) >= self._max_queue_depth:
-            raise QueueFull(f"admission queue is full{self._limit_note()}")
+            note = self._limit_note(request)
+            self._give_back_slot(request)
+            raise QueueFull(f"admission queue is full{note}")
 
         timeout_s = self._queued_timeout_s if queued_timeout_s is None else queued_timeout_s
         waiter: asyncio.Future = asyncio.get_running_loop().create_future()
@@ -539,8 +590,10 @@ class Admission:
                 self._waiters.remove(entry)
             elif waiter.done() and not waiter.cancelled():
                 self.release(waiter.result())
+            note = self._limit_note(request)
+            self._give_back_slot(request)
             if isinstance(exc, TimeoutError):
-                raise QueuedTimeout(f"exceeded queued timeout{self._limit_note()}") from exc
+                raise QueuedTimeout(f"exceeded queued timeout{note}") from exc
             raise
 
     def try_amend(self, reservation: Reservation, request: ReservationRequest) -> bool:

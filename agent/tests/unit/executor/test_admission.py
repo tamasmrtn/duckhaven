@@ -908,3 +908,94 @@ async def test_a_memory_refusal_does_not_blame_the_pids_limit():
     with pytest.raises(QueuedTimeout) as exc:
         await adm.acquire(_req(1))
     assert "connections" not in str(exc.value)
+
+
+# -- connections opened ahead of their reservation ----------------------
+
+
+def _held_slot_request(memory_bytes=1):
+    return ReservationRequest(memory_bytes=memory_bytes, threads=CORES, holds_slot=True)
+
+
+def test_slots_count_toward_the_ceiling():
+    adm = _pids_bound(15)  # 3 connections
+    assert [adm.try_open_slot() for _ in range(4)] == [True, True, True, False]
+    adm.drop_slot()
+    assert adm.try_open_slot()
+
+
+def test_slots_are_unbounded_without_a_ceiling():
+    adm = _auto()
+    assert all(adm.try_open_slot() for _ in range(1000))
+
+
+async def test_a_held_slot_becomes_the_reservation_not_a_second_connection():
+    adm = _pids_bound(15)  # 3 connections
+    assert adm.try_open_slot()
+    held = [await adm.acquire(_req(1)) for _ in range(2)]
+    # 2 running + 1 slot = full. A request holding the slot is still admitted ...
+    reservation = await adm.acquire(_held_slot_request())
+    assert reservation is not None
+    assert (adm.running_count, adm._pending_slots) == (3, 0)
+    # ... and nothing else is, since the slot was converted, not kept.
+    assert adm._try_admit(_req(1)) is None
+    adm.release(held[0])
+    assert adm._try_admit(_req(1)) is not None
+
+
+async def test_open_slots_make_other_requests_wait_for_a_connection():
+    adm = _pids_bound(15)
+    assert all(adm.try_open_slot() for _ in range(3))  # 3 connections opened ahead
+    pending = asyncio.create_task(adm.acquire(_req(1)))  # a session open
+    await asyncio.sleep(0)
+    assert adm.queued_count == 1
+
+    adm.drop_slot()  # one of them failed to open
+    assert (await pending).memory_bytes == 1
+
+
+async def test_a_request_blocked_only_by_the_ceiling_does_not_reclaim_cache():
+    adm = _pids_bound(10)  # 2 connections
+    first = await adm.acquire(_req(1))
+    await adm.acquire(_req(1))
+    elastic = adm.grant_elastic(first, BUDGET)  # the rest of the memory, as cache
+    assert elastic > 0
+
+    async def resize(total):
+        pass
+
+    first.is_idle, first.on_resize = (lambda: True), resize  # reclaimable, were it needed
+
+    pending = asyncio.create_task(adm.acquire(_req(1)))  # short of memory *and* connections
+    await asyncio.sleep(0)
+    assert first.elastic_bytes == elastic  # the cap alone cannot be fixed with cache
+    pending.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await pending
+
+
+@pytest.mark.parametrize("how", ["timeout", "cancel", "queue_full"])
+async def test_a_request_that_fails_gives_its_slot_back(how):
+    adm = _pids_bound(
+        100,
+        max_queue_depth=0 if how == "queue_full" else 100,
+        queued_timeout_s=0.05 if how == "timeout" else 0.0,
+    )
+    await adm.acquire(_req(BUDGET))  # all the memory, so the request below must wait
+    assert adm.try_open_slot()
+    assert adm._pending_slots == 1
+
+    if how == "queue_full":
+        with pytest.raises(QueueFull):
+            await adm.acquire(_held_slot_request())
+    elif how == "timeout":
+        with pytest.raises(QueuedTimeout):
+            await adm.acquire(_held_slot_request())
+    else:
+        waiting = asyncio.create_task(adm.acquire(_held_slot_request()))
+        await asyncio.sleep(0)
+        assert adm.queued_count == 1
+        waiting.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await waiting
+    assert adm._pending_slots == 0

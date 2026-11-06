@@ -48,6 +48,8 @@ def _clear_sessions():
 
 def _admission(profile: str = "single", **kwargs) -> Admission:
     """A test admission manager with an exact, headroom-free budget."""
+    # No pids limit unless a test sets one, so the host's cgroup never decides.
+    kwargs.setdefault("pids_provider", lambda: None)
     return Admission(
         profile=profile,
         headroom=0.0,
@@ -1181,6 +1183,112 @@ async def test_a_cancelled_estimate_hands_its_worker_back_when_it_finishes(monke
     finally:
         release.set()
     await _until(lambda: ch_module._estimates_in_flight == 0)
+
+
+async def _dispatch_capturing(tmp_path, monkeypatch, admission, *, prepared=None):
+    """Run one `auto` dispatch with the runner and estimate faked; return what the
+    runner was given and how often a connection was prepared ahead of admission."""
+    import agent.control.channel as ch_module
+
+    seen: dict[str, object] = {"prepared": 0}
+
+    async def fake_prepare(sql, **kwargs):
+        seen["prepared"] += 1
+        return prepared
+
+    async def fake_run_query(sql, result_path, timeout_s, **kwargs):
+        seen["conn"] = kwargs.get("conn")
+        seen["slots_while_running"] = admission._pending_slots
+        result_path.write_bytes(b"PAR1fake")
+        return {"row_count": 0, "duration_ms": 0, "wrote_result": True, "profile": None}
+
+    monkeypatch.setattr(ch_module, "_prepare_and_estimate", fake_prepare)
+    monkeypatch.setattr(ch_module, "run_query", fake_run_query)
+    ws = _FakeWS()
+    await ch_module._handle_dispatch(ws, {"query_id": "q", "sql": "SELECT 1"}, tmp_path, admission)
+    return seen, Frame.model_validate_json(ws.sent[-1])
+
+
+class _Conn:
+    def close(self) -> None:
+        pass
+
+
+async def test_the_estimate_connection_takes_a_slot_that_becomes_the_reservation(
+    tmp_path, monkeypatch
+):
+    admission = _admission(
+        profile="auto", floor_bytes=1, ceiling_fraction=1.0, pids_provider=lambda: 100
+    )
+    seen, done = await _dispatch_capturing(tmp_path, monkeypatch, admission, prepared=(_Conn(), 1))
+
+    assert seen["prepared"] == 1
+    assert seen["conn"] is not None
+    # Handed over, not held twice: nothing pending while the query runs.
+    assert seen["slots_while_running"] == 0
+    assert done.payload["status"] == "done"
+    assert (admission.running_count, admission._pending_slots) == (0, 0)
+
+
+async def test_no_connection_is_opened_ahead_of_admission_at_the_ceiling(tmp_path, monkeypatch):
+    # cores=2 -> one worker per connection; pids 3 with no reserve -> 3 connections.
+    admission = _admission(
+        profile="auto", floor_bytes=1, ceiling_fraction=1.0, pids_provider=lambda: 3
+    )
+    held = [
+        await admission.acquire(ReservationRequest(memory_bytes=1, threads=2)) for _ in range(3)
+    ]
+
+    import asyncio
+
+    task = asyncio.create_task(
+        _dispatch_capturing(tmp_path, monkeypatch, admission, prepared=(_Conn(), 1))
+    )
+    await asyncio.sleep(0.05)
+    assert admission.queued_count == 1  # waiting for a connection, with none opened yet
+    admission.release(held[0])
+    seen, done = await task
+
+    assert seen["prepared"] == 0
+    assert seen["conn"] is None  # the runner opens its own after admission
+    assert done.payload["status"] == "done"
+
+
+async def test_a_failed_estimate_connection_gives_its_slot_back(tmp_path, monkeypatch):
+    admission = _admission(
+        profile="auto", floor_bytes=1, ceiling_fraction=1.0, pids_provider=lambda: 100
+    )
+    seen, done = await _dispatch_capturing(tmp_path, monkeypatch, admission, prepared=(None, None))
+
+    assert seen["prepared"] == 1
+    assert seen["conn"] is None
+    assert done.payload["status"] == "done"
+    assert (admission.running_count, admission._pending_slots) == (0, 0)
+
+
+async def test_a_dispatch_cancelled_while_opening_gives_its_slot_back(tmp_path, monkeypatch):
+    import asyncio
+
+    import agent.control.channel as ch_module
+
+    async def never_prepared(sql, **kwargs):
+        await asyncio.sleep(60)
+
+    monkeypatch.setattr(ch_module, "_prepare_and_estimate", never_prepared)
+    admission = _admission(
+        profile="auto", floor_bytes=1, ceiling_fraction=1.0, pids_provider=lambda: 100
+    )
+    task = asyncio.create_task(
+        ch_module._handle_dispatch(
+            _FakeWS(), {"query_id": "q", "sql": "SELECT 1"}, tmp_path, admission
+        )
+    )
+    await asyncio.sleep(0.05)
+    assert admission._pending_slots == 1
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert admission._pending_slots == 0
 
 
 async def test_static_profile_opens_no_estimate_connection(tmp_path, monkeypatch):

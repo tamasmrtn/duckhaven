@@ -54,7 +54,9 @@ PARAMETERS_DESCRIPTION = (
 QUERY_ID_DESCRIPTION = (
     "A UUID you choose for the run, so you know its id before this call returns and "
     "can cancel or read it while the call is still waiting. Omitted, the server picks "
-    "one. An id already used answers 409 `query_id_conflict`."
+    "one. Ids are unique across the server, so send a random (version 4) UUID; an "
+    "attempt the server refuses still spends its id. An id already used answers 409 "
+    "`query_id_conflict`."
 )
 
 

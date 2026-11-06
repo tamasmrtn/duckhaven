@@ -100,9 +100,10 @@ What you cannot do is ask the query engine to list objects for you. These are re
 - `information_schema.tables`, `information_schema.schemata` and `information_schema.columns`, and the
   `system.information_schema.…` spelling
 - the `duckdb_tables()`, `duckdb_schemas()`, `duckdb_columns()` and `duckdb_views()` family, with `duckdb_indexes()`,
-  `duckdb_sequences()` and `duckdb_dependencies()`
+  `duckdb_sequences()` and `duckdb_dependencies()`, called as functions or read as views without the parentheses
 - DuckDB's Postgres-compatible catalog: `pg_catalog.pg_tables`, `pg_class`, `pg_attribute`, `pg_namespace` and the
   other `pg_catalog` views, written with or without the `pg_catalog.` prefix
+- the SQLite-compatible `sqlite_master` and `sqlite_schema`, and `pragma_database_list`
 - `SHOW TABLES`, `SHOW ALL TABLES`, `PRAGMA show_tables`, `PRAGMA show_tables_expanded` and `PRAGMA database_list`
 - `PRAGMA table_info(…)`, and every function that names its table only inside a string: `pragma_table_info()`,
   `pragma_show()`, `pragma_storage_info()`, and `iceberg_snapshots()` / `iceberg_metadata()`. Use `DESCRIBE` instead,
@@ -111,6 +112,10 @@ What you cannot do is ask the query engine to list objects for you. These are re
 
 DuckDB computes these across every attached catalog and cannot filter their rows, so allowing them would reveal the
 names of tables you were not granted. The answer has to come from the API, which can filter.
+
+These views resolve without a prefix, so an unqualified name such as `pg_tables` or `sqlite_master` is rejected even
+when it means one of your own tables, or a CTE in the same query. Qualify such a table with its catalog and schema
+(`sales.analytics.pg_tables`) or rename the CTE.
 
 ### The rejection covers the whole workspace
 

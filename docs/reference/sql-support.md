@@ -143,7 +143,7 @@ WHERE catalog_name = 'sales';
     that has at least one scoped catalog, even from a worksheet whose active catalog is open, and even with a
     `table_catalog` filter. The same applies to every other way of asking the engine to list objects: the `info_schema`
     spelling, any `SHOW` statement, the `duckdb_tables()` family, the `pg_catalog` views (`pg_tables`, `pg_class`,
-    `pg_attribute`, with or without the prefix), the listing `PRAGMA`s, functions that name their table
+    `pg_attribute`, with or without the prefix), `sqlite_master`, the listing `PRAGMA`s, functions that name their table
     in a string (`pragma_table_info()`, `iceberg_snapshots()`), DuckLake's catalog methods (`lake.snapshots()`), and
     direct file reads. See [Finding objects in a scoped
     catalog](../access/scoped-access.md#finding-objects-in-a-scoped-catalog).

@@ -72,6 +72,19 @@ from duckhaven_shared.concurrency import CONCURRENCY_PROFILES, DEFAULT_PROFILE
 logger = logging.getLogger(__name__)
 
 
+def default_pids_reserve(async_threads: int) -> int:
+    """Threads the pids limit keeps for the agent itself when ``PIDS_RESERVE`` is unset.
+
+    DuckDB 1.5 keeps the original 64. An engine with an async I/O pool needs more,
+    measured on a 6-core DuckDB 2.0 agent: 39 at rest, about 85 more while one connection
+    opens (signature hashing, the warm-spare refill), and that open can overlap the
+    threads of a session that just closed. A 22-session burst peaked at 507 of 512 with
+    a reserve of 160 and 509 with 192; 224 held it near 420. The transient grows with
+    the pool, so on larger agents the cap is the safer bound, not the reserve.
+    """
+    return 224 if async_threads > 0 else 64
+
+
 class QueueFull(Exception):
     """The admission queue is at ``max_queue_depth``; the query is rejected."""
 
@@ -174,6 +187,7 @@ class Admission:
         self._pids_limit = pids_provider()
         self._async_threads = max(0, async_threads)
         self._max_connections = self._connection_ceiling(self._pids_limit, pids_reserve)
+        self._log_connection_cap(pids_reserve)
         # Only an engine with an async pool, under a pids limit, opens connections in a
         # burst of threads big enough to matter (see the module docstring).
         bounded = self._pids_limit is not None and self._async_threads > 0
@@ -234,6 +248,41 @@ class Admission:
             return
         async with self._open_gate:
             yield
+
+    def _log_connection_cap(self, reserve: int) -> None:
+        """Say once, at start-up, how the pids limit became a cap on open connections."""
+        per_connection = self.threads_for_statement() - 1 + self._async_threads
+        if self._max_connections is None:
+            logger.info(
+                "Open connections are not capped (pids limit %s, %d threads per connection)",
+                self._pids_limit,
+                per_connection,
+            )
+            return
+        logger.info(
+            "Open connections are capped at %d: pids limit %s, %d reserved, %d threads per "
+            "connection (%d cores, %d async I/O threads)",
+            self._max_connections,
+            self._pids_limit,
+            reserve,
+            per_connection,
+            self._cores,
+            self._async_threads,
+        )
+        if self._pids_limit - reserve < per_connection:
+            logger.warning(
+                "The pids limit %d leaves %d threads after the %d reserved, less than the %d "
+                "one connection keeps: the agent will exceed its limit with a single connection",
+                self._pids_limit,
+                self._pids_limit - reserve,
+                reserve,
+                per_connection,
+            )
+
+    @property
+    def serialises_opens(self) -> bool:
+        """Whether connection opens run one at a time (see ``opening``)."""
+        return self._open_gate is not None
 
     @property
     def max_connections(self) -> int | None:

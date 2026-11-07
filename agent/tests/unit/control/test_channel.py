@@ -3098,3 +3098,187 @@ def test_get_capabilities_reports_the_time_zone():
 
     expected = duckdb.connect().execute("SELECT current_setting('TimeZone')").fetchone()[0]
     assert ch_module._get_capabilities().timezone == expected
+
+
+# -- connection opens under a pids limit with an async I/O pool (DuckDB 2.0) ----------
+#
+# Each open briefly needs far more threads than the connection keeps, so opens must run one
+# at a time wherever the cap is derived from a pids limit and the engine has such a pool.
+
+
+def _gated_admission(profile: str = "auto", **kwargs) -> Admission:
+    kwargs.setdefault("pids_provider", lambda: 512)
+    return _admission(profile, pids_reserve=224, async_threads=24, **kwargs)
+
+
+class _OpenProbe:
+    """A stand-in for `open_and_attach` that records how many opens overlap."""
+
+    def __init__(self, hold_s: float = 0.05) -> None:
+        self.hold_s = hold_s
+        self.running = 0
+        self.peak = 0
+        self.calls = 0
+        self._lock = threading.Lock()
+
+    def __call__(self, **kwargs):
+        with self._lock:
+            self.calls += 1
+            self.running += 1
+            self.peak = max(self.peak, self.running)
+        time.sleep(self.hold_s)
+        with self._lock:
+            self.running -= 1
+        return _ProbeConn()
+
+
+class _ProbeConn:
+    def execute(self, sql, *args):
+        return self
+
+    def fetchone(self):
+        return None
+
+    def close(self):
+        pass
+
+
+def _quiet_run_query(captured: list):
+    async def fake_run_query(sql, result_path, timeout_s, **kwargs):
+        captured.append(kwargs.get("conn"))
+        result_path.write_bytes(b"PAR1fake")
+        return {"row_count": 0, "duration_ms": 0, "wrote_result": True, "profile": None}
+
+    return fake_run_query
+
+
+def test_the_admission_is_built_from_the_engine_and_the_settings(monkeypatch):
+    import agent.control.channel as ch_module
+    from agent.executor import admission as adm_module
+
+    monkeypatch.setattr(adm_module, "effective_pids_limit", lambda: 512)
+    monkeypatch.setattr(adm_module, "effective_cores", lambda: 6)
+    monkeypatch.setattr(ch_module.settings, "pids_reserve", None)
+
+    monkeypatch.setattr(ch_module.runtime, "ASYNC_THREADS", 24)
+    with_pool = ch_module._build_admission()
+    assert with_pool.max_connections == 9  # (512 - 224) // (5 + 24)
+    assert with_pool.serialises_opens
+
+    monkeypatch.setattr(ch_module.runtime, "ASYNC_THREADS", 0)
+    without_pool = ch_module._build_admission()
+    assert without_pool.max_connections == 89  # (512 - 64) // 5, as before
+    assert not without_pool.serialises_opens
+
+    monkeypatch.setattr(ch_module.settings, "pids_reserve", 100)
+    assert ch_module._build_admission().max_connections == 82  # an operator's value wins
+
+
+async def test_session_opens_run_one_at_a_time_under_the_gate(monkeypatch):
+    import agent.control.channel as ch_module
+
+    probe = _OpenProbe()
+    monkeypatch.setattr(ch_module, "open_and_attach", probe)
+    admission = _gated_admission()
+    await asyncio.gather(
+        *(
+            ch_module._handle_open_session(_FakeWS(), {"session_id": f"s{i}"}, admission)
+            for i in range(4)
+        )
+    )
+    assert probe.calls == 4
+    assert probe.peak == 1
+
+
+async def test_session_opens_overlap_without_the_gate(monkeypatch):
+    """DuckDB 1.5 (no async pool) keeps opening in parallel, as it always did."""
+    import agent.control.channel as ch_module
+
+    probe = _OpenProbe()
+    monkeypatch.setattr(ch_module, "open_and_attach", probe)
+    admission = _admission("auto", pids_provider=lambda: 512, pids_reserve=64)
+    await asyncio.gather(
+        *(
+            ch_module._handle_open_session(_FakeWS(), {"session_id": f"s{i}"}, admission)
+            for i in range(4)
+        )
+    )
+    assert probe.peak > 1
+
+
+async def test_estimate_opens_share_the_gate_with_session_opens(monkeypatch):
+    import agent.control.channel as ch_module
+
+    probe = _OpenProbe()
+    monkeypatch.setattr(ch_module, "open_and_attach", probe)
+    monkeypatch.setattr(ch_module, "estimate_memory_bytes", lambda conn, sql, **k: 1)
+    admission = _gated_admission()
+    await asyncio.gather(
+        ch_module._handle_open_session(_FakeWS(), {"session_id": "s1"}, admission),
+        *(ch_module._prepare_and_estimate("SELECT 1", admission=admission) for _ in range(3)),
+    )
+    assert probe.calls == 4
+    assert probe.peak == 1
+
+
+async def test_a_one_shot_that_would_open_in_the_runner_opens_under_the_gate(tmp_path, monkeypatch):
+    """Static profiles never estimate, so the runner used to open their connection itself,
+    on the execution pool and outside the gate."""
+    import agent.control.channel as ch_module
+
+    probe = _OpenProbe()
+    monkeypatch.setattr(ch_module, "open_and_attach", probe)
+    captured: list = []
+    monkeypatch.setattr(ch_module, "run_query", _quiet_run_query(captured))
+    admission = _gated_admission("decaying_3")
+    await asyncio.gather(
+        *(
+            ch_module._handle_dispatch(
+                _FakeWS(), {"query_id": f"q{i}", "sql": "SELECT 1"}, tmp_path, admission
+            )
+            for i in range(3)
+        )
+    )
+    assert probe.calls == 3
+    assert probe.peak == 1
+    assert all(conn is not None for conn in captured), "the runner is handed the opened connection"
+
+
+async def test_a_one_shot_still_opens_in_the_runner_without_the_gate(tmp_path, monkeypatch):
+    import agent.control.channel as ch_module
+
+    probe = _OpenProbe()
+    monkeypatch.setattr(ch_module, "open_and_attach", probe)
+    captured: list = []
+    monkeypatch.setattr(ch_module, "run_query", _quiet_run_query(captured))
+    admission = _admission("decaying_3")
+    await ch_module._handle_dispatch(
+        _FakeWS(), {"query_id": "q", "sql": "SELECT 1"}, tmp_path, admission
+    )
+    assert probe.calls == 0
+    assert captured == [None]
+
+
+async def test_a_close_cancels_an_open_waiting_at_the_gate(monkeypatch):
+    """The wait for the gate can be long, and nothing is built during it, so a close
+    that lands meanwhile must stop the open instead of letting it take its turn."""
+    import agent.control.channel as ch_module
+
+    probe = _OpenProbe()
+    monkeypatch.setattr(ch_module, "open_and_attach", probe)
+    admission = _gated_admission()
+    async with admission.opening():  # another open holds the gate
+        task = asyncio.create_task(
+            ch_module._handle_open_session(_FakeWS(), {"session_id": "s1"}, admission)
+        )
+        ch_module._opening["s1"] = ch_module._OpeningSession(task=task)
+        await _wait_until(
+            lambda: admission.running_count == 1 and ch_module._opening["s1"].acquiring
+        )
+        assert admission.running_count == 1, "the open holds its reservation while it waits"
+
+        ch_module._abandon_open("s1")
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+    assert admission.running_count == 0, "the cancelled open gave its reservation back"
+    assert probe.calls == 0, "and never built a connection"

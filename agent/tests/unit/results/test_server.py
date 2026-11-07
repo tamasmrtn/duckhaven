@@ -1,3 +1,4 @@
+import os
 import uuid
 
 import duckdb
@@ -184,3 +185,34 @@ async def test_head_reports_whether_a_result_is_still_held(client, results_dir):
     assert gone.status_code == 404
     unauthorized = await client.head(f"/results/{query_id}.parquet")
     assert unauthorized.status_code == 401
+
+
+def test_a_windowed_fetch_opens_a_single_thread_instance(tmp_path, monkeypatch):
+    """The slice copy runs outside admission, so its instance must stay small: a default one
+    keeps a full set of workers, and on DuckDB 2.0 an async I/O pool, against the pids limit."""
+    import duckdb
+
+    from agent import runtime
+    from agent.results import server
+
+    source = tmp_path / "r.parquet"
+    duckdb.sql(f"COPY (SELECT range AS n FROM range(10)) TO '{source}' (FORMAT PARQUET)")
+    seen: list[dict] = []
+    real_connect = duckdb.connect
+
+    def spy(*args, **kwargs):
+        seen.append(kwargs.get("config") or {})
+        return real_connect(*args, **kwargs)
+
+    monkeypatch.setattr(server.duckdb, "connect", spy)
+    out = server._slice_parquet(source, 2, 3)
+    try:
+        assert duckdb.sql(f"SELECT n FROM read_parquet('{out}') ORDER BY n").fetchall() == [
+            (2,),
+            (3,),
+            (4,),
+        ]
+    finally:
+        os.unlink(out)
+    assert seen[0]["threads"] == 1
+    assert ("async_threads" in seen[0]) is ("async_threads" in runtime.SETTINGS)

@@ -7,6 +7,7 @@ import time
 import duckdb
 import pytest
 
+from agent import runtime
 from agent.executor import runner
 from agent.executor.warm_connections import _MAX_SHAPES, Prepared, WarmConnections
 
@@ -79,6 +80,24 @@ def test_a_spare_waits_with_one_thread_and_wakes_with_its_own():
             == spare.threads
             == duckdb.connect().execute("SELECT current_setting('threads')").fetchone()[0]
         )
+    finally:
+        pool.close()
+
+
+@pytest.mark.skipif("async_threads" not in runtime.SETTINGS, reason="no async I/O pool")
+def test_a_spare_gives_up_its_async_io_pool_while_it_waits():
+    prepare, _ = _counting_prepare()
+    pool = WarmConnections(prepare, per_shape=1)
+    try:
+        pool.take("a")
+        _wait_for_spares(pool, "a", 1)
+        with pool._lock:
+            spare = pool._spares["a"][0]
+        idle = spare.prepared.conn.execute("SELECT current_setting('async_threads')").fetchone()[0]
+        assert idle == 1
+        assert spare.async_threads == runtime.ASYNC_THREADS > 1
+        woken = pool.take("a").conn.execute("SELECT current_setting('async_threads')").fetchone()[0]
+        assert woken == runtime.ASYNC_THREADS
     finally:
         pool.close()
 

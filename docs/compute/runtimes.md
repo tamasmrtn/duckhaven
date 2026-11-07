@@ -126,8 +126,9 @@ A DuckDB 2.0 connection keeps an I/O thread pool of four threads per core, on to
 default process limit of 512 per agent, a 6-core 2.0 agent holds at most 9 connections open (sessions and running
 queries together) and the rest wait in the
 [admission queue](../querying/query-execution.md#admission-control-and-concurrency). A DuckDB 1.5 agent of the same
-size holds 57. The cap shrinks as cores grow, because the I/O pool does: a 24-core 2.0 agent holds 2. If you need
-more, raise the container's process limit.
+size holds 89. The cap shrinks as cores grow, because the I/O pool does: a 24-core 2.0 agent holds 2. Elastic compute
+fixes the process limit at 512, so pick fewer cores for a 2.0 agent that must hold many sessions. A static agent takes
+its limit from the container (`pids_limit` in the compose file).
 
 ## SQL on DuckDB 2.0
 

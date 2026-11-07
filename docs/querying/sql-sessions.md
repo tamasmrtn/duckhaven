@@ -65,8 +65,9 @@ lends it between statements, so a run that reads the same tables repeatedly, suc
 again. That memory is taken back the moment another query needs it.
 
 How many sessions an agent holds depends on the baseline: roughly the agent's memory budget divided by
-`SESSION_BASELINE_BYTES`, about 56 on a 4 GB agent. The container's process limit caps it too: 89 on a 6-core agent
-with the default limit of 512 (see [Query execution](query-execution.md#when-the-agent-is-full)). Opens beyond that
+`SESSION_BASELINE_BYTES`, about 56 on a 4 GB agent. The container's process limit caps it too: 89 on a 6-core DuckDB 1.5
+agent (9 on 2.0) with the default limit of 512 (see
+[Query execution](query-execution.md#when-the-agent-is-full)). Opens beyond that
 **queue** for capacity, and give up after `SESSION_QUEUED_TIMEOUT_S` with an error. If tools routinely open more
 sessions than an agent holds, add or enlarge agents; a longer timeout does not help.
 

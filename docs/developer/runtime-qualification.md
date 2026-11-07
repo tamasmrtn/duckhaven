@@ -100,6 +100,10 @@ Differences users see are listed on the [Runtimes](../compute/runtimes.md#sql-on
 
 Open items. These don't block beta, since beta agents are only used when named, but they block promotion:
 
+- **A connection costs 29 threads, so the cap is low.** A 2.0 connection keeps an async I/O pool of four threads per
+  core on top of its workers. Under the 512-thread limit a 6-core 2.0 agent holds 9 connections (1.5 holds 89), and a
+  24-core one holds 2. Opens run one at a time. Shrinking an idle session's pool between statements would raise the
+  cap, at about 5 ms of `SET` per statement; measured 2026-11-07, `SET async_threads` takes 1-3 ms.
 - **Vended credentials are not exposed as a DuckDB secret.** On 1.5 the `iceberg` extension registers the storage
   credentials Polaris vends as an S3 secret. On 2.0 it keeps them internal, so a direct read of a table's files
   needs another secret. The catalog-scoped fallback secret the API sends with every Iceberg catalog serves those

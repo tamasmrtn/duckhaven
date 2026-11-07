@@ -40,6 +40,15 @@ def test_profile_setting_is_one_this_engine_has():
     assert runtime.PROFILE_SETTING in runtime.SETTINGS
 
 
+def test_async_threads_are_read_from_the_engine_that_has_them():
+    """1.5 has no async I/O pool (0); 2.0 keeps one per database that admission must count."""
+    if "async_threads" in runtime.SETTINGS:
+        live = duckdb.connect().execute("select current_setting('async_threads')").fetchone()[0]
+        assert runtime.ASYNC_THREADS == int(live) > 0
+    else:
+        assert runtime.ASYNC_THREADS == 0
+
+
 def test_secret_bind_parameters_are_detected_on_this_engine():
     """Detected, not assumed: the probe must agree with what the engine does."""
     conn = duckdb.connect()

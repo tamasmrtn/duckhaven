@@ -60,9 +60,13 @@ class Settings(BaseSettings):
     queued_timeout_s: float = 0.0
     # Threads and processes the container's pids limit keeps for the agent itself
     # (event loop, executors, result server, telemetry, extension loading) before
-    # any DuckDB worker. Admission divides what is left among open connections, since
-    # each holds `threads - 1` DuckDB workers for as long as it lives.
-    pids_reserve: int = 64
+    # any DuckDB thread. Admission divides what is left among open connections, since
+    # each holds `threads - 1` DuckDB workers (plus, on DuckDB 2.0, its async I/O
+    # pool) for as long as it lives. Measured on a 6-core DuckDB 2.0 agent: 39 at rest,
+    # +85 while a session opens (signature hashing, the spare refill) and that open can
+    # overlap the threads of a session that just closed. A 22-session burst peaked at
+    # 507 of 512 with a 160 reserve and 509 with 192, so the reserve keeps the peak near 450.
+    pids_reserve: int = 224
     # What a held SQL session reserves while it is idle: enough for the attached
     # connection's own footprint, not for the heaviest query it might ever run.
     # Under `auto` each statement grows the reservation to its own estimate and

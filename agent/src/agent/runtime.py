@@ -65,6 +65,13 @@ with duckdb.connect() as _conn:
         row[0] for row in _conn.execute("select name from duckdb_settings()").fetchall()
     )
     SECRET_BIND_PARAMETERS: bool = _secret_takes_bind_parameters(_conn)
+    # DuckDB 2.0 keeps an I/O thread pool of 4 x cores (at most 256) alive per database
+    # instance, on top of `threads` workers; 1.5 has no such pool.
+    ASYNC_THREADS: int = (
+        int(_conn.execute("select current_setting('async_threads')").fetchone()[0])
+        if "async_threads" in SETTINGS
+        else 0
+    )
 
 _identity = _read_runtime_file(RUNTIME_FILE)
 _inferred = runtimes.infer(ENGINE_VERSION)

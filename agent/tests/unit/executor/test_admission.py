@@ -838,11 +838,71 @@ def test_ceiling_is_what_is_left_after_the_reserve_divided_by_workers():
     assert _pids_bound(100, reserve=20).max_connections == 16
 
 
+def test_ceiling_counts_the_async_io_pool_each_connection_keeps():
+    # DuckDB 2.0 keeps 4 x cores = 24 async threads per database next to its 5 workers:
+    # (512 - 224) // 29 = 9 connections, not the 57 that counting only workers allows.
+    assert _pids_bound(512, reserve=224, async_threads=24).max_connections == 9
+    assert _pids_bound(512, reserve=224).max_connections == 57
+
+
+@pytest.mark.parametrize(
+    ("pids", "async_threads", "serial"),
+    [(512, 24, True), (512, 0, False), (None, 24, False)],
+)
+def test_opens_are_serialised_only_with_a_pids_limit_and_an_async_pool(pids, async_threads, serial):
+    adm = _pids_bound(pids, reserve=224, async_threads=async_threads)
+    assert (adm._open_gate is not None) is serial
+
+
+async def test_opens_never_overlap_past_the_bound():
+    adm = _pids_bound(512, reserve=224, async_threads=24)  # one open at a time
+    running = peak = 0
+
+    async def open_one():
+        nonlocal running, peak
+        async with adm.opening():
+            running += 1
+            peak = max(peak, running)
+            await asyncio.sleep(0.01)
+            running -= 1
+
+    await asyncio.gather(*(open_one() for _ in range(8)))
+    assert peak == 1
+
+
+async def test_unbounded_opens_run_together():
+    adm = _pids_bound(None, reserve=0)
+    running = peak = 0
+
+    async def open_one():
+        nonlocal running, peak
+        async with adm.opening():
+            running += 1
+            peak = max(peak, running)
+            await asyncio.sleep(0.01)
+            running -= 1
+
+    await asyncio.gather(*(open_one() for _ in range(8)))
+    assert peak == 8
+
+
+def test_a_one_core_agent_with_an_async_pool_is_still_bounded():
+    adm = Admission(
+        profile="auto",
+        mem_bytes_provider=lambda: BUDGET,
+        cores_provider=lambda: 1,
+        pids_provider=lambda: 100,
+        pids_reserve=0,
+        async_threads=4,
+    )
+    assert adm.max_connections == 25
+
+
 @pytest.mark.parametrize(
     ("pids", "reserve", "cores"),
     [
         (None, 0, CORES),  # no pids limit
-        (100, 0, 1),  # one core: a connection keeps no worker threads
+        (100, 0, 1),  # one core, no async pool: a connection keeps no extra thread
     ],
 )
 def test_nothing_bounds_connections_without_a_limit_or_workers(pids, reserve, cores):

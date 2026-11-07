@@ -418,7 +418,9 @@ async def _estimate_under_timeout(work, get_conn, *, what: str) -> int | None:
             fut.add_done_callback(_estimate_worker_returned)
 
 
-async def _prepare_and_estimate(sql: str, **attach_kwargs) -> tuple[object | None, int | None]:
+async def _prepare_and_estimate(
+    sql: str, *, admission: Admission, **attach_kwargs
+) -> tuple[object | None, int | None]:
     """Open+attach a connection and estimate peak memory (best-effort, `auto`).
 
     The open runs first, on the connection-open pool and outside the EXPLAIN
@@ -435,10 +437,11 @@ async def _prepare_and_estimate(sql: str, **attach_kwargs) -> tuple[object | Non
     trace_headers = inject_trace_context()
     loop = asyncio.get_running_loop()
     try:
-        conn = await loop.run_in_executor(
-            _session_open_executor(),
-            functools.partial(open_and_attach, **attach_kwargs, trace_headers=trace_headers),
-        )
+        async with admission.opening():
+            conn = await loop.run_in_executor(
+                _session_open_executor(),
+                functools.partial(open_and_attach, **attach_kwargs, trace_headers=trace_headers),
+            )
     except Exception as exc:  # noqa: BLE001 - run_query opens again and reports it
         logger.warning("Opening the connection to estimate on failed: %s", exc)
         return None, None
@@ -653,7 +656,8 @@ async def _handle_open_session(ws, payload: dict, admission: Admission) -> None:
             return conn
 
         try:
-            conn = await loop.run_in_executor(_session_open_executor(), _open)
+            async with admission.opening():
+                conn = await loop.run_in_executor(_session_open_executor(), _open)
         except asyncio.CancelledError:
             # CancelledError is a BaseException, so the `except Exception` below
             # does not catch it and the reservation would leak on any cancel.
@@ -1212,6 +1216,7 @@ async def _handle_dispatch(ws, payload: dict, results_dir: Path, admission: Admi
             if slot:
                 conn, estimate = await _prepare_and_estimate(
                     sql,
+                    admission=admission,
                     catalogs=catalogs,
                     active_catalog=active_catalog,
                     polaris=polaris,
@@ -1435,6 +1440,7 @@ async def run_control_channel(
         floor_bytes=settings.estimate_floor_bytes,
         ceiling_fraction=settings.estimate_ceiling_fraction,
         pids_reserve=settings.pids_reserve,
+        async_threads=runtime.ASYNC_THREADS,
     )
 
     while True:

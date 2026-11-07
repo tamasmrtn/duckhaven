@@ -120,6 +120,15 @@ tables through DuckHaven:
 On that workload, where most reads are repeats, queries are about 11% slower overall. So 2.0 favors writes and work
 that reads many different tables, and 1.5 favors queries that rerun over the same data, such as dashboards.
 
+## Concurrent sessions on DuckDB 2.0
+
+A DuckDB 2.0 connection keeps an I/O thread pool of four threads per core, on top of its worker threads. With the
+default process limit of 512 per agent, a 6-core 2.0 agent holds at most 9 connections open (sessions and running
+queries together) and the rest wait in the
+[admission queue](../querying/query-execution.md#admission-control-and-concurrency). A DuckDB 1.5 agent of the same
+size holds 57. The cap shrinks as cores grow, because the I/O pool does: a 24-core 2.0 agent holds 2. If you need
+more, raise the container's process limit.
+
 ## SQL on DuckDB 2.0
 
 A few statements that work on DuckDB 1.5 fail or return something else on a 2.0 agent:

@@ -45,7 +45,7 @@ There is no setting for the budget itself: size the container and the agent foll
 | Variable | Default | Meaning |
 |---|---|---|
 | `MAX_CONCURRENCY_PROFILE` | `auto` | How queries share memory: `auto` sizes each from its plan; `single`, `equal_2`, `decaying_2` and `decaying_3` are fixed slot ladders. Can be changed while the agent runs with the [concurrency command](sql-support.md#concurrency-control-command) |
-| `PIDS_RESERVE` | `64` | Threads the container's process limit (`pids.max`) keeps for the agent itself. The rest, divided by the DuckDB worker threads each connection keeps, caps how many connections the agent holds open; more wait. See [Query execution](../querying/query-execution.md#when-the-agent-is-full). No effect without a process limit |
+| `PIDS_RESERVE` | `224` | Threads the container's process limit (`pids.max`) keeps for the agent itself and for connections still opening. The rest, divided by the DuckDB threads each connection keeps (workers, plus the I/O pool on DuckDB 2.0), caps how many connections the agent holds open; more wait. See [Query execution](../querying/query-execution.md#when-the-agent-is-full). No effect without a process limit |
 | `MEMORY_HEADROOM_FRACTION` | `0.10` | Share of memory held back from queries, so DuckDB's overshoot cannot trigger the out-of-memory killer |
 | `MAX_QUEUE_DEPTH` | `100` | Queries that may wait; one more fails with `queue full` |
 | `QUEUED_TIMEOUT_S` | `0` (off) | Fail a query that waits longer than this with `queued timeout` |

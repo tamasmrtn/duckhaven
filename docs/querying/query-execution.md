@@ -158,13 +158,18 @@ between concurrent queries, so handing one query fewer threads than the agent ha
 without leaving anything extra for anyone else.
 
 What bounds threads is the number of **open connections**. Each connection, a held SQL session or a running query,
-keeps one fewer DuckDB worker thread than the agent has cores alive for as long as it is open, idle or not, and every
+keeps one fewer DuckDB worker thread than the agent has cores alive for as long as it is open, idle or not. On
+[DuckDB 2.0](../compute/runtimes.md) it also keeps an I/O pool of four threads per core (24 on a 6-core agent). Every
 thread counts against the container's process limit (the cgroup's `pids.max`). An agent that runs past that limit
 crashes and drops every session on it, so admission caps open connections at the limit, less `PIDS_RESERVE` for the
-agent's own threads, divided by that worker count. With the default limit of 512 that is 89 connections on a 6-core
-agent and 19 on a 24-core one. A connection past the cap **waits** in the same queue as one waiting for memory, and a
-session open that waits longer than `SESSION_QUEUED_TIMEOUT_S` fails with an error that names the cap. A container with
-no process limit, or an agent with one core, has no cap.
+agent's own threads and for connections still opening, divided by the threads each connection keeps. With the default
+limit of 512 that is 57 connections on a 6-core DuckDB 1.5 agent, 12 on a 24-core one, and 9 on a 6-core DuckDB 2.0
+agent. A connection past the cap **waits** in the same queue as one waiting for memory, and a session open that waits
+longer than `SESSION_QUEUED_TIMEOUT_S` fails with an error that names the cap. A container with no process limit, or
+an agent with one core and no I/O pool, has no cap.
+
+On a DuckDB 2.0 agent, connections also open **one at a time**. Opening one briefly needs about 85 more threads than
+it keeps, so overlapping opens would pass the limit even when the connections themselves fit.
 
 A query under the `auto` profile opens its connection to run `EXPLAIN` before it is admitted, so that connection counts
 against the cap too. When the cap leaves no room for it, the agent skips the `EXPLAIN`, sizes the query with

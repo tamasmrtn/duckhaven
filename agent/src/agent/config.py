@@ -59,10 +59,12 @@ class Settings(BaseSettings):
     max_queue_depth: int = 100
     queued_timeout_s: float = 0.0
     # Threads and processes the container's pids limit keeps for the agent itself
-    # (event loop, executors, result server, telemetry, extension loading) before
-    # any DuckDB worker. Admission divides what is left among open connections, since
-    # each holds `threads - 1` DuckDB workers for as long as it lives.
-    pids_reserve: int = 64
+    # (event loop, executors, result server, telemetry, extension loading) and for
+    # connections still opening, before any DuckDB thread. Admission divides what is
+    # left among open connections, since each holds `threads - 1` DuckDB workers (plus,
+    # on DuckDB 2.0, its async I/O pool) for as long as it lives. Unset: 64 on an engine
+    # without an async pool, 224 with one (see `admission.default_pids_reserve`).
+    pids_reserve: int | None = None
     # What a held SQL session reserves while it is idle: enough for the attached
     # connection's own footprint, not for the heaviest query it might ever run.
     # Under `auto` each statement grows the reservation to its own estimate and

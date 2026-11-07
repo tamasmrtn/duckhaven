@@ -9,6 +9,7 @@ from agent.executor.admission import (
     QueuedTimeout,
     QueueFull,
     ReservationRequest,
+    default_pids_reserve,
 )
 from duckhaven_shared.concurrency import CONCURRENCY_PROFILES
 
@@ -838,11 +839,71 @@ def test_ceiling_is_what_is_left_after_the_reserve_divided_by_workers():
     assert _pids_bound(100, reserve=20).max_connections == 16
 
 
+def test_ceiling_counts_the_async_io_pool_each_connection_keeps():
+    # DuckDB 2.0 keeps 4 x cores = 24 async threads per database next to its 5 workers:
+    # (512 - 224) // 29 = 9 connections, not the 57 that counting only workers allows.
+    assert _pids_bound(512, reserve=224, async_threads=24).max_connections == 9
+    assert _pids_bound(512, reserve=224).max_connections == 57
+
+
+@pytest.mark.parametrize(
+    ("pids", "async_threads", "serial"),
+    [(512, 24, True), (512, 0, False), (None, 24, False)],
+)
+def test_opens_are_serialised_only_with_a_pids_limit_and_an_async_pool(pids, async_threads, serial):
+    adm = _pids_bound(pids, reserve=224, async_threads=async_threads)
+    assert (adm._open_gate is not None) is serial
+
+
+async def test_opens_never_overlap_past_the_bound():
+    adm = _pids_bound(512, reserve=224, async_threads=24)  # one open at a time
+    running = peak = 0
+
+    async def open_one():
+        nonlocal running, peak
+        async with adm.opening():
+            running += 1
+            peak = max(peak, running)
+            await asyncio.sleep(0.01)
+            running -= 1
+
+    await asyncio.gather(*(open_one() for _ in range(8)))
+    assert peak == 1
+
+
+async def test_unbounded_opens_run_together():
+    adm = _pids_bound(None, reserve=0)
+    running = peak = 0
+
+    async def open_one():
+        nonlocal running, peak
+        async with adm.opening():
+            running += 1
+            peak = max(peak, running)
+            await asyncio.sleep(0.01)
+            running -= 1
+
+    await asyncio.gather(*(open_one() for _ in range(8)))
+    assert peak == 8
+
+
+def test_a_one_core_agent_with_an_async_pool_is_still_bounded():
+    adm = Admission(
+        profile="auto",
+        mem_bytes_provider=lambda: BUDGET,
+        cores_provider=lambda: 1,
+        pids_provider=lambda: 100,
+        pids_reserve=0,
+        async_threads=4,
+    )
+    assert adm.max_connections == 25
+
+
 @pytest.mark.parametrize(
     ("pids", "reserve", "cores"),
     [
         (None, 0, CORES),  # no pids limit
-        (100, 0, 1),  # one core: a connection keeps no worker threads
+        (100, 0, 1),  # one core, no async pool: a connection keeps no extra thread
     ],
 )
 def test_nothing_bounds_connections_without_a_limit_or_workers(pids, reserve, cores):
@@ -999,3 +1060,32 @@ async def test_a_request_that_fails_gives_its_slot_back(how):
         with pytest.raises(asyncio.CancelledError):
             await waiting
     assert adm._pending_slots == 0
+
+
+# -- the unset PIDS_RESERVE and the start-up log ---------------------------------
+
+
+def test_the_default_reserve_follows_the_engine():
+    assert default_pids_reserve(0) == 64  # DuckDB 1.5, as before
+    assert default_pids_reserve(24) == 224  # an async I/O pool needs room for opens
+
+
+def test_opens_are_serialised_flag_matches_the_gate():
+    assert _pids_bound(512, reserve=224, async_threads=24).serialises_opens
+    assert not _pids_bound(512, reserve=64).serialises_opens
+
+
+def test_the_cap_is_logged_at_start_up(caplog):
+    with caplog.at_level("INFO", logger="agent.executor.admission"):
+        _pids_bound(512, reserve=224, async_threads=24)
+    text = " ".join(r.getMessage() for r in caplog.records)
+    assert "capped at 9" in text
+    assert "pids limit 512" in text
+    assert "24 async I/O threads" in text
+
+
+def test_a_limit_below_one_connection_is_a_warning(caplog):
+    with caplog.at_level("WARNING", logger="agent.executor.admission"):
+        adm = _pids_bound(100, reserve=224, async_threads=24)
+    assert adm.max_connections == 1
+    assert any("exceed its limit" in r.getMessage() for r in caplog.records)

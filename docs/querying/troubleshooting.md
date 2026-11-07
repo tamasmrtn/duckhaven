@@ -120,7 +120,9 @@ agent or a larger one; see [Scaling compute](../compute/scaling.md).
 **What it means.** The query waited in the agent's queue longer than `QUEUED_TIMEOUT_S` allows.
 
 **What to do.** As for "queue full": retry later, and add capacity if it repeats. The agent's
-[Monitoring](../compute/agent-monitoring.md) tab shows how long queries wait.
+[Monitoring](../compute/agent-monitoring.md) tab shows how long queries wait. A session open that fails with "the agent
+is holding its limit of N open connections" hit the cap the container's process limit sets; see
+[Query execution](query-execution.md#when-the-agent-is-full).
 
 ## "query exceeded statement timeout"
 

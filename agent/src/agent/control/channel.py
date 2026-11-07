@@ -27,6 +27,7 @@ from agent.executor.admission import (
     QueueFull,
     Reservation,
     ReservationRequest,
+    default_pids_reserve,
 )
 from agent.executor.estimate_cache import EstimateCache, EstimateKey
 from agent.executor.estimator import bucket_for, estimate_memory_bytes
@@ -418,7 +419,23 @@ async def _estimate_under_timeout(work, get_conn, *, what: str) -> int | None:
             fut.add_done_callback(_estimate_worker_returned)
 
 
-async def _prepare_and_estimate(sql: str, **attach_kwargs) -> tuple[object | None, int | None]:
+async def _open_connection(admission: Admission, **attach_kwargs) -> object:
+    """Open and attach a connection on the open pool, through the admission open gate."""
+    # Captured here (event-loop thread, inside the caller's span) and passed in:
+    # run_in_executor does not propagate contextvars to the worker thread, so
+    # trace.get_current_span() would see nothing inside the open.
+    trace_headers = inject_trace_context()
+    loop = asyncio.get_running_loop()
+    async with admission.opening():
+        return await loop.run_in_executor(
+            _session_open_executor(),
+            functools.partial(open_and_attach, **attach_kwargs, trace_headers=trace_headers),
+        )
+
+
+async def _prepare_and_estimate(
+    sql: str, *, admission: Admission, **attach_kwargs
+) -> tuple[object | None, int | None]:
     """Open+attach a connection and estimate peak memory (best-effort, `auto`).
 
     The open runs first, on the connection-open pool and outside the EXPLAIN
@@ -429,16 +446,8 @@ async def _prepare_and_estimate(sql: str, **attach_kwargs) -> tuple[object | Non
     open returns no connection and leaves `run_query` to open its own. Never
     raises into dispatch.
     """
-    # Captured here (event-loop thread, inside handle_dispatch's span) and
-    # passed in: run_in_executor does not propagate contextvars to the worker
-    # thread, so trace.get_current_span() would see nothing inside the open.
-    trace_headers = inject_trace_context()
-    loop = asyncio.get_running_loop()
     try:
-        conn = await loop.run_in_executor(
-            _session_open_executor(),
-            functools.partial(open_and_attach, **attach_kwargs, trace_headers=trace_headers),
-        )
+        conn = await _open_connection(admission, **attach_kwargs)
     except Exception as exc:  # noqa: BLE001 - run_query opens again and reports it
         logger.warning("Opening the connection to estimate on failed: %s", exc)
         return None, None
@@ -653,7 +662,17 @@ async def _handle_open_session(ws, payload: dict, admission: Admission) -> None:
             return conn
 
         try:
-            conn = await loop.run_in_executor(_session_open_executor(), _open)
+            # A close landing while this waits for the gate may cancel it, as it may
+            # while queued in `acquire`: nothing is built yet, and the handler below
+            # gives the reservation back. Once the gate is ours the open goes to the
+            # executor, where a cancel cannot stop it, so `acquiring` ends here, with
+            # nothing awaited between the two.
+            if inflight is not None:
+                inflight.acquiring = True
+            async with admission.opening():
+                if inflight is not None:
+                    inflight.acquiring = False
+                conn = await loop.run_in_executor(_session_open_executor(), _open)
         except asyncio.CancelledError:
             # CancelledError is a BaseException, so the `except Exception` below
             # does not catch it and the reservation would leak on any cancel.
@@ -1212,6 +1231,7 @@ async def _handle_dispatch(ws, payload: dict, results_dir: Path, admission: Admi
             if slot:
                 conn, estimate = await _prepare_and_estimate(
                     sql,
+                    admission=admission,
                     catalogs=catalogs,
                     active_catalog=active_catalog,
                     polaris=polaris,
@@ -1275,6 +1295,18 @@ async def _handle_dispatch(ws, payload: dict, results_dir: Path, admission: Admi
     global _one_shot_running
     _one_shot_running += 1
     try:
+        if conn is None and admission.serialises_opens:
+            # Static profiles, and `auto` queries that found no connection slot, would
+            # otherwise open inside `run_query` on the execution pool, outside the gate.
+            conn = await _open_connection(
+                admission,
+                catalogs=catalogs,
+                active_catalog=active_catalog,
+                polaris=polaris,
+                disabled_filesystems=settings.sandbox_disabled_filesystems,
+                lock_config=settings.sandbox_lock_configuration,
+                **preload,
+            )
         stats = await run_query(
             sql,
             result_path,
@@ -1401,6 +1433,28 @@ async def _push_metrics(ws, sampler: MetricsSampler, admission: Admission) -> No
         await ws.send(frame.model_dump_json())
 
 
+def _build_admission() -> Admission:
+    """The agent's admission gate, sized from its settings and its DuckDB engine."""
+    return Admission(
+        profile=settings.max_concurrency_profile,
+        headroom=settings.memory_headroom_fraction,
+        max_queue_depth=settings.max_queue_depth,
+        queued_timeout_s=settings.queued_timeout_s,
+        # Documented as operator-tunable but never passed until now, so setting
+        # either env var did nothing. They happened to match Admission's own
+        # defaults, which is why it went unnoticed — but the floor now bounds
+        # every session's idle baseline, so it has to be honoured.
+        floor_bytes=settings.estimate_floor_bytes,
+        ceiling_fraction=settings.estimate_ceiling_fraction,
+        pids_reserve=(
+            settings.pids_reserve
+            if settings.pids_reserve is not None
+            else default_pids_reserve(runtime.ASYNC_THREADS)
+        ),
+        async_threads=runtime.ASYNC_THREADS,
+    )
+
+
 async def run_control_channel(
     results_dir: Path | None = None,
     token_holder: TokenHolder | None = None,
@@ -1423,19 +1477,7 @@ async def run_control_channel(
 
     # One admission manager for the agent's lifetime; the in-memory queue + the
     # active concurrency profile persist across reconnects (reset on restart).
-    admission = Admission(
-        profile=settings.max_concurrency_profile,
-        headroom=settings.memory_headroom_fraction,
-        max_queue_depth=settings.max_queue_depth,
-        queued_timeout_s=settings.queued_timeout_s,
-        # Documented as operator-tunable but never passed until now, so setting
-        # either env var did nothing. They happened to match Admission's own
-        # defaults, which is why it went unnoticed — but the floor now bounds
-        # every session's idle baseline, so it has to be honoured.
-        floor_bytes=settings.estimate_floor_bytes,
-        ceiling_fraction=settings.estimate_ceiling_fraction,
-        pids_reserve=settings.pids_reserve,
-    )
+    admission = _build_admission()
 
     while True:
         try:

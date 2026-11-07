@@ -12,6 +12,7 @@ from starlette.requests import Request
 from starlette.responses import FileResponse, JSONResponse, Response
 from starlette.routing import Route
 
+from agent import runtime
 from agent.auth import TokenHolder
 
 _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
@@ -37,6 +38,13 @@ def _parse_window(request: Request) -> tuple[int, int] | None:
     return offset, limit
 
 
+# DuckDB 2.0 sizes an async I/O pool per instance from the cores; 1.5 has no such setting.
+_SLICE_CONFIG = {
+    "threads": 1,
+    **({"async_threads": 1} if "async_threads" in runtime.SETTINGS else {}),
+}
+
+
 def _slice_parquet(source: Path, offset: int, limit: int) -> str:
     """Write just rows [offset, offset+limit) of `source` to a new temp Parquet.
 
@@ -46,7 +54,10 @@ def _slice_parquet(source: Path, offset: int, limit: int) -> str:
     """
     fd, tmp = tempfile.mkstemp(suffix=".parquet")
     os.close(fd)
-    conn = duckdb.connect()
+    # One thread is plenty for a LIMIT/OFFSET copy, and a default instance would keep a
+    # full set of workers and, on DuckDB 2.0, its async I/O pool for the whole request,
+    # none of it counted against the container's pids limit.
+    conn = duckdb.connect(config=_SLICE_CONFIG)
     try:
         # COPY cannot bind its TO target, and offset/limit are validated ints, so
         # inline them. The source path is the uuid-validated results file and tmp

@@ -20,9 +20,12 @@ that tripled a DuckLake ATTACH. The hashing threads inherit the pin, so a refill
 uses at most one CPU and the query keeps the rest. Lowering the refill's priority
 does not help, because the quota is the cgroup's, not the thread's.
 
-Spares wait with ``threads=1``: an idle DuckDB database keeps ``threads - 1``
-workers alive, which count against the container's pids limit. The thread count
-the database started with is put back when a spare is taken.
+Spares wait with ``threads=1`` and, where the engine has one, ``async_threads=1``:
+an idle DuckDB database keeps ``threads - 1`` workers alive, and on DuckDB 2.0 its
+whole async I/O pool (4 x cores, 24 on a 6-core agent), and all of them count
+against the container's pids limit. Resizing either costs 2-3 ms and the pool is
+back at its size within a few ms. The counts the database started with are put back
+when a spare is taken.
 """
 
 from __future__ import annotations
@@ -36,6 +39,8 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 import duckdb
+
+from agent import runtime
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +61,7 @@ class Prepared:
 class _Spare:
     prepared: Prepared
     threads: int
+    async_threads: int | None = None  # None: this engine has no async I/O pool
 
 
 class WarmConnections:
@@ -95,6 +101,8 @@ class WarmConnections:
             return None
         try:
             spare.prepared.conn.execute(f"SET threads={spare.threads}")
+            if spare.async_threads is not None:
+                spare.prepared.conn.execute(f"SET async_threads={spare.async_threads}")
         except duckdb.Error as exc:
             logger.warning("Discarding a warm connection that failed to wake: %s", exc)
             _close(spare)
@@ -131,8 +139,14 @@ class WarmConnections:
         try:
             prepared = self._prepare(shape)
             threads = int(prepared.conn.execute("SELECT current_setting('threads')").fetchone()[0])
+            async_threads = None
+            if "async_threads" in runtime.SETTINGS:
+                async_threads = int(
+                    prepared.conn.execute("SELECT current_setting('async_threads')").fetchone()[0]
+                )
+                prepared.conn.execute("SET async_threads=1")
             prepared.conn.execute("SET threads=1")
-            spare = _Spare(prepared, threads)
+            spare = _Spare(prepared, threads, async_threads)
         except Exception as exc:  # noqa: BLE001 - the next take tries again
             logger.warning("Preparing a warm connection failed: %s", exc)
         with self._lock:

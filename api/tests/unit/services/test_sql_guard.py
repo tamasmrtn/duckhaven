@@ -216,6 +216,8 @@ QUERY_PATH_DENIED = [
     "SELECT 1; SELECT * FROM 'local.json'",
     # A path that cannot be read statically is refused, as in a session.
     "SELECT * FROM read_parquet(concat('s3://', 'bucket/x.parquet'))",
+    # Only a write's target is a table; its source query is still a read.
+    "INSERT INTO sales.analytics.events SELECT * FROM 'local.json'",
 ]
 
 QUERY_PATH_ALLOWED = [
@@ -231,6 +233,11 @@ QUERY_PATH_ALLOWED = [
     'SELECT * FROM "my cat"."my schema"."my table"',
     "SELECT 'local.parquet' AS name",
     "SELECT * FROM analytics.analytics.events",
+    # A write target resolves as a table, never as a file.
+    'CREATE TABLE "sales"."analytics"."events.json" (id INTEGER)',
+    'DROP TABLE "sales"."analytics"."events.json"',
+    'ALTER TABLE "sales"."analytics"."events.json" ADD COLUMN note VARCHAR',
+    "INSERT INTO sales.analytics.json SELECT 1",
 ]
 
 

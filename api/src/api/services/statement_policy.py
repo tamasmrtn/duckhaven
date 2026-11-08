@@ -20,6 +20,8 @@ opened. Unparseable or unrecognized SQL is rejected fail-closed.
 from __future__ import annotations
 
 import posixpath
+import re
+from collections.abc import Iterator
 
 import sqlglot
 from sqlglot import exp
@@ -70,6 +72,35 @@ _FILE_FUNCTION_NAMES = {
     "iceberg_scan",
     "delta_scan",
 }
+
+# Suffixes DuckDB's replacement scan reads as a file, so a relation name ending in
+# one is a path whatever its quoting.
+_FILE_LIKE_EXTENSIONS = frozenset(
+    {
+        "parquet",
+        "csv",
+        "tsv",
+        "json",
+        "jsonl",
+        "ndjson",
+        "avro",
+        "arrow",
+        "db",
+        "duckdb",
+        "txt",
+        "blob",
+        "xlsx",
+        "gz",
+        "zst",
+    }
+)
+
+# What the single-shot query path may read by path: only what the agent reaches
+# over the network (docs/reference/sql-support.md). Anything else names the
+# agent's own disk.
+_ALLOWED_URL_SCHEMES = frozenset(
+    {"s3", "s3a", "s3n", "gs", "gcs", "r2", "http", "https", "az", "azure", "abfs", "abfss", "hf"}
+)
 
 # Statement node types admitted outright (their file-function args are still
 # checked). Data + catalog DDL + session context + transaction control.
@@ -169,6 +200,11 @@ def _paths_from_arg(arg: exp.Expression | None) -> list[str] | None:
     return None
 
 
+def _ends_with_file_extension(name: str) -> bool:
+    base, _, ext = name.rpartition(".")
+    return bool(base) and ext.lower() in _FILE_LIKE_EXTENSIONS
+
+
 def _looks_like_a_path(name: str) -> bool:
     """True when a quoted relation name is really a file/URL for DuckDB's
     replacement scan, rather than an ordinary quoted identifier.
@@ -176,49 +212,68 @@ def _looks_like_a_path(name: str) -> bool:
     ``SELECT * FROM 'http://host/x.parquet'`` is a valid DuckDB read, but sqlglot
     models the literal exactly like a double-quoted identifier (``Table`` with a
     ``quoted=True`` Identifier), so the two are indistinguishable by shape alone.
-    A URL scheme or a path separator is the discriminator: dbt quotes identifiers
-    containing spaces, case, or reserved words — never ``://`` or ``/``.
+    A URL scheme, a path separator, a leading dot or a file-extension suffix is the
+    discriminator: dbt quotes identifiers containing spaces, case, or reserved
+    words — never those — while DuckDB resolves a relative file name too.
     """
-    return "://" in name or "/" in name
+    return (
+        "://" in name
+        or "/" in name
+        or "\\" in name
+        or name.startswith(".")
+        or _ends_with_file_extension(name)
+    )
 
 
-def _check_replacement_scans(stmt: exp.Expression, staging_prefixes: list[str]) -> None:
-    """Confine DuckDB replacement scans (``FROM '<path or URL>'``) to staging."""
-    for table in stmt.find_all(exp.Table):
-        ident = table.this
-        if not (isinstance(ident, exp.Identifier) and ident.quoted):
-            continue
-        name = ident.name
-        if not _looks_like_a_path(name):
-            continue
-        if not _is_under_staging(name, staging_prefixes):
-            raise StatementNotAllowed(
-                f"Reading directly from a path may only target the staging prefix, not {name!r}",
-                "read_path",
-            )
+def _has_allowed_scheme(path: str) -> bool:
+    scheme, sep, _ = path.partition("://")
+    return bool(sep) and scheme.lower() in _ALLOWED_URL_SCHEMES
 
 
-def _check_file_functions(stmt: exp.Expression, staging_prefixes: list[str]) -> None:
+def _table_path(table: exp.Table) -> str | None:
+    """The file a relation names for DuckDB's replacement scan, else ``None``."""
+    ident = table.this
+    if not isinstance(ident, exp.Identifier):
+        return None
+    if ident.quoted:
+        return ident.name if _looks_like_a_path(ident.name) else None
+    parts = [part for part in (table.catalog, table.db, table.name) if part]
+    if len(parts) > 1 and table.name.lower() in _FILE_LIKE_EXTENSIONS:
+        return ".".join(parts)
+    return None
+
+
+def _file_read_sites(stmt: exp.Expression) -> Iterator[tuple[str, str | None]]:
+    """Every place ``stmt`` reads a file or URL: ``(reader, path)``.
+
+    ``reader`` names the spelling for messages (``read_parquet()``, ``FROM`` for a
+    replacement scan, ``SUMMARIZE``); ``path`` is ``None`` when the argument is
+    not a string literal and so cannot be checked. One walk, so the session gate,
+    the scoped-catalog grant check and the query-path gate see the same reads.
+    """
     for node in stmt.walk():
         name: str | None = None
         if isinstance(node, exp.ReadParquet | exp.ReadCSV):
             name = "read_parquet" if isinstance(node, exp.ReadParquet) else "read_csv"
         elif function_name(node) in _FILE_FUNCTION_NAMES:
             name = function_name(node)
-        if name is None:
-            continue
-        paths = _paths_from_arg(_positional_path_arg(node))
-        if paths is None:
-            raise StatementNotAllowed(
-                f"{name}() path must be a string literal under the staging prefix",
-                "read_path",
-            )
-        for path in paths:
-            if not _is_under_staging(path, staging_prefixes):
-                raise StatementNotAllowed(
-                    f"{name}() may only read from the staging prefix, not {path!r}",
-                    "read_path",
-                )
+        if name is not None:
+            paths = _paths_from_arg(_positional_path_arg(node))
+            if paths is None:
+                yield f"{name}()", None
+            else:
+                for path in paths:
+                    yield f"{name}()", path
+        elif isinstance(node, exp.Table):
+            if (path := _table_path(node)) is not None:
+                yield "FROM", path
+        elif (
+            # sqlglot parses `SUMMARIZE '<file>'` as a string Literal, not a Table.
+            isinstance(node, exp.Summarize)
+            and isinstance(node.this, exp.Literal)
+            and node.this.is_string
+        ):
+            yield "SUMMARIZE", node.this.this
 
 
 def check_file_reads(stmt: exp.Expression, staging_prefixes: list[str]) -> None:
@@ -227,8 +282,80 @@ def check_file_reads(stmt: exp.Expression, staging_prefixes: list[str]) -> None:
     Shared with the grant check, which applies it with no prefixes at all in a
     workspace holding a scoped catalog.
     """
-    _check_file_functions(stmt, staging_prefixes)
-    _check_replacement_scans(stmt, staging_prefixes)
+    for reader, path in _file_read_sites(stmt):
+        if path is None:
+            raise StatementNotAllowed(
+                f"{reader} path must be a string literal under the staging prefix",
+                "read_path",
+            )
+        if not _is_under_staging(path, staging_prefixes):
+            raise StatementNotAllowed(_staging_detail(reader, path), "read_path")
+
+
+def _staging_detail(reader: str, path: str) -> str:
+    if reader == "FROM":
+        return f"Reading directly from a path may only target the staging prefix, not {path!r}"
+    return f"{reader} may only read from the staging prefix, not {path!r}"
+
+
+def _query_path_denial(path: str) -> StatementNotAllowed:
+    return StatementNotAllowed(
+        f"Reading {path!r} is not permitted: a query reads files by path only over a URL "
+        "(s3://, https://, abfss://, ...), never from the agent's own disk. A SQL session "
+        "may also read its staging prefix.",
+        "read_path",
+    )
+
+
+def check_query_path_reads(stmt: exp.Expression) -> None:
+    """Raise ``StatementNotAllowed`` if ``stmt`` reads anything but a network URL.
+
+    The single-shot query path's file-read rule: documented as limited to what the
+    agent's network can reach, so a filesystem path in any spelling is refused in
+    every workspace. A statement sqlglot could only keep as a raw ``Command`` is
+    checked lexically, since its reads are invisible to the walk.
+    """
+    if isinstance(stmt, exp.Command):
+        check_query_path_reads_lexically(stmt.sql(dialect="duckdb"))
+        return
+    for reader, path in _file_read_sites(stmt):
+        if path is None:
+            raise StatementNotAllowed(
+                f"{reader} path must be a string literal URL (s3://, https://, ...)",
+                "read_path",
+            )
+        if not _has_allowed_scheme(path):
+            raise _query_path_denial(path)
+
+
+_QUOTED_RELATION = re.compile(
+    r"""\b(?:from|join|summarize|describe)\s+(['"])(.*?)\1""", re.IGNORECASE | re.DOTALL
+)
+_DOTTED_RELATION = re.compile(r"\b(?:from|join)\s+([\w.]+)", re.I)
+
+
+def check_query_path_reads_lexically(sql: str) -> None:
+    """The query-path file-read rule for SQL sqlglot cannot model.
+
+    Over-matches on purpose, like ``sql_denylist``'s lexical fallback: any file
+    reader call is refused, because its argument cannot be verified.
+    """
+    lowered = sql.lower()
+    for name in sorted(_FILE_FUNCTION_NAMES):
+        if re.search(rf'\b{name}\b"?\s*\(', lowered):
+            raise StatementNotAllowed(
+                f"{name}() cannot be checked in a statement that does not parse here; "
+                "rewrite it so its path can be verified",
+                "read_path",
+            )
+    for match in _QUOTED_RELATION.finditer(sql):
+        path = match.group(2)
+        if _looks_like_a_path(path) and not _has_allowed_scheme(path):
+            raise _query_path_denial(path)
+    for match in _DOTTED_RELATION.finditer(sql):
+        parts = match.group(1).split(".")
+        if len(parts) > 1 and parts[-1].lower() in _FILE_LIKE_EXTENSIONS:
+            raise _query_path_denial(match.group(1))
 
 
 def _check_set(stmt: exp.Set) -> None:

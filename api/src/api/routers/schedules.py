@@ -46,15 +46,32 @@ def _validate_cron_or_422(expr: str) -> None:
         ) from exc
 
 
-async def _assert_schedulable_or_422(db: AsyncSession, saved_query_id: uuid.UUID) -> None:
+async def _saved_query_in_workspace_or_422(
+    db: AsyncSession, workspace_id: uuid.UUID, saved_query_id: uuid.UUID
+) -> SavedQuery:
+    """The saved query a schedule runs, which must belong to the schedule's workspace.
+
+    The scheduler runs it with the workspace's grants and catalogs, so a query
+    from anywhere else would run where its author never put it.
+    """
+    saved = await db.get(SavedQuery, saved_query_id)
+    if saved is None or saved.workspace_id != workspace_id:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={
+                "error": "saved_query_not_found",
+                "detail": "No saved query with that id in this workspace",
+            },
+        )
+    return saved
+
+
+def _assert_schedulable_or_422(saved: SavedQuery) -> None:
     """Refuse up front SQL the scheduler would refuse on every run.
 
     Only feedback: the scheduler checks again each run, because the saved SQL
     can change after the schedule is made.
     """
-    saved = await db.get(SavedQuery, saved_query_id)
-    if saved is None:
-        return
     try:
         assert_allowed(saved.sql)
     except SQLNotAllowed as exc:
@@ -115,13 +132,15 @@ async def create_schedule(
 ) -> Schedule:
     """Schedule a job on a cron expression. Requires `writer`.
 
-    422 for an unparseable cron. You may only point a schedule at an agent you
+    422 for an unparseable cron, or a saved query that is not in this workspace.
+    You may only point a schedule at an agent you
     could run on yourself, and that check runs again at dispatch against the
     creator -- so revoking their access stops the runs too."""
     workspace = await _require_workspace(db, ws, user, min_role="writer")
     _validate_cron_or_422(body.cron)
+    saved = await _saved_query_in_workspace_or_422(db, workspace.id, body.saved_query_id)
     if body.enabled:
-        await _assert_schedulable_or_422(db, body.saved_query_id)
+        _assert_schedulable_or_422(saved)
     # You may only point a schedule at an agent you could run on yourself. This is
     # the fast feedback path; the same check runs again at dispatch against the
     # schedule's creator, so revoking access later stops the runs too.
@@ -172,7 +191,8 @@ async def update_schedule(
     if "agent_id" in fields:
         await assert_can_assign_agent(db, user, fields["agent_id"], workspace=workspace)
     if fields.get("enabled") and schedule.saved_query_id is not None:
-        await _assert_schedulable_or_422(db, schedule.saved_query_id)
+        saved = await _saved_query_in_workspace_or_422(db, workspace.id, schedule.saved_query_id)
+        _assert_schedulable_or_422(saved)
     for key, value in fields.items():
         setattr(schedule, key, value)
     # Recompute the next run when the cadence changes or the schedule is (re)enabled.

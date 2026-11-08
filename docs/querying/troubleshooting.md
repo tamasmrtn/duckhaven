@@ -19,6 +19,17 @@ before reaching an agent, with **422** `sql_not_allowed`.
 query's plan, run it and open its [profile](query-profiles.md). Session-level commands such as `USE` and `SET timezone`
 work only in a [SQL session](sql-sessions.md).
 
+## "Reading '⟨path⟩' is not permitted: a query reads files by path only over a URL …"
+
+**What it means.** The query reads a file by a filesystem path, absolute or relative, or by a `file://` URL: in
+`read_parquet(…)`, `read_csv(…)`, a quoted name in `FROM`, or `SUMMARIZE`. A query reads files by path only over a
+network URL such as `s3://` or `https://`, so it was refused before reaching an agent, with **422** `sql_not_allowed`.
+
+**What to do.** Put the file in object storage and read it by its URL, or load it into a table. A
+[SQL session](sql-sessions.md) can also read files it uploads to its
+[staging prefix](../reference/sql-sessions-api.md#staging-files). The allowed schemes are in
+[SQL support](../reference/sql-support.md#allowed-statements).
+
 ## "… is not permitted" in a SQL session
 
 **What it means.** A session statement broke the [session policy](sql-sessions.md#statement-policy), with **422**

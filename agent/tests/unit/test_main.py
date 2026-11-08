@@ -49,3 +49,65 @@ def test_use_writable_workdir_enables_relative_dir_writes(tmp_path: Path) -> Non
     finally:
         os.chdir(original_cwd)
         read_only.chmod(0o755)
+
+
+# ── session token location ───────────────────────────────────────────────────
+
+
+def test_session_token_defaults_to_the_results_dir(tmp_path: Path) -> None:
+    from agent.main import _session_token_path
+
+    assert _session_token_path("", tmp_path) == tmp_path / ".session-token"
+
+
+def test_a_token_at_the_default_location_moves_to_the_configured_path(tmp_path: Path) -> None:
+    """An upgraded agent keeps its identity, and no copy stays beside the results."""
+    from agent.main import _session_token_path
+
+    results = tmp_path / "results"
+    results.mkdir()
+    (results / ".session-token").write_text("dh_sess_abc\n")
+    configured = tmp_path / "state" / "session-token"
+
+    assert _session_token_path(str(configured), results) == configured
+    assert configured.read_text() == "dh_sess_abc"
+    assert configured.stat().st_mode & 0o777 == 0o600
+    assert not (results / ".session-token").exists()
+
+    # Once moved, a restart leaves it where it is.
+    assert _session_token_path(str(configured), results) == configured
+    assert configured.read_text() == "dh_sess_abc"
+
+
+def test_a_token_already_at_the_configured_path_wins(tmp_path: Path) -> None:
+    from agent.main import _session_token_path
+
+    results = tmp_path / "results"
+    results.mkdir()
+    (results / ".session-token").write_text("dh_sess_old")
+    configured = tmp_path / "session-token"
+    configured.write_text("dh_sess_new")
+
+    assert _session_token_path(str(configured), results) == configured
+    assert configured.read_text() == "dh_sess_new"
+    assert not (results / ".session-token").exists()
+
+
+def test_an_unwritable_configured_path_keeps_the_token_where_it_is(tmp_path: Path) -> None:
+    """An older image without the token directory must not lose its identity."""
+    from agent.main import _session_token_path
+
+    if os.geteuid() == 0:
+        pytest.skip("root ignores directory permissions")
+    results = tmp_path / "results"
+    results.mkdir()
+    legacy = results / ".session-token"
+    legacy.write_text("dh_sess_abc")
+    locked = tmp_path / "locked"
+    locked.mkdir()
+    locked.chmod(0o555)
+    try:
+        assert _session_token_path(str(locked / "session-token"), results) == legacy
+        assert legacy.read_text() == "dh_sess_abc"
+    finally:
+        locked.chmod(0o755)

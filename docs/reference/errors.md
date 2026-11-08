@@ -116,7 +116,7 @@ Each message has an entry in [Troubleshoot sign-in and access](../access/trouble
 | `saved_query_exists` | 409 | A saved query with that name exists (names ignore case). `details` has its `id` and `name`. |
 | `worksheet_conflict` | 409 | The worksheet changed elsewhere since your `base_version`. `details.current` has the latest version. |
 | `base_version_required` | 422 | Saving `sql` or `title` needs the `base_version` you edited. |
-| `saved_query_not_found`, `query_not_found` | 422 | A worksheet field names a saved query or query that is not in this workspace. |
+| `saved_query_not_found`, `query_not_found` | 422 | A worksheet field or a schedule names a saved query or query that is not in this workspace. |
 
 ## Semantic layer
 

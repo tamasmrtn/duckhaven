@@ -219,24 +219,27 @@ def check_statement(stmt: exp.Expression) -> None:
                 raise _deny_metadata(part)
 
 
-def check_sql(sql: str) -> None:
+def check_sql(sql: str) -> list[exp.Expression] | None:
     """Raise :class:`ForeignAccessDenied` if any statement in ``sql`` is denied.
 
-    For gates with no sqlglot AST of their own.
+    For gates with no sqlglot AST of their own. Returns the statements it parsed,
+    so the caller can run further checks on the same AST, or ``None`` when sqlglot
+    could not parse ``sql`` and the lexical check was used instead.
     """
     try:
         statements = sqlglot.parse(sql, read="duckdb")
     except Exception:  # noqa: BLE001 - unparseable falls back to the lexical check
         _check_lexically(sql)
-        return
+        return None
 
     parsed = [s for s in statements if s is not None]
     if not parsed:
         # Nothing parsed; DuckDB's own parse decides validity.
         _check_lexically(sql)
-        return
+        return None
     for stmt in parsed:
         check_statement(stmt)
+    return parsed
 
 
 def _check_lexically(sql: str) -> None:

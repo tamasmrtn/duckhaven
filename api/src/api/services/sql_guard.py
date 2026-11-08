@@ -12,6 +12,11 @@ a foreign database or DuckLake's internal metadata, and `CREATE SECRET` /
 `DROP SECRET` are refused: DuckDB types them as `CREATE` and `DROP`, but they
 manage storage credentials, which only the agent sets up.
 
+Files are readable by path only over a network URL (`s3://`, `https://`, ...),
+in every workspace: a filesystem path names the agent's own disk. The rule is
+`statement_policy.check_query_path_reads`, which walks the same file readers the
+session gate confines to its staging prefix.
+
 The control plane uses DuckDB *as a parser*: `duckdb.extract_statements`
 is purely lexical/syntactic — no execution, no storage, no extensions
 loaded. D1's intent ("control plane does not run DuckDB") is preserved
@@ -26,6 +31,11 @@ import re
 import duckdb
 
 from api.services.sql_denylist import ForeignAccessDenied, check_sql
+from api.services.statement_policy import (
+    StatementNotAllowed,
+    check_query_path_reads,
+    check_query_path_reads_lexically,
+)
 
 _ALLOWED_TYPES = {
     duckdb.StatementType.SELECT,
@@ -84,8 +94,17 @@ def assert_allowed(sql: str) -> None:
 
     # Re-raised as SQLNotAllowed to keep the router's 422 shape.
     try:
-        check_sql(sql)
+        parsed = check_sql(sql)
     except ForeignAccessDenied as exc:
+        raise SQLNotAllowed(str(exc)) from exc
+
+    try:
+        if parsed is None:
+            check_query_path_reads_lexically(sql)
+        else:
+            for stmt in parsed:
+                check_query_path_reads(stmt)
+    except StatementNotAllowed as exc:
         raise SQLNotAllowed(str(exc)) from exc
 
 

@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from api.deps import get_session_factory
 from api.models.agent import Agent
 from api.models.user import Credential
+from api.services.addresses import clean_host, clean_port, peer_address
 from api.services.agent_dispatch import claim_agent_owner, release_agent_owner
 from api.services.agent_presence import close_unfinished_run
 from api.services.agent_registry import registry
@@ -31,21 +32,6 @@ router = APIRouter()
 # How often a heartbeat refreshes the DB ``last_ping_at`` that proves cluster-wide
 # presence. Heartbeats arrive far more often; throttling avoids a write per beat.
 _PRESENCE_REFRESH_S = 30.0
-
-
-def _result_host(ws: WebSocket) -> str | None:
-    """The agent's reachable address for result fetches.
-
-    Behind a reverse proxy (Caddy in the HA topology) the socket peer is the
-    proxy, so the real agent address is the left-most ``X-Forwarded-For`` hop.
-    Falls back to the socket peer for a direct (single-node) connection.
-    """
-    forwarded_for = ws.headers.get("x-forwarded-for")
-    if forwarded_for:
-        first = forwarded_for.split(",", 1)[0].strip()
-        if first:
-            return first
-    return ws.client.host if ws.client else None
 
 
 async def _elastic_result_host(
@@ -168,17 +154,19 @@ async def agent_connect(
         token = frame.payload["token"]
         # Where the agent's result server is reachable, so services/query.proxy_rows
         # can fetch result Parquet. The agent advertises its result port in the auth
-        # frame; the host is the connection's peer address — except behind a reverse
-        # proxy / load balancer (the HA topology dials the API through Caddy), where
-        # the peer is the proxy. There the agent's real address is the left-most
-        # X-Forwarded-For hop, mirroring how the add-agent dial URL trusts
-        # X-Forwarded-* (routers/agents._agent_dial_url).
+        # frame; the host is the connection's peer address (services/addresses
+        # .peer_address, which reads X-Forwarded-For only behind a trusted proxy).
         # An agent whose result server is reached at a different address than its
-        # socket peer advertises it explicitly; otherwise the peer/X-Forwarded-For hop
-        # is used. Elastic agents fall between the two: see _resolve_result_host.
-        advertised_host = frame.payload.get("result_host")
+        # socket peer advertises a bare host explicitly; anything else it advertises
+        # is ignored. Elastic agents fall between the two: see _elastic_result_host.
+        advertised = frame.payload.get("result_host")
+        advertised_host = clean_host(advertised)
+        if advertised and advertised_host is None:
+            logger.warning("Ignoring advertised result_host %r: not a bare host", advertised)
         result_port = frame.payload.get("result_port")
-        result_port_int = int(result_port) if result_port is not None else None
+        result_port_int = clean_port(result_port)
+        if result_port is not None and result_port_int is None:
+            logger.warning("Ignoring advertised result_port %r: not a port", result_port)
 
         # The handshake runs in a single short-lived session; the connection is
         # returned to the pool before we enter the (potentially hours-long) loop.
@@ -210,7 +198,7 @@ async def agent_connect(
                 # fills it in when the address is first needed.
                 result_host = elastic_host
             else:
-                result_host = _result_host(ws)
+                result_host = peer_address(ws)
 
             if cred.kind == "agent_session":
                 # Re-authentication: rebind the existing agent row instead of

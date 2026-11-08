@@ -46,6 +46,7 @@ from api.models.catalog import Catalog
 from api.models.query import Query
 from api.models.result_cache import ResultCacheEntry
 from api.models.workspace import Workspace
+from api.services.addresses import result_url
 from api.services.catalog_backends import CatalogBackendError, TableVersion, backend_for
 from api.services.catalog_refs import statement_catalogs
 from api.services.result_cache.eligibility import Ineligible, TableRef, analyze, resolve
@@ -273,10 +274,10 @@ async def _agent_result_available(db: AsyncSession, entry: ResultCacheEntry) -> 
     if entry.agent_id is None or not await is_agent_connected(db, entry.agent_id):
         return False
     agent = await db.get(Agent, entry.agent_id)
-    if agent is None or agent.result_host is None or agent.result_port is None:
+    url = result_url(agent, entry.source_query_id) if agent is not None else None
+    if agent is None or url is None:
         return False
     token = await agent_session_token(db, agent.id)
-    url = f"http://{agent.result_host}:{agent.result_port}/results/{entry.source_query_id}.parquet"
     try:
         async with httpx.AsyncClient(timeout=settings.result_cache_lookup_timeout_s) as client:
             resp = await client.head(url, headers={"Authorization": f"Bearer {token}"})

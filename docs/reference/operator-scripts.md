@@ -47,6 +47,10 @@ Backup written to /mnt/nas/duckhaven/polaris_20261019_031500.sql.gz
 |---|---|---|
 | `DUCKHAVEN_BACKUP_DIR` | `/var/duckhaven/backups` | Where the dumps go. Use a separate disk or NAS in production |
 
+The dumps are readable by their owner only (mode `0600`) and the directory is limited to its owner (`0700`), whatever
+the caller's umask. When the directory's mode cannot be changed, as on some NAS mounts, the script prints a warning and
+writes the dumps anyway.
+
 With a `ducklake` database it first prints a reminder to snapshot object storage at the same moment, because a
 DuckLake catalog's metadata and data can otherwise be restored to different points in time. A systemd timer that runs
 the script ships under `deploy/systemd/`. See [Backup & restore](../deployment/backup-restore.md) for restoring.

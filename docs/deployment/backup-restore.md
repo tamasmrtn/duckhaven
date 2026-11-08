@@ -28,15 +28,19 @@ tools.
 
 ## Back up the databases
 
-From the stack's directory, dump each database:
+From the stack's directory, dump each database. A dump holds every row and every stored credential, so `umask 077`
+makes the files readable by you only:
 
 ```bash
+umask 077
 docker compose exec -T postgres pg_dump -U duckhaven duckhaven | gzip > duckhaven-$(date +%F).sql.gz
 docker compose exec -T postgres pg_dump -U duckhaven polaris | gzip > polaris-$(date +%F).sql.gz
 docker compose exec -T postgres pg_dump -U duckhaven ducklake | gzip > ducklake-$(date +%F).sql.gz
 ```
 
-Copy the files off the host. A backup on the same disk as the data does not survive that disk.
+Copy the files off the host. A backup on the same disk as the data does not survive that disk. Encrypt the copy that
+leaves the host; `gpg --symmetric --cipher-algo AES256 duckhaven-$(date +%F).sql.gz` writes an encrypted `.gpg` file
+next to it and asks for a passphrase.
 
 ## Back up the secret key
 
@@ -44,8 +48,11 @@ Copy the files off the host. A backup on the same disk as the data does not surv
 
 ```bash
 docker run --rm -v deploy_api_data:/data -v "$PWD":/out alpine \
-    tar czf /out/duckhaven-api-data-$(date +%F).tgz -C /data .
+    sh -c "umask 077 && tar czf /out/duckhaven-api-data-$(date +%F).tgz -C /data ."
 ```
+
+The archive holds the key that decrypts every stored credential. It is written readable by root only; treat its
+copies like the database dumps.
 
 Replace `deploy_api_data` with the name `docker volume ls` shows if your compose project is not called `deploy`. There
 is no separate secrets volume; naming one creates an empty volume and archives nothing.
@@ -63,7 +70,11 @@ sudo systemctl enable --now duckhaven-backup.timer
 systemctl list-timers duckhaven-backup.timer
 ```
 
-Point `DUCKHAVEN_BACKUP_DIR` at a second disk or a NAS mount; it defaults to `/var/duckhaven/backups`.
+Point `DUCKHAVEN_BACKUP_DIR` at a second disk or a NAS mount; it defaults to `/var/duckhaven/backups`. The script
+writes each dump readable by its owner only, root under the shipped unit, and limits the directory to its owner, which
+also covers dumps already in it. A NAS mount that does not keep Unix modes, such as CIFS, makes the script print a
+warning, and the mount options decide who can read the dumps: mount it owner-only, for example with
+`file_mode=0600,dir_mode=0700`.
 
 ## Restore
 

@@ -188,7 +188,8 @@ async def _finish(sessions, fake_polaris, query_id: str, *, result_bytes: int = 
         },
     )
     async with sessions() as db:
-        await query_service.handle_agent_frame(db, frame, fake_polaris)
+        agent_id = (await db.get(Query, uuid.UUID(query_id))).agent_id
+        await query_service.handle_agent_frame(db, frame, fake_polaris, agent_id=agent_id)
     await result_cache.drain_admissions()
 
 

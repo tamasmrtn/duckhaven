@@ -1001,7 +1001,7 @@ async def test_explicit_close_records_the_client_reason(
         return True
 
     monkeypatch.setattr(session_service, "dispatch_close_session", fake_close)
-    session_id = session.id
+    session_id, agent_id = session.id, agent.id
     await authed_client.delete(f"/sql/sessions/{session_id}")
     # The request ran on its own DB session; drop this one's cached copy so the
     # frame handler below sees the committed `closing` status.
@@ -1011,6 +1011,7 @@ async def test_explicit_close_records_the_client_reason(
     await session_service.handle_session_frame(
         db_session,
         Frame(type=FrameType.SESSION_CLOSED, payload={"session_id": str(session_id)}),
+        agent_id=agent_id,
     )
     reloaded = await db_session.get(SqlSession, session_id)
     assert reloaded.status == "closed"

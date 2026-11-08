@@ -57,8 +57,12 @@ def _sample(**overrides) -> dict:
 
 
 async def _make_query(db, *, origin: str | None) -> Query:
+    agent = Agent(name="runner", status="healthy")
+    db.add(agent)
+    await db.flush()
     q = Query(
         workspace_id=uuid.uuid4(),
+        agent_id=agent.id,
         sql="SELECT 1",
         status="running",
         origin=origin,
@@ -68,6 +72,13 @@ async def _make_query(db, *, origin: str | None) -> Query:
     await db.commit()
     await db.refresh(q)
     return q
+
+
+async def _apply(db, frame: Frame) -> None:
+    """Apply ``frame`` as the agent its query was dispatched to."""
+    row = await db.get(Query, uuid.UUID(frame.payload["query_id"]))
+    assert row is not None and row.agent_id is not None, "dispatch the row to an agent first"
+    await query_service.handle_agent_frame(db, frame, agent_id=row.agent_id)
 
 
 async def _done_frame(query_id, *, status="done", duration_ms=1200, result_bytes=4096) -> Frame:
@@ -110,7 +121,7 @@ async def test_terminal_counter_and_histograms(db_session):
     bytes_before = _value("duckhaven_query_result_bytes_count", {"replica_id": RID}) or 0
 
     query = await _make_query(db_session, origin=None)
-    await query_service.handle_agent_frame(db_session, await _done_frame(query.id))
+    await _apply(db_session, await _done_frame(query.id))
 
     assert _value("duckhaven_queries_total", {"replica_id": RID, "status": "done"}) == before + 1
     assert _value("duckhaven_query_duration_seconds_count", {"replica_id": RID}) == dur_before + 1
@@ -122,7 +133,7 @@ async def test_failed_query_counts_but_skips_histograms(db_session):
     dur_before = _value("duckhaven_query_duration_seconds_count", {"replica_id": RID}) or 0
 
     query = await _make_query(db_session, origin=None)
-    await query_service.handle_agent_frame(db_session, await _done_frame(query.id, status="failed"))
+    await _apply(db_session, await _done_frame(query.id, status="failed"))
 
     assert _value("duckhaven_queries_total", {"replica_id": RID, "status": "failed"}) == before + 1
     # Duration/result histograms only observe successful queries. Both sides are
@@ -141,7 +152,7 @@ async def test_failures_are_counted_by_cause(db_session):
     before = _value("duckhaven_query_failures_total", {"replica_id": RID, "reason": "sql_error"})
     frame = await _done_frame(q.id, status="failed")
     frame.payload["error"] = "Catalog Error: Table with name nope does not exist!"
-    await query_service.handle_agent_frame(db_session, frame)
+    await _apply(db_session, frame)
     after = _value("duckhaven_query_failures_total", {"replica_id": RID, "reason": "sql_error"})
     assert (after or 0) - (before or 0) == 1
 
@@ -154,7 +165,7 @@ async def test_internal_queries_excluded(db_session):
     label = {"replica_id": RID, "status": "done"}
     before = _value("duckhaven_queries_total", label) or 0
     query = await _make_query(db_session, origin="maintenance")
-    await query_service.handle_agent_frame(db_session, await _done_frame(query.id))
+    await _apply(db_session, await _done_frame(query.id))
     assert (_value("duckhaven_queries_total", label) or 0) == before
 
 
@@ -326,7 +337,7 @@ async def test_queue_wait_recorded_on_first_running_transition(db_session):
     # Force the query back to "queued" so the PROGRESS frame is the first transition.
     query.status = "queued"
     await db_session.commit()
-    await query_service.handle_agent_frame(
+    await _apply(
         db_session,
         Frame(type=FrameType.QUERY_PROGRESS, payload={"query_id": str(query.id), "stage": "scan"}),
     )
@@ -339,9 +350,9 @@ async def test_queue_wait_is_recorded_once_per_query(db_session):
     query.status = "queued"
     await db_session.commit()
     frame = Frame(type=FrameType.QUERY_PROGRESS, payload={"query_id": str(query.id)})
-    await query_service.handle_agent_frame(db_session, frame)
+    await _apply(db_session, frame)
     before = _value("duckhaven_query_queue_wait_seconds_count", {"replica_id": RID}) or 0
-    await query_service.handle_agent_frame(db_session, frame)
+    await _apply(db_session, frame)
     assert _value("duckhaven_query_queue_wait_seconds_count", {"replica_id": RID}) == before
 
 
@@ -351,7 +362,7 @@ async def test_queue_wait_is_not_recorded_for_a_session_statement(db_session):
     query = await _make_query(db_session, origin="session")
     query.status = "queued"
     await db_session.commit()
-    await query_service.handle_agent_frame(
+    await _apply(
         db_session,
         Frame(type=FrameType.QUERY_PROGRESS, payload={"query_id": str(query.id)}),
     )
@@ -364,7 +375,7 @@ async def test_queue_rejection_counted(db_session):
         or 0
     )
     query = await _make_query(db_session, origin=None)
-    await query_service.handle_agent_frame(
+    await _apply(
         db_session,
         Frame(
             type=FrameType.QUERY_DONE,
@@ -389,7 +400,7 @@ async def test_ordinary_failure_is_not_a_queue_rejection(db_session):
         or 0
     )
     query = await _make_query(db_session, origin=None)
-    await query_service.handle_agent_frame(
+    await _apply(
         db_session,
         Frame(
             type=FrameType.QUERY_DONE,

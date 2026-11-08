@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from api.config import settings
 from api.models.agent import Agent
+from api.models.query import Query
 from api.models.result_cache import ResultCacheEntry
 from api.models.sql_session import SqlSession
 from api.models.user import User
@@ -265,8 +266,9 @@ async def _done(sessions, fake_polaris, query_id: str, *, context=CONTEXT, statu
     if context is not None:
         payload["session_context"] = context
     async with sessions() as db:
+        agent_id = (await db.get(Query, uuid.UUID(query_id))).agent_id
         await query_service.handle_agent_frame(
-            db, Frame(type=FrameType.QUERY_DONE, payload=payload), fake_polaris
+            db, Frame(type=FrameType.QUERY_DONE, payload=payload), fake_polaris, agent_id=agent_id
         )
     await result_cache.drain_admissions()
 

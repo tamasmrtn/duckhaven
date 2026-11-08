@@ -486,6 +486,20 @@ async def test_ws_frame_error_does_not_break_next_frame(ws_client, db_engine):
         assert agent.capabilities == caps
 
 
+async def _dispatch_to(factory, query_id, auth_ok: str) -> None:
+    """Bind the row to the agent that just authenticated, as dispatch does."""
+    import uuid
+
+    import sqlalchemy as sa
+
+    from api.models.query import Query
+
+    agent_id = uuid.UUID(json.loads(auth_ok)["payload"]["agent_id"])
+    async with factory() as db:
+        await db.execute(sa.update(Query).where(Query.id == query_id).values(agent_id=agent_id))
+        await db.commit()
+
+
 async def test_ws_query_done_visible_to_separate_session(ws_client, db_engine):
     """QUERY_DONE applied in the handler's per-frame session is committed and so
     visible to a separate session (the run_sync_query poll contract)."""
@@ -523,7 +537,7 @@ async def test_ws_query_done_visible_to_separate_session(ws_client, db_engine):
             await ws.send_text(
                 json.dumps({"type": "auth", "payload": {"token": token, "result_port": 8001}})
             )
-            await asyncio.wait_for(ws.receive_text(), timeout=5.0)
+            await _dispatch_to(factory, query_id, await asyncio.wait_for(ws.receive_text(), 5.0))
 
             await ws.send_text(
                 json.dumps(
@@ -583,7 +597,7 @@ async def test_ws_ack_and_progress_are_visible_to_separate_session(ws_client, db
             await ws.send_text(
                 json.dumps({"type": "auth", "payload": {"token": token, "result_port": 8001}})
             )
-            await asyncio.wait_for(ws.receive_text(), timeout=5.0)
+            await _dispatch_to(factory, query_id, await asyncio.wait_for(ws.receive_text(), 5.0))
 
             payload = {"query_id": str(query_id)}
             await ws.send_text(json.dumps({"type": "statement_ack", "payload": payload}))
@@ -1250,3 +1264,48 @@ async def test_ws_catalog_request_is_answered_on_the_same_socket(ws_client, db_e
     assert answer["type"] == "catalog_response"
     assert answer["payload"]["request_id"] == "r1"
     assert answer["payload"]["catalog"]["slug"] == catalog.slug
+
+
+async def test_ws_query_done_for_another_agents_query_changes_nothing(ws_client, db_engine):
+    """The socket's own agent is what a frame is checked against, not the payload."""
+    import asyncio
+
+    from httpx import AsyncClient
+    from httpx_ws import aconnect_ws
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from api.models.agent import Agent
+    from api.models.query import Query
+    from api.models.workspace import Workspace
+
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+    token = "dh_boot_foreign"
+    await _add_bootstrap(factory, token)
+    async with factory() as db:
+        ws_row = Workspace(slug="fq-ws", name="FQ WS")
+        other = Agent(name="other", status="healthy")
+        db.add_all([ws_row, other])
+        await db.flush()
+        query = Query(workspace_id=ws_row.id, agent_id=other.id, sql="SELECT 1", status="running")
+        db.add(query)
+        await db.commit()
+        query_id = query.id
+
+    async with AsyncClient(transport=ws_client, base_url="http://test") as c:
+        async with aconnect_ws("http://test/agents/connect", c) as ws:
+            await ws.send_text(
+                json.dumps({"type": "auth", "payload": {"token": token, "result_port": 8001}})
+            )
+            await asyncio.wait_for(ws.receive_text(), timeout=5.0)
+            await ws.send_text(
+                json.dumps(
+                    {
+                        "type": "query_done",
+                        "payload": {"query_id": str(query_id), "status": "done", "row_count": 7},
+                    }
+                )
+            )
+            await asyncio.sleep(0.2)
+            async with factory() as db:
+                row = await db.get(Query, query_id)
+                assert (row.status, row.row_count) == ("running", None)

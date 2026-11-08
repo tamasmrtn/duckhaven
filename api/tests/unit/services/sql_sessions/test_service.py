@@ -41,7 +41,7 @@ async def test_session_closed_with_reason_closes_open_row(db_session, reason):
         type=FrameType.SESSION_CLOSED,
         payload={"session_id": str(session.id), "status": "closed", "reason": reason},
     )
-    await handle_session_frame(db_session, frame)
+    await handle_session_frame(db_session, frame, agent_id=session.agent_id)
 
     await db_session.refresh(session)
     assert session.status == "closed"
@@ -75,7 +75,9 @@ async def test_statement_ack_marks_the_statement_running(db_session):
     q = await _statement(db_session, session)
 
     await handle_statement_ack(
-        db_session, Frame(type=FrameType.STATEMENT_ACK, payload={"query_id": str(q.id)})
+        db_session,
+        Frame(type=FrameType.STATEMENT_ACK, payload={"query_id": str(q.id)}),
+        agent_id=q.agent_id,
     )
     await db_session.refresh(q)
     assert q.status == "running"
@@ -86,8 +88,8 @@ async def test_statement_ack_is_idempotent(db_session):
     q = await _statement(db_session, session)
     frame = Frame(type=FrameType.STATEMENT_ACK, payload={"query_id": str(q.id)})
 
-    await handle_statement_ack(db_session, frame)
-    await handle_statement_ack(db_session, frame)
+    await handle_statement_ack(db_session, frame, agent_id=q.agent_id)
+    await handle_statement_ack(db_session, frame, agent_id=q.agent_id)
     await db_session.refresh(q)
     assert q.status == "running"
 
@@ -99,7 +101,9 @@ async def test_statement_ack_never_resurrects_a_finished_statement(db_session):
     q = await _statement(db_session, session, status="done")
 
     await handle_statement_ack(
-        db_session, Frame(type=FrameType.STATEMENT_ACK, payload={"query_id": str(q.id)})
+        db_session,
+        Frame(type=FrameType.STATEMENT_ACK, payload={"query_id": str(q.id)}),
+        agent_id=q.agent_id,
     )
     await db_session.refresh(q)
     assert q.status == "done"
@@ -109,6 +113,7 @@ async def test_statement_ack_for_unknown_query_is_a_noop(db_session):
     await handle_statement_ack(
         db_session,
         Frame(type=FrameType.STATEMENT_ACK, payload={"query_id": str(uuid.uuid4())}),
+        agent_id=uuid.uuid4(),
     )
 
 
@@ -175,6 +180,7 @@ async def test_session_closed_resolves_in_flight_statements(db_session):
             type=FrameType.SESSION_CLOSED,
             payload={"session_id": str(session.id), "status": "closed"},
         ),
+        agent_id=session.agent_id,
     )
     await db_session.refresh(q)
     assert q.status == "failed"
@@ -539,3 +545,40 @@ async def test_await_query_done_returns_on_the_completion_event_not_the_poll(db_
 
     assert query.status == "done"
     assert elapsed < 0.4, f"woke on the poll grid, not the event ({elapsed:.3f}s)"
+
+
+# ── frames are bound to the agent that sent them ─────────────────────────────
+
+
+async def test_another_agents_statement_ack_changes_nothing(db_session):
+    session = await _open_session(db_session)
+    q = await _statement(db_session, session)
+
+    await handle_statement_ack(
+        db_session,
+        Frame(type=FrameType.STATEMENT_ACK, payload={"query_id": str(q.id)}),
+        agent_id=uuid.uuid4(),
+    )
+
+    await db_session.refresh(q)
+    assert q.status == "queued"
+
+
+@pytest.mark.parametrize(
+    ("frame_type", "status"),
+    [(FrameType.SESSION_CLOSED, "closed"), (FrameType.SESSION_OPENED, "failed")],
+)
+async def test_another_agents_session_frame_changes_nothing(db_session, frame_type, status):
+    session = await _open_session(db_session)
+    q = await _statement(db_session, session)
+
+    await handle_session_frame(
+        db_session,
+        Frame(type=frame_type, payload={"session_id": str(session.id), "status": status}),
+        agent_id=uuid.uuid4(),
+    )
+
+    await db_session.refresh(session)
+    await db_session.refresh(q)
+    assert session.status == "open"
+    assert q.status == "queued"

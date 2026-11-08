@@ -11,6 +11,7 @@ from fake_polaris import FakePolaris
 from httpx import AsyncClient
 from sqlalchemy import select
 
+from api.models.agent import Agent
 from api.models.catalog import Catalog
 from api.models.storage_backend import StorageBackend
 from api.models.table_metadata import TableMetadata
@@ -597,8 +598,12 @@ async def test_table_detail_surfaces_iceberg_metadata(
     fake_polaris.tables[(slug, "main", "events")].format_version = 2
 
     ws = (await db_session.execute(select(Workspace).where(Workspace.slug == slug))).scalar_one()
+    agent = Agent(name="runner", status="healthy")
+    db_session.add(agent)
+    await db_session.flush()
     query = Query(
         workspace_id=ws.id,
+        agent_id=agent.id,
         sql="SELECT * FROM main.events",
         status="running",
         started_at=datetime.now(UTC),
@@ -624,6 +629,7 @@ async def test_table_detail_surfaces_iceberg_metadata(
                 },
             },
         ),
+        agent_id=agent.id,
     )
 
     body = (

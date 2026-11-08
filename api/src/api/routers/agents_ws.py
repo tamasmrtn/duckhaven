@@ -429,21 +429,24 @@ async def agent_connect(
                         # one the lifespan owns, the same instance every request
                         # handler is given.
                         await handle_agent_frame(
-                            db, msg_frame, getattr(ws.app.state, "polaris_client", None)
+                            db,
+                            msg_frame,
+                            getattr(ws.app.state, "polaris_client", None),
+                            agent_id=agent_id,
                         )
 
                 elif msg_frame.type in (FrameType.SESSION_OPENED, FrameType.SESSION_CLOSED):
                     from api.services.sql_sessions.service import handle_session_frame
 
                     async with session_factory() as db:
-                        await handle_session_frame(db, msg_frame)
+                        await handle_session_frame(db, msg_frame, agent_id=agent_id)
 
                 elif msg_frame.type == FrameType.STATEMENT_ACK:
                     from api.services.sql_sessions.service import handle_statement_ack
 
                     async with session_factory() as db:
                         await _autocommit(db)
-                        await handle_statement_ack(db, msg_frame)
+                        await handle_statement_ack(db, msg_frame, agent_id=agent_id)
 
                 elif msg_frame.type == FrameType.CATALOG_REQUEST:
                     # A task, so a cold credential mint for the catalog cannot hold

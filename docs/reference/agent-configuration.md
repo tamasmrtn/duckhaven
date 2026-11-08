@@ -29,7 +29,7 @@ first column is checked by a unit test against the agent's settings, so the list
 | `RESULTS_DIR` | `/var/duckhaven-agent/results` | Where result files are written. Give each agent its own, on a persistent volume |
 | `RESULTS_HTTP_HOST` | `0.0.0.0` | Interface the result server listens on. It answers only requests that carry the agent's session credential |
 | `RESULTS_HTTP_PORT` | `8001` | Port the control plane reads results from |
-| `RESULT_ADVERTISE_HOST` | the connection's source address | The address the control plane uses to reach the result server. Set it when the agent is reached at a different address than it connects from, such as a public DNS name |
+| `RESULT_ADVERTISE_HOST` | the connection's source address | The address the control plane uses to reach the result server. Set it when the agent is reached at a different address than it connects from, such as a public DNS name. It must be a bare hostname or IP address, an IPv6 address in brackets, with no scheme, port or path; the control plane ignores any other value and logs a warning |
 | `RESULT_RETENTION_HOURS` | `24` | How long result files are kept. A file the [result cache](../querying/result-cache.md) serves is kept longer, until its entry expires |
 | `RETENTION_SWEEP_INTERVAL_S` | `3600` | How often expired result files are removed |
 | `RESULT_CACHE_MAX_BYTES` | `10737418240` (10 GiB) | Ceiling on result files kept past their retention for the result cache. Past it, the oldest go first and the cache misses for them |

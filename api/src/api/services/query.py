@@ -43,6 +43,7 @@ from api.schemas.query import RowsPageOut
 from api.services import agent_access
 from api.services import grants as grant_service
 from api.services import runtimes as runtime_service
+from api.services.addresses import result_url
 from api.services.agent_capabilities import agent_supports_catalog
 from api.services.agent_dispatch import (
     connected_agent_ids,
@@ -551,7 +552,12 @@ async def proxy_rows(
     row_limit: int | None = None,
     token: str | None = None,
 ) -> httpx.Response:
-    url = f"http://{agent.result_host}:{agent.result_port}/results/{query.id}.parquet"
+    url = result_url(agent, query.id)
+    if url is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Agent result endpoint unavailable",
+        )
     params: dict[str, int] = {}
     if row_offset is not None:
         params["row_offset"] = row_offset
@@ -627,10 +633,9 @@ class ResultSource:
     @property
     def url(self) -> str:
         assert self.agent is not None
-        return (
-            f"http://{self.agent.result_host}:{self.agent.result_port}"
-            f"/results/{self.query.id}.parquet"
-        )
+        url = result_url(self.agent, self.query.id)
+        assert url is not None  # resolve_result_source returns only a usable agent
+        return url
 
 
 async def resolve_result_source(db: AsyncSession, query: Query) -> ResultSource:
@@ -676,7 +681,7 @@ async def resolve_result_source(db: AsyncSession, query: Query) -> ResultSource:
         await record_activity(db, agent.id)
         await db.commit()
 
-    if agent is None or agent.result_host is None or agent.result_port is None:
+    if agent is None or result_url(agent, query.id) is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Agent result endpoint unavailable",

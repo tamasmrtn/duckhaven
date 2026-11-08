@@ -129,6 +129,13 @@ resource "azurerm_container_app" "api" {
         value = "true"
       }
 
+      # The app is reachable only through its ingress, which sets X-Forwarded-For, so
+      # the API takes client and static-agent addresses from it.
+      env {
+        name  = "TRUSTED_PROXY_INGRESS"
+        value = "true"
+      }
+
       # Gates the one-time first-admin creation. Injected for the same reason as
       # SECRET_KEY: /var/duckhaven is ephemeral, so the entrypoint's self-generated
       # token would change on every replica replacement -- which is exactly what makes

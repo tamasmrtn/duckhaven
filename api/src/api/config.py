@@ -114,6 +114,11 @@ class Settings(BaseSettings):
     session_max_age_seconds: int = 86400 * 7
     cors_origins: list[str] = ["http://localhost:5173"]
     cookie_secure: bool = True
+    # Every request reaches the API through a reverse proxy that sets
+    # X-Forwarded-For, so the right-most hop is the address the proxy saw. Off,
+    # the header is ignored and the socket peer is the client's address: any
+    # client could otherwise name an address of its choosing.
+    trusted_proxy_ingress: bool = False
     # Directory of the built SPA, served at / when present (baked into the image).
     static_dir: Path = Path("/app/static")
     # File holding the one-shot first-admin setup token, written by

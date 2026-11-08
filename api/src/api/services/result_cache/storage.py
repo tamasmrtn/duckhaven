@@ -29,6 +29,7 @@ from api.metrics import record_result_cache_eviction
 from api.models.agent import Agent
 from api.models.query import Query
 from api.models.result_cache import ResultCacheEntry
+from api.services.addresses import result_url
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +47,7 @@ async def store(db: AsyncSession, query: Query) -> str | None:
     inline: bytes | None = None
     storage = AGENT
     if (query.result_bytes or 0) <= settings.result_cache_inline_max_bytes:
-        if agent.result_host is None or agent.result_port is None:
+        if result_url(agent, query.id) is None:
             return None
         token = await agent_session_token(db, agent.id)
         try:

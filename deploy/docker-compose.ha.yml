@@ -71,6 +71,10 @@ x-api-base: &api-base
     DEFAULT_RUNTIME: ${DEFAULT_RUNTIME:-1.5}
     AGENT_IMAGE_TAG: ${DUCKHAVEN_IMAGE_TAG:-latest}
     COOKIE_SECURE: ${COOKIE_SECURE:-false}
+    # Every request reaches the replicas through Caddy, which sets
+    # X-Forwarded-For, so the API takes the client's (and each agent's) address
+    # from it rather than from the socket peer, which is Caddy.
+    TRUSTED_PROXY_INGRESS: "true"
     # Shared secret guarding the private /internal dispatch endpoints between
     # replicas. Required for cross-replica agent dispatch to work.
     INTERNAL_API_SECRET: ${INTERNAL_API_SECRET:?set a shared INTERNAL_API_SECRET}

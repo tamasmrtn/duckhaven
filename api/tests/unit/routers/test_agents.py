@@ -1,38 +1,13 @@
 import json
 import uuid
 from datetime import UTC
-from types import SimpleNamespace
 
 import pytest
 from httpx import AsyncClient
 
 from api.models.agent import Agent
 from api.models.user import User
-from api.routers.agents_ws import _result_host
 from api.services.auth import hash_password
-
-
-def _fake_ws(*, xff: str | None, peer: str | None):
-    headers = {"x-forwarded-for": xff} if xff is not None else {}
-    client = SimpleNamespace(host=peer) if peer is not None else None
-    return SimpleNamespace(headers=headers, client=client)
-
-
-def test_result_host_prefers_forwarded_for():
-    """Behind a proxy the agent's real address is the left-most X-Forwarded-For
-    hop, not the socket peer (which is the load balancer)."""
-    ws = _fake_ws(xff="10.0.0.5, 172.30.0.10", peer="172.30.0.10")
-    assert _result_host(ws) == "10.0.0.5"
-
-
-def test_result_host_falls_back_to_peer_without_forwarded_for():
-    ws = _fake_ws(xff=None, peer="172.30.0.7")
-    assert _result_host(ws) == "172.30.0.7"
-
-
-def test_result_host_ignores_blank_forwarded_for():
-    ws = _fake_ws(xff="   ", peer="172.30.0.7")
-    assert _result_host(ws) == "172.30.0.7"
 
 
 @pytest.fixture
@@ -447,6 +422,86 @@ async def _add_bootstrap(factory, token: str) -> None:
             )
         )
         await db.commit()
+
+
+async def _registered_address(
+    ws_client, db_engine, *, payload: dict, headers: dict | None = None
+) -> tuple[str | None, int | None]:
+    """Register an agent with ``payload`` and return the result address stored for it."""
+    import asyncio
+
+    from httpx_ws import aconnect_ws
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+    token = f"dh_boot_{uuid.uuid4().hex}"
+    await _add_bootstrap(factory, token)
+    async with AsyncClient(transport=ws_client, base_url="http://test") as c:
+        async with aconnect_ws("http://test/agents/connect", c, headers=headers or {}) as ws:
+            await ws.send_text(json.dumps({"type": "auth", "payload": {"token": token, **payload}}))
+            ok = json.loads(await asyncio.wait_for(ws.receive_text(), timeout=5.0))
+    assert ok["type"] == "auth_ok"
+    async with factory() as db:
+        agent = await db.get(Agent, uuid.UUID(ok["payload"]["agent_id"]))
+        return agent.result_host, agent.result_port
+
+
+async def test_ws_stores_an_advertised_bare_host(ws_client, db_engine):
+    host, port = await _registered_address(
+        ws_client, db_engine, payload={"result_host": "agent-7.internal", "result_port": 8001}
+    )
+    assert (host, port) == ("agent-7.internal", 8001)
+
+
+@pytest.mark.parametrize(
+    "advertised",
+    [
+        "agent.example/path",
+        "agent.example?x=1",
+        "agent.example#x",
+        "user@agent.example",
+        "agent.example:9000",
+        "http://agent.example",
+        "agent example",
+    ],
+)
+async def test_ws_ignores_an_advertised_host_that_is_not_bare(ws_client, db_engine, advertised):
+    """Anything but a bare host is ignored, so the socket peer is stored instead."""
+    peer, _ = await _registered_address(ws_client, db_engine, payload={"result_port": 8001})
+    host, _ = await _registered_address(
+        ws_client, db_engine, payload={"result_host": advertised, "result_port": 8001}
+    )
+    assert host == peer
+
+
+@pytest.mark.parametrize("port", [0, 65536, "not-a-port", True])
+async def test_ws_ignores_an_advertised_port_that_is_not_a_port(ws_client, db_engine, port):
+    _, stored = await _registered_address(ws_client, db_engine, payload={"result_port": port})
+    assert stored is None
+
+
+async def test_ws_ignores_forwarded_for_without_a_trusted_proxy(ws_client, db_engine):
+    peer, _ = await _registered_address(ws_client, db_engine, payload={"result_port": 8001})
+    host, _ = await _registered_address(
+        ws_client,
+        db_engine,
+        payload={"result_port": 8001},
+        headers={"X-Forwarded-For": "10.9.9.9"},
+    )
+    assert host == peer != "10.9.9.9"
+
+
+async def test_ws_takes_the_proxy_hop_behind_a_trusted_proxy(ws_client, db_engine, monkeypatch):
+    from api.config import settings
+
+    monkeypatch.setattr(settings, "trusted_proxy_ingress", True)
+    host, _ = await _registered_address(
+        ws_client,
+        db_engine,
+        payload={"result_port": 8001},
+        headers={"X-Forwarded-For": "10.1.1.1, 10.9.9.9"},
+    )
+    assert host == "10.9.9.9"
 
 
 async def test_ws_frame_error_does_not_break_next_frame(ws_client, db_engine):

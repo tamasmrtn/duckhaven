@@ -127,6 +127,42 @@ class FakeWS:
         self.sent.append(json.loads(payload))
 
 
+async def _done_on_agent_at(db, host: str) -> Query:
+    workspace_id = await _workspace(db)
+    agent = Agent(name="a", status="healthy", result_host=host, result_port=8001)
+    db.add(agent)
+    await db.flush()
+    query = Query(
+        workspace_id=workspace_id, agent_id=agent.id, sql="SELECT 1", status="done", result_bytes=1
+    )
+    db.add(query)
+    await db.commit()
+    return query
+
+
+async def test_a_stored_host_that_is_not_bare_is_never_fetched(sessions, monkeypatch) -> None:
+    """Cache admission and revalidation read from the agent only at a bare host."""
+    from api.services import agent_dispatch
+    from api.services.result_cache.storage import store
+
+    requests: list[httpx.Request] = []
+    transport = httpx.MockTransport(lambda r: requests.append(r) or httpx.Response(200))
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(httpx, "AsyncClient", lambda *a, **kw: real_client(transport=transport))
+
+    async def connected(db, agent_id) -> bool:
+        return True
+
+    monkeypatch.setattr(agent_dispatch, "is_agent_connected", connected)
+
+    async with sessions() as db:
+        query = await _done_on_agent_at(db, "agent.example/path")
+        assert await store(db, query) is None
+        entry = ResultCacheEntry(agent_id=query.agent_id, source_query_id=query.id)
+        assert await result_cache._agent_result_available(db, entry) is False
+    assert requests == []
+
+
 def _parquet() -> bytes:
     fd, path = tempfile.mkstemp(suffix=".parquet")
     os.close(fd)

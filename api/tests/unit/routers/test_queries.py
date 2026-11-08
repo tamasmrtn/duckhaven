@@ -1467,6 +1467,60 @@ async def test_proxy_rows_sets_bearer_and_window(monkeypatch):
     assert seen["row_limit"] == "50"
 
 
+async def test_proxy_rows_refuses_a_stored_host_that_is_not_bare(monkeypatch):
+    """A stored result host that is not a bare host never becomes a request."""
+    from datetime import UTC, datetime
+
+    import httpx
+    from fastapi import HTTPException
+
+    from api.models.agent import Agent
+    from api.models.query import Query
+    from api.services import query as query_service
+
+    requests: list[httpx.Request] = []
+    transport = httpx.MockTransport(lambda r: requests.append(r) or httpx.Response(200))
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(
+        query_service.httpx, "AsyncClient", lambda *a, **kw: real_client(transport=transport)
+    )
+
+    agent = Agent(name="a", status="healthy", result_host="agent.example/path", result_port=8001)
+    query = Query(
+        workspace_id=uuid.uuid4(), sql="SELECT 1", status="done", started_at=datetime.now(UTC)
+    )
+    query.id = uuid.uuid4()
+
+    with pytest.raises(HTTPException) as exc:
+        await query_service.proxy_rows(agent, query, token="abc")
+    assert exc.value.status_code == 503
+    assert requests == []
+
+
+async def test_get_query_rows_with_a_stored_host_that_is_not_bare_is_unavailable(
+    authed_client: AsyncClient, workspace: Workspace, agent: Agent, db_session
+):
+    from datetime import UTC, datetime
+
+    from api.models.query import Query
+
+    agent.result_host = "agent.example?x=1"
+    agent.result_port = 8001
+    query = Query(
+        workspace_id=workspace.id,
+        agent_id=agent.id,
+        sql="SELECT 1",
+        status="done",
+        result_path="/tmp/fake.parquet",
+        started_at=datetime.now(UTC),
+    )
+    db_session.add_all([agent, query])
+    await db_session.commit()
+
+    resp = await authed_client.get(f"/queries/{query.id}/rows")
+    assert resp.status_code == 503
+
+
 async def test_cancel_query_agent_not_connected(
     authed_client: AsyncClient, workspace: Workspace, agent: Agent, db_session
 ):

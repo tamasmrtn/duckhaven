@@ -13,6 +13,9 @@ import re
 
 import httpx
 import pytest
+from sqlalchemy import select, update
+
+from api.models.user import User
 
 pytestmark = pytest.mark.integration
 
@@ -59,6 +62,11 @@ async def _sign_in(app_client, username: str) -> httpx.Response:
     )
 
 
+async def _account(db_session, email: str) -> User:
+    db_session.expire_all()
+    return (await db_session.scalars(select(User).where(User.email == email))).one()
+
+
 async def test_sso_login_provisions_admin_from_group(app_client, oidc_settings) -> None:
     cb = await _sign_in(app_client, "sso-admin")
     assert cb.status_code == 303
@@ -81,3 +89,38 @@ async def test_sso_user_without_group_is_plain_user(app_client, oidc_settings) -
     me = await app_client.get("/me")
     assert me.json()["role"] == "user"
     assert me.json()["permissions"] == []
+
+
+async def test_an_account_made_under_the_plain_oidc_name_is_relabelled(
+    app_client, db_session, oidc_settings
+) -> None:
+    """An account a provider created as plain `oidc` signs in as itself."""
+    assert (await _sign_in(app_client, "sso-user")).headers["location"] == "/"
+    account = await _account(db_session, "sso-user@duckhaven.test")
+    await db_session.execute(update(User).where(User.id == account.id).values(auth_provider="oidc"))
+    await db_session.commit()
+    app_client.cookies.clear()
+
+    cb = await _sign_in(app_client, "sso-user")
+    assert cb.headers["location"] == "/"
+    me = (await app_client.get("/me")).json()
+    assert (me["id"], me["auth_provider"]) == (str(account.id), "oidc:sso")
+
+
+async def test_an_account_another_provider_holds_is_not_signed_in_to(
+    app_client, db_session, oidc_settings
+) -> None:
+    """The same email and subject from this provider do not take the account over."""
+    await _sign_in(app_client, "sso-user")
+    account = await _account(db_session, "sso-user@duckhaven.test")
+    await db_session.execute(
+        update(User).where(User.id == account.id).values(auth_provider="oidc:other")
+    )
+    await db_session.commit()
+    app_client.cookies.clear()
+
+    cb = await _sign_in(app_client, "sso-user")
+    assert cb.headers["location"] == "/login?error=sso"
+    assert "session" not in app_client.cookies
+    after = await _account(db_session, "sso-user@duckhaven.test")
+    assert (after.auth_provider, after.external_subject) == ("oidc:other", account.external_subject)

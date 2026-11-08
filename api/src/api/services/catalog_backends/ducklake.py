@@ -40,6 +40,7 @@ from api.services.catalog_backends import (
     TableVersion,
     WriteContext,
 )
+from duckhaven_shared.sql import quote_ident as _quote
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from api.models.catalog import Catalog
@@ -219,11 +220,6 @@ def ducklake_role_password(catalog: Catalog) -> str:
 def new_role_password() -> str:
     """A fresh password for a catalog's PostgreSQL role."""
     return secrets.token_urlsafe(32)
-
-
-def _quote(identifier: str) -> str:
-    """Quote a SQL identifier, doubling any embedded quote."""
-    return '"' + identifier.replace('"', '""') + '"'
 
 
 class DuckLakeCatalogBackend:

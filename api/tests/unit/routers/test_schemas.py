@@ -735,6 +735,50 @@ async def test_sample_returns_rows(auth_client: AsyncClient, backend: StorageBac
     assert body["column_schema"] == [{"name": "id", "type": "INTEGER"}]
 
 
+async def test_sample_sql_names_a_quote_bearing_table_as_one_identifier(
+    auth_client: AsyncClient, backend: StorageBackend, monkeypatch
+):
+    """A table name holding `"` stays one identifier in the preview's SQL."""
+    import types
+    import uuid as uuidlib
+    from urllib.parse import quote
+
+    import duckdb
+
+    from api.models.query import Query
+    from api.services import query as query_service
+
+    slug = await _make_workspace(auth_client, backend, "alpha")
+    name = 'say "hi"'
+    created = await auth_client.post(
+        f"/workspaces/{slug}/catalogs/{slug}/schemas/main/tables",
+        json={"name": name, "columns": [{"name": "id", "type": "BIGINT"}]},
+    )
+    assert created.status_code < 300, created.text
+
+    seen: list[str] = []
+
+    async def fake_pick(db, workspace, *, principal_id=None):
+        return types.SimpleNamespace(id=uuidlib.uuid4())
+
+    async def fake_run(db, **kwargs):
+        seen.append(kwargs["sql"])
+        return Query(workspace_id=uuidlib.uuid4(), sql=kwargs["sql"], status="failed")
+
+    monkeypatch.setattr(query_service, "pick_agent_for", fake_pick)
+    monkeypatch.setattr(query_service, "run_sync_query", fake_run)
+
+    await auth_client.get(
+        f"/workspaces/{slug}/catalogs/{slug}/schemas/main/tables/{quote(name, safe='')}/sample"
+    )
+    assert len(seen) == 1
+    conn = duckdb.connect()
+    conn.execute(f"ATTACH ':memory:' AS \"{slug}\"")
+    conn.execute(f'CREATE TABLE "{slug}".main."say ""hi""" AS SELECT 7 AS id')
+    conn.execute(f'CREATE TABLE "{slug}".main.say AS SELECT 1 AS id')
+    assert conn.execute(seen[0]).fetchall() == [(7,)]
+
+
 async def test_drop_table_requires_writer(
     auth_client: AsyncClient, backend: StorageBackend, db_session
 ):

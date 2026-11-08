@@ -56,6 +56,7 @@ from api.services.workspace import (
     resolve_catalog,
     resolve_workspace_catalogs,
 )
+from duckhaven_shared.sql import quote_ident
 
 logger = logging.getLogger(__name__)
 
@@ -742,7 +743,10 @@ async def sample_table(
             fallback="No compatible agent is connected to preview this table.",
         )
 
-    sql = f'SELECT * FROM "{cat.slug}"."{schema}"."{table}" LIMIT {_SAMPLE_LIMIT}'
+    sql = (
+        f"SELECT * FROM {quote_ident(cat.slug)}.{quote_ident(schema)}.{quote_ident(table)}"
+        f" LIMIT {_SAMPLE_LIMIT}"
+    )
     query = await query_service.run_sync_query(
         db,
         workspace=workspace,

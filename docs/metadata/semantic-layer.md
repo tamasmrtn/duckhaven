@@ -129,6 +129,10 @@ Publishing validates first and is refused if anything is broken. Deprecated
 models stay readable — old links keep working — but are excluded from new
 answers.
 
+A `writer` authors drafts. Once a model is published or deprecated, changing it — renaming it, or adding, changing or
+removing a definition, a metric's status included — needs `owner`, like publishing does, because it changes what the
+assistant quotes. Anyone else gets `published_model`, and the web app shows the model without its edit controls.
+
 Imported models arrive as drafts. An import is a pipeline publishing, not a
 person deciding — so the model is the gate, and the definitions inside it become
 usable on that one decision rather than needing promoting one by one.

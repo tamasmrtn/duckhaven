@@ -187,11 +187,13 @@ async def agent_connect(
             # reconnect, or the single-use bootstrap token on its first
             # registration. We accept both kinds and branch on the credential's
             # kind below so one logical agent maps to one row across restarts and
-            # network blips.
+            # network blips. An expired credential is refused like an unknown one.
             result = await db.execute(
                 select(Credential).where(
                     Credential.token == token,
                     Credential.kind.in_(("agent_bootstrap", "agent_session")),
+                    (Credential.expires_at == None)  # noqa: E711
+                    | (Credential.expires_at > datetime.now(tz=UTC)),
                 )
             )
             cred = result.scalar_one_or_none()

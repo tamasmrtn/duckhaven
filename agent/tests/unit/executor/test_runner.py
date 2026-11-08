@@ -1078,6 +1078,42 @@ def test_stats_for_reports_table_row_count(tmp_path):
     assert stats["table_size_bytes"] is None
 
 
+def test_stats_for_counts_a_table_whose_name_holds_a_double_quote(tmp_path):
+    """The count probe quotes the name it is given, so a name holding `"` names
+    exactly that table."""
+    result_path = tmp_path / "out.parquet"
+
+    def seed(conn):
+        conn.execute('CREATE TABLE main."say ""hi""" AS SELECT * FROM range(5) t(id)')
+        conn.execute("CREATE TABLE main.say AS SELECT * FROM range(2) t(id)")
+
+    stats = _run(
+        "SELECT 1",
+        result_path,
+        stats_for={"catalog": "memory", "schema": "main", "table": 'say "hi"'},
+        on_connect=seed,
+    )
+    assert stats["table_row_count"] == 5
+
+
+def test_iceberg_probes_quote_the_table_they_name():
+    """The metadata and health probes name the table as one quoted identifier."""
+    from agent.executor.runner import _iceberg_metadata, collect_table_health
+
+    seen: list[str] = []
+
+    class RecordingConn:
+        def execute(self, sql, *args):
+            seen.append(sql)
+            raise RuntimeError("no iceberg extension")
+
+    _iceberg_metadata(RecordingConn(), "cat", "analytics", 'say "hi"')
+    collect_table_health(RecordingConn(), "cat", "analytics", 'say "hi"', target_file_bytes=1)
+    probes = [sql for sql in seen if "say" in sql]
+    assert probes
+    assert all('"cat"."analytics"."say ""hi"""' in sql for sql in probes)
+
+
 # ── per-statement peak/spill on a held connection ─────────────────────────────
 
 

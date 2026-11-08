@@ -134,6 +134,18 @@ async def _agent_id(db_session) -> uuid.UUID:
     return agent.id
 
 
+def _probe(kind: str, catalog, schema: str = "main", table: str = "events") -> dict:
+    """The probe ``dispatch_query`` records for a table of ``catalog``."""
+    return {
+        kind: {
+            "catalog_id": str(catalog.id),
+            "catalog": catalog.slug,
+            "schema": schema,
+            "table": table,
+        }
+    }
+
+
 async def _apply(db_session, frame, polaris=None) -> None:
     """Apply ``frame`` as the agent its query was dispatched to."""
     row = await db_session.get(Query, uuid.UUID(frame.payload["query_id"]))
@@ -428,6 +440,7 @@ async def test_query_done_upserts_table_stats(db_session):
         sql="SELECT 1",
         status="running",
         origin="sample",
+        probe=_probe("stats", catalog),
     )
     db_session.add(query)
     await db_session.commit()
@@ -469,6 +482,7 @@ async def test_query_done_upserts_stats_from_the_ducklake_probe(db_session):
         sql="SELECT 1",
         status="running",
         origin="sample",
+        probe=_probe("stats", catalog),
     )
     db_session.add(query)
     await db_session.commit()
@@ -516,6 +530,7 @@ async def test_query_done_still_reads_the_iceberg_key(db_session):
         sql="SELECT 1",
         status="running",
         origin="sample",
+        probe=_probe("stats", catalog),
     )
     db_session.add(query)
     await db_session.commit()
@@ -555,6 +570,7 @@ async def test_query_done_stores_the_iceberg_probe_size(db_session):
         sql="SELECT 1",
         status="running",
         origin="sample",
+        probe=_probe("stats", catalog),
     )
     db_session.add(query)
     await db_session.commit()
@@ -965,3 +981,73 @@ async def test_a_cancel_landing_mid_completion_drops_the_session_state(db_sessio
     await db_session.refresh(session)
     assert query.status == "cancelled"
     assert session.cache_state is None
+
+
+# ── a probe's result is recorded only for the table it asked about ───────────
+
+
+class _Socket:
+    def __init__(self) -> None:
+        self.sent: list[str] = []
+
+    async def send_text(self, payload: str) -> None:
+        self.sent.append(payload)
+
+
+async def test_dispatch_records_the_probes_it_sends(db_session):
+    ws, catalog = await _make_workspace(db_session)
+    agent = Agent(
+        name="a",
+        status="healthy",
+        capabilities={"duckdb_version": "1.5.5", "extensions": ["httpfs", "iceberg"]},
+    )
+    db_session.add(agent)
+    await db_session.flush()
+    registry.register(agent.id, _Socket())  # type: ignore[arg-type]
+    query = Query(workspace_id=ws.id, agent_id=agent.id, sql="SELECT 1")
+    db_session.add(query)
+    await db_session.flush()
+
+    target = {"catalog": catalog.slug, "schema": "main", "table": "events"}
+    await query_service.dispatch_query(
+        db_session, query, stats_for=target, health_for={**target, "include_orphans": False}
+    )
+
+    await db_session.refresh(query)
+    assert query.probe == {**_probe("stats", catalog), **_probe("health", catalog)}
+
+
+def _stats_done(query, catalog_slug: str) -> Frame:
+    return Frame(
+        type=FrameType.QUERY_DONE,
+        payload={
+            "query_id": str(query.id),
+            "status": "done",
+            "stats_table": {"catalog": catalog_slug, "schema": "main", "table": "events"},
+            "table_row_count": 42,
+        },
+    )
+
+
+@pytest.mark.parametrize("probed", ["another table", "nothing"])
+async def test_stats_for_a_table_not_probed_write_nothing(db_session, probed):
+    ws, catalog = await _make_workspace(db_session)
+    probe = _probe("stats", catalog, table="orders") if probed == "another table" else None
+    query = await _queued_query(db_session, ws, status="running", probe=probe)
+
+    await _apply(db_session, _stats_done(query, catalog.slug))
+
+    assert (await db_session.execute(select(TableMetadata))).scalars().all() == []
+
+
+async def test_stats_for_a_catalog_the_workspace_does_not_attach_write_nothing(db_session):
+    ws, _ = await _make_workspace(db_session)
+    owner = User(email="other@test.local", password_hash=hash_password("pw"), name="O", role="user")
+    db_session.add(owner)
+    await db_session.flush()
+    _, foreign = await seed_workspace(db_session, user_id=owner.id, slug="other-ws", name="Other")
+    query = await _queued_query(db_session, ws, status="running", probe=_probe("stats", foreign))
+
+    await _apply(db_session, _stats_done(query, foreign.slug))
+
+    assert (await db_session.execute(select(TableMetadata))).scalars().all() == []

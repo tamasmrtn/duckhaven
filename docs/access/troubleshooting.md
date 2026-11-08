@@ -46,7 +46,7 @@ it.
 ## "Too many sign-in attempts. Try again in ⟨n⟩ seconds."
 
 **What it means.** Too many failed attempts were made for this account, or from your address, within the last minute,
-so the email and password form refuses more for now. The limits are in
+so the email and password form refuses more until the minute is up. The limits are in
 [Errors](../reference/errors.md#signing-in-and-tokens).
 
 **What to do.** Wait the number of seconds shown, then sign in again. If it happens for an account nobody is signing in

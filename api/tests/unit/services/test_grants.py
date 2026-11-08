@@ -454,6 +454,10 @@ _SESSION_STAGING = ["s3://warehouse/cat/_staging/sess-1/"]
         "SELECT * FROM iceberg_scan('s3://warehouse/cat/s/t')",
         "SELECT * FROM \"glob\"('s3://warehouse/*')",
         "SELECT 1; SELECT * FROM read_text('s3://warehouse/x')",
+        # Relative file names and the SUMMARIZE string form are file reads too.
+        "SELECT * FROM 'result.parquet'",
+        "SELECT * FROM '.hidden-file'",
+        "SUMMARIZE 'result.parquet'",
     ],
 )
 def test_file_reads_are_refused_without_a_staging_prefix(sql):

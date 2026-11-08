@@ -173,6 +173,19 @@ DIVERGENCE_DENIED = [
         "SELECT * FROM read_parquet('s3://warehouse/analytics/_staging/sess-1/../../../x.parquet')",
         "read_path",
     ),
+    # A relative file name is a replacement scan too: no `/` or `://` needed,
+    # because DuckDB resolves it against the agent's working directory.
+    ("SELECT * FROM '.hidden-file'", "read_path"),
+    ("SELECT * FROM '42424242-3333-4444-5555-666666666666.parquet'", "read_path"),
+    ('SELECT * FROM "local.parquet"', "read_path"),
+    ("SELECT * FROM local.parquet", "read_path"),
+    ("SELECT * FROM read_parquet('part-0.parquet')", "read_path"),
+    ("CREATE TABLE t AS SELECT * FROM 'local.csv'", "read_path"),
+    ("SELECT 1; SELECT * FROM 'local.json'", "read_path"),
+    ("DESCRIBE 'local.parquet'", "read_path"),
+    # sqlglot parses this argument as a string, not a table.
+    ("SUMMARIZE 'local.parquet'", "read_path"),
+    ("SUMMARIZE 'https://example.com/x.parquet'", "read_path"),
 ]
 
 
@@ -193,7 +206,27 @@ DIVERGENCE_ALLOWED = [
     "SELECT * FROM 's3://warehouse/analytics/_staging/sess-1/part-0.parquet'",
     # `.` segments inside the staging prefix normalize back into it.
     "SELECT * FROM read_parquet('s3://warehouse/analytics/_staging/sess-1/./part-0.parquet')",
+    # Names with no file shape stay ordinary identifiers.
+    'SELECT * FROM "Order Lines"',
+    "SELECT * FROM sales.analytics.orders_v2",
+    # A staged file stays summarizable, and so does a table or a subquery.
+    "SUMMARIZE 's3://warehouse/analytics/_staging/sess-1/part-0.parquet'",
+    "SUMMARIZE SELECT * FROM sales.analytics.orders",
 ]
+
+
+def test_bare_relative_replacement_scan_is_confined():
+    for sql in (
+        "SELECT * FROM '.hidden-file'",
+        "SELECT * FROM 'result.parquet'",
+        "SUMMARIZE 'result.parquet'",
+    ):
+        with pytest.raises(StatementNotAllowed) as exc:
+            _check(sql)
+        assert exc.value.rule == "read_path"
+    # Ordinary quoted identifiers without file shape stay admitted.
+    _check('SELECT * FROM "my table"')
+    _check('SELECT * FROM "my cat"."my schema"."my table"')
 
 
 @pytest.mark.parametrize("sql", DIVERGENCE_ALLOWED)

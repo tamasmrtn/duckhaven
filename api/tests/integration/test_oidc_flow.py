@@ -24,11 +24,15 @@ async def _drive_keycloak_login(authorize_url: str, username: str, password: str
         match = re.search(r'action="([^"]+)"', page.text)
         assert match, "Could not find the Keycloak login form action"
         form_action = match.group(1).replace("&amp;", "&")
+        # Keycloak marks its login-session cookies Secure, which a cookie jar
+        # withholds over the plain-HTTP dev realm, so send them as a header.
         submit = await kc.post(
             form_action,
             data={"username": username, "password": password},
-            cookies=page.cookies,
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            headers={
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Cookie": "; ".join(f"{k}={v}" for k, v in page.cookies.items()),
+            },
         )
     assert submit.status_code in (302, 303), submit.text
     return submit.headers["location"]
@@ -41,12 +45,22 @@ async def _callback_path(callback_url: str) -> str:
     return callback_url.split("http://test", 1)[-1].replace("/api/auth", "/auth", 1)
 
 
-async def test_sso_login_provisions_admin_from_group(app_client, oidc_settings) -> None:
+async def _sign_in(app_client, username: str) -> httpx.Response:
+    """Run the whole flow for one Keycloak user; return the callback's response."""
     login = await app_client.get("/auth/oidc/sso/login", follow_redirects=False)
     assert login.status_code in (302, 307)
+    callback_url = await _drive_keycloak_login(login.headers["location"], username, "sso-pass")
+    # The session middleware holding the state is built before the conftest turns
+    # Secure cookies off, so its cookie is Secure: hand it to the callback directly.
+    return await app_client.get(
+        await _callback_path(callback_url),
+        headers={"Cookie": f"dh_oidc={login.cookies['dh_oidc']}"},
+        follow_redirects=False,
+    )
 
-    callback_url = await _drive_keycloak_login(login.headers["location"], "sso-admin", "sso-pass")
-    cb = await app_client.get(await _callback_path(callback_url), follow_redirects=False)
+
+async def test_sso_login_provisions_admin_from_group(app_client, oidc_settings) -> None:
+    cb = await _sign_in(app_client, "sso-admin")
     assert cb.status_code == 303
     assert cb.headers["location"] == "/"
     assert "session" in app_client.cookies
@@ -61,9 +75,7 @@ async def test_sso_login_provisions_admin_from_group(app_client, oidc_settings) 
 
 
 async def test_sso_user_without_group_is_plain_user(app_client, oidc_settings) -> None:
-    login = await app_client.get("/auth/oidc/sso/login", follow_redirects=False)
-    callback_url = await _drive_keycloak_login(login.headers["location"], "sso-user", "sso-pass")
-    cb = await app_client.get(await _callback_path(callback_url), follow_redirects=False)
+    cb = await _sign_in(app_client, "sso-user")
     assert cb.status_code == 303
 
     me = await app_client.get("/me")

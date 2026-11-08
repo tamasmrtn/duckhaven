@@ -253,6 +253,10 @@ def oidc_settings(monkeypatch) -> str:
         settings, "oidc_client_secret", os.getenv("OIDC_CLIENT_SECRET", "duckhaven-secret")
     )
     monkeypatch.setattr(settings, "oidc_group_role_map", {"dh-admins": "admin"})
+    # The bundled realm defines no `groups` client scope, and Keycloak refuses a
+    # request naming one; its client's group-membership mapper puts the claim in
+    # the ID token without it.
+    monkeypatch.setattr(settings, "oidc_scopes", "openid email profile")
     # Deterministic redirect_uri the Keycloak realm whitelists.
     monkeypatch.setattr(settings, "oidc_redirect_base_url", "http://test")
 

@@ -188,3 +188,93 @@ def test_is_write_false(sql: str) -> None:
 def test_every_write_is_also_not_read_only(sql: str) -> None:
     """The two agree wherever they overlap; they differ only outside it."""
     assert is_read_only(sql) is False
+
+
+# ── File reads by path on the query path ──────────────────────────────────────
+#
+# Documented as limited to what the agent's network can reach, so only URL
+# schemes pass; any filesystem path names the agent's own disk and is refused in
+# every workspace, whatever the spelling.
+
+QUERY_PATH_DENIED = [
+    "SELECT content FROM read_text('/var/lib/data/notes.txt')",
+    "SELECT * FROM read_parquet('/var/lib/data/9a111111-2222-4333-8444-555555555555.parquet')",
+    "SELECT * FROM read_parquet('part-0.parquet')",
+    "SELECT * FROM read_csv('./local.csv')",
+    "SELECT * FROM read_csv('../local.csv')",
+    "SELECT * FROM read_json('C:\\data\\x.json')",
+    "SELECT content FROM read_text('.hidden-file')",
+    "SELECT file FROM glob('*')",
+    "SELECT * FROM read_parquet(['s3://bucket/a.parquet', '/var/lib/data/b.parquet'])",
+    "SELECT * FROM read_parquet('file:///var/lib/data/x.parquet')",
+    "SELECT * FROM '/var/lib/data/x.parquet'",
+    "SELECT * FROM 'local.parquet'",
+    'SELECT * FROM "local.parquet"',
+    "SELECT * FROM local.parquet",
+    "SUMMARIZE 'local.parquet'",
+    "DESCRIBE 'local.parquet'",
+    "SELECT 1; SELECT * FROM 'local.json'",
+    # A path that cannot be read statically is refused, as in a session.
+    "SELECT * FROM read_parquet(concat('s3://', 'bucket/x.parquet'))",
+]
+
+QUERY_PATH_ALLOWED = [
+    "SELECT * FROM read_parquet('s3://bucket/data.parquet')",
+    "SELECT * FROM read_csv('https://example.com/data.csv')",
+    "SELECT * FROM read_parquet('abfss://container@account.dfs.core.windows.net/x.parquet')",
+    "SELECT * FROM read_parquet('gs://bucket/x.parquet')",
+    "SELECT * FROM 's3://bucket/data.parquet'",
+    "SUMMARIZE 'https://example.com/x.parquet'",
+    "SELECT * FROM glob('s3://bucket/*.parquet')",
+    # Quoted identifiers and string data are not file reads.
+    'SELECT * FROM "my table"',
+    'SELECT * FROM "my cat"."my schema"."my table"',
+    "SELECT 'local.parquet' AS name",
+    "SELECT * FROM analytics.analytics.events",
+]
+
+
+@pytest.mark.parametrize("sql", QUERY_PATH_DENIED)
+def test_filesystem_path_reads_are_refused(sql: str) -> None:
+    with pytest.raises(SQLNotAllowed) as info:
+        assert_allowed(sql)
+    assert "path" in str(info.value).lower()
+
+
+@pytest.mark.parametrize("sql", QUERY_PATH_ALLOWED)
+def test_url_reads_and_identifiers_still_pass(sql: str) -> None:
+    assert_allowed(sql)
+
+
+def test_unparseable_sql_with_a_file_reader_is_refused(monkeypatch) -> None:
+    # DuckDB may accept SQL that sqlglot cannot model; the path rule must not
+    # silently switch off for it.
+    import api.services.sql_denylist as denylist
+
+    def _fail(*_args, **_kwargs):
+        raise ValueError("unparseable")
+
+    monkeypatch.setattr(denylist.sqlglot, "parse", _fail)
+    with pytest.raises(SQLNotAllowed):
+        assert_allowed("SELECT * FROM read_parquet('s3://bucket/x.parquet')")
+    with pytest.raises(SQLNotAllowed):
+        assert_allowed("SELECT * FROM 'local.parquet'")
+    assert_allowed("SELECT 1")
+
+
+def test_internal_statement_templates_still_pass() -> None:
+    # SQL the platform composes itself must keep clearing the gate.
+    from api.services.sql_metadata import _FUNCTIONS_SQL, _KEYWORDS_SQL, _TYPES_SQL
+
+    for sql in (
+        'SELECT * FROM "ws"."analytics"."orders" LIMIT 20',
+        "SELECT 1",
+        'CREATE SCHEMA "ws"."analytics"',
+        'CREATE TABLE "ws"."analytics"."orders" ("id" BIGINT NOT NULL)',
+        'DROP TABLE "ws"."analytics"."orders"',
+        'DROP SCHEMA "ws"."analytics" CASCADE',
+        _FUNCTIONS_SQL,
+        _KEYWORDS_SQL,
+        _TYPES_SQL,
+    ):
+        assert_allowed(sql)

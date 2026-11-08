@@ -1318,14 +1318,14 @@ async def test_a_large_result_pages_like_the_real_gateway():
 
 async def test_sql_runs_only_inside_the_sandbox():
     """The assistant's SQL now executes in the test process, so what the API
-    refuses is refused here too, and what it would allow cannot reach the disk."""
+    refuses is refused here too — a filesystem path included."""
     from api.services.assistant.gateway import GatewayError
     from tests.evals.fixtures import EvalGateway
 
     gateway = EvalGateway()
     with pytest.raises(GatewayError, match="Not allowed"):
         await gateway.run_sql("ATTACH 'elsewhere.db'", catalog="w", timeout_s=30)
-    with pytest.raises(GatewayError, match="disabled by configuration"):
+    with pytest.raises(GatewayError, match="Not allowed"):
         await gateway.run_sql("SELECT * FROM read_csv('/etc/passwd')", catalog="w", timeout_s=30)
 
 

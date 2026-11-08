@@ -59,7 +59,9 @@ Notes on the rows above:
 - **Reading files by path** on the query path works only over a network URL: `s3://`, `s3a://`, `s3n://`, `gs://`,
   `gcs://`, `r2://`, `http://`, `https://`, `az://`, `azure://`, `abfs://`, `abfss://` or `hf://`. Any other path names
   the agent's own disk and is refused with `sql_not_allowed` in every workspace, whatever the spelling, and so is a path
-  that is not a plain string literal. A workspace with a
+  that is not a plain string literal. A table whose name ends in a file extension, such as `events.json`, reads as a
+  path too: you can create, write and drop it, but reading or previewing it is refused, so rename it with
+  `ALTER TABLE … RENAME TO`. A workspace with a
   [scoped catalog](../access/scoped-access.md#files-are-read-through-tables) refuses URL reads too, because a path
   names no table to check grants against.
 - **Writes and roles.** In an open catalog any member can run these statements; in a scoped catalog each table needs a

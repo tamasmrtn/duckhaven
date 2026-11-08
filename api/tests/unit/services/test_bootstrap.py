@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import func, select
@@ -40,6 +40,31 @@ async def test_second_run_is_idempotent(db_session) -> None:
 
     count = await db_session.scalar(select(func.count()).select_from(Credential))
     assert count == 1
+
+
+@pytest.mark.asyncio
+async def test_expired_bootstrap_credentials_are_replaced(db_session) -> None:
+    """An expired seed is re-seeded with a fresh lifetime; other expired bootstrap
+    credentials go, live ones and session credentials stay."""
+    past = datetime.now(tz=UTC) - timedelta(minutes=1)
+    future = datetime.now(tz=UTC) + timedelta(hours=1)
+    db_session.add_all(
+        [
+            Credential(kind="agent_bootstrap", token="tok-123", expires_at=past),
+            Credential(kind="agent_bootstrap", token="tok-old", expires_at=past),
+            Credential(kind="agent_bootstrap", token="tok-live", expires_at=future),
+            Credential(kind="agent_session", token="tok-session", expires_at=None),
+        ]
+    )
+    await db_session.commit()
+
+    await seed_agent_bootstrap_token(db_session, "tok-123", ttl_hours=240)
+
+    creds = {c.token: c for c in await _tokens(db_session)}
+    assert set(creds) == {"tok-123", "tok-live", "tok-session"}
+    reseeded = creds["tok-123"].expires_at
+    assert reseeded is not None
+    assert reseeded.replace(tzinfo=None) > datetime.now().replace(tzinfo=None)
 
 
 @pytest.mark.asyncio

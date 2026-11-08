@@ -4,14 +4,14 @@ Folds in the former agent-bootstrap compose one-shot: the API owns the
 `credentials` table (and applies its migrations), so it seeds the token itself
 once migrations have run. Idempotent — re-seeds only when the token is absent
 (the agent consumes it on first registration and reconnects with a session
-token thereafter), mirroring the one-shot's `WHERE NOT EXISTS`.
+token thereafter) or expired, mirroring the one-shot's `WHERE NOT EXISTS`.
 """
 
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -31,6 +31,17 @@ async def seed_agent_bootstrap_token(db: AsyncSession, token: str | None, ttl_ho
     """
     if not token:
         return
+
+    # An expired bootstrap credential can never register an agent, and left in
+    # place it would block re-seeding the configured token below. Session
+    # credentials have no expiry and are untouched.
+    await db.execute(
+        delete(Credential).where(
+            Credential.kind == "agent_bootstrap",
+            Credential.expires_at.is_not(None),
+            Credential.expires_at <= datetime.now(tz=UTC),
+        )
+    )
 
     existing = await db.execute(select(Credential.id).where(Credential.token == token))
     if existing.scalar_one_or_none() is not None:

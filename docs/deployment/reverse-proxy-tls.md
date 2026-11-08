@@ -180,6 +180,12 @@ snippets correctly with no extra config.
 generated in the admin UI uses `wss://duckhaven.example.com/agents/connect`
 when fronted by TLS, `ws://...` otherwise.
 
+Agents that dial in through the proxy also need `TRUSTED_PROXY_INGRESS=true` in `.env`. The control plane fetches
+query results from the address an agent connected from, and behind a proxy the connection comes from the proxy; the
+setting makes the API take the agent's address from the `X-Forwarded-For` header that Caddy and NPM set. Set it only
+while the proxy is the API's only ingress, as in both setups above: with port 8000 published, a client could name any
+address in the header.
+
 ## Check that it worked
 
 Open `https://duckhaven.example.com`, sign in, and stay signed in after a reload. In **Compute → Generate bootstrap**,
@@ -193,6 +199,9 @@ the snippet's `CONTROL_PLANE_URL` starts with `wss://`.
   `/agents/connect` and must not close idle connections quickly. Raise its read timeout.
 - **The bootstrap snippet shows `ws://` or the wrong host.** The proxy does not send `X-Forwarded-Proto` and
   `X-Forwarded-Host`; configure it to.
+- **Query results from an agent behind the proxy fail to load.** `TRUSTED_PROXY_INGRESS` is not `true`, so the
+  control plane recorded the proxy's address for the agent. Set it, restart the API, then restart the agent so it
+  reconnects; see [What the agent sees](#what-the-agent-sees).
 
 ## Private-network deploys
 

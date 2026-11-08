@@ -122,6 +122,9 @@ your agents show `healthy` under **Compute**.
   [Upgrade Postgres to a new major version](backup-restore.md#upgrade-postgres-to-a-new-major-version).
 - **Agents are refused work after the update.** They run a runtime the control plane does not know, or an image that
   is too old; see [Troubleshoot compute](../compute/troubleshooting.md).
+- **Query results from agents behind a reverse proxy fail to load.** The API reads `X-Forwarded-For` only with
+  `TRUSTED_PROXY_INGRESS=true`. Set it as in [What the agent sees](reverse-proxy-tls.md#what-the-agent-sees),
+  restart the API, then restart those agents. The HA compose file sets it already.
 - **The agent cannot write results after moving to the distroless images.** Its volumes still belong to the old
   user; see the one-time step [above](#one-time-updating-past-the-chainguard-base-image-migration).
 

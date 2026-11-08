@@ -41,7 +41,8 @@ Each row is checked by a unit test against both gates, so this table is what the
 | Transactions | `BEGIN TRANSACTION` | No | Yes |
 | Load a staged file | `COPY sales.analytics.orders FROM '⟨staging prefix⟩/orders.parquet'` | No | Yes |
 | Read a staged file | `SELECT * FROM read_parquet('⟨staging prefix⟩/orders.parquet')` | Yes | Yes |
-| Read any file by path | `SELECT * FROM read_parquet('s3://other-bucket/data.parquet')` | Yes | No |
+| Read a file by URL | `SELECT * FROM read_parquet('s3://other-bucket/data.parquet')` | Yes | No |
+| Read a file on the agent's disk | `SELECT * FROM read_parquet('/data/orders.parquet')` | No | No |
 | Attach a catalog the workspace binds | `ATTACH 'sales' AS sales` | No | Yes |
 
 Notes on the rows above:
@@ -52,11 +53,15 @@ Notes on the rows above:
 - **Introspection** (`DESCRIBE`, `SHOW`, `SUMMARIZE`, row-returning `PRAGMA`s) returns a result grid like a `SELECT`
   and changes nothing. `SUMMARIZE` scans the table, so it needs read access to the rows, not just the schema.
 - **Session statements.** `SET` accepts only `timezone`, `search_path` and `schema`. `COPY` and file reads in a
-  session are confined to the session's own staging prefix; see
-  [Staging files](../querying/sql-sessions.md#staging-files).
-- **Reading files by path** on the query path works in a workspace without a scoped catalog, limited to what the agent's
-  network can reach. A workspace with a [scoped catalog](../access/scoped-access.md#files-are-read-through-tables)
-  refuses it, because a path names no table to check grants against.
+  session are confined to the session's own staging prefix, in every spelling of a path: a function argument, a quoted
+  name in `FROM` or a `SUMMARIZE` argument, absolute or relative. A name with a file extension, such as
+  `'orders.parquet'`, counts as a path. See [Staging files](../querying/sql-sessions.md#staging-files).
+- **Reading files by path** on the query path works only over a network URL: `s3://`, `s3a://`, `s3n://`, `gs://`,
+  `gcs://`, `r2://`, `http://`, `https://`, `az://`, `azure://`, `abfs://`, `abfss://` or `hf://`. Any other path names
+  the agent's own disk and is refused with `sql_not_allowed` in every workspace, whatever the spelling, and so is a path
+  that is not a plain string literal. A workspace with a
+  [scoped catalog](../access/scoped-access.md#files-are-read-through-tables) refuses URL reads too, because a path
+  names no table to check grants against.
 - **Writes and roles.** In an open catalog any member can run these statements; in a scoped catalog each table needs a
   grant. See [How access works](../access/how-access-works.md).
 

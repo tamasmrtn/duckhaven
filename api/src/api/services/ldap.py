@@ -99,4 +99,8 @@ async def authenticate_ldap(db: AsyncSession, email: str, password: str) -> User
         subject=claims["dn"],
         provider="ldap",
         role=role,
+        # The address comes from the entry the user just bound as, and a moved
+        # entry keeps its account rather than being refused for a new DN.
+        email_verified=True,
+        rebind_on_verified_email=True,
     )

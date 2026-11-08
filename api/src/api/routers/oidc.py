@@ -17,7 +17,11 @@ from api.config import OidcProvider, settings
 from api.deps import get_db
 from api.services.auth import create_session, set_session_cookie
 from api.services.oidc import client_name, get_provider, oauth
-from api.services.provisioning import provision_federated_user, resolve_role
+from api.services.provisioning import (
+    ProvisioningRefused,
+    provision_federated_user,
+    resolve_role,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -97,14 +101,25 @@ async def oidc_callback(provider: str, request: Request, db: AsyncSession = Depe
 
     groups = claims.get(prov.groups_claim) or []
     role = resolve_role(groups, prov.group_role_map)
-    user = await provision_federated_user(
-        db,
-        email=email,
-        name=claims.get("name") or email,
-        subject=sub,
-        provider="oidc",
-        role=role,
-    )
+    verified = claims.get("email_verified")
+    try:
+        user = await provision_federated_user(
+            db,
+            email=email,
+            name=claims.get("name") or email,
+            subject=sub,
+            # Each provider binds its own accounts: a subject is unique only within
+            # its issuer. Rows a provider created as plain "oidc" re-label on its
+            # first sign-in with their subject.
+            provider=f"oidc:{prov.id}",
+            role=role,
+            # Some IdPs send the claim as the string "true".
+            email_verified=verified is True or verified == "true",
+            legacy_provider="oidc",
+        )
+    except ProvisioningRefused as exc:
+        logger.warning("OIDC sign-in refused for provider=%s: %s", provider, exc.detail)
+        return RedirectResponse("/login?error=sso", status_code=status.HTTP_303_SEE_OTHER)
 
     session_token = await create_session(db, user.id)
     response = RedirectResponse("/", status_code=status.HTTP_303_SEE_OTHER)

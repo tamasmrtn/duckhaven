@@ -26,8 +26,9 @@ class User(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     role: Mapped[str] = mapped_column(String(50), nullable=False, default="user")
     theme: Mapped[str] = mapped_column(String(50), nullable=False, default="system")
-    # How this account authenticates: "local" | "oidc" | "ldap". Guards against a
-    # federated login binding to an existing local account (and vice versa).
+    # How this account authenticates: "local", "ldap", or "oidc:<provider id>" (a
+    # bare "oidc" on rows from before providers were told apart). Guards against a
+    # federated login binding to an account of another provider.
     auth_provider: Mapped[str] = mapped_column(String(50), nullable=False, default="local")
     # The IdP-side identifier (OIDC `sub` / LDAP DN) for audit and re-matching.
     external_subject: Mapped[str | None] = mapped_column(String(255), nullable=True)

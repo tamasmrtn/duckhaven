@@ -80,7 +80,7 @@ Each message has an entry in [Troubleshoot sign-in and access](../access/trouble
 
 | Code | Status | Meaning and what to do |
 |---|---|---|
-| `sql_not_allowed` | 422 | The statement type is not allowed, such as `ATTACH`, `INSTALL` or `SET`. See [SQL support](sql-support.md). |
+| `sql_not_allowed` | 422 | The statement type is not allowed, such as `ATTACH`, `INSTALL` or `SET`, or the statement reads a file by a filesystem path. See [SQL support](sql-support.md). |
 | `statement_not_allowed` | 422 | The same check in a [SQL session](../querying/sql-sessions.md), which allows a few more statements. |
 | `invalid_parameters` | 422 | The [query parameters](sql-support.md#query-parameters) do not fit the placeholders. |
 | `query_id_conflict` | 409 | `A query with id ⟨id⟩ already exists.` The `id` you chose names an earlier run. Ids are unique across the server, and every attempt the server records spends its id, including one it answered with an error such as a 503, so retry an error with a new UUID. After a submit whose answer was lost, a 409 means that submit was recorded: if it was yours, read it with `GET /api/queries/{query_id}`. |

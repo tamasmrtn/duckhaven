@@ -91,11 +91,15 @@ function buildComposeSnippet(token: BootstrapToken, name?: string): string {
     "      # Bind the agent's result server to all interfaces so the control",
     "      # plane can fetch query results back across the host boundary.",
     "      RESULTS_HTTP_HOST: 0.0.0.0",
+    "      # Keep the agent's credential in its own volume, apart from results.",
+    "      SESSION_TOKEN_PATH: /var/duckhaven-agent/state/session-token",
     "    volumes:",
     "      - agent_results:/var/duckhaven-agent/results",
+    "      - agent_state:/var/duckhaven-agent/state",
     "",
     "volumes:",
     "  agent_results:",
+    "  agent_state:",
     "",
   ].join("\n");
 }

@@ -99,9 +99,10 @@ re-authenticate an established connection — so the response reports how many s
 They pick it up when they close.
 
 Storage credentials are minted by the API per query and never written to agent disk. For external S3 they are STS
-credentials expiring within the hour; for ADLS Gen 2, a user-delegation SAS. For the bundled object store they are the
-store's static key, scoped to the catalog's own prefix — weaker than what Polaris vends, and worth knowing if that
-matters to you.
+credentials expiring within the hour; for ADLS Gen 2, a user-delegation SAS that grants the catalog's whole container.
+For the bundled object store they are the store's static key — weaker than what Polaris vends, and worth knowing if
+that matters to you. Whatever the backend, the agent scopes each credential to its catalog's own prefix, so a query
+that attaches several catalogs reads each catalog's data only with that catalog's credential.
 
 !!! warning "ADLS Gen 2 is implemented but unexercised"
     The bundled object store and external S3 are verified end to end — external S3 against a real STS `AssumeRole`,

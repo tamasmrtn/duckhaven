@@ -383,8 +383,11 @@ services:
       SANDBOX_LOCK_CONFIGURATION: ${SANDBOX_LOCK_CONFIGURATION:-true}
       # OpenTelemetry tracing (empty = disabled), same collector as the api.
       OTEL_EXPORTER_OTLP_ENDPOINT: ${OTEL_EXPORTER_OTLP_ENDPOINT:-http://otel-collector:4318}
+      # The session token lives in its own volume, apart from the result files.
+      SESSION_TOKEN_PATH: /var/duckhaven-agent/state/session-token
     volumes:
       - agent_results:/var/duckhaven-agent/results
+      - agent_state:/var/duckhaven-agent/state
     healthcheck:
       # Result server up = agent process alive. Stdlib so the image stays curl-free.
       test:
@@ -444,6 +447,7 @@ volumes:
   api_data:
   objectstore_data:
   agent_results:
+  agent_state:
   tempo_data:
 
 # Agent egress restriction. `duckhaven_internal` is an isolated bridge with no

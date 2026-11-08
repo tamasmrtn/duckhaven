@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -38,6 +39,7 @@ from duckhaven_shared.telemetry import inject_trace_context
 if TYPE_CHECKING:
     from api.services.query import Completion
 
+logger = logging.getLogger(__name__)
 _tracer = trace.get_tracer("duckhaven.api")
 
 _TERMINAL = ("closed", "expired", "failed")
@@ -254,27 +256,42 @@ async def fail_inflight_statements(
     return count
 
 
-async def handle_statement_ack(db: AsyncSession, frame: Frame) -> None:
+async def handle_statement_ack(db: AsyncSession, frame: Frame, *, agent_id: uuid.UUID) -> None:
     """Apply an agent's STATEMENT_ACK receipt: the statement reached the agent.
 
-    Only ``queued`` -> ``running``. A fast statement's QUERY_DONE can beat its own
-    ack (both are sent by the agent but applied by separate DB sessions), so an
-    already-terminal row is left alone rather than resurrected. One conditional
-    update rather than a read and a write: it runs for every statement.
+    Only ``queued`` -> ``running``, and only for a statement dispatched to
+    ``agent_id``, the agent the frame came from. A fast statement's QUERY_DONE can
+    beat its own ack (both are sent by the agent but applied by separate DB
+    sessions), so an already-terminal row is left alone rather than resurrected.
+    One conditional update rather than a read and a write: it runs for every
+    statement.
     """
     await db.execute(
         sa.update(Query)
-        .where(Query.id == uuid.UUID(frame.payload["query_id"]), Query.status == "queued")
+        .where(
+            Query.id == uuid.UUID(frame.payload["query_id"]),
+            Query.agent_id == agent_id,
+            Query.status == "queued",
+        )
         .values(status="running")
         .execution_options(synchronize_session=False)
     )
     await db.commit()
 
 
-async def handle_session_frame(db: AsyncSession, frame: Frame) -> None:
-    """Apply an agent's SESSION_OPENED / SESSION_CLOSED lifecycle ack to the row."""
-    session = await db.get(SqlSession, uuid.UUID(frame.payload["session_id"]))
+async def handle_session_frame(db: AsyncSession, frame: Frame, *, agent_id: uuid.UUID) -> None:
+    """Apply an agent's SESSION_OPENED / SESSION_CLOSED lifecycle ack to the row.
+
+    Only for a session pinned to ``agent_id``, the agent the frame came from.
+    """
+    session_id = uuid.UUID(frame.payload["session_id"])
+    session = await db.get(SqlSession, session_id)
     if session is None:
+        return
+    if session.agent_id != agent_id:
+        logger.warning(
+            "Ignored %s for %s from agent %s: not its session", frame.type, session_id, agent_id
+        )
         return
     now = datetime.now(tz=UTC)
 

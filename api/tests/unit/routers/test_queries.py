@@ -1000,6 +1000,7 @@ async def test_query_progress_persisted_and_exposed(
             type=FrameType.QUERY_PROGRESS,
             payload={"query_id": str(query.id), "stage": "scanning", "pct": 42},
         ),
+        agent_id=agent.id,
     )
 
     resp = await authed_client.get(f"/queries/{query.id}")
@@ -1043,6 +1044,7 @@ async def test_query_done_persists_result_bytes(
                 "result_path": "/tmp/x.parquet",
             },
         ),
+        agent_id=agent.id,
     )
 
     resp = await authed_client.get(f"/queries/{query.id}")

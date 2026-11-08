@@ -271,7 +271,16 @@ def _utc(value: datetime) -> datetime:
     return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
 
 
-async def handle_agent_frame(db: AsyncSession, frame: Frame, polaris=None) -> None:
+async def handle_agent_frame(
+    db: AsyncSession, frame: Frame, polaris=None, *, agent_id: uuid.UUID
+) -> None:
+    """Apply an agent's QUERY_PROGRESS or QUERY_DONE frame to its query row.
+
+    ``agent_id`` is the authenticated agent the frame came from. A frame is applied
+    only to a row dispatched to that agent and still queued or running, so another
+    agent's frame, or a late one for a run already cancelled or failed, changes
+    nothing.
+    """
     query_id = uuid.UUID(frame.payload["query_id"])
     if frame.type == FrameType.QUERY_PROGRESS:
         progress = {k: v for k, v in frame.payload.items() if k != "query_id"}
@@ -286,7 +295,11 @@ async def handle_agent_frame(db: AsyncSession, frame: Frame, polaris=None) -> No
         row = (
             await db.execute(
                 sa.update(Query)
-                .where(Query.id == query_id, Query.status.in_(("queued", "running")))
+                .where(
+                    Query.id == query_id,
+                    Query.agent_id == agent_id,
+                    Query.status.in_(("queued", "running")),
+                )
                 .values(
                     status="running",
                     progress=progress or None,
@@ -310,7 +323,17 @@ async def handle_agent_frame(db: AsyncSession, frame: Frame, polaris=None) -> No
         status_val = frame.payload.get("status", "done")
         finished = datetime.now(tz=UTC)
         statement = await db.get(Query, query_id)
-        if statement is not None and statement.origin == "session":
+        if statement is None or statement.agent_id != agent_id:
+            logger.warning(
+                "Ignored QUERY_DONE for %s from agent %s: not its query", query_id, agent_id
+            )
+            return
+        if statement.status not in ("queued", "running"):
+            logger.info(
+                "Ignored QUERY_DONE for %s: the run is already %s", query_id, statement.status
+            )
+            return
+        if statement.origin == "session":
             from api.services.result_cache.session import record_completion
 
             # In the commit below, with the status: a client that sends its next
@@ -325,7 +348,11 @@ async def handle_agent_frame(db: AsyncSession, frame: Frame, polaris=None) -> No
         ran_at = finished - timedelta(milliseconds=duration_ms) if duration_ms else finished
         update = (
             sa.update(Query)
-            .where(Query.id == query_id)
+            .where(
+                Query.id == query_id,
+                Query.agent_id == agent_id,
+                Query.status.in_(("queued", "running")),
+            )
             .values(
                 status=status_val,
                 row_count=frame.payload.get("row_count"),
@@ -346,6 +373,12 @@ async def handle_agent_frame(db: AsyncSession, frame: Frame, polaris=None) -> No
             update = update.returning(*columns)
         result = await db.execute(update)
         terminal = result.first() if columns is not None else None
+        if (terminal is None) if columns is not None else result.rowcount == 0:
+            # Cancelled or failed since the read above: keep it as it ended, and
+            # drop the session state recorded with it.
+            await db.rollback()
+            logger.info("Ignored QUERY_DONE for %s: the run ended first", query_id)
+            return
         await db.commit()
         # Before the stats/lineage work below, which is deliberately not on the
         # client's critical path: the row is terminal and committed as of here.

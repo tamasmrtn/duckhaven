@@ -198,7 +198,7 @@ async def test_an_unchanged_scheduled_run_is_answered_from_the_cache(
             },
         )
         async with sessions() as db:
-            await query_service.handle_agent_frame(db, frame, fake_polaris)
+            await query_service.handle_agent_frame(db, frame, fake_polaris, agent_id=agent_id)
         await result_cache.drain_admissions()
 
         async with sessions() as db:

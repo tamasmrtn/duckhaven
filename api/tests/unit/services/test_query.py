@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import os
 import tempfile
+import uuid
 
 import duckdb
 import pytest
@@ -125,8 +126,25 @@ async def _make_workspace(db_session):
     return await seed_workspace(db_session, user_id=user.id, slug="svc-ws", name="Svc WS")
 
 
+async def _agent_id(db_session) -> uuid.UUID:
+    """A registered agent for a test row to be dispatched to."""
+    agent = Agent(name="runner", status="healthy")
+    db_session.add(agent)
+    await db_session.flush()
+    return agent.id
+
+
+async def _apply(db_session, frame, polaris=None) -> None:
+    """Apply ``frame`` as the agent its query was dispatched to."""
+    row = await db_session.get(Query, uuid.UUID(frame.payload["query_id"]))
+    assert row is not None and row.agent_id is not None, "dispatch the row to an agent first"
+    await query_service.handle_agent_frame(db_session, frame, polaris, agent_id=row.agent_id)
+
+
 async def _queued_query(db_session, ws, **kw):
-    query = Query(workspace_id=ws.id, sql="SELECT 1", status="queued", **kw)
+    kw.setdefault("agent_id", await _agent_id(db_session))
+    kw.setdefault("status", "queued")
+    query = Query(workspace_id=ws.id, sql="SELECT 1", **kw)
     db_session.add(query)
     await db_session.commit()
     await db_session.refresh(query)
@@ -137,7 +155,7 @@ async def test_progress_stamps_running_at(db_session):
     ws, _ = await _make_workspace(db_session)
     query = await _queued_query(db_session, ws)
 
-    await query_service.handle_agent_frame(
+    await _apply(
         db_session,
         Frame(type=FrameType.QUERY_PROGRESS, payload={"query_id": str(query.id)}),
     )
@@ -156,7 +174,7 @@ async def test_progress_stamps_running_at_for_every_origin(db_session):
     ws, _ = await _make_workspace(db_session)
     query = await _queued_query(db_session, ws, origin="scheduled")
 
-    await query_service.handle_agent_frame(
+    await _apply(
         db_session,
         Frame(type=FrameType.QUERY_PROGRESS, payload={"query_id": str(query.id)}),
     )
@@ -170,13 +188,19 @@ async def test_progress_stamps_running_at_for_an_acked_session_statement(db_sess
     session lock. Its progress frame is what says it started executing; the queue
     histogram keeps its meaning (only a queued -> running transition feeds it)."""
     ws, _ = await _make_workspace(db_session)
-    query = Query(workspace_id=ws.id, sql="SELECT 1", status="running", origin="session")
+    query = Query(
+        agent_id=await _agent_id(db_session),
+        workspace_id=ws.id,
+        sql="SELECT 1",
+        status="running",
+        origin="session",
+    )
     db_session.add(query)
     await db_session.commit()
     recorded: list[float] = []
     monkeypatch.setattr(query_service, "record_query_queue_wait", recorded.append)
 
-    await query_service.handle_agent_frame(
+    await _apply(
         db_session,
         Frame(type=FrameType.QUERY_PROGRESS, payload={"query_id": str(query.id)}),
     )
@@ -189,11 +213,13 @@ async def test_progress_stamps_running_at_for_an_acked_session_statement(db_sess
 @pytest.mark.parametrize("terminal", ["done", "failed", "cancelled"])
 async def test_a_late_progress_frame_never_resurrects_a_finished_query(db_session, terminal):
     ws, _ = await _make_workspace(db_session)
-    query = Query(workspace_id=ws.id, sql="SELECT 1", status=terminal)
+    query = Query(
+        agent_id=await _agent_id(db_session), workspace_id=ws.id, sql="SELECT 1", status=terminal
+    )
     db_session.add(query)
     await db_session.commit()
 
-    await query_service.handle_agent_frame(
+    await _apply(
         db_session,
         Frame(type=FrameType.QUERY_PROGRESS, payload={"query_id": str(query.id)}),
     )
@@ -208,11 +234,11 @@ async def test_a_second_progress_frame_does_not_move_running_at(db_session):
     query = await _queued_query(db_session, ws)
     progress = Frame(type=FrameType.QUERY_PROGRESS, payload={"query_id": str(query.id)})
 
-    await query_service.handle_agent_frame(db_session, progress)
+    await _apply(db_session, progress)
     await db_session.refresh(query)
     first = query.running_at
 
-    await query_service.handle_agent_frame(db_session, progress)
+    await _apply(db_session, progress)
     await db_session.refresh(query)
     assert query.running_at == first
 
@@ -225,7 +251,7 @@ async def test_done_backs_running_at_out_of_duration_when_progress_never_arrived
     ws, _ = await _make_workspace(db_session)
     query = await _queued_query(db_session, ws)
 
-    await query_service.handle_agent_frame(
+    await _apply(
         db_session,
         Frame(
             type=FrameType.QUERY_DONE,
@@ -243,7 +269,7 @@ async def test_done_falls_back_to_finished_at_without_a_duration(db_session):
     ws, _ = await _make_workspace(db_session)
     query = await _queued_query(db_session, ws)
 
-    await query_service.handle_agent_frame(
+    await _apply(
         db_session,
         Frame(
             type=FrameType.QUERY_DONE,
@@ -258,14 +284,14 @@ async def test_done_falls_back_to_finished_at_without_a_duration(db_session):
 async def test_done_preserves_a_running_at_already_stamped(db_session):
     ws, _ = await _make_workspace(db_session)
     query = await _queued_query(db_session, ws)
-    await query_service.handle_agent_frame(
+    await _apply(
         db_session,
         Frame(type=FrameType.QUERY_PROGRESS, payload={"query_id": str(query.id)}),
     )
     await db_session.refresh(query)
     stamped = query.running_at
 
-    await query_service.handle_agent_frame(
+    await _apply(
         db_session,
         Frame(
             type=FrameType.QUERY_DONE,
@@ -292,9 +318,7 @@ async def test_done_hands_its_waiter_the_result_file(db_session):
         "result_parquet": base64.b64encode(data).decode("ascii"),
     }
     with query_service.completion_waiter(query.id) as done:
-        await query_service.handle_agent_frame(
-            db_session, Frame(type=FrameType.QUERY_DONE, payload=payload)
-        )
+        await _apply(db_session, Frame(type=FrameType.QUERY_DONE, payload=payload))
 
     assert done.result_parquet == data
     assert "result_parquet" not in done.row
@@ -310,9 +334,7 @@ async def test_an_unusable_result_file_is_dropped(db_session, status, encoded):
     query = await _queued_query(db_session, ws)
     payload = {"query_id": str(query.id), "status": status, "result_parquet": encoded}
     with query_service.completion_waiter(query.id) as done:
-        await query_service.handle_agent_frame(
-            db_session, Frame(type=FrameType.QUERY_DONE, payload=payload)
-        )
+        await _apply(db_session, Frame(type=FrameType.QUERY_DONE, payload=payload))
 
     assert done.is_set()
     assert done.result_parquet is None
@@ -328,9 +350,7 @@ async def test_a_result_file_with_no_waiter_here_is_ignored(db_session):
         "status": "done",
         "result_parquet": base64.b64encode(_parquet_bytes("SELECT 1")).decode("ascii"),
     }
-    await query_service.handle_agent_frame(
-        db_session, Frame(type=FrameType.QUERY_DONE, payload=payload)
-    )
+    await _apply(db_session, Frame(type=FrameType.QUERY_DONE, payload=payload))
     await db_session.refresh(query)
     assert query.status == "done"
 
@@ -340,13 +360,13 @@ async def test_done_hands_its_waiter_the_terminal_row(db_session):
     committed, so it need not read it back; the row is exactly what a read sees."""
     ws, _ = await _make_workspace(db_session)
     query = await _queued_query(db_session, ws)
-    await query_service.handle_agent_frame(
+    await _apply(
         db_session,
         Frame(type=FrameType.QUERY_PROGRESS, payload={"query_id": str(query.id)}),
     )
 
     with query_service.completion_waiter(query.id) as done:
-        await query_service.handle_agent_frame(
+        await _apply(
             db_session,
             Frame(
                 type=FrameType.QUERY_DONE,
@@ -386,7 +406,7 @@ async def test_done_without_a_waiter_does_not_read_the_row_back(db_session):
     engine = db_session.bind.sync_engine
     event.listen(engine, "before_cursor_execute", capture)
     try:
-        await query_service.handle_agent_frame(
+        await _apply(
             db_session,
             Frame(
                 type=FrameType.QUERY_DONE,
@@ -402,7 +422,13 @@ async def test_done_without_a_waiter_does_not_read_the_row_back(db_session):
 
 async def test_query_done_upserts_table_stats(db_session):
     ws, catalog = await _make_workspace(db_session)
-    query = Query(workspace_id=ws.id, sql="SELECT 1", status="running", origin="sample")
+    query = Query(
+        agent_id=await _agent_id(db_session),
+        workspace_id=ws.id,
+        sql="SELECT 1",
+        status="running",
+        origin="sample",
+    )
     db_session.add(query)
     await db_session.commit()
     await db_session.refresh(query)
@@ -418,7 +444,7 @@ async def test_query_done_upserts_table_stats(db_session):
             "table_size_bytes": None,
         },
     )
-    await query_service.handle_agent_frame(db_session, frame)
+    await _apply(db_session, frame)
 
     meta = (
         await db_session.execute(
@@ -437,7 +463,13 @@ async def test_query_done_upserts_stats_from_the_ducklake_probe(db_session):
     """The agent names the probe block after the format, so a DuckLake table's
     file count must not be dropped for arriving under a different key."""
     ws, catalog = await _make_workspace(db_session)
-    query = Query(workspace_id=ws.id, sql="SELECT 1", status="running", origin="sample")
+    query = Query(
+        agent_id=await _agent_id(db_session),
+        workspace_id=ws.id,
+        sql="SELECT 1",
+        status="running",
+        origin="sample",
+    )
     db_session.add(query)
     await db_session.commit()
     await db_session.refresh(query)
@@ -457,7 +489,7 @@ async def test_query_done_upserts_stats_from_the_ducklake_probe(db_session):
             },
         },
     )
-    await query_service.handle_agent_frame(db_session, frame)
+    await _apply(db_session, frame)
 
     meta = (
         await db_session.execute(
@@ -478,7 +510,13 @@ async def test_query_done_upserts_stats_from_the_ducklake_probe(db_session):
 async def test_query_done_still_reads_the_iceberg_key(db_session):
     """An agent that predates catalog kinds still sends "iceberg"."""
     ws, catalog = await _make_workspace(db_session)
-    query = Query(workspace_id=ws.id, sql="SELECT 1", status="running", origin="sample")
+    query = Query(
+        agent_id=await _agent_id(db_session),
+        workspace_id=ws.id,
+        sql="SELECT 1",
+        status="running",
+        origin="sample",
+    )
     db_session.add(query)
     await db_session.commit()
     await db_session.refresh(query)
@@ -492,7 +530,7 @@ async def test_query_done_still_reads_the_iceberg_key(db_session):
             "iceberg": {"data_file_count": 481, "has_deletes": False},
         },
     )
-    await query_service.handle_agent_frame(db_session, frame)
+    await _apply(db_session, frame)
 
     meta = (
         await db_session.execute(
@@ -511,7 +549,13 @@ async def test_query_done_stores_the_iceberg_probe_size(db_session):
     """The probe's sum of live data-file bytes becomes the table's size: the
     Iceberg listing has none, so without it a schema's size read as 0."""
     ws, catalog = await _make_workspace(db_session)
-    query = Query(workspace_id=ws.id, sql="SELECT 1", status="running", origin="sample")
+    query = Query(
+        agent_id=await _agent_id(db_session),
+        workspace_id=ws.id,
+        sql="SELECT 1",
+        status="running",
+        origin="sample",
+    )
     db_session.add(query)
     await db_session.commit()
     await db_session.refresh(query)
@@ -527,7 +571,7 @@ async def test_query_done_stores_the_iceberg_probe_size(db_session):
             "iceberg": {"data_file_count": 481, "data_file_size_bytes": 2_223_533_507},
         },
     )
-    await query_service.handle_agent_frame(db_session, frame)
+    await _apply(db_session, frame)
 
     meta = (
         await db_session.execute(
@@ -543,7 +587,9 @@ async def test_query_done_stores_the_iceberg_probe_size(db_session):
 
 async def test_query_done_persists_profile(db_session):
     ws, _catalog = await _make_workspace(db_session)
-    query = Query(workspace_id=ws.id, sql="SELECT 1", status="running")
+    query = Query(
+        agent_id=await _agent_id(db_session), workspace_id=ws.id, sql="SELECT 1", status="running"
+    )
     db_session.add(query)
     await db_session.commit()
     await db_session.refresh(query)
@@ -556,14 +602,16 @@ async def test_query_done_persists_profile(db_session):
         type=FrameType.QUERY_DONE,
         payload={"query_id": str(query.id), "status": "done", "profile": profile},
     )
-    await query_service.handle_agent_frame(db_session, frame)
+    await _apply(db_session, frame)
     await db_session.refresh(query)
     assert query.profile == profile
 
 
 async def test_query_done_persists_result_schema(db_session):
     ws, _catalog = await _make_workspace(db_session)
-    query = Query(workspace_id=ws.id, sql="SELECT 1", status="running")
+    query = Query(
+        agent_id=await _agent_id(db_session), workspace_id=ws.id, sql="SELECT 1", status="running"
+    )
     db_session.add(query)
     await db_session.commit()
     await db_session.refresh(query)
@@ -576,7 +624,7 @@ async def test_query_done_persists_result_schema(db_session):
         type=FrameType.QUERY_DONE,
         payload={"query_id": str(query.id), "status": "done", "result_schema": schema},
     )
-    await query_service.handle_agent_frame(db_session, frame)
+    await _apply(db_session, frame)
     await db_session.refresh(query)
     assert query.result_schema == schema
 
@@ -585,7 +633,9 @@ async def test_query_done_without_result_schema_leaves_it_null(db_session):
     """An agent that predates the field reports nothing; the API stores nothing
     rather than deriving a schema from the (lossy) result Parquet."""
     ws, _catalog = await _make_workspace(db_session)
-    query = Query(workspace_id=ws.id, sql="SELECT 1", status="running")
+    query = Query(
+        agent_id=await _agent_id(db_session), workspace_id=ws.id, sql="SELECT 1", status="running"
+    )
     db_session.add(query)
     await db_session.commit()
     await db_session.refresh(query)
@@ -594,7 +644,7 @@ async def test_query_done_without_result_schema_leaves_it_null(db_session):
         type=FrameType.QUERY_DONE,
         payload={"query_id": str(query.id), "status": "done", "row_count": 1},
     )
-    await query_service.handle_agent_frame(db_session, frame)
+    await _apply(db_session, frame)
     await db_session.refresh(query)
     assert query.result_schema is None
 
@@ -604,7 +654,13 @@ async def test_session_statement_done_records_statement_metric(db_session):
     from api.metrics import SQL_STATEMENTS
 
     ws, _catalog = await _make_workspace(db_session)
-    query = Query(workspace_id=ws.id, sql="SELECT 1", status="running", origin="session")
+    query = Query(
+        agent_id=await _agent_id(db_session),
+        workspace_id=ws.id,
+        sql="SELECT 1",
+        status="running",
+        origin="session",
+    )
     db_session.add(query)
     await db_session.commit()
     await db_session.refresh(query)
@@ -614,7 +670,7 @@ async def test_session_statement_done_records_statement_metric(db_session):
         type=FrameType.QUERY_DONE,
         payload={"query_id": str(query.id), "status": "done", "row_count": 1},
     )
-    await query_service.handle_agent_frame(db_session, frame)
+    await _apply(db_session, frame)
     await db_session.refresh(query)
     assert query.status == "done"
     assert SQL_STATEMENTS.labels(settings.replica_id, "done")._value.get() == before + 1
@@ -622,7 +678,12 @@ async def test_session_statement_done_records_statement_metric(db_session):
 
 async def test_query_done_without_profile_stays_null(db_session):
     ws, _catalog = await _make_workspace(db_session)
-    query = Query(workspace_id=ws.id, sql="CREATE TABLE t (x INT)", status="running")
+    query = Query(
+        agent_id=await _agent_id(db_session),
+        workspace_id=ws.id,
+        sql="CREATE TABLE t (x INT)",
+        status="running",
+    )
     db_session.add(query)
     await db_session.commit()
     await db_session.refresh(query)
@@ -631,7 +692,7 @@ async def test_query_done_without_profile_stays_null(db_session):
         type=FrameType.QUERY_DONE,
         payload={"query_id": str(query.id), "status": "done"},
     )
-    await query_service.handle_agent_frame(db_session, frame)
+    await _apply(db_session, frame)
     await db_session.refresh(query)
     assert query.profile is None
 
@@ -643,6 +704,7 @@ async def test_done_frame_records_lineage(db_session):
 
     ws, catalog = await _make_workspace(db_session)
     query = Query(
+        agent_id=await _agent_id(db_session),
         workspace_id=ws.id,
         sql=(
             f"CREATE TABLE {catalog.slug}.analytics.dim "
@@ -654,7 +716,7 @@ async def test_done_frame_records_lineage(db_session):
     db_session.add(query)
     await db_session.commit()
 
-    await query_service.handle_agent_frame(
+    await _apply(
         db_session,
         Frame(type=FrameType.QUERY_DONE, payload={"query_id": str(query.id), "status": "done"}),
     )
@@ -668,6 +730,7 @@ async def test_failed_frame_records_no_lineage(db_session):
 
     ws, catalog = await _make_workspace(db_session)
     query = Query(
+        agent_id=await _agent_id(db_session),
         workspace_id=ws.id,
         sql=(
             f"CREATE TABLE {catalog.slug}.analytics.dim "
@@ -679,7 +742,7 @@ async def test_failed_frame_records_no_lineage(db_session):
     db_session.add(query)
     await db_session.commit()
 
-    await query_service.handle_agent_frame(
+    await _apply(
         db_session,
         Frame(
             type=FrameType.QUERY_DONE,
@@ -699,6 +762,7 @@ async def test_lineage_failure_does_not_break_frame_handling(db_session, monkeyp
     # A statement that *would* produce an edge, so the assertions below can tell
     # a swallowed failure apart from a patch that never took effect.
     query = Query(
+        agent_id=await _agent_id(db_session),
         workspace_id=ws.id,
         sql=(
             f"CREATE TABLE {catalog.slug}.analytics.dim "
@@ -715,7 +779,7 @@ async def test_lineage_failure_does_not_break_frame_handling(db_session, monkeyp
 
     monkeypatch.setattr("api.services.lineage.ingest.record_execution_lineage", boom)
 
-    await query_service.handle_agent_frame(
+    await _apply(
         db_session,
         Frame(
             type=FrameType.QUERY_DONE,
@@ -736,6 +800,7 @@ async def _done_with_lineage_spy(db_session, monkeypatch, sql):
 
     ws, catalog = await _make_workspace(db_session)
     query = Query(
+        agent_id=await _agent_id(db_session),
         workspace_id=ws.id,
         sql=sql.format(c=catalog.slug),
         status="queued",
@@ -751,7 +816,7 @@ async def _done_with_lineage_spy(db_session, monkeypatch, sql):
         return await real(*args, **kwargs)
 
     monkeypatch.setattr(ingest, "workspace_catalog_context", counting)
-    await query_service.handle_agent_frame(
+    await _apply(
         db_session,
         Frame(type=FrameType.QUERY_DONE, payload={"query_id": str(query.id), "status": "done"}),
         polaris=object(),
@@ -807,3 +872,96 @@ def _clear_registry():
         import uuid
 
         registry.unregister(uuid.UUID(cid))
+
+
+# ── frames are bound to the agent that sent them ─────────────────────────────
+
+
+async def test_another_agents_progress_changes_nothing(db_session):
+    ws, _ = await _make_workspace(db_session)
+    query = await _queued_query(db_session, ws)
+
+    await query_service.handle_agent_frame(
+        db_session,
+        Frame(type=FrameType.QUERY_PROGRESS, payload={"query_id": str(query.id), "pct": 50}),
+        agent_id=await _agent_id(db_session),
+    )
+
+    await db_session.refresh(query)
+    assert (query.status, query.progress, query.running_at) == ("queued", None, None)
+
+
+async def test_another_agents_completion_changes_nothing(db_session):
+    """Not the row, not a waiter here, and none of the follow-up writes."""
+    ws, _ = await _make_workspace(db_session)
+    query = await _queued_query(db_session, ws, status="running")
+    payload = {"query_id": str(query.id), "status": "done", "row_count": 9, "result_path": "/r"}
+    frame = Frame(type=FrameType.QUERY_DONE, payload=payload)
+
+    with query_service.completion_waiter(query.id) as done:
+        await query_service.handle_agent_frame(
+            db_session, frame, agent_id=await _agent_id(db_session)
+        )
+
+    assert not done.is_set()
+    await db_session.refresh(query)
+    assert (query.status, query.row_count, query.result_path) == ("running", None, None)
+    assert (await db_session.execute(select(TableMetadata))).scalars().all() == []
+
+
+@pytest.mark.parametrize("ended", ["cancelled", "failed"])
+async def test_a_late_completion_keeps_a_run_as_it_ended(db_session, ended):
+    ws, _ = await _make_workspace(db_session)
+    query = await _queued_query(db_session, ws, status=ended)
+
+    with query_service.completion_waiter(query.id) as done:
+        await _apply(
+            db_session,
+            Frame(
+                type=FrameType.QUERY_DONE,
+                payload={"query_id": str(query.id), "status": "done", "row_count": 3},
+            ),
+        )
+
+    assert not done.is_set()
+    await db_session.refresh(query)
+    assert (query.status, query.row_count) == (ended, None)
+
+
+async def test_a_cancel_landing_mid_completion_drops_the_session_state(db_session, monkeypatch):
+    """The read says running, but the run is cancelled before the conditional
+    update: what the handler recorded for the session is rolled back with it."""
+    import sqlalchemy as sa
+
+    from api.models.sql_session import SqlSession
+    from api.services.result_cache import session as session_cache
+
+    ws, _ = await _make_workspace(db_session)
+    agent_id = await _agent_id(db_session)
+    session = SqlSession(workspace_id=ws.id, agent_id=agent_id, status="open")
+    db_session.add(session)
+    await db_session.flush()
+    query = await _queued_query(
+        db_session, ws, agent_id=agent_id, status="running", origin="session", session_id=session.id
+    )
+
+    async def cancel_meanwhile(db, statement, payload):
+        await db.execute(
+            sa.update(Query).where(Query.id == statement.id).values(status="cancelled")
+        )
+        await db.commit()
+        session_row = await db.get(SqlSession, statement.session_id)
+        session_row.cache_state = {"recorded": True}
+
+    monkeypatch.setattr(session_cache, "record_completion", cancel_meanwhile)
+    with query_service.completion_waiter(query.id) as done:
+        await _apply(
+            db_session,
+            Frame(type=FrameType.QUERY_DONE, payload={"query_id": str(query.id), "status": "done"}),
+        )
+
+    assert not done.is_set()
+    await db_session.refresh(query)
+    await db_session.refresh(session)
+    assert query.status == "cancelled"
+    assert session.cache_state is None

@@ -47,6 +47,32 @@ describe('LoginPage', () => {
     await waitFor(() => expect(router.state.location.pathname).toBe('/welcome'))
   })
 
+  it('says when to retry after too many attempts', async () => {
+    server.use(
+      http.post('/api/auth/login', () =>
+        HttpResponse.json(
+          {
+            error: 'too_many_sign_in_attempts',
+            message: 'Too many sign-in attempts. Try again in 42 seconds.',
+            details: null,
+          },
+          { status: 429, headers: { 'Retry-After': '42' } },
+        ),
+      ),
+    )
+    const user = userEvent.setup()
+    renderWithProviders({ initialRoute: '/login' })
+
+    await user.type(await screen.findByLabelText(/email/i), 'test@example.com')
+    await user.type(screen.getByLabelText(/password/i), 'password')
+    await user.click(screen.getByRole('button', { name: /sign in/i }))
+
+    expect(
+      await screen.findByText('Too many sign-in attempts. Try again in 42 seconds.'),
+    ).toBeInTheDocument()
+    expect(screen.queryByText('Invalid credentials.')).not.toBeInTheDocument()
+  })
+
   it('shows error message on 401 response', async () => {
     server.use(
       http.post('/api/auth/login', () => new HttpResponse(null, { status: 401 })),

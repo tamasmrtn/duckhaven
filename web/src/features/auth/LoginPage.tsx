@@ -9,6 +9,7 @@ import { useAuthMethods, useLogin } from "@/queries/auth";
 import { useSetupStatus } from "@/queries/setup";
 import { useQueryClient } from "@tanstack/react-query";
 import { workspacesApi } from "@/api/workspaces";
+import { ApiError } from "@/api/client";
 
 export function LoginPage() {
   const [email, setEmail] = useState("");
@@ -47,8 +48,13 @@ export function LoginPage() {
           ? { to: "/$ws/worksheets", params: { ws: first.slug } }
           : { to: "/welcome" },
       );
-    } catch {
-      setError("Invalid credentials.");
+    } catch (err) {
+      // A refused attempt says when to retry; every other failure looks the same.
+      setError(
+        err instanceof ApiError && err.code === "too_many_sign_in_attempts"
+          ? err.message
+          : "Invalid credentials.",
+      );
     }
   }
 

@@ -37,8 +37,11 @@ An account signs in one of three ways:
 
 When you submit a password, DuckHaven checks it against a local account first and tries LDAP only if there is no local
 password for that email. The first time someone signs in through single sign-on or LDAP, DuckHaven creates their
-account; on every sign-in it refreshes their name and global role from the directory. An email already registered to a
-different sign-in method is refused, so a directory account cannot take over a local admin.
+account and binds it to that provider and to the identity the provider names: the OIDC subject (`sub`), or the LDAP
+entry. Later sign-ins find the account through that binding, and each one refreshes the name and global role from the
+directory. Each OIDC provider binds its own accounts. A sign-in whose email belongs to an account of another provider,
+or to another identity at the same OIDC provider, is refused, so one provider cannot take over another's account or a
+local admin. An LDAP entry that moves keeps its account.
 
 Every sign-in produces the same kind of session: an opaque token stored on the server, so signing out, expiry and
 [revoking sessions](offboarding.md) behave the same whichever way you signed in.

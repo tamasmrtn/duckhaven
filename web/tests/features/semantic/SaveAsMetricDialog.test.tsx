@@ -70,6 +70,24 @@ describe("SaveAsMetricDialog", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("does not offer a published model to anyone but an owner", async () => {
+    // `sales` is published, and the member list answers only owners.
+    server.use(
+      http.get("/api/workspaces/:ws/members", () =>
+        HttpResponse.json(
+          { error: "forbidden", message: "Forbidden", details: null },
+          { status: 403 },
+        ),
+      ),
+    );
+    open("SUM(amount)");
+
+    expect(
+      await screen.findByText(/only a workspace owner can add to a published/i),
+    ).toBeVisible();
+    expect(screen.queryByLabelText("Model")).not.toBeInTheDocument();
+  });
+
   it("posts the aggregation and expression as separate fields", async () => {
     // The assertion that matters: what reaches the API is `agg: "sum"` over
     // `expr: "amount"`, never the string "SUM(amount)" — which would save as

@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import userEvent from "@testing-library/user-event";
+import { http, HttpResponse } from "msw";
+import { server } from "@tests/mock/server";
 import { renderWithProviders, screen } from "@tests/utils";
 
 const SALES = "/acme-analytics/semantic/sales";
@@ -11,6 +13,43 @@ describe("SemanticModelDetail", () => {
 
     const tablist = await screen.findByRole("tablist");
     expect(tablist.parentElement).toHaveClass("border-b");
+  });
+
+  it("lets an owner change a published model", async () => {
+    renderWithProviders({ initialRoute: SALES });
+
+    expect(
+      await screen.findByRole("button", { name: "Metric" }),
+    ).toBeVisible();
+    expect(
+      screen.getAllByRole("button", { name: /^Remove / }),
+    ).not.toHaveLength(0);
+    expect(
+      screen.queryByText(/only a workspace owner can change/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it("offers no changes to a published model to anyone but an owner", async () => {
+    // The member list answers only owners, so a writer gets a 403 for it.
+    server.use(
+      http.get("/api/workspaces/:ws/members", () =>
+        HttpResponse.json(
+          { error: "forbidden", message: "Forbidden", details: null },
+          { status: 403 },
+        ),
+      ),
+    );
+    renderWithProviders({ initialRoute: SALES });
+
+    expect(
+      await screen.findByText(/only a workspace owner can change/i),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("button", { name: "Metric" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryAllByRole("button", { name: /^Remove / }),
+    ).toHaveLength(0);
   });
 
   it("shows what a metric actually computes", async () => {

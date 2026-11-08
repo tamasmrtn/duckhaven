@@ -12,6 +12,7 @@ import { useSemanticModel, useSemanticModels } from "@/queries/semantic";
 import { useAddMetric } from "@/queries/semantic.mutations";
 import { Field, Shell, useSubmitError } from "./DefinitionDialogs";
 import { metricFromSql } from "./metricFromSql";
+import { useCanEditModel } from "./useCanEditModel";
 import type { Aggregation } from "@/types/semantic";
 
 const AGGREGATIONS: Aggregation[] = [
@@ -35,7 +36,8 @@ const AGGREGATIONS: Aggregation[] = [
  *
  * The two things the worksheet cannot know are asked for rather than guessed:
  * which subject area this belongs to, and which of its datasets the expression
- * reads. Imported models are not offered — they are edited at their source.
+ * reads. Imported models are not offered — they are edited at their source —
+ * and neither, to anyone but a workspace owner, is a model past draft.
  *
  * The form seeds from `sql` once, on mount. Callers must therefore key this
  * component on the selection, so a different expression mounts a fresh form
@@ -67,9 +69,11 @@ export function SaveAsMetricDialog({
   const [filter, setFilter] = useState("");
   const [timeDimension, setTimeDimension] = useState("");
 
-  const editable = (models ?? []).filter(
+  const canEdit = useCanEditModel(ws);
+  const native = (models ?? []).filter(
     (m) => m.provider === "native" && m.status !== "deprecated",
   );
+  const editable = native.filter(canEdit);
   const timeDimensions = (model?.dimensions ?? []).filter(
     (d) => d.kind === "time",
   );
@@ -115,9 +119,9 @@ export function SaveAsMetricDialog({
     >
       {editable.length === 0 ? (
         <p className="text-xs text-text-secondary">
-          There is no model to save into yet. Create one under Semantic first —
-          a metric belongs to a subject area, which is also what binds it to a
-          table.
+          {native.length === 0
+            ? "There is no model to save into yet. Create one under Semantic first — a metric belongs to a subject area, which is also what binds it to a table."
+            : "Only a workspace owner can add to a published model. Create a draft model under Semantic, or ask an owner to add it."}
         </p>
       ) : (
         <>

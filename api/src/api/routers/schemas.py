@@ -50,6 +50,7 @@ from api.services.lineage import ingest as lineage_ingest
 from api.services.migration.service import active_migration
 from api.services.polaris import PolarisClient
 from api.services.semantic import impact as semantic_impact
+from api.services.sql_guard import SQLNotAllowed
 from api.services.workspace import (
     assert_workspace_member,
     get_workspace,
@@ -747,16 +748,22 @@ async def sample_table(
         f"SELECT * FROM {quote_ident(cat.slug)}.{quote_ident(schema)}.{quote_ident(table)}"
         f" LIMIT {_SAMPLE_LIMIT}"
     )
-    query = await query_service.run_sync_query(
-        db,
-        workspace=workspace,
-        agent=agent,
-        user_id=user.id,
-        sql=sql,
-        origin="sample",
-        active_catalog=cat.slug,
-        stats_for={"catalog": cat.slug, "schema": schema, "table": table},
-    )
+    try:
+        query = await query_service.run_sync_query(
+            db,
+            workspace=workspace,
+            agent=agent,
+            user_id=user.id,
+            sql=sql,
+            origin="sample",
+            active_catalog=cat.slug,
+            stats_for={"catalog": cat.slug, "schema": schema, "table": table},
+        )
+    except SQLNotAllowed as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={"error": "sql_not_allowed", "detail": str(exc)},
+        ) from exc
     if query.status != "done" or query.result_path is None:
         raise HTTPException(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,

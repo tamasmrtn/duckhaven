@@ -779,6 +779,37 @@ async def test_sample_sql_names_a_quote_bearing_table_as_one_identifier(
     assert conn.execute(seen[0]).fetchall() == [(7,)]
 
 
+async def test_sample_the_query_gate_refuses_is_a_422(
+    auth_client: AsyncClient, backend: StorageBackend, monkeypatch
+):
+    """The preview's SQL passes the query gate, whose refusal keeps its 422 shape."""
+    import types
+    import uuid as uuidlib
+
+    from api.services import query as query_service
+
+    slug = await _make_workspace(auth_client, backend, "alpha")
+    await auth_client.post(
+        f"/workspaces/{slug}/catalogs/{slug}/schemas/main/tables",
+        json={"name": "events.json", "columns": [{"name": "id", "type": "BIGINT"}]},
+    )
+
+    async def fake_pick(db, workspace, *, principal_id=None):
+        return types.SimpleNamespace(id=uuidlib.uuid4())
+
+    async def no_dispatch(*args, **kwargs):
+        raise AssertionError("a refused statement must not be dispatched")
+
+    monkeypatch.setattr(query_service, "pick_agent_for", fake_pick)
+    monkeypatch.setattr(query_service, "dispatch_query", no_dispatch)
+
+    resp = await auth_client.get(
+        f"/workspaces/{slug}/catalogs/{slug}/schemas/main/tables/events.json/sample"
+    )
+    assert resp.status_code == 422, resp.text
+    assert resp.json()["error"] == "sql_not_allowed"
+
+
 async def test_drop_table_requires_writer(
     auth_client: AsyncClient, backend: StorageBackend, db_session
 ):

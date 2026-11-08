@@ -426,3 +426,25 @@ async def test_ddl_with_no_agent_says_why_rather_than_timing_out(monkeypatch):
     ctx = SimpleNamespace(db=None, workspace=SimpleNamespace(id="ws"), user=SimpleNamespace(id="u"))
     with pytest.raises(CatalogBackendUnavailable, match="only the DuckLake extension"):
         await DuckLakeCatalogBackend()._run_ddl(_catalog(), "CREATE SCHEMA x", ctx, what="create")
+
+
+@pytest.mark.asyncio
+async def test_ddl_the_query_gate_refuses_is_a_bad_request(monkeypatch):
+    """DuckLake DDL passes the query gate; a refusal surfaces as a bad request."""
+    from types import SimpleNamespace
+
+    from api.services import query as query_service
+    from api.services.catalog_backends import CatalogBackendBadRequest
+
+    async def _agent(db, workspace, *, principal_id=None):  # noqa: ANN001
+        return SimpleNamespace(id="agent-1")
+
+    async def no_dispatch(*args, **kwargs):  # noqa: ANN002, ANN003
+        raise AssertionError("a refused statement must not be dispatched")
+
+    monkeypatch.setattr(query_service, "pick_agent_for", _agent)
+    monkeypatch.setattr(query_service, "dispatch_query", no_dispatch)
+
+    ctx = SimpleNamespace(db=None, workspace=SimpleNamespace(id="ws"), user=SimpleNamespace(id="u"))
+    with pytest.raises(CatalogBackendBadRequest, match="Could not create"):
+        await DuckLakeCatalogBackend()._run_ddl(_catalog(), "INSTALL httpfs", ctx, what="create")

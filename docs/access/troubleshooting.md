@@ -43,6 +43,17 @@ wrong password, an unknown email and an unreachable directory all look the same,
 [Connect LDAP / AD](connect-ldap.md#if-it-goes-wrong). A deactivated account cannot sign in until an admin reactivates
 it.
 
+## "Too many sign-in attempts. Try again in ⟨n⟩ seconds."
+
+**What it means.** Too many failed attempts were made for this account, or from your address, within the last minute,
+so the email and password form refuses more for now. The limits are in
+[Errors](../reference/errors.md#signing-in-and-tokens).
+
+**What to do.** Wait the number of seconds shown, then sign in again. If it happens for an account nobody is signing in
+to, someone else is trying its password. If every user behind a reverse proxy is refused at once, they share the
+proxy's address: set `TRUSTED_PROXY_INGRESS=true` as in
+[Reverse proxy & TLS](../deployment/reverse-proxy-tls.md#what-the-agent-sees).
+
 ## "Single sign-on failed. Try again or sign in locally."
 
 **What it means.** The identity provider's sign-in did not complete: the redirect address, a claim, or the provider

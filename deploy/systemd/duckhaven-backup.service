@@ -9,6 +9,8 @@ Requires=docker.service
 
 [Service]
 Type=oneshot
+# Backup files are readable by root only.
+UMask=0077
 WorkingDirectory=/opt/duckhaven
 Environment=DUCKHAVEN_BACKUP_DIR=/mnt/backup-disk/duckhaven
 ExecStart=/opt/duckhaven/scripts/pg-backup.sh

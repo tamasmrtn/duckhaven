@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# A dump holds every row and stored credential in the database, so it is
+# readable by its owner only, whatever umask the caller runs with.
+umask 077
 
 # Point this at a second disk / NAS mount in production (G-D18-b).
 BACKUP_DIR="${DUCKHAVEN_BACKUP_DIR:-/var/duckhaven/backups}"
@@ -7,6 +10,10 @@ TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 COMPOSE_FILE="$(dirname "$0")/../deploy/docker-compose.yml"
 
 mkdir -p "$BACKUP_DIR"
+# Also closes off dumps an earlier run left readable. A mount that does not
+# keep modes refuses this; say so rather than skip the backup.
+chmod 0700 "$BACKUP_DIR" ||
+    echo "warning: could not restrict $BACKUP_DIR to its owner; check the mount's permissions" >&2
 
 # All are required to restore a working install: `duckhaven`, `polaris` (the
 # Iceberg metastore) and, when it exists, `ducklake` (DuckLake catalog metadata).

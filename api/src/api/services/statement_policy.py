@@ -243,6 +243,20 @@ def _table_path(table: exp.Table) -> str | None:
     return None
 
 
+def _write_targets(stmt: exp.Expression) -> list[exp.Expression]:
+    """The tables a write or DDL statement names as its target.
+
+    DuckDB resolves a target as a table, never as a file, so a target named
+    ``events.json`` is not a read; the statement's source query still is.
+    """
+    if isinstance(stmt, exp.Drop):
+        return list(stmt.args.get("tables") or [])
+    if isinstance(stmt, exp.Create | exp.Insert | exp.Alter | exp.Update | exp.Delete | exp.Merge):
+        target = stmt.this
+        return [target.this if isinstance(target, exp.Schema) else target]
+    return []
+
+
 def _file_read_sites(stmt: exp.Expression) -> Iterator[tuple[str, str | None]]:
     """Every place ``stmt`` reads a file or URL: ``(reader, path)``.
 
@@ -251,6 +265,7 @@ def _file_read_sites(stmt: exp.Expression) -> Iterator[tuple[str, str | None]]:
     not a string literal and so cannot be checked. One walk, so the session gate,
     the scoped-catalog grant check and the query-path gate see the same reads.
     """
+    targets = {id(target) for target in _write_targets(stmt)}
     for node in stmt.walk():
         name: str | None = None
         if isinstance(node, exp.ReadParquet | exp.ReadCSV):
@@ -265,7 +280,7 @@ def _file_read_sites(stmt: exp.Expression) -> Iterator[tuple[str, str | None]]:
                 for path in paths:
                     yield f"{name}()", path
         elif isinstance(node, exp.Table):
-            if (path := _table_path(node)) is not None:
+            if id(node) not in targets and (path := _table_path(node)) is not None:
                 yield "FROM", path
         elif (
             # sqlglot parses `SUMMARIZE '<file>'` as a string Literal, not a Table.

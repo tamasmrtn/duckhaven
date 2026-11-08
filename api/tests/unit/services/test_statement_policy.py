@@ -186,6 +186,8 @@ DIVERGENCE_DENIED = [
     # sqlglot parses this argument as a string, not a table.
     ("SUMMARIZE 'local.parquet'", "read_path"),
     ("SUMMARIZE 'https://example.com/x.parquet'", "read_path"),
+    # Only a write's target is a table; its source query is still a read.
+    ("INSERT INTO \"events.json\" SELECT * FROM 'local.json'", "read_path"),
 ]
 
 
@@ -212,6 +214,10 @@ DIVERGENCE_ALLOWED = [
     # A staged file stays summarizable, and so does a table or a subquery.
     "SUMMARIZE 's3://warehouse/analytics/_staging/sess-1/part-0.parquet'",
     "SUMMARIZE SELECT * FROM sales.analytics.orders",
+    # A write target resolves as a table, never as a file.
+    'CREATE TABLE "events.json" (id INTEGER)',
+    'INSERT INTO "events.json" SELECT 1',
+    'DROP TABLE "events.json"',
 ]
 
 

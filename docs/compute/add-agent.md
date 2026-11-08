@@ -29,11 +29,14 @@ services:
     environment:
       CONTROL_PLANE_URL: wss://duckhaven.example.com/agents/connect
       BOOTSTRAP_TOKEN: dh_boot_…
+      SESSION_TOKEN_PATH: /var/duckhaven-agent/state/session-token
     volumes:
       - agent_results:/var/duckhaven-agent/results
+      - agent_state:/var/duckhaven-agent/state
 
 volumes:
   agent_results:
+  agent_state:
 ```
 
 - The token works once and expires after **24 hours**.
@@ -52,7 +55,7 @@ Save the snippet as `docker-compose.yml` on the new host and run:
 docker compose up -d
 ```
 
-The agent connects, exchanges the bootstrap token for a long-lived credential it keeps in its results volume, and
+The agent connects, exchanges the bootstrap token for a long-lived credential it keeps in its `agent_state` volume, and
 registers. Restarts reuse that credential; the bootstrap token is not needed again.
 
 ## Check that it worked
@@ -90,7 +93,7 @@ for each.
 ## Remove an agent
 
 Open **Compute**, click the agent, and click **Revoke credential**. The agent is disconnected at once and shows as
-`unavailable`; stop its container and delete its results volume once you are done with them.
+`unavailable`; stop its container and delete its `agent_results` and `agent_state` volumes once you are done with them.
 
 ## If it goes wrong
 

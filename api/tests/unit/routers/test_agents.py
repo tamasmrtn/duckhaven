@@ -376,6 +376,48 @@ async def test_ws_consumed_bootstrap_token_is_rejected(ws_client, db_engine):
         assert (await db.execute(select(func.count()).select_from(Agent))).scalar_one() == 1
 
 
+async def test_ws_expired_bootstrap_token_is_rejected(ws_client, db_engine):
+    """An expired bootstrap token closes like an unknown one and registers nothing."""
+    import asyncio
+    from datetime import datetime, timedelta
+
+    from httpx import AsyncClient
+    from httpx_ws import WebSocketDisconnect, aconnect_ws
+    from sqlalchemy import func, select
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from api.models.user import Credential
+
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+    token = "dh_boot_expired"
+    async with factory() as db:
+        db.add(
+            Credential(
+                kind="agent_bootstrap",
+                token=token,
+                expires_at=datetime.now(tz=UTC) - timedelta(minutes=1),
+            )
+        )
+        await db.commit()
+
+    close_code = None
+    async with AsyncClient(transport=ws_client, base_url="http://test") as c:
+        async with aconnect_ws("http://test/agents/connect", c) as ws:
+            await ws.send_text(
+                json.dumps({"type": "auth", "payload": {"token": token, "result_port": 8001}})
+            )
+            try:
+                await asyncio.wait_for(ws.receive_text(), timeout=5.0)
+            except WebSocketDisconnect as exc:
+                close_code = exc.code
+
+    assert close_code == 1008
+    async with factory() as db:
+        assert (await db.execute(select(func.count()).select_from(Agent))).scalar_one() == 0
+        kinds = (await db.execute(select(Credential.kind))).scalars().all()
+        assert "agent_session" not in kinds
+
+
 async def test_ws_multiple_reconnects_keep_one_row(ws_client, db_engine):
     """Bootstrap once, then reconnect repeatedly with the session token."""
     from datetime import datetime, timedelta

@@ -52,6 +52,7 @@ boot, so every variable below is optional.
 | `CORS_ORIGINS` | `["http://localhost:5173"]` | JSON list of browser origins allowed to call the API from another origin. The web app is served by the API itself and needs no entry; a separately hosted front end (such as `make dev-web`) does. The [MCP server](../ai/mcp-server.md) also refuses a request whose `Origin` is not on this list. |
 | `SESSION_MAX_AGE_SECONDS` | `604800` (7 days) | Session lifetime — drives both the server-side credential expiry and the cookie max-age. Lower it to shorten how long a sign-in lasts. |
 | `AGENT_BOOTSTRAP_TOKEN` | `dh_boot_localdev_seed` | Single-use token the API seeds on startup so the bundled in-stack agent auto-registers. Override in production. |
+| `AGENT_BOOTSTRAP_TTL_HOURS` | `240` (10 days) | How long the seeded `AGENT_BOOTSTRAP_TOKEN` stays valid after an API start. An agent that presents it later is refused; the next API start seeds it again. An agent that already registered is unaffected. |
 
 ### DuckLake
 

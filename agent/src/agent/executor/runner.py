@@ -961,6 +961,13 @@ def _create_storage_secret(
     """
     name = _storage_secret(slug)
     if store.get("type") == "azure":
+        # DuckDB matches an empty SCOPE to every path, so a credential without
+        # one is refused rather than left to serve every catalog's data.
+        if not store.get("scope"):
+            raise ValueError(
+                f"The storage credential for catalog {slug!r} has no scope. "
+                "Upgrade the DuckHaven API to this agent's version."
+            )
         _create_secret(
             conn,
             f"CREATE OR REPLACE SECRET {name}",
@@ -968,6 +975,7 @@ def _create_storage_secret(
             {
                 "CONNECTION_STRING": store["connection_string"],
                 "ACCOUNT_NAME": store["account_name"],
+                "SCOPE": store["scope"],
             },
         )
         return

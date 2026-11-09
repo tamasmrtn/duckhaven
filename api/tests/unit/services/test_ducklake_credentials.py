@@ -246,3 +246,33 @@ def test_real_aws_s3_stays_on_https(monkeypatch):
         block = build_storage_block(backend, "s3://bucket/lake/raw/")
         assert block["endpoint"] == ""
         assert block["use_ssl"] is True
+
+
+def test_adls_storage_block_is_scoped_to_the_catalog_prefix(monkeypatch):
+    """The user-delegation SAS reaches the whole container, so the block carries
+    the catalog's own prefix as its scope, as the S3 blocks do."""
+    import azure.identity
+    import azure.storage.blob
+
+    class _FakeService:
+        def __init__(self, account_url, credential):
+            self.account_url = account_url
+
+        def get_user_delegation_key(self, **kwargs):
+            return object()
+
+    monkeypatch.setattr(azure.identity, "DefaultAzureCredential", lambda: object())
+    monkeypatch.setattr(azure.storage.blob, "BlobServiceClient", _FakeService)
+    monkeypatch.setattr(azure.storage.blob, "generate_container_sas", lambda **kwargs: "sig")
+
+    backend = StorageBackend(
+        kind="adls_gen2", name="corp", root_uri="abfss://lake@acct.dfs.core.windows.net/dh"
+    )
+    path = "abfss://lake@acct.dfs.core.windows.net/dh/raw/"
+    block = build_storage_block(backend, path)
+    assert block["type"] == "azure"
+    assert block["scope"] == path
+    assert block["account_name"] == "acct"
+    assert block["connection_string"] == (
+        "BlobEndpoint=https://acct.blob.core.windows.net;SharedAccessSignature=sig"
+    )

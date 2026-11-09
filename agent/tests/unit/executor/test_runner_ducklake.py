@@ -123,17 +123,66 @@ def test_secret_names_are_per_catalog():
     assert "dh_dl_store_raw" in text and "dh_dl_store_curated" in text
 
 
+_ADLS = "abfss://lake@acct.dfs.core.windows.net/"
+
+
+def _azure_store(scope: str | None) -> dict:
+    store = {
+        "type": "azure",
+        "account_name": "acct",
+        "connection_string": "BlobEndpoint=https://acct.blob.core.windows.net;SharedAccessSignature=sig",
+    }
+    if scope is not None:
+        store["scope"] = scope
+    return store
+
+
 def test_azure_storage_uses_an_azure_secret():
     conn = FakeConn()
     cat = _ducklake_catalog()
-    cat["storage"] = {
-        "type": "azure",
-        "account_name": "acct",
-        "connection_string": "BlobEndpoint=https://x;SharedAccessSignature=sig",
-    }
+    cat["storage"] = _azure_store(f"{_ADLS}raw/")
     runner._attach_ducklake(conn, cat)
     assert "TYPE AZURE" in conn.sql_text()
     assert "TYPE S3" not in conn.sql_text()
+
+
+def test_the_azure_secret_is_scoped_to_the_catalog_prefix(monkeypatch):
+    """The SAS reaches the whole container, so SCOPE keeps one catalog's
+    credential off another's data, as it does for S3."""
+    monkeypatch.setattr(runtime, "SECRET_BIND_PARAMETERS", True)
+    conn = FakeConn()
+    cat = _ducklake_catalog()
+    cat["storage"] = _azure_store(f"{_ADLS}raw/")
+    runner._attach_ducklake(conn, cat)
+    secret_call = next(c for c in conn.calls if "TYPE AZURE" in c[0])
+    assert "SCOPE" in secret_call[0]
+    assert f"{_ADLS}raw/" in [str(p) for p in secret_call[1]]
+
+
+@pytest.mark.parametrize("scope", [None, ""])
+def test_an_azure_credential_without_a_scope_is_refused(scope):
+    """DuckDB matches an empty SCOPE to every path."""
+    conn = FakeConn()
+    with pytest.raises(ValueError, match="has no scope"):
+        runner._create_storage_secret(conn, "raw", _azure_store(scope))
+    assert not any("TYPE AZURE" in sql for sql, _ in conn.calls)
+
+
+def test_duckdb_selects_the_azure_secret_only_under_its_scope():
+    import duckdb
+
+    conn = duckdb.connect()
+    try:
+        conn.execute("LOAD azure")
+    except duckdb.Error:
+        pytest.skip("the azure extension is not installed")
+    runner._create_storage_secret(conn, "raw", _azure_store(f"{_ADLS}raw/"))
+
+    def selected(path: str) -> list[tuple]:
+        return conn.execute("SELECT name FROM which_secret(?, 'azure')", [path]).fetchall()
+
+    assert selected(f"{_ADLS}raw/analytics/orders/part-0.parquet") == [("dh_dl_store_raw",)]
+    assert selected(f"{_ADLS}curated/analytics/orders/part-0.parquet") == []
 
 
 def test_a_ducklake_only_workspace_creates_no_iceberg_secret():

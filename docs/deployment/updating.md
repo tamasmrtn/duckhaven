@@ -89,7 +89,9 @@ docker restart duckhaven-agent
 Pull the tag for the runtime the host runs. Plain `:latest` keeps working as the default runtime's
 image. **Upgrade the control plane first** whenever a release adds a runtime you want to use: an
 agent reporting a runtime the control plane doesn't know is refused work until the control
-plane is upgraded too.
+plane is upgraded too. With DuckLake catalogs on ADLS Gen 2, upgrade the control plane before
+the agents in every release: an agent refuses an ADLS storage credential that carries no prefix
+scope, and a control plane older than the agent may send one.
 
 Elastic compute follows the control plane on its own. A provisioned or restarted agent runs its
 runtime's image at the control plane's version, so after an upgrade each agent picks up the new
@@ -125,6 +127,8 @@ your agents show `healthy` under **Compute**.
 - **Query results from agents behind a reverse proxy fail to load.** The API reads `X-Forwarded-For` only with
   `TRUSTED_PROXY_INGRESS=true`. Set it as in [What the agent sees](reverse-proxy-tls.md#what-the-agent-sees),
   restart the API, then restart those agents. The HA compose file sets it already.
+- **Queries on a DuckLake catalog on ADLS Gen 2 fail with "The storage credential for catalog '⟨slug⟩' has no
+  scope."** The agent is newer than the control plane. Upgrade the control plane to the agent's version.
 - **The agent cannot write results after moving to the distroless images.** Its volumes still belong to the old
   user; see the one-time step [above](#one-time-updating-past-the-chainguard-base-image-migration).
 

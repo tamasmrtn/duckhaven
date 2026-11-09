@@ -189,7 +189,11 @@ def _s3_storage_block(backend: StorageBackend, data_path: str) -> dict[str, obje
 
 
 def _adls_storage_block(data_path: str) -> dict[str, object]:
-    """A container-scoped user-delegation SAS: DuckLake writes blobs DuckHaven can't name ahead."""
+    """A container-scoped user-delegation SAS: DuckLake writes blobs DuckHaven can't name ahead.
+
+    The SAS reaches the whole container, so ``scope`` keeps the agent's secret to
+    this catalog's own prefix, as the S3 blocks do.
+    """
     from azure.identity import DefaultAzureCredential
     from azure.storage.blob import (
         BlobServiceClient,
@@ -219,6 +223,7 @@ def _adls_storage_block(data_path: str) -> dict[str, object]:
     )
     return {
         "type": "azure",
+        "scope": data_path,
         "account_name": account,
         "connection_string": f"BlobEndpoint={account_url};SharedAccessSignature={sas}",
     }

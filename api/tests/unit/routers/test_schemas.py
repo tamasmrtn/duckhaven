@@ -601,12 +601,15 @@ async def test_table_detail_surfaces_iceberg_metadata(
     agent = Agent(name="runner", status="healthy")
     db_session.add(agent)
     await db_session.flush()
+    catalog = (await db_session.execute(select(Catalog).where(Catalog.slug == slug))).scalar_one()
+    probe = {"catalog_id": str(catalog.id), "catalog": slug, "schema": "main", "table": "events"}
     query = Query(
         workspace_id=ws.id,
         agent_id=agent.id,
         sql="SELECT * FROM main.events",
         status="running",
         started_at=datetime.now(UTC),
+        probe={"stats": probe},
     )
     db_session.add(query)
     await db_session.commit()

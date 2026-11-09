@@ -114,6 +114,12 @@ class Query(Base):
     tags: Mapped[dict | None] = mapped_column(
         JSON().with_variant(JSONB, "postgresql"), nullable=True
     )
+    # The table probes dispatched with this run, by kind (`stats`, `health`):
+    # `{catalog_id, catalog, schema, table}` each. What the agent reports back
+    # for a probe is recorded only when it names the table asked for.
+    probe: Mapped[dict | None] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql"), nullable=True
+    )
     # What the result cache did with this run: `hit` (answered from an earlier
     # run's result, nothing executed), `miss` (executed, and offered to the cache
     # when it finished), `bypass` (the cache was off or could not decide in time)

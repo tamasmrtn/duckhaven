@@ -15,7 +15,6 @@ from typing import Any
 import sqlalchemy as sa
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.models.catalog import Catalog
 from api.models.maintenance import MaintenanceRecommendation, TableHealthSample
 from api.models.query import Query
 from api.services.catalog_backends import capabilities_for
@@ -48,9 +47,9 @@ async def record_health_sample(db: AsyncSession, query: Query, health: dict[str,
     catalog_slug = health.get("catalog")
     if not schema or not table or not catalog_slug:
         return
-    catalog = (
-        await db.execute(sa.select(Catalog).where(Catalog.slug == catalog_slug))
-    ).scalar_one_or_none()
+    from api.services.query import probed_catalog
+
+    catalog = await probed_catalog(db, query, "health", health)
     if catalog is None:
         return
 

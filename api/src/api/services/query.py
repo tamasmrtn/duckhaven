@@ -205,6 +205,14 @@ async def dispatch_query(
             active_schema,
             catalogs,
         )
+    # Committed with the dispatch, so what the agent reports for a probe is held
+    # to the table asked for here.
+    probes = {
+        kind: _probe_target(target, catalogs)
+        for kind, target in (("stats", stats_for), ("health", health_for))
+        if target is not None
+    }
+    query.probe = {kind: t for kind, t in probes.items() if t is not None} or None
     payload: dict[str, object] = {
         "query_id": str(query.id),
         "sql": query.sql,
@@ -264,6 +272,37 @@ async def dispatch_query(
     if query.origin is None:
         record_query_submitted()
     await db.commit()
+
+
+def _probe_target(target: dict[str, Any], catalogs: list[Catalog]) -> dict[str, Any] | None:
+    """The table a probe names, with its catalog's id; ``None`` when the catalog
+    is not one the workspace attaches."""
+    catalog = next((c for c in catalogs if c.slug == target.get("catalog")), None)
+    if catalog is None:
+        return None
+    return {
+        "catalog_id": str(catalog.id),
+        "catalog": catalog.slug,
+        "schema": target.get("schema"),
+        "table": target.get("table"),
+    }
+
+
+async def probed_catalog(
+    db: AsyncSession, query: Query, kind: str, reported: dict[str, Any]
+) -> Catalog | None:
+    """The catalog of the ``kind`` probe dispatched with ``query``.
+
+    ``None`` unless ``reported`` names the table that probe asked for and the
+    catalog is still one the query's workspace attaches, so an agent's report
+    is recorded only for the table it was asked about.
+    """
+    expected = (query.probe or {}).get(kind)
+    if not expected or any(reported.get(k) != expected[k] for k in ("catalog", "schema", "table")):
+        return None
+    catalog_id = uuid.UUID(expected["catalog_id"])
+    catalogs = await resolve_workspace_catalogs(db, query.workspace_id)
+    return next((c for c in catalogs if c.id == catalog_id), None)
 
 
 def _utc(value: datetime) -> datetime:
@@ -472,9 +511,7 @@ async def _upsert_table_stats(db: AsyncSession, query_id: uuid.UUID, frame: Fram
     query = await db.get(Query, query_id)
     if query is None:
         return
-    catalog = (
-        await db.execute(sa.select(Catalog).where(Catalog.slug == catalog_slug))
-    ).scalar_one_or_none()
+    catalog = await probed_catalog(db, query, "stats", stats)
     if catalog is None:
         return
     existing = (

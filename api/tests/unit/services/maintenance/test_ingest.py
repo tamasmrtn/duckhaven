@@ -4,6 +4,7 @@ import pytest
 from conftest import seed_workspace
 from sqlalchemy import select
 
+from api.models.catalog import Catalog
 from api.models.maintenance import MaintenanceRecommendation, TableHealthSample
 from api.models.query import Query
 from api.models.user import User
@@ -23,7 +24,21 @@ async def _workspace(db) -> Workspace:
 
 
 async def _query(db, ws) -> Query:
-    q = Query(workspace_id=ws.id, sql="SELECT 1", status="done", origin="maintenance")
+    """A health probe of mws.analytics.events, as the scanner dispatches it."""
+    catalog = (await db.execute(select(Catalog).where(Catalog.slug == "mws"))).scalar_one()
+    probe = {
+        "catalog_id": str(catalog.id),
+        "catalog": "mws",
+        "schema": "analytics",
+        "table": "events",
+    }
+    q = Query(
+        workspace_id=ws.id,
+        sql="SELECT 1",
+        status="done",
+        origin="maintenance",
+        probe={"health": probe},
+    )
     db.add(q)
     await db.commit()
     await db.refresh(q)
@@ -134,3 +149,25 @@ async def test_ignores_sample_without_table(db_session):
     q = await _query(db_session, ws)
     await record_health_sample(db_session, q, {"schema": "analytics"})
     assert (await db_session.execute(select(TableHealthSample))).first() is None
+
+
+async def _recorded(db) -> tuple[list, list]:
+    samples = (await db.execute(select(TableHealthSample))).scalars().all()
+    recs = (await db.execute(select(MaintenanceRecommendation))).scalars().all()
+    return list(samples), list(recs)
+
+
+async def test_health_for_a_table_not_probed_records_nothing(db_session):
+    ws = await _workspace(db_session)
+    q = await _query(db_session, ws)
+    await record_health_sample(db_session, q, _unhealthy(table="orders"))
+    assert await _recorded(db_session) == ([], [])
+
+
+async def test_health_on_a_run_without_a_probe_records_nothing(db_session):
+    ws = await _workspace(db_session)
+    q = await _query(db_session, ws)
+    q.probe = None
+    await db_session.commit()
+    await record_health_sample(db_session, q, _unhealthy())
+    assert await _recorded(db_session) == ([], [])

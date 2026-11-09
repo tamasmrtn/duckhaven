@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import random
+from datetime import UTC, datetime, timedelta
 
 import pytest
 import pytest_asyncio
@@ -83,3 +84,32 @@ async def test_concurrent_bootstrap_seed_is_race_safe(db_session):
             select(func.count()).select_from(Credential).where(Credential.token == "dh_boot_race")
         )
     assert count == 1
+
+
+async def test_concurrent_seeding_replaces_an_expired_seed(db_session):
+    """Replicas starting together over an expired seed leave exactly one live row:
+    each deletes expired bootstrap credentials before checking for the token."""
+    factory = async_sessionmaker(db_session.bind, expire_on_commit=False)
+    token = "dh_boot_expired_race"
+    async with factory() as db:
+        db.add(
+            Credential(
+                kind="agent_bootstrap",
+                token=token,
+                expires_at=datetime.now(tz=UTC) - timedelta(hours=1),
+            )
+        )
+        await db.commit()
+
+    async def seed() -> None:
+        async with factory() as db:
+            await seed_agent_bootstrap_token(db, token, ttl_hours=24)
+
+    await asyncio.gather(*(seed() for _ in range(5)))
+
+    async with factory() as db:
+        expiries = (
+            await db.scalars(select(Credential.expires_at).where(Credential.token == token))
+        ).all()
+    assert len(expiries) == 1
+    assert expiries[0] > datetime.now(tz=UTC)

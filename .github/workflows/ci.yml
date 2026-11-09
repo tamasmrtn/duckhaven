@@ -329,9 +329,7 @@ jobs:
 
   e2e:
     name: E2E (Playwright)
-    # ubuntu-latest is now 26.04, which the locked Playwright (1.60) does not
-    # support; it needs 1.61 or later there.
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     needs: [changes]
     # Heavy full-stack run: only on merge to main or PRs labelled `run-e2e`,
     # and only when app/e2e code changed.

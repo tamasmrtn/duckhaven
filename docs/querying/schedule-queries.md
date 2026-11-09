@@ -46,6 +46,9 @@ run. So the finest cadence is once a minute, and:
   cannot be created or enabled.
 - **The SQL as saved.** A schedule runs the saved query's SQL exactly, with no parameters. Saving over the query changes
   what the schedule runs.
+- **Its own workspace's saved query.** A schedule runs only a saved query of the workspace it belongs to, with that
+  workspace's catalogs and grants. Creating or enabling a schedule for any other saved query is refused with
+  `saved_query_not_found`, and a schedule bound to one is skipped when it is due.
 
 ### When the agent is stopped
 

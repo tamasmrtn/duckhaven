@@ -1,6 +1,7 @@
 import uuid
 from datetime import UTC, datetime, timedelta
 
+import pytest
 import pytest_asyncio
 from conftest import seed_workspace
 from httpx import AsyncClient
@@ -116,6 +117,68 @@ async def test_enabling_a_schedule_of_refused_sql_is_422(
     )
     assert resp.status_code == 422
     assert resp.json()["error"] == "sql_not_allowed"
+
+
+async def _foreign_saved_query(db_session, user: User) -> SavedQuery:
+    """A saved query in another workspace the same user can reach."""
+    other, _catalog = await seed_workspace(db_session, user_id=user.id, slug="other-ws")
+    sq = SavedQuery(workspace_id=other.id, name="theirs", sql="SELECT 2", created_by=user.id)
+    db_session.add(sq)
+    await db_session.commit()
+    await db_session.refresh(sq)
+    return sq
+
+
+@pytest.mark.parametrize("enabled", [True, False])
+async def test_create_schedule_refuses_a_saved_query_of_another_workspace(
+    authed_client: AsyncClient, workspace: Workspace, user: User, db_session, enabled
+):
+    foreign = await _foreign_saved_query(db_session, user)
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/schedules",
+        json={"saved_query_id": str(foreign.id), "cron": "0 2 * * *", "enabled": enabled},
+    )
+    assert resp.status_code == 422
+    assert resp.json()["error"] == "saved_query_not_found"
+    listed = await authed_client.get(f"/workspaces/{workspace.slug}/schedules")
+    assert listed.json() == []
+
+
+async def test_create_schedule_refuses_an_unknown_saved_query(
+    authed_client: AsyncClient, workspace: Workspace
+):
+    resp = await authed_client.post(
+        f"/workspaces/{workspace.slug}/schedules",
+        json={"saved_query_id": str(uuid.uuid4()), "cron": "0 2 * * *", "enabled": False},
+    )
+    assert resp.status_code == 422
+    assert resp.json()["error"] == "saved_query_not_found"
+
+
+async def test_enabling_a_schedule_of_another_workspaces_saved_query_is_422(
+    authed_client: AsyncClient, workspace: Workspace, user: User, db_session
+):
+    from api.models.query import Schedule
+
+    foreign = await _foreign_saved_query(db_session, user)
+    schedule = Schedule(
+        workspace_id=workspace.id,
+        job_type="saved_query",
+        saved_query_id=foreign.id,
+        cron="0 2 * * *",
+        enabled=False,
+        created_by=user.id,
+    )
+    db_session.add(schedule)
+    await db_session.commit()
+
+    resp = await authed_client.patch(
+        f"/workspaces/{workspace.slug}/schedules/{schedule.id}", json={"enabled": True}
+    )
+    assert resp.status_code == 422
+    assert resp.json()["error"] == "saved_query_not_found"
+    await db_session.refresh(schedule)
+    assert schedule.enabled is False
 
 
 async def test_update_schedule_recomputes_next_run(

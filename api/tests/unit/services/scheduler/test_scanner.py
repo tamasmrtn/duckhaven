@@ -252,6 +252,26 @@ async def test_scheduled_run_executes_as_the_last_editor(session_factory):
         assert "authorized" in (q.error or "").lower()
 
 
+async def test_skips_a_saved_query_of_another_workspace(session_factory):
+    """A schedule runs only its own workspace's saved query, under that workspace's
+    grants; one bound elsewhere is skipped as if the query were gone."""
+    async with session_factory() as db:
+        schedule, _agent, ws_obj = await _seed(db, next_run_at=_PAST)
+        foreign, _agent2, _ws2 = await _seed(db, connect_agent=False, enabled=False)
+        row = await db.get(Schedule, schedule.id)
+        row.saved_query_id = foreign.saved_query_id
+        await db.commit()
+
+    result = await run_cycle(session_factory, now=_NOW)
+    assert result["dispatched"] == 0
+
+    async with session_factory() as db:
+        assert (await db.execute(select(Query))).scalars().all() == []
+        assert _naive((await db.get(Schedule, schedule.id)).next_run_at) == _NEXT
+    assert ws_obj is not None
+    assert ws_obj.sent == []
+
+
 async def test_skips_disabled_and_future_schedules(session_factory):
     async with session_factory() as db:
         await _seed(db, enabled=False, next_run_at=_PAST)

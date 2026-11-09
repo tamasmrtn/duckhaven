@@ -161,8 +161,9 @@ async def _run_saved_query(
     whole cost of the run.
     """
     saved = await db.get(SavedQuery, schedule.saved_query_id) if schedule.saved_query_id else None
-    if saved is None:
-        logger.warning("Schedule %s has no saved query; skipping", schedule.id)
+    # Only a saved query of the schedule's own workspace runs under its grants.
+    if saved is None or saved.workspace_id != schedule.workspace_id:
+        logger.warning("Schedule %s has no saved query in its workspace; skipping", schedule.id)
         return None
     workspace = await db.get(Workspace, schedule.workspace_id)
 

@@ -5,6 +5,7 @@ control channel between the real API and real agent processes.
 from __future__ import annotations
 
 import asyncio
+import stat
 
 import pytest
 
@@ -51,6 +52,51 @@ async def test_agent_disconnect_marks_unavailable(api_client, spawn_agent) -> No
         return agents.get(agent_id, {}).get("status") == "unavailable"
 
     assert await _poll(_is_unavailable, timeout=30.0), "agent stayed healthy after disconnect"
+
+
+async def test_a_restarted_agent_moves_its_token_and_reconnects_as_itself(
+    api_client, spawn_agent, tmp_path
+) -> None:
+    """A restart keeps the agent's identity, also when SESSION_TOKEN_PATH moves.
+
+    The first run keeps its session token beside the results, the default. The
+    restart points SESSION_TOKEN_PATH elsewhere, as the bundled compose file does:
+    the agent moves the token there and reconnects with it rather than with the
+    fresh bootstrap token it is also given, so it comes back as the same agent.
+    """
+    results = tmp_path / "results"
+    results.mkdir()
+    legacy = results / ".session-token"
+    moved = tmp_path / "state" / "session-token"
+    before = {a["id"] for a in (await api_client.get("/api/agents")).json()}
+
+    async def _healthy_new_ids() -> set[str]:
+        agents = (await api_client.get("/api/agents")).json()
+        return {a["id"] for a in agents if a["id"] not in before and a["status"] == "healthy"}
+
+    async def _token_saved() -> bool:
+        return legacy.exists()
+
+    proc = spawn_agent({"RESULTS_DIR": str(results)})
+    first = await _poll(_healthy_new_ids, timeout=90.0)
+    assert first is not None and len(first) == 1, "spawned agent never registered healthy"
+    (agent_id,) = first
+    assert await _poll(_token_saved, timeout=10.0), "the agent saved no session token"
+
+    proc.terminate()
+    proc.wait(timeout=10)
+
+    async def _is_unavailable() -> bool:
+        agents = {a["id"]: a for a in (await api_client.get("/api/agents")).json()}
+        return agents.get(agent_id, {}).get("status") == "unavailable"
+
+    assert await _poll(_is_unavailable, timeout=30.0), "agent stayed healthy after it stopped"
+
+    spawn_agent({"RESULTS_DIR": str(results), "SESSION_TOKEN_PATH": str(moved)})
+    back = await _poll(_healthy_new_ids, timeout=90.0)
+    assert back == {agent_id}, "the restarted agent registered as a new agent"
+    assert moved.exists() and not legacy.exists()
+    assert stat.S_IMODE(moved.stat().st_mode) == 0o600
 
 
 async def _poll(predicate, timeout: float, interval: float = 0.5):

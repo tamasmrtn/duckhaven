@@ -538,6 +538,74 @@ async def test_a_writer_cannot_publish(client, auth_client, ws, db_session):
     assert resp.status_code == 403
 
 
+async def _sign_in_as_writer(client, ws, db_session) -> None:
+    import sqlalchemy as sa
+
+    from api.models.workspace import Workspace
+
+    writer = User(email="writer@s.local", password_hash=hash_password("pw"), name="W", role="user")
+    db_session.add(writer)
+    await db_session.commit()
+    await db_session.refresh(writer)
+    workspace = (
+        await db_session.execute(sa.select(Workspace).where(Workspace.slug == ws))
+    ).scalar_one()
+    db_session.add(WorkspaceMember(workspace_id=workspace.id, user_id=writer.id, role="writer"))
+    await db_session.commit()
+    await client.post("/auth/login", json={"email": "writer@s.local", "password": "pw"})
+
+
+_EDITS = [
+    ("patch", "", {"name": "Renamed"}),
+    ("patch", "/metrics/revenue", {"expr": "amount * 2"}),
+    ("patch", "/metrics/revenue", {"status": "draft"}),
+    ("post", "/dimensions", {"name": "status", "dataset": "orders", "expr": "status"}),
+    ("delete", "/metrics/revenue", None),
+]
+
+
+@pytest.mark.parametrize("lifecycle", ["publish", "deprecate"])
+async def test_a_writer_cannot_change_a_model_once_it_leaves_draft(
+    client, auth_client, ws, db_session, lifecycle
+):
+    """A published model is what the assistant quotes as fact, so changing it is an
+    owner act, like publishing it."""
+    await _published(auth_client, ws)
+    if lifecycle == "deprecate":
+        await auth_client.post(f"/workspaces/{ws}/semantic/models/sales/deprecate")
+    before = (await auth_client.get(f"/workspaces/{ws}/semantic/models/sales")).json()
+
+    await _sign_in_as_writer(client, ws, db_session)
+    base = f"/workspaces/{ws}/semantic/models/sales"
+    for method, path, body in _EDITS:
+        kwargs = {"json": body} if body is not None else {}
+        resp = await client.request(method.upper(), base + path, **kwargs)
+        assert resp.status_code == 403, (method, path, resp.text)
+        assert resp.json()["error"] == "published_model"
+        assert "only a workspace owner" in resp.json()["message"]
+
+    assert (await client.get(base)).json() == before
+
+
+async def test_an_owner_can_change_a_published_model(auth_client, ws):
+    await _published(auth_client, ws)
+    base = f"/workspaces/{ws}/semantic/models/sales"
+    for method, path, body in _EDITS:
+        kwargs = {"json": body} if body is not None else {}
+        resp = await auth_client.request(method.upper(), base + path, **kwargs)
+        assert resp.status_code < 300, (method, path, resp.text)
+
+
+async def test_a_writer_can_change_a_draft(client, auth_client, ws, db_session):
+    await build_model(auth_client, ws)
+    await _sign_in_as_writer(client, ws, db_session)
+    base = f"/workspaces/{ws}/semantic/models/sales"
+    for method, path, body in _EDITS:
+        kwargs = {"json": body} if body is not None else {}
+        resp = await client.request(method.upper(), base + path, **kwargs)
+        assert resp.status_code < 300, (method, path, resp.text)
+
+
 async def test_a_non_member_sees_nothing(client, auth_client, ws, db_session):
     await build_model(auth_client, ws)
     stranger = User(

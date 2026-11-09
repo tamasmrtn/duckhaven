@@ -84,6 +84,7 @@ from api.services.semantic.retrieve import ambiguous, search, search_broken
 from api.services.semantic.timespec import TimeRange
 from api.services.semantic.validate import validate_model
 from api.services.workspace import (
+    ROLE_ORDER,
     assert_workspace_member,
     get_workspace,
     resolve_catalog,
@@ -97,10 +98,11 @@ router = APIRouter()
 
 
 class _Context:
-    def __init__(self, workspace, user: User, catalogs: list[Catalog]) -> None:
+    def __init__(self, workspace, user: User, catalogs: list[Catalog], role: str) -> None:
         self.workspace = workspace
         self.user = user
         self.catalogs = catalogs
+        self.role = role
 
 
 def _context(min_role: str):
@@ -112,9 +114,9 @@ def _context(min_role: str):
         workspace = await get_workspace(db, ws)
         if workspace is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
-        await assert_workspace_member(db, workspace.id, user.id, min_role=min_role)
+        member = await assert_workspace_member(db, workspace.id, user.id, min_role=min_role)
         catalogs = await resolve_workspace_catalogs(db, workspace.id)
-        return _Context(workspace, user, catalogs)
+        return _Context(workspace, user, catalogs, member.role)
 
     return _dep
 
@@ -148,7 +150,12 @@ def _immutable(model: SemanticModel) -> HTTPException:
 
 
 async def _editable(db: AsyncSession, ctx: _Context, slug: str) -> SemanticModel:
-    """Fetch a model for writing, refusing anything an import owns."""
+    """Fetch a model for writing, refusing anything an import owns.
+
+    A writer edits a draft. Once a model is published or deprecated, changing it
+    changes what the assistant quotes as fact, which is the owner's decision just
+    as publishing is.
+    """
     try:
         model = await store.get_model(
             db,
@@ -161,6 +168,16 @@ async def _editable(db: AsyncSession, ctx: _Context, slug: str) -> SemanticModel
         raise _not_found(slug) from exc
     if model.provider != NATIVE_PROVIDER:
         raise _immutable(model)
+    if model.status != "draft" and ROLE_ORDER.get(ctx.role, -1) < ROLE_ORDER["owner"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail={
+                "error": "published_model",
+                "detail": (
+                    f"{model.slug!r} is {model.status}; only a workspace owner can change it."
+                ),
+            },
+        )
     model.updated_at = datetime.now(UTC)
     return model
 
@@ -391,7 +408,8 @@ async def update_model(
 ) -> ModelOut:
     """Rename a model or change its description. A partial update.
 
-    Only editable while the model is a draft; the slug is immutable because it
+    A writer edits a draft; a published or deprecated model needs owner. The slug
+    is immutable because it
     addresses the model and may be referenced by compiled queries."""
     model = await _editable(db, ctx, slug)
     if body.name is not None:
@@ -583,7 +601,7 @@ async def add_dataset(
     ctx: _Context = Depends(_context("writer")),
     db: AsyncSession = Depends(get_db),
 ) -> DatasetOut:
-    """Bind a table into the model as a dataset. Draft models only.
+    """Bind a table into the model as a dataset. Owner-only unless a draft.
 
     Requires the same tier on the table that reading its metadata needs -- other-
     wise binding to a table and reading the validation error back would leak its
@@ -642,7 +660,7 @@ async def add_dimension(
     db: AsyncSession = Depends(get_db),
 ) -> DimensionOut:
     """Define a dimension on one of the model's datasets -- something to group or
-    filter by. Draft models only.
+    filter by. Owner-only unless a draft.
 
     Names are unique within the model; 409 if one is taken."""
     model = await _editable(db, ctx, slug)
@@ -694,7 +712,7 @@ async def add_metric(
     ctx: _Context = Depends(_context("writer")),
     db: AsyncSession = Depends(get_db),
 ) -> MetricOut:
-    """Define a metric -- an aggregation over a dataset. Draft models only.
+    """Define a metric -- an aggregation over a dataset. Owner-only unless a draft.
 
     Naming a `time_dimension` is what lets the metric be asked for over a period
     without the caller writing the date logic."""
@@ -773,7 +791,7 @@ async def update_metric(
     ctx: _Context = Depends(_context("writer")),
     db: AsyncSession = Depends(get_db),
 ) -> MetricOut:
-    """Change a metric's definition. A partial update. Draft models only."""
+    """Change a metric's definition. A partial update. Owner-only unless a draft."""
     model = await _editable(db, ctx, slug)
     metric = (
         await db.execute(
@@ -857,7 +875,7 @@ async def add_relationship(
     db: AsyncSession = Depends(get_db),
 ) -> RelationshipOut:
     """Join two of the model's datasets, so a metric on one can be sliced by a
-    dimension on the other. Draft models only.
+    dimension on the other. Owner-only unless a draft.
 
     422 if both sides name the same dataset."""
     model = await _editable(db, ctx, slug)

@@ -35,8 +35,8 @@ Each member of a workspace has one role, which decides what they can do in the w
 | Role | Allows |
 |---|---|
 | `reader` | Browse schemas and tables, run queries, keep worksheets, and see the workspace's history |
-| `writer` | Everything `reader` allows, plus save and schedule queries, author semantic models, import lineage, and apply maintenance recommendations |
-| `owner` | Everything `writer` allows, plus manage membership and workspace settings, attach, detach and create catalogs, set a catalog's access mode and grants, publish semantic models, and purge imported lineage |
+| `writer` | Everything `reader` allows, plus save and schedule queries, author draft semantic models, import lineage, and apply maintenance recommendations |
+| `owner` | Everything `writer` allows, plus manage membership and workspace settings, attach, detach and create catalogs, set a catalog's access mode and grants, publish semantic models and change published ones, and purge imported lineage |
 
 The role does not limit the SQL a member runs against an **open** catalog: any member, `reader` included, can write and
 run DDL there. In a [scoped catalog](../access/scoped-access.md) the role caps the member's grants, so there a `reader`

@@ -22,6 +22,7 @@ import {
   AddRelationshipDialog,
 } from "./DefinitionDialogs";
 import { DeleteDefinitionButton } from "./DeleteDefinitionButton";
+import { useCanEditModel } from "./useCanEditModel";
 import { MetricSqlPreview } from "./MetricSqlPreview";
 import { StatusPill, ValidationPill } from "./SemanticStatusPill";
 import type { ValidationReport } from "@/types/semantic";
@@ -42,6 +43,7 @@ export function SemanticModelDetail() {
   const [report, setReport] = useState<ValidationReport | null>(null);
   const [publishError, setPublishError] = useState<string | null>(null);
   const [adding, setAdding] = useState<string | null>(null);
+  const canEdit = useCanEditModel(ws);
 
   /**
    * Why removing a dimension will be refused, when it will be.
@@ -83,6 +85,8 @@ export function SemanticModelDetail() {
   }
 
   const imported = model.provider !== "native";
+  // A native model past draft that this user may not change: only an owner can.
+  const locked = !imported && !canEdit(model);
 
   const runValidate = () => {
     validate.mutate(undefined, {
@@ -165,7 +169,7 @@ export function SemanticModelDetail() {
             <TabsTrigger value="datasets">Datasets</TabsTrigger>
             <TabsTrigger value="relationships">Joins</TabsTrigger>
           </TabsList>
-          {!imported && (
+          {!imported && !locked && (
             <div className="flex gap-2">
               <Button
                 variant="outline"
@@ -227,6 +231,13 @@ export function SemanticModelDetail() {
           </Banner>
         )}
 
+        {locked && (
+          <Banner className="mx-6 mt-3">
+            This model is {model.status}, so only a workspace owner can change
+            its definitions.
+          </Banner>
+        )}
+
         {model.status !== "published" && (
           <Banner className="mx-6 mt-3">
             This model is a {model.status}. The assistant will not use its
@@ -262,15 +273,17 @@ export function SemanticModelDetail() {
                     </code>
                     <StatusPill status={metric.status} />
                     <ValidationPill state={metric.validation_state} />
-                    <div className="ml-auto">
-                      <DeleteDefinitionButton
-                        ws={ws}
-                        slug={slug}
-                        kind="metrics"
-                        name={metric.name}
-                        consequence="questions it answers today fall back to hand-written SQL"
-                      />
-                    </div>
+                    {!locked && (
+                      <div className="ml-auto">
+                        <DeleteDefinitionButton
+                          ws={ws}
+                          slug={slug}
+                          kind="metrics"
+                          name={metric.name}
+                          consequence="questions it answers today fall back to hand-written SQL"
+                        />
+                      </div>
+                    )}
                   </div>
 
                   {metric.description && (
@@ -355,15 +368,17 @@ export function SemanticModelDetail() {
                     </span>
                   )}
                   <ValidationPill state={dim.validation_state} />
-                  <div className="ml-auto">
-                    <DeleteDefinitionButton
-                      ws={ws}
-                      slug={slug}
-                      kind="dimensions"
-                      name={dim.name}
-                      consequence={measuredOn(dim.name)}
-                    />
-                  </div>
+                  {!locked && (
+                    <div className="ml-auto">
+                      <DeleteDefinitionButton
+                        ws={ws}
+                        slug={slug}
+                        kind="dimensions"
+                        name={dim.name}
+                        consequence={measuredOn(dim.name)}
+                      />
+                    </div>
+                  )}
                 </div>
                 {dim.description && (
                   <p className="mt-1 text-text-secondary">{dim.description}</p>
@@ -401,14 +416,16 @@ export function SemanticModelDetail() {
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="font-medium">{ds.name}</span>
                   <ValidationPill state={ds.validation_state} />
-                  <div className="ml-auto">
-                    <DeleteDefinitionButton
-                      ws={ws}
-                      slug={slug}
-                      kind="datasets"
-                      name={ds.name}
-                    />
-                  </div>
+                  {!locked && (
+                    <div className="ml-auto">
+                      <DeleteDefinitionButton
+                        ws={ws}
+                        slug={slug}
+                        kind="datasets"
+                        name={ds.name}
+                      />
+                    </div>
+                  )}
                 </div>
                 <div className="mt-1 font-mono text-text-tertiary">
                   {ds.catalog}.{ds.schema_name}.{ds.table_name}
@@ -446,15 +463,17 @@ export function SemanticModelDetail() {
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="font-medium">{rel.name}</span>
                     <ValidationPill state={rel.validation_state} />
-                    <div className="ml-auto">
-                      <DeleteDefinitionButton
-                        ws={ws}
-                        slug={slug}
-                        kind="relationships"
-                        name={rel.name}
-                        consequence="dimensions only reachable through it stop being available to metrics on the other side"
-                      />
-                    </div>
+                    {!locked && (
+                      <div className="ml-auto">
+                        <DeleteDefinitionButton
+                          ws={ws}
+                          slug={slug}
+                          kind="relationships"
+                          name={rel.name}
+                          consequence="dimensions only reachable through it stop being available to metrics on the other side"
+                        />
+                      </div>
+                    )}
                   </div>
                   <div className="mt-1 font-mono text-text-tertiary">
                     {rel.left_dataset} → {rel.right_dataset} ({rel.cardinality})

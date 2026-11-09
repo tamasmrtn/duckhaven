@@ -126,6 +126,7 @@ Each message has an entry in [Troubleshoot sign-in and access](../access/trouble
 | `semantic_error` | 422 | A definition or compile request is invalid. The message names the legal alternatives. |
 | `validation_failed` | 422 | `This model cannot be published until its definitions resolve.` Validate it and fix what is broken. |
 | `imported_model` | 409 | The model came from an import. Change it at the source and import again. |
+| `published_model` | 403 | `'⟨model⟩' is published; only a workspace owner can change it.` A published or deprecated model is changed by a workspace `owner`; ask one, or work in a draft model. |
 | `dataset_in_use`, `dimension_in_use` | 409 | Other definitions depend on it; the message names them. Remove those first. |
 
 ## Administration

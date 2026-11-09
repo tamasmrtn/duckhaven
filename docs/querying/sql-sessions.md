@@ -144,8 +144,8 @@ every statement checked by the API against the caller's own access.
 Because sessions accept more SQL, the statement policy is not the only boundary. Three more layers contain an agent, all
 on by default:
 
-- **The container** runs with a read-only root filesystem (only its results volume and `/tmp` are writable), dropped
-  Linux capabilities, `no-new-privileges`, a process limit and a non-root user.
+- **The container** runs with a read-only root filesystem (only its results and credential volumes and `/tmp` are
+  writable), dropped Linux capabilities, `no-new-privileges`, a process limit and a non-root user.
 - **Network egress.** The agent sits on an isolated Docker network with no route off the host. It reaches the API,
   Polaris, the object store and the trace collector, and nothing else.
 - **DuckDB configuration.** After setting up a connection, the agent locks DuckDB's configuration

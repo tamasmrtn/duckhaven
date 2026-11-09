@@ -20,8 +20,10 @@ class Settings(BaseSettings):
     # File where the agent persists its long-lived session token so it can
     # re-authenticate across restarts instead of re-consuming the single-use
     # bootstrap token. Empty => resolved at runtime to `<results_dir>/.session-token`
-    # (the results dir is the agent's persistent volume; the retention sweep only
-    # touches `*.parquet`, so a dotfile here is safe).
+    # (the retention sweep only touches `*.parquet`, so a dotfile there is safe).
+    # The bundled compose and the bootstrap snippet point it at a volume of its
+    # own, apart from the results; a token at the default location moves there
+    # on start (see agent.main._session_token_path).
     session_token_path: str = ""
     # Interface the result server binds. Defaults to all interfaces because the
     # control plane reaches the result port across a container/host boundary in the

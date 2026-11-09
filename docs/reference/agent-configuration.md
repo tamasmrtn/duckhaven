@@ -17,7 +17,7 @@ first column is checked by a unit test against the agent's settings, so the list
 | `CONTROL_PLANE_URL` | `ws://localhost:8000/agents/connect` | The control plane's agent endpoint. Use `wss://` behind TLS. **Required** |
 | `BOOTSTRAP_TOKEN` | – | The one-time token from **Compute → Generate bootstrap**, valid for 24 hours. **Required** on the first start |
 | `AGENT_NAME` | the host name | Display name, set at first registration and kept after |
-| `SESSION_TOKEN_PATH` | `⟨RESULTS_DIR⟩/.session-token` | Where the agent keeps the long-lived credential it gets for the bootstrap token, so it reconnects after a restart without a new token |
+| `SESSION_TOKEN_PATH` | `⟨RESULTS_DIR⟩/.session-token` | Where the agent keeps the long-lived credential it gets for the bootstrap token, so it reconnects after a restart without a new token. The bundled stack and the bootstrap snippet set `/var/duckhaven-agent/state/session-token`, on a volume of its own apart from the results. When it is set, a credential at the default location moves there on start |
 | `POLARIS_BASE_URL` | `http://localhost:8181` | Fallback Polaris address, used only if the control plane sends none with a query; current control planes always send one |
 | `POLARIS_CLIENT_ID` | `root` | Fallback Polaris client id, as above |
 | `POLARIS_CLIENT_SECRET` | `s3cr3t` | Fallback Polaris client secret, as above |

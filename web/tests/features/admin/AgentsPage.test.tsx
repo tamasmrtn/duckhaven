@@ -176,6 +176,11 @@ describe('AgentsPage', () => {
     // The result-server bind host must be documented in the snippet so
     // externally-added agents are reachable by the control plane out of the box.
     expect(snippet.textContent).toContain('RESULTS_HTTP_HOST: 0.0.0.0')
+    // The credential lives in its own volume, apart from the result files.
+    expect(snippet.textContent).toContain(
+      'SESSION_TOKEN_PATH: /var/duckhaven-agent/state/session-token',
+    )
+    expect(snippet.textContent).toContain('- agent_state:/var/duckhaven-agent/state')
     expect(screen.getByLabelText('Copy compose snippet')).toBeInTheDocument()
   })
 

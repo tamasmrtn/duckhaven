@@ -5,7 +5,7 @@ from pathlib import Path
 
 import uvicorn
 
-from agent.auth import TokenHolder, load_session_token
+from agent.auth import TokenHolder, load_session_token, save_session_token
 from agent.config import settings
 from agent.control.channel import run_control_channel
 from agent.results.retention import sweep_loop
@@ -16,6 +16,34 @@ from duckhaven_shared.telemetry import LOG_FORMAT, install_log_correlation
 logging.basicConfig(level=logging.INFO, format=LOG_FORMAT)
 # basicConfig has no filter= param; attach trace_id/span_id correlation now.
 install_log_correlation()
+logger = logging.getLogger(__name__)
+
+
+def _session_token_path(configured: str, results_dir: Path) -> Path:
+    """Where the agent keeps its session token.
+
+    ``configured`` empty means the default, ``<results_dir>/.session-token``. A
+    token at the default location moves to a configured path once, so the agent
+    keeps its identity instead of registering as a new agent, and no copy stays
+    beside the results. If the configured path cannot be written, the token stays
+    where it is.
+    """
+    legacy = results_dir / ".session-token"
+    if not configured:
+        return legacy
+    path = Path(configured)
+    if path == legacy or not legacy.exists():
+        return path
+    if not path.exists():
+        try:
+            save_session_token(path, load_session_token(legacy))
+        except OSError as exc:
+            logger.warning(
+                "Keeping the session token at %s: cannot write %s (%s)", legacy, path, exc
+            )
+            return legacy
+    legacy.unlink(missing_ok=True)
+    return path
 
 
 def _use_writable_workdir(results_dir: Path) -> None:
@@ -50,11 +78,7 @@ async def main() -> None:
     results_dir = Path(settings.results_dir)
     results_dir.mkdir(parents=True, exist_ok=True)
     _use_writable_workdir(results_dir)
-    session_token_path = (
-        Path(settings.session_token_path)
-        if settings.session_token_path
-        else results_dir / ".session-token"
-    )
+    session_token_path = _session_token_path(settings.session_token_path, results_dir)
     # Seed the holder from any persisted token so the result server can authorize
     # range reads immediately on restart, before the control channel reconnects.
     token_holder = TokenHolder(load_session_token(session_token_path))

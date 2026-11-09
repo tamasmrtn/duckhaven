@@ -59,8 +59,9 @@ RUN mkdir -p /home/duckhaven && \
         "${DUCKHAVEN_RUNTIME}" "${DUCKHAVEN_APP_VERSION}" /app/runtime.json
 
 # Pre-created here since the runtime stage has no shell to mkdir/chown in;
-# copied with --chown below.
-RUN mkdir -p /var/duckhaven-agent/results
+# copied with --chown below. `state` holds the session token when
+# SESSION_TOKEN_PATH points into it, apart from the results.
+RUN mkdir -p /var/duckhaven-agent/results /var/duckhaven-agent/state
 
 # ── Runtime ──────────────────────────────────────────────────────────────────
 # Distroless: no shell, package manager, or apt/dpkg — the unfixable
@@ -88,6 +89,7 @@ LABEL org.duckhaven.runtime="${DUCKHAVEN_RUNTIME}"
 
 # Pre-created in the builder stage (see comment there) — no shell here to mkdir/chown.
 COPY --chown=65532:65532 --from=builder /var/duckhaven-agent/results /var/duckhaven-agent/results
+COPY --chown=65532:65532 --from=builder /var/duckhaven-agent/state /var/duckhaven-agent/state
 
 USER 65532:65532
 

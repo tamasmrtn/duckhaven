@@ -27,7 +27,7 @@ dependencies = [
     "authlib>=1.9.5",
     "ldap3>=2.9",
     "itsdangerous>=2.0",
-    "boto3>=1.43.107",
+    "boto3>=1.43.126",
     "azure-storage-blob>=12.19",
     "azure-identity>=1.16",
     # Azure Container Instances management, for the elastic-compute azure_aci

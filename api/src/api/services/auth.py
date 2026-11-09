@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 
 import bcrypt
 from fastapi import Response
+from fastapi.concurrency import run_in_threadpool
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
@@ -72,7 +73,11 @@ async def authenticate_password(db: AsyncSession, email: str, password: str) -> 
     """
     user = await get_user_by_email(db, email)
     if user is not None and user.password_hash is not None:
-        if user.is_active and verify_password(password, user.password_hash):
+        # bcrypt takes a few hundred milliseconds; off the event loop, it holds up
+        # only this request.
+        if user.is_active and await run_in_threadpool(
+            verify_password, password, user.password_hash
+        ):
             return user
         return None
     if settings.ldap_enabled:

@@ -8,7 +8,7 @@ file is deleted after the admin is successfully created so it cannot be replayed
 
 import secrets
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Response, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,7 +17,9 @@ from api.deps import get_db
 from api.models.user import SERVICE_ACCOUNT_PROVIDER, User
 from api.schemas.auth import UserOut
 from api.schemas.setup import FirstAdminRequest, SetupStatus
+from api.services.addresses import peer_address
 from api.services.auth import create_session, hash_password, set_session_cookie
+from api.services.login_limiter import check_attempt
 
 router = APIRouter(prefix="/setup", tags=["setup"])
 
@@ -49,6 +51,7 @@ async def setup_status(db: AsyncSession = Depends(get_db)) -> SetupStatus:
 @router.post("/admin", response_model=UserOut, status_code=status.HTTP_201_CREATED)
 async def create_first_admin(
     body: FirstAdminRequest,
+    request: Request,
     response: Response,
     db: AsyncSession = Depends(get_db),
     x_setup_token: str | None = Header(default=None, alias="X-Setup-Token"),
@@ -59,6 +62,7 @@ async def create_first_admin(
     account exists yet. The token is consumed on success and the endpoint returns
     409 once a human account exists, so it cannot be replayed to mint a second
     admin."""
+    check_attempt(peer_address(request))
     if await _human_user_count(db) > 0:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,

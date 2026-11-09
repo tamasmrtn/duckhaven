@@ -75,6 +75,14 @@ settings.result_cache_enabled = False
 TEST_DB_URL = "sqlite+aiosqlite:///:memory:"
 
 
+@pytest.fixture(autouse=True)
+def _fresh_login_limiter():
+    """Sign-in attempts are counted per process; start every test from zero."""
+    from api.services import login_limiter
+
+    login_limiter.reset()
+
+
 @pytest_asyncio.fixture(scope="function")
 async def db_engine():
     engine = create_async_engine(TEST_DB_URL, connect_args={"check_same_thread": False})

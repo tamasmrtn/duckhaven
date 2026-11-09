@@ -44,6 +44,98 @@ async def test_login_unknown_email(client: AsyncClient):
     assert resp.status_code == 401
 
 
+async def _attempts(client: AsyncClient, emails, headers=None) -> list[int]:
+    codes = []
+    for email in emails:
+        resp = await client.post(
+            "/auth/login", json={"email": email, "password": "x"}, headers=headers or {}
+        )
+        codes.append(resp.status_code)
+    return codes
+
+
+async def test_login_is_limited_per_account(client: AsyncClient):
+    from api.services.login_limiter import PER_ACCOUNT
+
+    codes = await _attempts(client, ["nobody@test.local"] * PER_ACCOUNT)
+    assert codes == [401] * PER_ACCOUNT
+
+    resp = await client.post("/auth/login", json={"email": "Nobody@Test.local ", "password": "x"})
+    assert resp.status_code == 429
+    assert resp.json()["error"] == "too_many_sign_in_attempts"
+    assert 1 <= int(resp.headers["Retry-After"]) <= 60
+
+    # Another account from the same source still gets an answer.
+    assert await _attempts(client, ["somebody@test.local"]) == [401]
+
+
+async def test_successful_sign_ins_are_not_counted(
+    client: AsyncClient, admin_user: User, monkeypatch
+):
+    from api.services import login_limiter
+
+    monkeypatch.setattr(login_limiter, "PER_ACCOUNT", 2)
+    monkeypatch.setattr(login_limiter, "PER_SOURCE", 2)
+    for _ in range(3):
+        resp = await client.post(
+            "/auth/login", json={"email": "admin@test.local", "password": "secret"}
+        )
+        assert resp.status_code == 200
+    assert await _attempts(client, ["admin@test.local"] * 3) == [401, 401, 429]
+
+
+async def test_login_is_limited_per_source(client: AsyncClient):
+    from api.services.login_limiter import PER_SOURCE
+
+    emails = [f"user{i}@test.local" for i in range(PER_SOURCE + 1)]
+    codes = await _attempts(client, emails)
+    assert codes == [401] * PER_SOURCE + [429]
+
+
+async def test_login_limits_each_forwarded_source_behind_a_trusted_proxy(
+    client: AsyncClient, monkeypatch
+):
+    from api.config import settings
+    from api.services.login_limiter import PER_SOURCE
+
+    monkeypatch.setattr(settings, "trusted_proxy_ingress", True)
+    emails = [f"user{i}@test.local" for i in range(PER_SOURCE + 1)]
+    first = await _attempts(client, emails, headers={"X-Forwarded-For": "10.0.0.1"})
+    assert first[-1] == 429
+    second = await _attempts(client, emails[:1], headers={"X-Forwarded-For": "10.0.0.2"})
+    assert second == [401]
+
+
+async def test_login_verifies_the_password_off_the_event_loop(
+    client: AsyncClient, admin_user: User, monkeypatch
+):
+    from api.services import auth as auth_service
+
+    offloaded = []
+    real = auth_service.run_in_threadpool
+
+    async def spy(func, *args):
+        offloaded.append(func)
+        return await real(func, *args)
+
+    monkeypatch.setattr(auth_service, "run_in_threadpool", spy)
+    resp = await client.post(
+        "/auth/login", json={"email": "admin@test.local", "password": "secret"}
+    )
+    assert resp.status_code == 200
+    assert offloaded == [auth_service.verify_password]
+
+
+async def test_oidc_sign_in_is_not_limited(client: AsyncClient):
+    from api.services.login_limiter import PER_SOURCE
+
+    emails = [f"user{i}@test.local" for i in range(PER_SOURCE + 1)]
+    assert (await _attempts(client, emails))[-1] == 429
+
+    resp = await client.get("/auth/oidc/unknown/login")
+    assert resp.status_code != 429
+
+
 async def test_me_with_session(client: AsyncClient, admin_user: User):
     login = await client.post(
         "/auth/login", json={"email": "admin@test.local", "password": "secret"}

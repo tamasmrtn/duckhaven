@@ -64,6 +64,7 @@ in the envelope, as `internal_error` with a fixed message; the details are in th
 | `session_required` | 403 | Issuing yourself a token needs a signed-in session, not a bearer token. Sign in, or use a [service-account token](../access/service-accounts.md). |
 | `service_account_tokens_are_managed` | 403 | A service account cannot manage its own tokens. An admin issues them under **Admin** → **Service accounts**. |
 | `too_many_tokens` | 409 | `You already hold 25 tokens, the maximum.` Revoke one you do not use. |
+| `too_many_sign_in_attempts` | 429 | Email and password sign-in, or first-admin setup, was tried too often: more than 10 failed attempts for one account, or more than 20 from one address, within a minute. A successful sign-in does not count, and single sign-on is not limited. Each API replica counts its own attempts. Retry after the `Retry-After` header. |
 
 See [Troubleshoot sign-in and access](../access/troubleshooting.md) for sign-in failures.
 

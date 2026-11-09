@@ -107,6 +107,22 @@ async def test_create_first_admin_rejects_wrong_token(client: AsyncClient, setup
     assert settings.setup_token_path.exists()
 
 
+async def test_create_first_admin_is_limited_per_source(client: AsyncClient, setup_token: str):
+    from api.services.login_limiter import PER_SOURCE
+
+    codes = []
+    for _ in range(PER_SOURCE + 1):
+        resp = await client.post(
+            "/setup/admin",
+            headers={"X-Setup-Token": "wrong"},
+            json={"email": "admin@test.local", "password": "longenough"},
+        )
+        codes.append(resp.status_code)
+    assert codes == [403] * PER_SOURCE + [429]
+    assert "Retry-After" in resp.headers
+    assert settings.setup_token_path.exists()
+
+
 async def test_create_first_admin_rejects_when_users_exist(
     client: AsyncClient, setup_token: str, db_session
 ):

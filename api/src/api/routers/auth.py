@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Response, status
+from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.config import settings
@@ -9,6 +9,7 @@ from api.models.user import SERVICE_ACCOUNT_PROVIDER, User
 from api.schemas.auth import AuthMethods, LoginRequest, OidcProviderInfo, UserOut
 from api.schemas.service_account import PatTokenOut, SelfPatCreateRequest, SelfPatOut
 from api.services import pats
+from api.services.addresses import peer_address
 from api.services.auth import (
     authenticate_password,
     create_session,
@@ -16,6 +17,7 @@ from api.services.auth import (
     hash_token,
     set_session_cookie,
 )
+from api.services.login_limiter import check_attempt
 from api.services.rbac import user_permissions
 
 router = APIRouter()
@@ -43,16 +45,21 @@ async def methods() -> AuthMethods:
 
 @router.post("/login", response_model=UserOut)
 async def login(
-    body: LoginRequest, response: Response, db: AsyncSession = Depends(get_db)
+    body: LoginRequest,
+    request: Request,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
 ) -> UserOut:
     """Sign in with email and password, setting the `session` cookie.
 
     Returns the user with their resolved permissions, so the SPA can render the
     right navigation without a second request. Machine callers should use a
     service-account token on the `Authorization` header instead."""
+    attempt = check_attempt(peer_address(request), body.email)
     user = await authenticate_password(db, body.email, body.password)
     if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
+    attempt.succeeded()
     token = await create_session(db, user.id)
     set_session_cookie(response, token)
     return await _user_out_with_permissions(db, user)

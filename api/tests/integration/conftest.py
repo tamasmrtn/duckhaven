@@ -357,6 +357,14 @@ async def connected_agent(db_session: AsyncSession) -> AsyncIterator[tuple[Agent
 
 
 @pytest.fixture(autouse=True)
+def _fresh_login_limiter():
+    """Sign-in attempts are counted per process; start every test from zero."""
+    from api.services import login_limiter
+
+    login_limiter.reset()
+
+
+@pytest.fixture(autouse=True)
 async def _fresh_ducklake_engine():
     """Dispose the module-global DuckLake engine around every test.
 

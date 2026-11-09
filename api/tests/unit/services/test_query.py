@@ -965,3 +965,33 @@ async def test_a_cancel_landing_mid_completion_drops_the_session_state(db_sessio
     await db_session.refresh(session)
     assert query.status == "cancelled"
     assert session.cache_state is None
+
+
+@pytest.mark.parametrize(
+    "sql", ["INSTALL httpfs", "SELECT * FROM read_parquet('/data/orders.parquet')"]
+)
+async def test_run_sync_query_refuses_what_the_query_gate_refuses(db_session, monkeypatch, sql):
+    """SQL DuckHaven builds passes the same gate as a user's query: a refusal raises
+    before a row is written or anything is dispatched."""
+    import types
+    import uuid
+
+    from api.services.sql_guard import SQLNotAllowed
+
+    ws, _ = await _make_workspace(db_session)
+
+    async def no_dispatch(*args, **kwargs):
+        raise AssertionError("a refused statement must not be dispatched")
+
+    monkeypatch.setattr(query_service, "dispatch_query", no_dispatch)
+
+    with pytest.raises(SQLNotAllowed):
+        await query_service.run_sync_query(
+            db_session,
+            workspace=ws,
+            agent=types.SimpleNamespace(id=uuid.uuid4()),
+            user_id=uuid.uuid4(),
+            sql=sql,
+            origin="sample",
+        )
+    assert (await db_session.execute(select(Query))).scalars().all() == []

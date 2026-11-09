@@ -30,6 +30,7 @@ import duckdb
 from agent import runtime
 from agent.executor.plan import parse_profile
 from agent.executor.warm_connections import Prepared, WarmConnections
+from duckhaven_shared.sql import quote_ident as _quote_identifier
 
 logger = logging.getLogger(__name__)
 
@@ -288,6 +289,11 @@ def _enable_connection_caching(conn: duckdb.DuckDBPyConnection) -> None:
         logger.warning("Could not enable httpfs connection caching: %s", exc)
 
 
+def _table_ident(catalog: str, schema: str, table: str) -> str:
+    """``catalog.schema.table`` with every part quoted, as probe SQL names a table."""
+    return ".".join(_quote_identifier(part) for part in (catalog, schema, table))
+
+
 def _iceberg_metadata(
     conn: duckdb.DuckDBPyConnection, catalog: str, schema: str, table: str
 ) -> dict[str, Any]:
@@ -298,7 +304,7 @@ def _iceberg_metadata(
     Each field degrades to None on its own probe failure. The catalog must be
     ATTACHed already.
     """
-    ident = f'"{catalog}"."{schema}"."{table}"'
+    ident = _table_ident(catalog, schema, table)
     meta: dict[str, Any] = {
         "snapshot_id": None,
         "snapshot_at": None,
@@ -489,7 +495,7 @@ def collect_table_health(
     Orphan detection globs the table directory and diffs against the live file
     set; expensive and only an estimate, so it runs on a slow cadence.
     """
-    ident = f'"{catalog}"."{schema}"."{table}"'
+    ident = _table_ident(catalog, schema, table)
     health: dict[str, Any] = {
         "catalog": catalog,
         "schema": schema,
@@ -1488,10 +1494,6 @@ def _capture_profile(conn: duckdb.DuckDBPyConnection, profile_path: Path) -> dic
 _EXACT_WIDE_INTEGER = "DECIMAL(38,0)"
 
 
-def _quote_identifier(name: str) -> str:
-    return '"' + name.replace('"', '""') + '"'
-
-
 def _exact_type(t: duckdb.DuckDBPyType) -> str | None:
     """The type to write a column of type ``t`` as so no HUGEINT or UHUGEINT in
     it, at any depth, loses precision; ``None`` when it needs no change.
@@ -1910,7 +1912,7 @@ def run_query_sync(
             if catalog and schema and table:
                 try:
                     cnt = conn.execute(
-                        f'SELECT count(*) FROM "{catalog}"."{schema}"."{table}"'
+                        f"SELECT count(*) FROM {_table_ident(catalog, schema, table)}"
                     ).fetchone()
                     result["table_row_count"] = cnt[0] if cnt else None
                 except Exception as exc:  # noqa: BLE001 - stats are best-effort

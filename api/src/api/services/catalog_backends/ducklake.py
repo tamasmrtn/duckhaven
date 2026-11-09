@@ -28,6 +28,7 @@ from api.db.entra import attach_entra_auth
 from api.db.session import engine_kwargs
 from api.metrics import record_ducklake_query
 from api.services.catalog_backends import (
+    CatalogBackendBadRequest,
     CatalogBackendConflict,
     CatalogBackendError,
     CatalogBackendNotFound,
@@ -40,6 +41,8 @@ from api.services.catalog_backends import (
     TableVersion,
     WriteContext,
 )
+from api.services.sql_guard import SQLNotAllowed
+from duckhaven_shared.sql import quote_ident as _quote
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from api.models.catalog import Catalog
@@ -219,11 +222,6 @@ def ducklake_role_password(catalog: Catalog) -> str:
 def new_role_password() -> str:
     """A fresh password for a catalog's PostgreSQL role."""
     return secrets.token_urlsafe(32)
-
-
-def _quote(identifier: str) -> str:
-    """Quote a SQL identifier, doubling any embedded quote."""
-    return '"' + identifier.replace('"', '""') + '"'
 
 
 class DuckLakeCatalogBackend:
@@ -667,16 +665,19 @@ class DuckLakeCatalogBackend:
                 f"No compatible agent is connected to {what}. A DuckLake catalog's DDL "
                 "runs on an agent, because only the DuckLake extension can commit it."
             )
-        query = await query_service.run_sync_query(
-            ctx.db,
-            workspace=ctx.workspace,
-            agent=agent,
-            user_id=ctx.user.id,
-            sql=sql,
-            origin="metadata",
-            active_catalog=catalog.slug,
-            timeout_s=60.0,
-        )
+        try:
+            query = await query_service.run_sync_query(
+                ctx.db,
+                workspace=ctx.workspace,
+                agent=agent,
+                user_id=ctx.user.id,
+                sql=sql,
+                origin="metadata",
+                active_catalog=catalog.slug,
+                timeout_s=60.0,
+            )
+        except SQLNotAllowed as exc:
+            raise CatalogBackendBadRequest(f"Could not {what}: {exc}") from exc
         if query.status != "done":
             detail = query.error or f"statement {query.status}"
             if "already exists" in detail.lower():

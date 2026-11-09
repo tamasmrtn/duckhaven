@@ -52,7 +52,7 @@ from api.services.agent_dispatch import (
 )
 from api.services.catalog_refs import dispatch_catalogs, statement_catalogs
 from api.services.migration.service import workspace_has_active_migration
-from api.services.sql_guard import is_read_only
+from api.services.sql_guard import assert_allowed, is_read_only
 from api.services.workspace import (
     get_default_catalog,
     resolve_workspace_catalogs,
@@ -1400,7 +1400,12 @@ async def run_sync_query(
 
     Used by the synchronous table-sample preview. The QUERY_DONE frame is applied
     by the websocket handler in a separate session, so we poll this session's view.
+
+    The SQL passes the same gate as a user's query, so a statement DuckHaven builds
+    is refused with :class:`~api.services.sql_guard.SQLNotAllowed` before any row
+    is written rather than dispatched.
     """
+    assert_allowed(sql)
     query = Query(
         workspace_id=workspace.id,
         agent_id=agent.id,

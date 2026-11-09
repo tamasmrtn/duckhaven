@@ -105,6 +105,11 @@ role only**; workspace membership stays a DuckHaven operation.
    nonce), resolves the identity (`email`, falling back to `preferred_username`/`upn`), then
    [provisions](how-access-works.md#signing-in) the user and starts a normal session.
 
+An account belongs to the provider it was created through, bound to that provider's `id` and the account's `sub`, and
+**Admin** → **Users** shows it as `oidc:⟨id⟩`. Keep each provider's `id` stable once people sign in with it: accounts
+are bound to it, so a renamed `id` refuses their sign-ins. The same email arriving from a second provider is refused,
+not merged, and DuckHaven has no way to move an account to another provider.
+
 If anything fails — a bad state, an expired code, missing identity claims, or an unreachable IdP — the user is sent
 back to the login page with a generic error and can sign in locally instead. Token contents are never logged.
 
@@ -120,6 +125,12 @@ DuckHaven, and **Admin** → **Users** lists the account with the role its group
 The sign-in came back with `?error=sso`. The API log has a warning naming the provider and, when an identity claim was
 missing, the claims the token did contain (`docker compose logs api`). Check that the registered redirect URI and
 `OIDC_REDIRECT_BASE_URL` match exactly, and that the API container can reach the discovery URL.
+
+### One person gets the single sign-on error while others sign in
+
+Their email already belongs to another account: a local one, one created through another provider or LDAP, or another
+identity at this provider. The API log has a warning that the sign-in was refused, naming the provider. Have them sign
+in the way their account was created; under **Admin** → **Users** the account shows that provider.
 
 ### Sign-in fails with `invalid_scope` on Microsoft Entra ID
 

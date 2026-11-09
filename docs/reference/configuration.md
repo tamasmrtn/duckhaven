@@ -77,7 +77,7 @@ by default; local accounts always work. Secrets here must never be committed —
 
 | Variable | Default | Description |
 |---|---|---|
-| `OIDC_PROVIDERS` | `[]` | JSON list of OIDC providers, each a button on the login page. Per-entry keys: `id` (url-safe slug, used in `/api/auth/oidc/<id>/callback`), `label`, `server_metadata_url`, `client_id`, `client_secret`, `scopes` (default `openid email profile`), `groups_claim` (default `groups`), `group_role_map`. Takes precedence over the single-provider fields below. |
+| `OIDC_PROVIDERS` | `[]` | JSON list of OIDC providers, each a button on the login page. Per-entry keys: `id` (lowercase letters, digits, `-` and `_`, at most 45 characters; used in `/api/auth/oidc/<id>/callback` and bound to the accounts the provider creates, so keep it stable), `label`, `server_metadata_url`, `client_id`, `client_secret`, `scopes` (default `openid email profile`), `groups_claim` (default `groups`), `group_role_map`. Takes precedence over the single-provider fields below. |
 | `OIDC_REDIRECT_BASE_URL` | derived | Public base URL (scheme+host) the callback URL is built from. Required behind a TLS proxy; must match the registered redirect URI's host. |
 | `OIDC_ENABLED` | `false` | Single-provider shorthand (back-compat): when `true` and `OIDC_PROVIDERS` is empty, the fields below synthesize one provider with id `sso`. |
 | `OIDC_LABEL` | `SSO` | Button label for the shorthand provider: `Okta` renders "Sign in with Okta". |

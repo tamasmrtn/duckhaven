@@ -38,10 +38,12 @@ class OidcProvider(BaseModel):
     Every supported IdP (Microsoft Entra, Google, Okta, Authentik, Keycloak,
     AWS Cognito, …) speaks standard OIDC, so a provider is just a discovery URL
     plus a confidential client — no provider-specific code. ``id`` is a URL-safe
-    slug used in the per-provider callback path ``/api/auth/oidc/{id}/callback``.
+    slug used in the per-provider callback path ``/api/auth/oidc/{id}/callback``,
+    and names the provider its accounts are bound to (``oidc:{id}``), which is
+    what bounds its length.
     """
 
-    id: str = Field(pattern=r"^[a-z0-9_-]+$")
+    id: str = Field(pattern=r"^[a-z0-9_-]+$", max_length=45)
     label: str
     server_metadata_url: str
     client_id: str

@@ -55,7 +55,7 @@ async def test_sso_login_provisions_admin_from_group(app_client, oidc_settings) 
     assert me.status_code == 200
     body = me.json()
     assert body["email"] == "sso-admin@duckhaven.test"
-    assert body["auth_provider"] == "oidc"
+    assert body["auth_provider"] == "oidc:sso"
     assert body["role"] == "admin"
     assert "users:manage" in body["permissions"]
 

@@ -51,6 +51,24 @@ async def test_ldap_fallback_provisions_user(db_session, monkeypatch):
     assert user.role == "admin"
 
 
+async def test_ldap_sign_in_survives_a_moved_entry(db_session, monkeypatch):
+    """A directory entry that moves gets a new DN; it keeps signing in to its account."""
+    monkeypatch.setattr(settings, "ldap_enabled", True)
+    dn = {"value": "cn=dana,ou=a,dc=corp"}
+    monkeypatch.setattr(
+        ldap_mod,
+        "_claims_from_directory",
+        lambda email, password: {"dn": dn["value"], "email": email, "name": "Dana", "groups": []},
+    )
+    first = await authenticate_password(db_session, "dana@corp.com", "pw")
+    dn["value"] = "cn=dana,ou=b,dc=corp"
+    moved = await authenticate_password(db_session, "dana@corp.com", "pw")
+
+    assert moved is not None and first is not None
+    assert moved.id == first.id
+    assert moved.external_subject == "cn=dana,ou=b,dc=corp"
+
+
 async def test_ldap_bind_failure_denies(db_session, monkeypatch):
     monkeypatch.setattr(settings, "ldap_enabled", True)
     monkeypatch.setattr(ldap_mod, "_claims_from_directory", lambda email, password: None)

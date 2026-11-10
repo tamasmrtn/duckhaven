@@ -126,6 +126,15 @@ export function SchedulesPage() {
               icon={CalendarClock}
               title="No schedules yet"
               description="Create a schedule to run a saved query on a cron cadence."
+              action={
+                <Button
+                  size="sm"
+                  className="h-7 text-xs"
+                  onClick={() => setCreating(true)}
+                >
+                  Create the first one
+                </Button>
+              }
             />
           ) : (
             <Table

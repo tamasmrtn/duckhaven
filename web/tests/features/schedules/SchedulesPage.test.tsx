@@ -98,6 +98,18 @@ describe("SchedulesPage", () => {
     expect(await screen.findByText("No schedules yet")).toBeInTheDocument();
   });
 
+  it("offers a way to create one from the empty state, like Semantic does", async () => {
+    server.use(
+      http.get("/api/workspaces/:ws/schedules", () => HttpResponse.json([])),
+    );
+    const user = userEvent.setup();
+    renderWithProviders({ initialRoute: ROUTE });
+    await user.click(
+      await screen.findByRole("button", { name: "Create the first one" }),
+    );
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+  });
+
   it("shows an empty state on the Runs tab when there are no runs", async () => {
     server.use(
       http.get("/api/workspaces/:ws/schedule-runs", () =>

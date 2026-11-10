@@ -21,6 +21,9 @@ export function agentDotClass(agent: Agent): string {
   if (agent.lifecycle === "provisioning" || agent.lifecycle === "terminating") {
     return "bg-[var(--status-running)]";
   }
+  // A stopped elastic agent is finished, not faulty: it reports "unavailable"
+  // like a crashed one, but only `failed` should read as red.
+  if (agent.lifecycle === "terminated") return "bg-[var(--status-cancelled)]";
   return statusDot[agent.status];
 }
 

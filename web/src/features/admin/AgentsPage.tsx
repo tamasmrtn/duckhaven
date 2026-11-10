@@ -720,7 +720,7 @@ export function AgentsPage() {
                 ].map((h) => (
                   <th
                     key={h}
-                    className="px-4 py-2 text-left text-xs font-medium text-text-secondary"
+                    className="whitespace-nowrap px-4 py-2 text-left text-xs font-medium text-text-secondary"
                   >
                     {h}
                   </th>
@@ -767,7 +767,7 @@ export function AgentsPage() {
                       })()}
                     </td>
                     <td className="px-4 py-2 font-medium">
-                      <span className="flex items-center gap-2">
+                      <span className="flex items-center gap-2 whitespace-nowrap">
                         {agent.name}
                         {agent.lifecycle && agent.lifecycle !== "running" && (
                           <span className="rounded bg-[var(--bg-surface)] px-1.5 py-0.5 text-2xs font-normal text-text-tertiary">
@@ -789,7 +789,7 @@ export function AgentsPage() {
                       <CountCell value={latest?.queued_queries} />
                     </td>
                     <td className="px-4 py-2 text-xs">
-                      <span className="flex items-center gap-1.5">
+                      <span className="flex items-center gap-1.5 whitespace-nowrap">
                         <span className="font-mono">
                           {runtimeLabel(agent) ?? "—"}
                         </span>
@@ -799,7 +799,7 @@ export function AgentsPage() {
                     <td className="px-4 py-2 text-xs text-text-secondary">
                       {agent.capabilities?.host ?? "—"}
                     </td>
-                    <td className="px-4 py-2 font-mono text-2xs text-text-tertiary max-w-[180px] truncate">
+                    <td className="px-4 py-2 font-mono text-xs text-text-tertiary max-w-[180px] truncate">
                       {agent.capabilities?.extensions.join(", ") ?? "—"}
                     </td>
                     <td className="px-4 py-2 font-mono text-xs font-tabular">
@@ -814,7 +814,7 @@ export function AgentsPage() {
                         ? formatCost(agent.hourly_cost, currency)
                         : "—"}
                     </td>
-                    <td className="px-4 py-2 font-mono text-2xs text-text-tertiary">
+                    <td className="whitespace-nowrap px-4 py-2 font-mono text-xs text-text-tertiary">
                       {relativeTime(agent.last_ping_at)}
                     </td>
                   </tr>

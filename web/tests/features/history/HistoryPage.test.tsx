@@ -995,6 +995,18 @@ describe("HistoryPage — table shape", () => {
     expect(el).toHaveAttribute("title", version);
   });
 
+  it("shows the start time to the minute, with the exact time on hover", async () => {
+    useRun({ started_at: "2026-05-15T10:00:42Z" });
+    renderWithProviders({ initialRoute: "/acme-analytics/history?user=all" });
+    const row = (await screen.findByText("SELECT shape_marker")).closest("tr")!;
+    const cells = within(row).getAllByRole("cell");
+    const stamp = cells[cells.length - 1].querySelector("span")!;
+    const exact = new Date("2026-05-15T10:00:42Z").toLocaleString();
+    expect(stamp).toHaveAttribute("title", exact);
+    // Shorter than the full stamp, so the column does not push the table wider.
+    expect(stamp.textContent!.length).toBeLessThan(exact.length);
+  });
+
   it("does not let the start time wrap", async () => {
     useRun();
     renderWithProviders({ initialRoute: "/acme-analytics/history?user=all" });

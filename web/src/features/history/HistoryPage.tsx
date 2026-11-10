@@ -557,7 +557,12 @@ export function HistoryPage() {
                     </TableCell>
                     <DurationCell query={q} />
                     <TableCell className="whitespace-nowrap px-4 py-2 font-mono text-xs text-text-tertiary">
-                      {new Date(q.started_at).toLocaleString()}
+                      <span title={new Date(q.started_at).toLocaleString()}>
+                        {new Date(q.started_at).toLocaleString(undefined, {
+                          dateStyle: "short",
+                          timeStyle: "short",
+                        })}
+                      </span>
                     </TableCell>
                   </TableRow>
                 ))}

@@ -67,7 +67,7 @@ export function SqlCell({
 }) {
   const tags = Object.entries(query.tags ?? {});
   return (
-    <TableCell className="px-4 py-2 max-w-xs">
+    <TableCell className="px-4 py-2 max-w-[18rem]">
       <pre className="truncate font-mono text-xs text-text-primary">
         {query.sql}
       </pre>

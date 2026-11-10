@@ -5,6 +5,7 @@ import {
   useNavigate,
 } from "@tanstack/react-router";
 import { useMe } from "@/queries/auth";
+import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 import { PageHeader } from "@/components/ui/page-header";
 import {
   segmentActiveClass,
@@ -51,6 +52,12 @@ export function AdminLayout() {
   const visibleTabs = tabs.filter(({ permission }) =>
     permissions.includes(permission),
   );
+
+  // Six screens share the "Admin" header, so the tab names the section.
+  const section = visibleTabs.find(({ segment }) =>
+    pathname.includes(`/admin/${segment}`),
+  );
+  useDocumentTitle(section ? `${section.label} · Admin` : "Admin");
 
   // Client-side gate: the admin area's screens are individually enforced by the
   // API too, but non-admins shouldn't even see the admin shell (e.g. by typing

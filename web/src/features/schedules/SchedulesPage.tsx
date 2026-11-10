@@ -126,6 +126,15 @@ export function SchedulesPage() {
               icon={CalendarClock}
               title="No schedules yet"
               description="Create a schedule to run a saved query on a cron cadence."
+              action={
+                <Button
+                  size="sm"
+                  className="h-7 text-xs"
+                  onClick={() => setCreating(true)}
+                >
+                  Create the first one
+                </Button>
+              }
             />
           ) : (
             <Table
@@ -177,8 +186,8 @@ export function SchedulesPage() {
                         className={cn(
                           "rounded-full px-2 py-0.5 text-2xs font-medium",
                           s.enabled
-                            ? "bg-[var(--status-success)] text-white"
-                            : "bg-[var(--status-cancelled)] text-white",
+                            ? "bg-[var(--pill-success)] text-white"
+                            : "bg-[var(--pill-cancelled)] text-white",
                         )}
                       >
                         {s.enabled ? "enabled" : "disabled"}

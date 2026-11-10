@@ -2,16 +2,16 @@ import { cn } from "@/utils";
 import type { SessionCloseReason, SqlSessionStatus } from "@/types/sql-session";
 
 // Deliberately not `StatusPill`: that one is typed to QueryStatus, and a session
-// moves through a different lifecycle. Same `--status-*` palette so the two read
+// moves through a different lifecycle. Same pill palette (`--pill-*`) so the two read
 // as one system.
 const colors: Record<SqlSessionStatus, string> = {
-  pending: "bg-[var(--status-queued)] text-white",
-  opening: "bg-[var(--status-queued)] text-white",
-  open: "bg-[var(--status-running)] text-white",
-  closing: "bg-[var(--status-queued)] text-white",
-  closed: "bg-[var(--status-success)] text-white",
-  expired: "bg-[var(--status-cancelled)] text-white",
-  failed: "bg-[var(--status-failed)] text-white",
+  pending: "bg-[var(--pill-queued)] text-white",
+  opening: "bg-[var(--pill-queued)] text-white",
+  open: "bg-[var(--pill-running)] text-white",
+  closing: "bg-[var(--pill-queued)] text-white",
+  closed: "bg-[var(--pill-success)] text-white",
+  expired: "bg-[var(--pill-cancelled)] text-white",
+  failed: "bg-[var(--pill-failed)] text-white",
 };
 
 const dots: Record<SqlSessionStatus, string> = {
@@ -51,7 +51,7 @@ export function SessionStatusPill({ status }: { status: SqlSessionStatus }) {
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-2xs font-medium transition-colors duration-200",
+        "inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-2 py-0.5 text-2xs font-medium transition-colors duration-200",
         colors[status],
       )}
       role="status"

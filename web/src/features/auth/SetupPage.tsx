@@ -6,8 +6,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useSetupStatus, useCreateFirstAdmin } from "@/queries/setup";
+import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 
 export function SetupPage() {
+  useDocumentTitle("First-time setup");
   const navigate = useNavigate();
   const status = useSetupStatus();
   const createAdmin = useCreateFirstAdmin();
@@ -69,7 +71,7 @@ export function SetupPage() {
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="space-y-1.5">
+          <div className="space-y-2">
             <Label htmlFor="token" className="text-sm">
               Setup token
             </Label>
@@ -83,7 +85,7 @@ export function SetupPage() {
               className="h-9 font-mono text-xs"
             />
           </div>
-          <div className="space-y-1.5">
+          <div className="space-y-2">
             <Label htmlFor="name" className="text-sm">
               Your name
             </Label>
@@ -96,7 +98,7 @@ export function SetupPage() {
               className="h-9"
             />
           </div>
-          <div className="space-y-1.5">
+          <div className="space-y-2">
             <Label htmlFor="email" className="text-sm">
               Email
             </Label>
@@ -110,7 +112,7 @@ export function SetupPage() {
               className="h-9"
             />
           </div>
-          <div className="space-y-1.5">
+          <div className="space-y-2">
             <Label htmlFor="password" className="text-sm">
               Password
             </Label>

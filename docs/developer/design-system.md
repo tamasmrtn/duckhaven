@@ -92,7 +92,7 @@ background field, never as body text.
 | `--border-strong` | `#CBD5E1` (slate-300) | `#374151` (gray-700) | Input borders, hovered dividers |
 | `--text-primary` | `#0F172A` (slate-900) | `#F1F5F9` (slate-100) | Body, headings |
 | `--text-secondary` | `#475569` (slate-600) | `#94A3B8` (slate-400) | Metadata, captions |
-| `--text-tertiary` | `#94A3B8` (slate-400) | `#64748B` (slate-500) | Placeholders, disabled |
+| `--text-tertiary` | `#5B6B82` | `#8B9BB0` | Help text, timestamps, placeholders (4.5:1 on every surface and chip) |
 
 #### Semantic
 
@@ -103,6 +103,17 @@ background field, never as body text.
 | `--status-success` | `#16A34A` (green-600) | `#22C55E` | Done, agent healthy |
 | `--status-failed` | `#DC2626` (red-600) | `#EF4444` | Errors, agent down |
 | `--status-cancelled` | `#475569` (slate-600) | `#94A3B8` | User-cancelled query |
+
+The `--status-*` tokens colour text and dots. A pill carries white text, so it takes a solid fill that holds 4.5:1
+against white in both themes:
+
+| Token | Both themes | Use |
+|---|---|---|
+| `--pill-queued` | `#64748B` | Queued, pending, opening |
+| `--pill-running` | `#C2410C` | Running, open |
+| `--pill-success` | `#15803D` | Done, closed, enabled |
+| `--pill-failed` | `#B91C1C` | Failed |
+| `--pill-cancelled` | `#475569` | Cancelled, expired, disabled |
 
 All foreground/background pairs validated for WCAG AA (4.5:1 body, 3:1
 large). Yellow text is **forbidden** on white; yellow only ever appears
@@ -398,7 +409,7 @@ the SQL writes.
 A single pill in the result header walks through `● queued` (slate) →
 `● running 0:04` (orange, counter ticking) → `● done 1.4s` (green) /
 `● failed` (red) / `● cancelled` (slate). One affordance, four colors,
-matches the `--status-*` tokens above.
+filled from the `--pill-*` tokens above. A pill never wraps, so every row's pill is the same height.
 
 ### 4.2 Catalog browser (full-screen detail)
 
@@ -622,6 +633,8 @@ destructive actions).
      notebook; we don't want surprise persistence of half-typed SQL)
    - `⌘W` / `Ctrl+W`: Close current tab (with unsaved-changes guard)
    - `Esc`: dismiss modal / cancel running query (with confirm if >1 s)
+- The first tab stop is a **Skip to main content** link that moves focus to `<main>`, so keyboard users do not tab
+  through the top bar and rail on every page.
 - Tab order matches visual order. Tree rows use ↑↓ for navigation, → / ←
   for expand/collapse, `Enter` for "open in active worksheet", `⌘Enter`
   for "open in new tab".
@@ -659,6 +672,8 @@ the theme tokens — never inline color literals.
 ## 8. Accessibility Contract
 
 - WCAG 2.1 **AA** is the floor. AAA where it costs us nothing.
+- Every route sets its own document title (`Page · DuckHaven`), through `PageHeader` or `useDocumentTitle`, and every
+  page has one `<h1>` (visually hidden on the worksheet).
 - All interactive elements: keyboard reachable, `aria-label` if icon-
   only, `aria-pressed` / `aria-expanded` / `aria-selected` for stateful
   ones, `aria-busy` while loading.

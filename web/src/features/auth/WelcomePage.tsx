@@ -4,8 +4,10 @@ import logoLight from "@/assets/logo-light.svg";
 import logoDark from "@/assets/logo-dark.svg";
 import { Button } from "@/components/ui/button";
 import { CreateWorkspaceDialog } from "@/features/workspace/CreateWorkspaceDialog";
+import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 
 export function WelcomePage() {
+  useDocumentTitle("Welcome");
   const navigate = useNavigate();
   const [open, setOpen] = useState(true);
 

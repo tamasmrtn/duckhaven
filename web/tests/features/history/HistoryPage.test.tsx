@@ -898,3 +898,38 @@ describe("HistoryPage scope, filters and paging", () => {
     expect(screen.queryByText("SELECT 1")).not.toBeInTheDocument();
   });
 });
+
+describe("HistoryPage — status pill", () => {
+  it("leaves the duration to its own column, so every status pill is one line", async () => {
+    server.use(
+      http.get("/api/workspaces/:ws/queries", () =>
+        HttpResponse.json({
+          items: [
+            {
+              id: "q-pill",
+              workspace_id: "137f7947-0000-4000-8000-000000000001",
+              agent_id: "ag-1",
+              user_id: "u-1",
+              sql: "SELECT pill_marker",
+              status: "done",
+              row_count: 1,
+              duration_ms: 1400,
+              error: null,
+              progress: null,
+              started_at: "2026-05-15T10:00:00Z",
+              finished_at: "2026-05-15T10:00:01.4Z",
+            },
+          ],
+          cursor: null,
+          has_more: false,
+        }),
+      ),
+    );
+    renderWithProviders({ initialRoute: "/acme-analytics/history?user=all" });
+    const row = (await screen.findByText("SELECT pill_marker")).closest("tr")!;
+
+    // "done 1.4s" wrapped to two lines in a narrow Status column.
+    expect(within(row).getByRole("status")).toHaveTextContent(/^done$/);
+    expect(within(row).getByText("1.4s")).toBeInTheDocument();
+  });
+});

@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { cn } from "@/utils";
+import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 
 export interface PageHeaderProps {
   title: ReactNode;
@@ -33,6 +34,10 @@ export function PageHeader({
   secondaryRow,
   className,
 }: PageHeaderProps) {
+  // Only a plain-string title can name the tab; a node title leaves it to the
+  // page, which can call useDocumentTitle itself.
+  useDocumentTitle(typeof title === "string" ? title : null);
+
   // A breadcrumb or description forces the title onto its own row inside a
   // left-hand column, so it can stack above/below them; otherwise leading,
   // title and badge sit directly in the header row as plain flex siblings.

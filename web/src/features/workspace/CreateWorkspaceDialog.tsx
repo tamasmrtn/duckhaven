@@ -57,7 +57,7 @@ export function CreateWorkspaceDialog({
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4 py-1">
-          <div className="space-y-1.5">
+          <div className="space-y-2">
             <Label htmlFor="ws-name">Workspace name</Label>
             <Input
               id="ws-name"

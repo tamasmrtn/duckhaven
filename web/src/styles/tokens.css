@@ -24,7 +24,7 @@
   /* Text */
   --text-primary: #0f172a;
   --text-secondary: #475569;
-  --text-tertiary: #94a3b8;
+  --text-tertiary: #5b6b82;
 
   /* Semantic status */
   --status-queued: #94a3b8;
@@ -32,6 +32,14 @@
   --status-success: #16a34a;
   --status-failed: #dc2626;
   --status-cancelled: #475569;
+
+  /* Solid pill fills. White text sits on these in both themes, so each is
+     >= 4.5:1 against white; the --status-* tokens above are for text and dots. */
+  --pill-queued: #64748b;
+  --pill-running: #c2410c;
+  --pill-success: #15803d;
+  --pill-failed: #b91c1c;
+  --pill-cancelled: #475569;
 
   /* Radius */
   --radius-sm: 4px;
@@ -87,7 +95,7 @@
 
   --text-primary: #f1f5f9;
   --text-secondary: #94a3b8;
-  --text-tertiary: #64748b;
+  --text-tertiary: #8b9bb0;
 
   --status-queued: #64748b;
   --status-running: #ff8a33;

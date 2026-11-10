@@ -81,7 +81,7 @@ export function LoginPage() {
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="space-y-1.5">
+          <div className="space-y-2">
             <Label htmlFor="email" className="text-sm">
               Email
             </Label>
@@ -96,7 +96,7 @@ export function LoginPage() {
               className="h-9"
             />
           </div>
-          <div className="space-y-1.5">
+          <div className="space-y-2">
             <Label htmlFor="password" className="text-sm">
               Password
             </Label>

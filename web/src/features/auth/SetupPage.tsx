@@ -71,7 +71,7 @@ export function SetupPage() {
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="space-y-1.5">
+          <div className="space-y-2">
             <Label htmlFor="token" className="text-sm">
               Setup token
             </Label>
@@ -85,7 +85,7 @@ export function SetupPage() {
               className="h-9 font-mono text-xs"
             />
           </div>
-          <div className="space-y-1.5">
+          <div className="space-y-2">
             <Label htmlFor="name" className="text-sm">
               Your name
             </Label>
@@ -98,7 +98,7 @@ export function SetupPage() {
               className="h-9"
             />
           </div>
-          <div className="space-y-1.5">
+          <div className="space-y-2">
             <Label htmlFor="email" className="text-sm">
               Email
             </Label>
@@ -112,7 +112,7 @@ export function SetupPage() {
               className="h-9"
             />
           </div>
-          <div className="space-y-1.5">
+          <div className="space-y-2">
             <Label htmlFor="password" className="text-sm">
               Password
             </Label>

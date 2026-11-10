@@ -194,7 +194,10 @@ export function WorksheetToolbar(props: WorksheetToolbarProps) {
         </PopoverContent>
       </Popover>
 
-      <div className="ml-auto flex items-center gap-1">
+      {/* Wraps instead of overflowing: on a phone the three actions plus the sync
+          status are wider than the screen, and the page clips what spills. The
+          Save labels give way to their icons below sm. */}
+      <div className="ml-auto flex min-w-0 max-w-full flex-wrap items-center justify-end gap-1">
         <SaveStatusText status={saveStatus} edited={edited} />
         {isRunning ? (
           <Button
@@ -218,7 +221,9 @@ export function WorksheetToolbar(props: WorksheetToolbarProps) {
           >
             <Play className="size-3 fill-black" />
             {willStart ? "Start & run" : "Run"}
-            <kbd className="ml-0.5 font-mono text-2xs opacity-60">⌘↵</kbd>
+            <kbd className="ml-0.5 hidden font-mono text-2xs opacity-60 sm:inline">
+              ⌘↵
+            </kbd>
           </Button>
         )}
         <Button
@@ -226,10 +231,11 @@ export function WorksheetToolbar(props: WorksheetToolbarProps) {
           size="sm"
           className="h-7 text-xs"
           title="Save the selected expression as a metric"
+          aria-label="Save as metric…"
           onClick={onSaveAsMetric}
         >
-          <Ruler className="size-3.5 mr-1" />
-          Save as metric…
+          <Ruler className="size-3.5 sm:mr-1" />
+          <span className="hidden sm:inline">Save as metric…</span>
         </Button>
         {linkedName ? (
           <div className="flex items-center">
@@ -239,9 +245,10 @@ export function WorksheetToolbar(props: WorksheetToolbarProps) {
               className="h-7 rounded-r-none text-xs"
               onClick={onSave}
               title={`Save to “${linkedName}” (⌘S)`}
+              aria-label="Save"
             >
-              <Save className="size-3.5 mr-1" />
-              Save
+              <Save className="size-3.5 sm:mr-1" />
+              <span className="hidden sm:inline">Save</span>
             </Button>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
@@ -270,9 +277,10 @@ export function WorksheetToolbar(props: WorksheetToolbarProps) {
             size="sm"
             className="h-7 text-xs"
             onClick={onSaveAs}
+            aria-label="Save…"
           >
-            <Save className="size-3.5 mr-1" />
-            Save…
+            <Save className="size-3.5 sm:mr-1" />
+            <span className="hidden sm:inline">Save…</span>
           </Button>
         )}
       </div>

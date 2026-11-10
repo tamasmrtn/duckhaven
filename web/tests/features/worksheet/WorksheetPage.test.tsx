@@ -1017,6 +1017,18 @@ describe("WorksheetPage responsive", () => {
     ).toBeInTheDocument();
   });
 
+  it("keeps every save action reachable by name when their labels collapse to icons", async () => {
+    mockViewport(true);
+    renderWithProviders({ initialRoute: WS_ROUTE });
+    // The labels are `hidden sm:inline`; the buttons must still be named.
+    expect(
+      await screen.findByRole("button", { name: "Save as metric…" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /^save(…)?$/i }),
+    ).toBeInTheDocument();
+  });
+
   it("keeps the sidebar switch inside the drawer on narrow screens", async () => {
     mockViewport(true);
     const user = userEvent.setup();

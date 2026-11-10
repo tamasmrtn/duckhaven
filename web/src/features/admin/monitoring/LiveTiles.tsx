@@ -19,11 +19,15 @@ function Tile({
   value,
   detail,
   tone,
+  word,
 }: {
   label: string;
   value: string;
   detail?: string;
   tone?: string;
+  // A status word ("terminated") rather than a measurement: set smaller so a
+  // state does not shout at the size of the numbers beside it.
+  word?: boolean;
 }) {
   return (
     <div className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-4 py-3">
@@ -31,7 +35,11 @@ function Tile({
         {label}
       </p>
       <p
-        className={cn("mt-1 font-mono text-xl font-tabular", tone)}
+        className={cn(
+          "mt-1 font-mono font-tabular",
+          word ? "text-md capitalize" : "text-xl",
+          tone,
+        )}
         data-testid={`live-${label.toLowerCase().replace(/\s+/g, "-")}`}
       >
         {value}
@@ -77,10 +85,15 @@ export function LiveTiles({ agent }: { agent: Agent }) {
         detail={
           latest ? `sampled ${ago(latest.sampled_at)}` : "no live samples"
         }
+        word
         tone={
           agent.status === "healthy"
             ? "text-[var(--status-success)]"
-            : "text-[var(--status-failed)]"
+            : // A stopped agent reports "unavailable" like a crashed one, but
+              // finishing is not a fault; only `failed` and a down agent are red.
+              agent.lifecycle === "terminated"
+              ? "text-text-secondary"
+              : "text-[var(--status-failed)]"
         }
       />
       <Tile

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate, useSearch } from "@tanstack/react-router";
+import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 import { Pencil, ExternalLink, Trash2, Clock } from "lucide-react";
 import { toast } from "sonner";
 import { Breadcrumb } from "@/components/ui/breadcrumb";
@@ -403,6 +404,7 @@ export function CatalogPage() {
   const tab = typeof search.tab === "string" ? search.tab : undefined;
   const navigate = useNavigate();
   const { data: workspace } = useWorkspace(ws);
+  useDocumentTitle(table ?? schema ?? catalog ?? "Catalog");
   // Only relevant on the bare landing state (nothing selected yet) — no need
   // to read localStorage on every render once a catalog/schema/table is picked.
   const recentlyViewed = !catalog

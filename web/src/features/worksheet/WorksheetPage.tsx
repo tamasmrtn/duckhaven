@@ -14,6 +14,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { StorageLabel } from "@/components/app/StorageIcon";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
+import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 import { useAgents } from "@/queries/agents";
 import { useCatalogs } from "@/queries/catalogs";
 import {
@@ -272,9 +273,12 @@ export function WorksheetPage() {
     />
   );
 
+  useDocumentTitle("Worksheets");
+
   if (sheets.isLoading || !sheet) {
     return (
       <div className="flex h-full flex-col gap-2 p-4" aria-busy="true">
+        <h1 className="sr-only">Worksheets</h1>
         <Skeleton className="h-6 w-64 animate-shimmer rounded" />
         <Skeleton className="h-40 w-full animate-shimmer rounded" />
       </div>
@@ -285,6 +289,7 @@ export function WorksheetPage() {
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
+      <h1 className="sr-only">Worksheets</h1>
       {/* One row across the page: the sidebar's switch sits
           in a cell exactly as wide as the sidebar, so its right border and the
           sidebar's form one straight divider, and one bottom border runs under

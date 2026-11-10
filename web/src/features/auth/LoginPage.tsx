@@ -10,8 +10,10 @@ import { useSetupStatus } from "@/queries/setup";
 import { useQueryClient } from "@tanstack/react-query";
 import { workspacesApi } from "@/api/workspaces";
 import { ApiError } from "@/api/client";
+import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 
 export function LoginPage() {
+  useDocumentTitle("Sign in");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState(() =>

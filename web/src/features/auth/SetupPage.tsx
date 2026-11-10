@@ -6,8 +6,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useSetupStatus, useCreateFirstAdmin } from "@/queries/setup";
+import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 
 export function SetupPage() {
+  useDocumentTitle("First-time setup");
   const navigate = useNavigate();
   const status = useSetupStatus();
   const createAdmin = useCreateFirstAdmin();

@@ -97,3 +97,22 @@ describe("AdminLayout document title", () => {
     expect(document.title).toBe("Users · Admin · DuckHaven");
   });
 });
+
+describe("AdminLayout section description", () => {
+  it("explains the active section under the title", async () => {
+    renderWithProviders({ initialRoute: "/acme-analytics/admin/users" });
+    expect(
+      await screen.findByText(
+        /who can sign in, and the role each person holds/i,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("follows the section as it changes", async () => {
+    renderWithProviders({ initialRoute: "/acme-analytics/admin/storage" });
+    expect(
+      await screen.findByText(/where workspace data is stored/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/who can sign in/i)).not.toBeInTheDocument();
+  });
+});

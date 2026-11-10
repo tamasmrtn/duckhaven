@@ -5,9 +5,12 @@ import { cn } from "@/utils";
  * The small-caps heading over a section of a page or panel ("Schema",
  * "Timeline", "Recommendations"). One look everywhere; `className` only places
  * it (margins, padding, truncation).
+ *
+ * An h2 by default: every page's title is an h1, so an h3 here would skip a
+ * level. Pass `as` for a label nested under another one.
  */
 export function SectionLabel({
-  as: Tag = "h3",
+  as: Tag = "h2",
   className,
   children,
 }: {

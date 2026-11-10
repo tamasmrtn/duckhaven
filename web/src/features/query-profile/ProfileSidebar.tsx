@@ -137,7 +137,7 @@ function ScanEffectiveness({ node }: { node: QueryProfileNode }) {
   if (eff == null) return null;
   return (
     <div className="mt-1 flex flex-col gap-1 border-t border-[var(--border-subtle)] pt-2">
-      <SectionLabel as="h4">Scan effectiveness</SectionLabel>
+      <SectionLabel as="h3">Scan effectiveness</SectionLabel>
       {eff.filesRead != null && (
         <Row
           label="Files read"

@@ -119,6 +119,9 @@ All foreground/background pairs validated for WCAG AA (4.5:1 body, 3:1
 large). Yellow text is **forbidden** on white; yellow only ever appears
 on dark surfaces or as a fill behind dark text.
 
+The yellow fills one button per page: its primary action (`Button variant="brand"`, black text), such as **Run** on the
+worksheet or **New compute** on Compute. Secondary actions stay outline or ghost, and destructive ones stay red.
+
 ### 2.2 Typography
 
 Three families, all open-source and self-hosted (no Google Fonts CDN

@@ -94,7 +94,8 @@ never shows a bare number.
 
 Namespace, workspace, and deployment scores are **data-byte-weighted** averages of their table scores (a 1 TB table
 outweighs a 1 MB one). Each rollup also reports the table count and the number of tables needing attention, so a few
-small unhealthy tables are not hidden behind one healthy large one.
+small unhealthy tables are not hidden behind one healthy large one. The **Lakehouse health** page states this beside
+the headline score, so a high score next to several tables to fix is not read as a contradiction.
 
 ## Recommendations
 

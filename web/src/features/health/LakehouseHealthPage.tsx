@@ -122,6 +122,15 @@ export function LakehouseHealthPage() {
                     </span>
                   ))}
                 </div>
+                {/* The headline is a size-weighted average while "need
+                    attention" is a plain count, so they can read as a
+                    contradiction (96 Healthy beside 9 tables to fix). Say
+                    which is which. */}
+                <p className="max-w-prose text-xs text-text-tertiary">
+                  The score weights each table by its data size, so a few large
+                  healthy tables can outweigh many small unhealthy ones. A table
+                  needs attention when it scores below 70.
+                </p>
               </div>
             </div>
 

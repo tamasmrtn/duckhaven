@@ -18,6 +18,14 @@ describe('HealthScoreGauge', () => {
     )
   })
 
+  it('hides the decorative chart SVG so the gauge is one labelled image, not an unnamed graphic', () => {
+    render(<HealthScoreGauge score={96} band="healthy" />)
+    const viz = screen.getByTestId('gauge-viz')
+    const hidden = viz.querySelector('[aria-hidden="true"]')
+    expect(hidden).not.toBeNull()
+    expect(hidden!.querySelector('.recharts-responsive-container, svg') ?? hidden).toBeTruthy()
+  })
+
   it('shows a dash and "No data" when the score is null', () => {
     render(<HealthScoreGauge score={null} band="unknown" />)
     expect(screen.getByText('—')).toBeInTheDocument()

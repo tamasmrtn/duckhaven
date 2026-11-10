@@ -31,23 +31,27 @@ export function HealthScoreGauge({ score, band, size = 160 }: Props) {
         style={{ width: size, height: size }}
         data-testid="gauge-viz"
       >
-        <ResponsiveContainer width="100%" height="100%">
-          <PieChart>
-            <Pie
-              data={data}
-              dataKey="value"
-              innerRadius="72%"
-              outerRadius="100%"
-              startAngle={90}
-              endAngle={-270}
-              stroke="none"
-              isAnimationActive={false}
-            >
-              <Cell fill={color} />
-              <Cell fill="var(--border-subtle)" />
-            </Pie>
-          </PieChart>
-        </ResponsiveContainer>
+        {/* The wrapper above is the labelled image; the recharts SVG inside
+            it is decoration and would otherwise be an unnamed graphic. */}
+        <div className="size-full" aria-hidden>
+          <ResponsiveContainer width="100%" height="100%">
+            <PieChart>
+              <Pie
+                data={data}
+                dataKey="value"
+                innerRadius="72%"
+                outerRadius="100%"
+                startAngle={90}
+                endAngle={-270}
+                stroke="none"
+                isAnimationActive={false}
+              >
+                <Cell fill={color} />
+                <Cell fill="var(--border-subtle)" />
+              </Pie>
+            </PieChart>
+          </ResponsiveContainer>
+        </div>
         <div className="absolute inset-0 flex items-center justify-center">
           <span className="font-mono text-3xl font-tabular" style={{ color }}>
             {score ?? "—"}

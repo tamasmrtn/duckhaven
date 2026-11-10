@@ -40,15 +40,15 @@ function TableRow({ ws, t }: { ws: string; t: TableHealth }) {
     <Link
       to="/$ws/catalog"
       params={{ ws }}
-      className="flex items-center justify-between border-b border-[var(--border-subtle)] px-4 py-2 last:border-b-0 hover:bg-accent/50"
+      className="flex items-center justify-between gap-3 border-b border-[var(--border-subtle)] px-4 py-2 last:border-b-0 hover:bg-accent/50"
     >
-      <div className="flex items-center gap-3">
+      <div className="flex min-w-0 items-center gap-3">
         <ScoreBadge score={t.score} band={t.band} />
-        <span className="font-mono text-xs text-text-primary">
+        <span className="truncate font-mono text-xs text-text-primary">
           {t.schema_name}.{t.table_name}
         </span>
       </div>
-      <span className="text-2xs text-text-tertiary font-tabular">
+      <span className="shrink-0 text-xs text-text-tertiary font-tabular">
         {formatBytes(t.total_data_bytes)}
         {t.small_file_ratio != null
           ? ` · ${Math.round(t.small_file_ratio * 100)}% small files`

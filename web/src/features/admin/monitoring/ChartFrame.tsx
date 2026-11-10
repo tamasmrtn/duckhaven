@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useId, type ReactNode } from "react";
 import {
   formatAbsoluteTimestamp,
   formatWindowTick,
@@ -19,6 +19,7 @@ export function ChartFrame({
   legend,
   testId,
   height = "h-48",
+  emptyMessage,
   children,
 }: {
   title: string;
@@ -26,25 +27,42 @@ export function ChartFrame({
   legend?: ReactNode;
   testId: string;
   height?: string;
+  // When set, the chart has nothing to draw: say so instead of plotting an
+  // arbitrary 0-4 axis and a legend of zeros, which reads as measured zeros.
+  emptyMessage?: string;
   children: ReactNode;
 }) {
+  const subtitleId = useId();
   return (
     <section className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-4">
       <div className="mb-3 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
         <div>
           <SectionLabel>{title}</SectionLabel>
           {subtitle && (
-            <p className="mt-0.5 text-2xs text-text-tertiary">{subtitle}</p>
+            <p id={subtitleId} className="mt-0.5 text-2xs text-text-tertiary">
+              {subtitle}
+            </p>
           )}
         </div>
-        {legend}
+        {emptyMessage ? null : legend}
       </div>
       {/* A clicked chart takes focus; show the ring for keyboard focus only. */}
+      {/* The chart is a picture; the title and subtitle are its text
+          alternative, and the same data is listed in the table below. */}
       <div
         className={`${height} [&_*:focus:not(:focus-visible)]:outline-none`}
         data-testid={testId}
+        role="img"
+        aria-label={title}
+        aria-describedby={subtitle ? subtitleId : undefined}
       >
-        {children}
+        {emptyMessage ? (
+          <div className="flex h-full items-center justify-center text-sm text-text-tertiary">
+            {emptyMessage}
+          </div>
+        ) : (
+          children
+        )}
       </div>
     </section>
   );

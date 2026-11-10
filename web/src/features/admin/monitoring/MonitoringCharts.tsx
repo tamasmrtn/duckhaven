@@ -262,10 +262,17 @@ export function QueriesPanel({ ctx }: { ctx: PanelContext }) {
   const causes = Object.entries(ctx.data.summary.failed_by_reason).filter(
     ([reason]) => reason !== "sql_error",
   );
+  const finished = rows.reduce(
+    (total, r) => total + series.reduce((n, s) => n + (r[s.key] ?? 0), 0),
+    0,
+  );
 
   return (
     <ChartFrame
       title="Queries"
+      emptyMessage={
+        finished === 0 ? "No queries finished in this range." : undefined
+      }
       subtitle={
         <>
           {`Finished per ${ctx.bucketLabel} bucket. "SQL error" is a mistake in the query itself; "Failed" is the platform's.`}

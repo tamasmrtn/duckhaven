@@ -64,12 +64,16 @@ describe("AdminLayout access gate", () => {
 
     // Scoped to the admin tab bar: the left rail legitimately still has a
     // Compute button, which is the whole point of the move.
-    const tabs = within(screen.getByRole("navigation", { name: "Admin sections" }));
-    expect(tabs.queryByRole("button", { name: "Agents" })).not.toBeInTheDocument();
-    expect(tabs.queryByRole("button", { name: "Compute" })).not.toBeInTheDocument();
+    const tabs = within(
+      screen.getByRole("navigation", { name: "Admin sections" }),
+    );
     expect(
-      screen.getByRole("button", { name: "Compute" }),
-    ).toBeInTheDocument();
+      tabs.queryByRole("button", { name: "Agents" }),
+    ).not.toBeInTheDocument();
+    expect(
+      tabs.queryByRole("button", { name: "Compute" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Compute" })).toBeInTheDocument();
   });
 
   it("still blocks a user holding no global permission", async () => {
@@ -83,5 +87,13 @@ describe("AdminLayout access gate", () => {
     expect(
       await screen.findByText("Admin access required"),
     ).toBeInTheDocument();
+  });
+});
+
+describe("AdminLayout document title", () => {
+  it("names the section, since every admin screen shares the Admin header", async () => {
+    renderWithProviders({ initialRoute: "/acme-analytics/admin/users" });
+    await screen.findByRole("heading", { name: "Admin", level: 1 });
+    expect(document.title).toBe("Users · Admin · DuckHaven");
   });
 });

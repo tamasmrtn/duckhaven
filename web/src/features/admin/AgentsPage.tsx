@@ -386,7 +386,7 @@ function CreateComputeModal({ open, onClose }: CreateComputeModalProps) {
                 step={options.cpu_step}
                 value={cpuValue}
                 onChange={(e) => setCpu(Number(e.target.value))}
-                className="w-full accent-[var(--status-running)]"
+                className="w-full accent-[var(--brand-slate-blue)]"
               />
             </div>
 
@@ -406,7 +406,7 @@ function CreateComputeModal({ open, onClose }: CreateComputeModalProps) {
                 step={options.memory_step_gb}
                 value={memoryValue}
                 onChange={(e) => setMemory(Number(e.target.value))}
-                className="w-full accent-[var(--status-running)]"
+                className="w-full accent-[var(--brand-slate-blue)]"
               />
             </div>
 

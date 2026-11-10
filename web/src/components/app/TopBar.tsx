@@ -162,6 +162,11 @@ export function TopBar({
               variant="ghost"
               size="sm"
               className="h-7 gap-2 px-2 text-sm"
+              // The visible name is hidden below `sm`; without this the
+              // button is an unnamed icon on phones.
+              aria-label={
+                me?.name ? `Account menu, ${me.name}` : "Account menu"
+              }
             >
               <User className="size-4" />
               <span className="hidden sm:inline">{me?.name ?? "Account"}</span>

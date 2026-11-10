@@ -18,3 +18,12 @@ describe('TopBar user menu', () => {
     )
   })
 })
+
+describe('TopBar user menu accessible name', () => {
+  it('is named by aria-label, so it survives the sm-only text being hidden', async () => {
+    renderWithProviders({ initialRoute: ROUTE })
+    // Waits for /me to resolve; the label falls back to "Account menu" before then.
+    const button = await screen.findByRole('button', { name: /^account menu, .*marton/i })
+    expect(button).toHaveAttribute('aria-label', expect.stringMatching(/^Account menu, /))
+  })
+})

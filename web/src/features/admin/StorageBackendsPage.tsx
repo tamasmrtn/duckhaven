@@ -26,7 +26,7 @@ import {
   useCheckStorageBackendHealth,
   useDeleteStorageBackend,
 } from "@/queries/storage-backends";
-import { StorageIcon } from "@/components/app/StorageIcon";
+import { StorageIcon, StorageLabel } from "@/components/app/StorageIcon";
 import type {
   BackendKind,
   StorageBackendConfig,
@@ -544,14 +544,17 @@ export function StorageBackendsPage() {
                   )}
                 >
                   <td className="px-4 py-2">
-                    <StorageIcon
-                      kind={b.kind}
-                      className="text-text-secondary"
-                    />
+                    <span className="flex items-center gap-2">
+                      <StorageIcon
+                        kind={b.kind}
+                        className="text-text-secondary"
+                      />
+                      <StorageLabel kind={b.kind} />
+                    </span>
                   </td>
                   <td className="px-4 py-2 font-medium">{b.name}</td>
                   <td className="px-4 py-2 font-mono text-2xs text-text-secondary max-w-[260px] truncate">
-                    {b.root_uri}
+                    {b.root_uri || "—"}
                   </td>
                   <td className="px-4 py-2">
                     <HealthCell id={b.id} />

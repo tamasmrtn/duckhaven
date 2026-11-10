@@ -111,3 +111,44 @@ describe('StorageBackendsPage health check', () => {
     )
   })
 })
+
+describe('StorageBackendsPage table cells', () => {
+  const backend = (over: object) => ({
+    id: 'sb-1',
+    name: 'bundled',
+    kind: 'object_store',
+    root_uri: '',
+    config: null,
+    workspace_count: 1,
+    created_by: 'u-1',
+    created_at: new Date().toISOString(),
+    ...over,
+  })
+
+  it('names the kind in words, not just an icon', async () => {
+    server.use(
+      http.get('/api/admin/storage-backends', () =>
+        HttpResponse.json([backend({ id: 'a', name: 'lake-a' })]),
+      ),
+    )
+    renderWithProviders({ initialRoute: STORAGE_ROUTE })
+    const row = (await screen.findByText('lake-a')).closest('tr')!
+    expect(within(row).getByText('Object storage')).toBeInTheDocument()
+  })
+
+  it('shows a dash, not a blank cell, when a backend has no root URI', async () => {
+    server.use(
+      http.get('/api/admin/storage-backends', () =>
+        HttpResponse.json([
+          backend({ id: 'a', name: 'bundled-lake', root_uri: '' }),
+          backend({ id: 'b', name: 'ext-lake', kind: 's3', root_uri: 's3://b/' }),
+        ]),
+      ),
+    )
+    renderWithProviders({ initialRoute: STORAGE_ROUTE })
+    const bundled = (await screen.findByText('bundled-lake')).closest('tr')!
+    const external = screen.getByText('ext-lake').closest('tr')!
+    expect(within(bundled).getByText('—')).toBeInTheDocument()
+    expect(within(external).getByText('s3://b/')).toBeInTheDocument()
+  })
+})

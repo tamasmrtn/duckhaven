@@ -460,10 +460,7 @@ export function HistoryPage() {
                     )}
                   >
                     <TableCell className="px-4 py-2">
-                      <StatusPill
-                        status={q.status}
-                        durationMs={q.duration_ms}
-                      />
+                      <StatusPill status={q.status} />
                     </TableCell>
                     {all && (
                       <TableCell className="px-4 py-2 font-mono text-xs text-text-secondary">

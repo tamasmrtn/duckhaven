@@ -2,9 +2,9 @@ import { cn } from "@/utils";
 import type { ModelStatus, ValidationState } from "@/types/semantic";
 
 const statusStyles: Record<ModelStatus, string> = {
-  draft: "bg-[var(--status-queued)] text-white",
-  published: "bg-[var(--status-success)] text-white",
-  deprecated: "bg-[var(--status-cancelled)] text-white",
+  draft: "bg-[var(--pill-queued)] text-white",
+  published: "bg-[var(--pill-success)] text-white",
+  deprecated: "bg-[var(--pill-cancelled)] text-white",
 };
 
 const statusTitles: Record<ModelStatus, string> = {

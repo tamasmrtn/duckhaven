@@ -9,11 +9,11 @@ interface StatusPillProps {
 }
 
 const colors: Record<QueryStatus, string> = {
-  queued: "bg-[var(--status-queued)] text-white",
-  running: "bg-[var(--status-running)] text-white",
-  done: "bg-[var(--status-success)] text-white",
-  failed: "bg-[var(--status-failed)] text-white",
-  cancelled: "bg-[var(--status-cancelled)] text-white",
+  queued: "bg-[var(--pill-queued)] text-white",
+  running: "bg-[var(--pill-running)] text-white",
+  done: "bg-[var(--pill-success)] text-white",
+  failed: "bg-[var(--pill-failed)] text-white",
+  cancelled: "bg-[var(--pill-cancelled)] text-white",
 };
 
 const dots: Record<QueryStatus, string> = {
@@ -65,7 +65,7 @@ export function StatusPill({ status, startedAt, durationMs }: StatusPillProps) {
   return (
     <span
       className={cn(
-        "inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-2xs font-medium transition-colors duration-200",
+        "inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full px-2 py-0.5 text-2xs font-medium transition-colors duration-200",
         colors[status],
       )}
       role="status"

@@ -20,6 +20,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
+import { initials, providerLabel } from "./userDisplay";
 import { Label } from "@/components/ui/label";
 import {
   Select,
@@ -229,16 +230,16 @@ function UserRow({ user }: { user: User }) {
     <div className="flex items-center gap-3 rounded-md border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-3">
       <Avatar className="size-8">
         <AvatarFallback className="text-xs font-medium">
-          {user.name.slice(0, 2).toUpperCase()}
+          {initials(user.name)}
         </AvatarFallback>
       </Avatar>
       <div className="flex-1 min-w-0">
         <p className="text-sm font-medium">{user.name}</p>
         <p className="text-xs text-text-secondary truncate">{user.email}</p>
       </div>
-      {user.auth_provider !== "local" && (
-        <Badge variant="outline" className="text-2xs uppercase">
-          {user.auth_provider}
+      {user.auth_provider && user.auth_provider !== "local" && (
+        <Badge variant="outline" className="text-2xs">
+          {providerLabel(user.auth_provider)}
         </Badge>
       )}
       {!user.is_active && (

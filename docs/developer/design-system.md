@@ -92,7 +92,7 @@ background field, never as body text.
 | `--border-strong` | `#CBD5E1` (slate-300) | `#374151` (gray-700) | Input borders, hovered dividers |
 | `--text-primary` | `#0F172A` (slate-900) | `#F1F5F9` (slate-100) | Body, headings |
 | `--text-secondary` | `#475569` (slate-600) | `#94A3B8` (slate-400) | Metadata, captions |
-| `--text-tertiary` | `#64748B` (slate-500) | `#8B9BB0` | Help text, timestamps, placeholders (4.5:1 on every surface) |
+| `--text-tertiary` | `#5B6B82` | `#8B9BB0` | Help text, timestamps, placeholders (4.5:1 on every surface and chip) |
 
 #### Semantic
 

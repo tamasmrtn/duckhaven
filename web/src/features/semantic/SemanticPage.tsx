@@ -77,6 +77,7 @@ export function SemanticPage() {
         description="What this workspace's business terms mean, and how they are calculated. Published models are what the assistant answers from."
         actions={
           <Button
+            variant="brand"
             size="sm"
             className="h-7 gap-1.5 text-xs"
             onClick={() => setOpen(true)}

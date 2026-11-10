@@ -610,6 +610,7 @@ export function AgentsPage() {
           canManageFleet && (
             <div className="flex items-center gap-2">
               <Button
+                variant="brand"
                 size="sm"
                 className="h-7 gap-1.5 text-xs"
                 onClick={() => setComputeOpen(true)}

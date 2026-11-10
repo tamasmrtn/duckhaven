@@ -469,8 +469,9 @@ export function WorksheetPage() {
                   Reject
                 </Button>
                 <Button
+                  variant="brand"
                   size="sm"
-                  className="h-7 gap-1 bg-[var(--brand-yellow)] text-black hover:bg-yellow-300 text-xs"
+                  className="h-7 gap-1 text-xs"
                   onClick={bridge.accept}
                 >
                   <Check className="size-3.5" />

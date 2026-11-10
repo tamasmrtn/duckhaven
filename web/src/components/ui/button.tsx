@@ -16,6 +16,9 @@ const buttonVariants = cva(
           "border border-input bg-background hover:bg-accent hover:text-accent-foreground",
         secondary:
           "bg-secondary text-secondary-foreground hover:bg-secondary/80",
+        // The brand yellow: one per page, for its primary action. Black text
+        // keeps it >= 4.5:1; the fill is never used behind white text.
+        brand: "bg-[var(--brand-yellow)] text-black hover:bg-yellow-300",
         ghost: "hover:bg-accent hover:text-accent-foreground",
         link: "text-primary underline-offset-4 hover:underline",
       },

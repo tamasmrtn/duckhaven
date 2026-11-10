@@ -213,6 +213,7 @@ export function MaintenancePage() {
               </p>
             </div>
             <Button
+              variant="brand"
               size="sm"
               className="gap-1.5 text-xs"
               disabled={scan.isPending}

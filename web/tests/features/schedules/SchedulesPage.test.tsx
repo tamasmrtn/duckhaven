@@ -151,3 +151,11 @@ describe("SchedulesPage agent access", () => {
     expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
 });
+
+describe("SchedulesPage primary action", () => {
+  it("makes New schedule the page's one brand-yellow action", async () => {
+    renderWithProviders({ initialRoute: ROUTE });
+    const button = await screen.findByRole("button", { name: /new schedule/i });
+    expect(button).toHaveClass("bg-[var(--brand-yellow)]");
+  });
+});

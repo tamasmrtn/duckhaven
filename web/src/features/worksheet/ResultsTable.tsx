@@ -29,6 +29,9 @@ interface ResultsTableProps {
   rows: QueryRow[];
   total: number;
   error?: string | null;
+  // Heading over the error; defaults to the worksheet's "Query failed". A
+  // preview that never ran a query of the user's should not claim one failed.
+  errorTitle?: string;
   isLoading?: boolean;
   onLoadMore?: () => void;
   hasMore?: boolean;
@@ -140,6 +143,7 @@ export function ResultsTable({
   rows,
   total,
   error,
+  errorTitle = "Query failed",
   isLoading,
   onLoadMore,
   hasMore,
@@ -218,7 +222,7 @@ export function ResultsTable({
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 text-[var(--status-failed)]">
             <AlertCircle className="size-5 shrink-0" />
-            <p className="text-sm font-medium">Query failed</p>
+            <p className="text-sm font-medium">{errorTitle}</p>
           </div>
           <div className="flex items-center gap-1.5">
             {errorActions}

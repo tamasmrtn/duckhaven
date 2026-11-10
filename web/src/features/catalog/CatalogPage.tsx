@@ -1,5 +1,10 @@
 import { useEffect, useState } from "react";
-import { useParams, useNavigate, useSearch } from "@tanstack/react-router";
+import {
+  Link,
+  useParams,
+  useNavigate,
+  useSearch,
+} from "@tanstack/react-router";
 import { useDocumentTitle } from "@/hooks/useDocumentTitle";
 import { ChevronLeft, Pencil, ExternalLink, Trash2, Clock } from "lucide-react";
 import { toast } from "sonner";
@@ -113,6 +118,12 @@ function TableDetail({
   const sampleDenied =
     sampleError instanceof ApiError &&
     (sampleError.status === 404 || sampleError.status === 403);
+  // Anything else (503 "no compatible agent is connected", a failed read) is
+  // the server explaining itself; show that instead of an empty grid.
+  const sampleErrorMessage =
+    sampleError && !sampleDenied ? sampleError.message : null;
+  const sampleUnavailable =
+    sampleError instanceof ApiError && sampleError.code === "unavailable";
   const { data: workspace } = useWorkspace(ws);
   const navigate = useNavigate();
   const deleteTable = useDeleteTable(ws, catalog, schema);
@@ -312,6 +323,19 @@ function TableDetail({
                   rows={sampleData?.rows ?? []}
                   total={sampleData?.total ?? 0}
                   isLoading={sampleLoading}
+                  error={sampleErrorMessage}
+                  errorTitle="Can't preview this table"
+                  errorActions={
+                    sampleUnavailable ? (
+                      <Link
+                        to="/$ws/compute"
+                        params={{ ws }}
+                        className="text-xs font-medium text-[var(--brand-slate-blue)] hover:underline"
+                      >
+                        Manage compute
+                      </Link>
+                    ) : undefined
+                  }
                 />
               )}
             </div>

@@ -55,6 +55,7 @@ function WorkspaceSettings({ ws }: { ws: string }) {
   const { data: members = [] } = useWorkspaceMembers(ws);
   const myRole = members.find((m) => m.user_id === me?.id)?.role;
   const isOwner = myRole === "owner";
+  const resultCacheEnabled = workspace?.result_cache_enabled ?? true;
 
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -129,7 +130,7 @@ function WorkspaceSettings({ ws }: { ws: string }) {
         <div className="flex items-start gap-2">
           <Checkbox
             id="ws-result-cache"
-            checked={workspace.result_cache_enabled ?? true}
+            checked={resultCacheEnabled}
             disabled={!isOwner || update.isPending}
             onCheckedChange={async (checked) => {
               try {
@@ -156,7 +157,10 @@ function WorkspaceSettings({ ws }: { ws: string }) {
             </Label>
             <p className="text-xs text-text-tertiary">
               A read is served from an earlier run's result when nothing it
-              reads has changed since. Turn this off to run every query.
+              reads has changed since.{" "}
+              {resultCacheEnabled
+                ? "Turn this off to run every query."
+                : "Turn this on to answer repeated queries from earlier results."}
             </p>
           </div>
         </div>

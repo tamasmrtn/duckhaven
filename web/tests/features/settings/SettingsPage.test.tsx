@@ -64,6 +64,36 @@ describe("SettingsPage — Workspace tab", () => {
     await waitFor(() => expect(sent).toEqual({ result_cache_enabled: false }));
   });
 
+  it("says which way the result cache toggle goes, not just 'turn it off'", async () => {
+    const ws = {
+      id: "ws-1",
+      slug: "acme-analytics",
+      name: "acme-analytics",
+      description: null,
+      default_catalog: "acme_analytics",
+      storage_backend_id: "sb-1",
+      storage_backend_kind: "s3",
+      created_at: "2026-01-01T00:00:00Z",
+    };
+    server.use(
+      http.get("/api/workspaces/:ws", () =>
+        HttpResponse.json({ ...ws, result_cache_enabled: false }),
+      ),
+    );
+    renderWithProviders({ initialRoute: ROUTE });
+    expect(
+      await screen.findByText(/turn this on to answer repeated queries/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/turn this off to run every query/i)).toBeNull();
+  });
+
+  it("offers to turn it off while the cache is on", async () => {
+    renderWithProviders({ initialRoute: ROUTE });
+    expect(
+      await screen.findByText(/turn this off to run every query/i),
+    ).toBeInTheDocument();
+  });
+
   it("sets the default compute from the agents the owner can use", async () => {
     let sent: Record<string, unknown> | null = null;
     server.use(

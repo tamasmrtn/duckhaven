@@ -36,7 +36,9 @@ function Tile({
       </p>
       <p
         className={cn(
-          "mt-1 font-mono font-tabular",
+          // One line box for both sizes, so the detail line under every tile
+          // sits at the same height whatever the value's type size.
+          "mt-1 font-mono font-tabular leading-8",
           word ? "text-md capitalize" : "text-xl",
           tone,
         )}

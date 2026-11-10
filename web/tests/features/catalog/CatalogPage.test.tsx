@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach, beforeEach } from "vitest";
+import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import {
   screen,
   waitFor,
@@ -427,5 +427,80 @@ describe("CatalogPage layout", () => {
     expect(list.className).toContain("h-7");
     expect(list.className).not.toContain("bg-muted");
     expect(tab.className).toContain("data-[state=active]:bg-accent");
+  });
+});
+
+describe("CatalogPage responsive", () => {
+  // Below md the 280px tree left the detail pane ~30px wide, so the page shows
+  // the tree until something is picked and then only the detail.
+  const originalMatchMedia = window.matchMedia;
+  afterEach(() => {
+    window.matchMedia = originalMatchMedia;
+  });
+  beforeEach(() => {
+    localStorage.setItem(
+      "dh-tree-expanded-acme-analytics",
+      JSON.stringify(["c:acme_analytics", "s:acme_analytics.raw"]),
+    );
+  });
+
+  function mockViewport(isMobile: boolean) {
+    window.matchMedia = vi.fn().mockImplementation((query: string) => ({
+      matches: isMobile,
+      media: query,
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })) as unknown as typeof window.matchMedia;
+  }
+
+  it("shows only the tree until an object is picked", async () => {
+    mockViewport(true);
+    renderWithProviders({ initialRoute: CATALOG_ROUTE });
+    await screen.findByText("raw");
+    expect(
+      screen.queryByText(/select a catalog, schema, or table/i),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: /back to catalog tree/i }),
+    ).toBeNull();
+  });
+
+  it("shows only the detail, with a way back, once a table is open", async () => {
+    mockViewport(true);
+    const user = userEvent.setup();
+    const { router } = renderWithProviders({
+      initialRoute: `${CATALOG_ROUTE}/acme_analytics/raw/events`,
+    });
+    expect(await screen.findByRole("tab", { name: "Sample" })).toBeVisible();
+    // The tree's search box is the tree's own marker; it must not be mounted.
+    expect(screen.queryByPlaceholderText(/search catalogs/i)).toBeNull();
+
+    await user.click(
+      screen.getByRole("button", { name: /back to catalog tree/i }),
+    );
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe(CATALOG_ROUTE),
+    );
+    expect(
+      await screen.findByPlaceholderText(/search catalogs/i),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps tree and detail side by side on wide screens", async () => {
+    mockViewport(false);
+    renderWithProviders({
+      initialRoute: `${CATALOG_ROUTE}/acme_analytics/raw/events`,
+    });
+    expect(await screen.findByRole("tab", { name: "Sample" })).toBeVisible();
+    expect(
+      await screen.findByPlaceholderText(/search catalogs/i),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /back to catalog tree/i }),
+    ).toBeNull();
   });
 });

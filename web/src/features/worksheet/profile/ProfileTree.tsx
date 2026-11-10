@@ -8,7 +8,7 @@ import {
   ROWS_READ_HINT,
   isRowsReadCorrected,
   nodeBadges,
-  rowsReadByScan,
+  rowsLabel,
 } from "./highlights";
 
 const BADGE_CLASS: Record<NodeBadge, string> = {
@@ -21,18 +21,6 @@ function formatMs(ms: number | null): string {
   if (ms == null) return "—";
   if (ms < 1000) return `${ms.toFixed(ms < 10 ? 1 : 0)}ms`;
   return `${(ms / 1000).toFixed(2)}s`;
-}
-
-function rowsLabel(
-  node: QueryProfileNode,
-  summary: QueryProfileSummary,
-): string {
-  const fmt = (n: number | null) => (n == null ? "—" : n.toLocaleString());
-  // Rows read, corrected for DuckDB's per-thread double count.
-  if (node.rows_scanned && node.rows_scanned > 0) {
-    return `${rowsReadByScan(node, summary).toLocaleString()} → ${fmt(node.rows_produced)}`;
-  }
-  return `${fmt(node.rows_produced)} rows`;
 }
 
 function ProfileNodeRow({

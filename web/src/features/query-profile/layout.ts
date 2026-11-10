@@ -10,7 +10,8 @@
 import type { QueryProfileNode } from "@/types/query";
 
 export const NODE_WIDTH = 200;
-export const NODE_HEIGHT = 64;
+// Three rows of text (name, time bar, rows) plus padding; 64 clipped the last.
+export const NODE_HEIGHT = 76;
 const H_GAP = 36;
 const V_GAP = 56;
 

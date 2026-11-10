@@ -1,8 +1,15 @@
 import { describe, it, expect } from "vitest";
-import { layoutTree, NODE_WIDTH } from "@/features/query-profile/layout";
+import {
+  layoutTree,
+  NODE_HEIGHT,
+  NODE_WIDTH,
+} from "@/features/query-profile/layout";
 import type { QueryProfileNode } from "@/types/query";
 
-function node(type: string, children: QueryProfileNode[] = []): QueryProfileNode {
+function node(
+  type: string,
+  children: QueryProfileNode[] = [],
+): QueryProfileNode {
   return {
     type,
     name: type,
@@ -42,5 +49,13 @@ describe("layoutTree", () => {
 
     expect(right - left).toBeGreaterThanOrEqual(NODE_WIDTH); // no overlap
     expect(byId["0"].x).toBeCloseTo((left + right) / 2); // parent centered
+  });
+});
+
+describe("node size", () => {
+  it("is tall enough for the three text rows a node carries", () => {
+    // name (12px) + time bar row + rows line (11px each), with 2 x 6px of
+    // padding and 2 x 4px of gap. At 64 the rows line was clipped.
+    expect(NODE_HEIGHT).toBeGreaterThanOrEqual(72);
   });
 });

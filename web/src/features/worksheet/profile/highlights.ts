@@ -50,6 +50,21 @@ export function rowsReadByScan(
 }
 
 /**
+ * The row figure under an operator in the plan graph and tree: "N → M" for a
+ * scan (rows read, corrected, then rows kept), otherwise "M rows" ("1 row").
+ */
+export function rowsLabel(
+  node: QueryProfileNode,
+  summary: QueryProfileSummary,
+): string {
+  const fmt = (n: number | null) => (n == null ? "—" : n.toLocaleString());
+  if (node.rows_scanned && node.rows_scanned > 0) {
+    return `${rowsReadByScan(node, summary).toLocaleString()} → ${fmt(node.rows_produced)}`;
+  }
+  return `${fmt(node.rows_produced)} ${node.rows_produced === 1 ? "row" : "rows"}`;
+}
+
+/**
  * Whether this node's `rows_scanned` carries the per-thread double count.
  *
  * Only file readers do. Measured on 1.5.5 over the same 200,000-row relation:

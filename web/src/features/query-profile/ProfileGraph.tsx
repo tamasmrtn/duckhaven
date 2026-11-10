@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { Minus, Plus } from "lucide-react";
-import type { QueryProfileNode, QueryProfileSummary } from "@/types/query";
+import type { QueryProfileSummary } from "@/types/query";
 import { cn } from "@/utils";
 import {
   BADGE_LABELS,
@@ -8,7 +8,7 @@ import {
   ROWS_READ_HINT,
   isRowsReadCorrected,
   nodeBadges,
-  rowsReadByScan,
+  rowsLabel,
 } from "@/features/worksheet/profile/highlights";
 import { NODE_HEIGHT, NODE_WIDTH, type GraphLayout } from "./layout";
 
@@ -26,19 +26,6 @@ function fmtMs(ms: number | null): string {
   if (ms == null) return "—";
   if (ms < 1000) return `${ms.toFixed(ms < 10 ? 1 : 0)}ms`;
   return `${(ms / 1000).toFixed(2)}s`;
-}
-
-function rowsLabel(
-  node: QueryProfileNode,
-  summary: QueryProfileSummary,
-): string {
-  const fmt = (n: number | null) => (n == null ? "—" : n.toLocaleString());
-  // Rows read, corrected for DuckDB's per-thread double count — the raw figure
-  // counts the whole relation once per participating thread.
-  if (node.rows_scanned && node.rows_scanned > 0) {
-    return `${rowsReadByScan(node, summary).toLocaleString()} → ${fmt(node.rows_produced)}`;
-  }
-  return `${fmt(node.rows_produced)} rows`;
 }
 
 /**

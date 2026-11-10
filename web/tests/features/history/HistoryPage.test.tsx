@@ -933,3 +933,73 @@ describe("HistoryPage — status pill", () => {
     expect(within(row).getByText("1.4s")).toBeInTheDocument();
   });
 });
+
+describe("HistoryPage — table shape", () => {
+  const run = (extra: object) => ({
+    id: "q-shape",
+    workspace_id: "137f7947-0000-4000-8000-000000000001",
+    agent_id: "ag-1",
+    user_id: "u-1",
+    sql: "SELECT shape_marker",
+    status: "done",
+    row_count: 1234,
+    duration_ms: 1400,
+    error: null,
+    progress: null,
+    started_at: "2026-05-15T10:00:00Z",
+    finished_at: "2026-05-15T10:00:01.4Z",
+    ...extra,
+  });
+
+  function useRun(extra: object = {}) {
+    server.use(
+      http.get("/api/workspaces/:ws/queries", () =>
+        HttpResponse.json({
+          items: [run(extra)],
+          cursor: null,
+          has_more: false,
+        }),
+      ),
+    );
+  }
+
+  it("right-aligns the numeric columns, header and cells alike", async () => {
+    useRun();
+    renderWithProviders({ initialRoute: "/acme-analytics/history?user=all" });
+    const row = (await screen.findByText("SELECT shape_marker")).closest("tr")!;
+
+    for (const name of ["Rows", "Duration"]) {
+      expect(screen.getByRole("columnheader", { name })).toHaveClass(
+        "text-right",
+      );
+    }
+    expect(screen.getByRole("columnheader", { name: "Started" })).toHaveClass(
+      "text-left",
+    );
+    expect(within(row).getByText("1,234").closest("td")).toHaveClass(
+      "text-right",
+    );
+    expect(within(row).getByText("1.4s").closest("td")).toHaveClass(
+      "text-right",
+    );
+  });
+
+  it("keeps a long client version to one truncated line with the full text on hover", async () => {
+    const version = "0.9.1.dev10+ge8eebc64a.d20261105";
+    useRun({ client_name: "duckhaven-sql-connector", client_version: version });
+    renderWithProviders({ initialRoute: "/acme-analytics/history?user=all" });
+    await screen.findByText("SELECT shape_marker");
+
+    const el = screen.getByText(version);
+    expect(el).toHaveClass("truncate");
+    expect(el).toHaveAttribute("title", version);
+  });
+
+  it("does not let the start time wrap", async () => {
+    useRun();
+    renderWithProviders({ initialRoute: "/acme-analytics/history?user=all" });
+    const row = (await screen.findByText("SELECT shape_marker")).closest("tr")!;
+    const cells = within(row).getAllByRole("cell");
+    expect(cells[cells.length - 1]).toHaveClass("whitespace-nowrap");
+  });
+});

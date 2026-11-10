@@ -72,6 +72,21 @@
     padding-right: 1.5rem;
   }
 
+  /* A cue that a horizontally scrolling region has more past an edge: a soft
+     shadow appears on each side that still has content, and fades once you
+     have scrolled to it. The `local` layers cover the shadows at the ends. */
+  .scroll-shadow-x {
+    background:
+      linear-gradient(to right, var(--bg-canvas) 30%, transparent) left center /
+        24px 100% no-repeat local,
+      linear-gradient(to left, var(--bg-canvas) 30%, transparent) right center /
+        24px 100% no-repeat local,
+      radial-gradient(farthest-side at 0 50%, rgb(0 0 0 / 0.22), transparent)
+        left center / 10px 100% no-repeat scroll,
+      radial-gradient(farthest-side at 100% 50%, rgb(0 0 0 / 0.22), transparent)
+        right center / 10px 100% no-repeat scroll;
+  }
+
   /* Pulse animation for Run button dispatch */
   @keyframes run-pulse {
     0% {

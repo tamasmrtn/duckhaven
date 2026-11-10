@@ -262,15 +262,19 @@ export function HistoryPage() {
   // from one (the web app's own runs carry none).
   const anyClient = rows.some((q) => q.client_name);
 
-  const columns: { label: string; sort?: SortKey }[] = all
+  const columns: {
+    label: string;
+    sort?: SortKey;
+    align?: "right";
+  }[] = all
     ? [
         { label: "Status" },
         { label: "Workspace" },
         { label: "Agent" },
         { label: "User" },
         { label: "SQL" },
-        { label: "Rows" },
-        { label: "Duration", sort: "duration" },
+        { label: "Rows", align: "right" },
+        { label: "Duration", sort: "duration", align: "right" },
         { label: "Started", sort: "started_at" },
       ]
     : [
@@ -280,8 +284,12 @@ export function HistoryPage() {
         { label: "User" },
         ...(anySession ? [{ label: "Connection" }] : []),
         ...(anyClient ? [{ label: "Client" }] : []),
-        { label: "Rows" },
-        { label: "Duration", sort: "duration" as SortKey },
+        { label: "Rows", align: "right" as const },
+        {
+          label: "Duration",
+          sort: "duration" as SortKey,
+          align: "right" as const,
+        },
         { label: "Started", sort: "started_at" as SortKey },
       ];
 
@@ -378,7 +386,7 @@ export function HistoryPage() {
         }
       />
 
-      <div className="flex-1 overflow-auto">
+      <div className="scroll-shadow-x flex-1 overflow-auto">
         {/* A disabled TanStack query reports isLoading false, so waiting for
             `me` would otherwise fall through to the empty state and flash
             "No queries match" before the skeletons appear. */}
@@ -424,7 +432,10 @@ export function HistoryPage() {
                   {columns.map((c) => (
                     <TableHead
                       key={c.label}
-                      className="h-auto px-4 py-2 text-left text-xs font-medium text-text-secondary"
+                      className={cn(
+                        "h-auto px-4 py-2 text-xs font-medium text-text-secondary",
+                        c.align === "right" ? "text-right" : "text-left",
+                      )}
                     >
                       {c.sort ? (
                         <button
@@ -470,19 +481,24 @@ export function HistoryPage() {
                     )}
                     {!all && <SqlCell query={q} />}
                     <TableCell className="px-4 py-2 font-mono text-xs text-text-secondary">
-                      {q.cache_status === "hit" ? (
-                        <span title="Answered from the result cache; nothing ran.">
-                          Result cache
-                        </span>
-                      ) : (
-                        (agentName.get(q.agent_id) ?? shortId(q.agent_id))
-                      )}
+                      {/* Name over engine, always two lines: a cell that wraps
+                          wherever the column happens to be narrow gives every
+                          row a different height. */}
+                      <div className="whitespace-nowrap">
+                        {q.cache_status === "hit" ? (
+                          <span title="Answered from the result cache; nothing ran.">
+                            Result cache
+                          </span>
+                        ) : (
+                          (agentName.get(q.agent_id) ?? shortId(q.agent_id))
+                        )}
+                      </div>
                       {/* The engine that ran it: an agent can be re-imaged, and
                           agents on different runtimes run different DuckDBs. */}
                       {q.runtime_id && (
-                        <span className="ml-1.5 text-text-tertiary">
-                          · DuckDB {q.runtime_id}
-                        </span>
+                        <div className="whitespace-nowrap text-text-tertiary">
+                          DuckDB {q.runtime_id}
+                        </div>
                       )}
                     </TableCell>
                     <TableCell className="px-4 py-2 text-xs text-text-secondary">
@@ -515,11 +531,19 @@ export function HistoryPage() {
                       <TableCell className="px-4 py-2 font-mono text-xs text-text-secondary">
                         {q.client_name ? (
                           <>
-                            {q.client_name}
+                            <div
+                              className="max-w-[10rem] truncate"
+                              title={q.client_name}
+                            >
+                              {q.client_name}
+                            </div>
                             {q.client_version && (
-                              <span className="ml-1 text-text-tertiary">
+                              <div
+                                className="max-w-[10rem] truncate text-text-tertiary"
+                                title={q.client_version}
+                              >
                                 {q.client_version}
-                              </span>
+                              </div>
                             )}
                           </>
                         ) : (
@@ -528,11 +552,11 @@ export function HistoryPage() {
                       </TableCell>
                     )}
                     {all && <SqlCell query={q} />}
-                    <TableCell className="px-4 py-2 font-mono text-xs text-text-secondary font-tabular">
+                    <TableCell className="px-4 py-2 text-right font-mono text-xs text-text-secondary font-tabular">
                       {q.row_count != null ? q.row_count.toLocaleString() : "—"}
                     </TableCell>
                     <DurationCell query={q} />
-                    <TableCell className="px-4 py-2 font-mono text-2xs text-text-tertiary">
+                    <TableCell className="whitespace-nowrap px-4 py-2 font-mono text-xs text-text-tertiary">
                       {new Date(q.started_at).toLocaleString()}
                     </TableCell>
                   </TableRow>

@@ -32,7 +32,7 @@ type Timed = Pick<
 
 export function DurationCell({ query }: { query: Timed }) {
   return (
-    <TableCell className="px-4 py-2 font-mono text-xs text-text-secondary font-tabular">
+    <TableCell className="px-4 py-2 text-right font-mono text-xs text-text-secondary font-tabular">
       <span title={durationBreakdown(query)}>
         {formatDuration(query.duration_ms)}
       </span>

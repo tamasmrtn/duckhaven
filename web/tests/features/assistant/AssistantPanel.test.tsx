@@ -1,5 +1,20 @@
-import { describe, it, expect, vi, afterEach } from "vitest";
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import {
+  describe,
+  it,
+  expect,
+  vi,
+  afterEach,
+  beforeAll,
+  afterAll,
+} from "vitest";
+import {
+  configure,
+  fireEvent,
+  getConfig,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { renderWithProviders } from "@tests/utils";
@@ -9,6 +24,18 @@ import {
   setAssistantEnabled,
   setAssistantAvailability,
 } from "@/mock/fixtures/assistant";
+
+// A streaming reply is mirrored, throttled, into a visually hidden aria-live
+// region for screen readers. Text queries should read what a sighted user sees,
+// not that copy: left in, it makes `getByText` find two elements as soon as the
+// region catches up, and which tests that hits depends on how slow the runner is.
+const originalIgnore = getConfig().defaultIgnore;
+beforeAll(() => {
+  configure({ defaultIgnore: `${originalIgnore}, [aria-live]` });
+});
+afterAll(() => {
+  configure({ defaultIgnore: originalIgnore });
+});
 
 // The panel is a right-side dock opened from the top bar; render a workspace page
 // so the worksheet editor bridge is live for the propose-edit test.
@@ -884,6 +911,29 @@ describe("AssistantPanel", () => {
       await waitFor(() => expect(stream.push).toBeDefined());
       return { stream, user };
     }
+
+    // The panel mirrors the streaming reply into a visually hidden aria-live
+    // region, throttled to 750ms. Once it catches up there are two elements with
+    // the reply's words, which made `findByText` throw "multiple elements" on any
+    // test slow enough to be polling by then. Waiting for the region to hold the
+    // text makes that state certain instead of timing-dependent.
+    it("still finds the reply's bubble after the live region repeats it", async () => {
+      const { stream } = await startTurn();
+      stream.push({ type: "token", text: "Repeated words." });
+      await screen.findByText("Repeated words.");
+
+      await waitFor(
+        () =>
+          expect(
+            Array.from(document.querySelectorAll("[aria-live]")).some(
+              (el) => el.textContent === "Repeated words.",
+            ),
+          ).toBe(true),
+        { timeout: 3000 },
+      );
+
+      expect(screen.getByText("Repeated words.").tagName).toBe("P");
+    });
 
     it("jumps to the newest text instantly, not with a smooth animation", async () => {
       const scroll = vi.spyOn(Element.prototype, "scrollIntoView");

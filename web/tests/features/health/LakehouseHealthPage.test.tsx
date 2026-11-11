@@ -23,6 +23,14 @@ describe('LakehouseHealthPage', () => {
     expect(screen.getByText('Expire old snapshots')).toBeInTheDocument()
   })
 
+  it('explains that the headline is size-weighted while attention is a count', async () => {
+    renderWithProviders({ initialRoute: HEALTH_ROUTE })
+    expect(
+      await screen.findByText(/weights each table by its data size/i),
+    ).toBeInTheDocument()
+    expect(screen.getByText(/needs attention when it scores below 70/i)).toBeInTheDocument()
+  })
+
   it('surfaces how many tables need attention', async () => {
     renderWithProviders({ initialRoute: HEALTH_ROUTE })
     expect(await screen.findByText(/1 need attention/)).toBeInTheDocument()

@@ -318,6 +318,7 @@ export function UsersPage() {
           {plural(users.length, "user")}
         </p>
         <Button
+          variant="brand"
           size="sm"
           className="h-7 gap-1.5 text-xs"
           onClick={() => setCreateOpen(true)}

@@ -90,6 +90,7 @@ export function SchedulesPage() {
         description="Saved queries that run on a cron cadence, and every run they have made."
         actions={
           <Button
+            variant="brand"
             size="sm"
             className="h-7 gap-1.5 text-xs"
             onClick={() => setCreating(true)}

@@ -410,6 +410,7 @@ export function ServiceAccountsPage() {
           {plural(accounts.length, "service account")}
         </p>
         <Button
+          variant="brand"
           size="sm"
           className="h-7 gap-1.5 text-xs"
           onClick={() => setCreateOpen(true)}

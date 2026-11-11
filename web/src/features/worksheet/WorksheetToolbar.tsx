@@ -211,8 +211,9 @@ export function WorksheetToolbar(props: WorksheetToolbarProps) {
           </Button>
         ) : (
           <Button
+            variant="brand"
             size="sm"
-            className="h-7 gap-1.5 bg-[var(--brand-yellow)] text-black hover:bg-yellow-300 text-xs font-medium animate-run-pulse-trigger"
+            className="h-7 gap-1.5 text-xs font-medium animate-run-pulse-trigger"
             onClick={onRun}
             disabled={runDisabled}
             aria-label={

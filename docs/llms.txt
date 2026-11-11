@@ -25,6 +25,7 @@
 - [Read query profiles](https://tamasmrtn.github.io/duckhaven/querying/query-profiles/): Open a query's profile to see where its time and memory went, and whether it was slow because it waited or because it worked.
 - [Result cache](https://tamasmrtn.github.io/duckhaven/querying/result-cache/): The result cache answers a repeated query from an earlier run's result when nothing it reads has changed, so it does not run again.
 - [SQL sessions](https://tamasmrtn.github.io/duckhaven/querying/sql-sessions/): A SQL session is a database connection that DuckHaven holds open on one agent, so a tool can run many statements that share state.
+- [Use Python data tools](https://tamasmrtn.github.io/duckhaven/querying/use-python-data-tools/): Query DuckHaven from Python and read results into pandas, Polars or a marimo notebook with duckhaven-sql-connector.
 - [Connect dbt](https://tamasmrtn.github.io/duckhaven/querying/connect-dbt/): Run a dbt project on DuckHaven with the dbt-duckhaven adapter, so models build in your catalogs on DuckHaven's agents.
 - [Load data with dlt](https://tamasmrtn.github.io/duckhaven/querying/load-data-with-dlt/): Load data from any dlt source into DuckHaven tables with the dlt-duckhaven destination.
 - [Read the session audit trail](https://tamasmrtn.github.io/duckhaven/querying/session-audit/): Use the Connections screen to see which SQL sessions are holding agents, what a dbt or dlt run did, and why a session ended.

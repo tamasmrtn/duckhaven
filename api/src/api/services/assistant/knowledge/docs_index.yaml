@@ -64,6 +64,11 @@ pages:
   section: Querying
   summary: A SQL session is a database connection that DuckHaven holds open on one agent, so a tool
     can run many statements that share state.
+- path: querying/use-python-data-tools.md
+  title: Use Python data tools
+  section: Querying
+  summary: Query DuckHaven from Python and read results into pandas, Polars or a marimo notebook with
+    duckhaven-sql-connector.
 - path: querying/connect-dbt.md
   title: Connect dbt
   section: Querying

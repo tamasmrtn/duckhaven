@@ -92,6 +92,8 @@ server, with each match opened out. See [Manage catalogs](../data/manage-catalog
 - *From an earlier version of this query* means you have edited the SQL since it ran.
 - **Copy** and **Download CSV** take the rows loaded so far. For a whole large result, read it as Parquet or Arrow
   through the [REST API](../reference/rest-api.md#whole-results-as-arrow-or-parquet).
+- To work with results in pandas, Polars or marimo, query from Python; see
+  [Use Python data tools](use-python-data-tools.md).
 - The **Profile** tab shows how the query ran; see [Read query profiles](query-profiles.md).
 - A result answered from the [result cache](result-cache.md) shows a **Cached** badge and a **Re-run without cache**
   action.
@@ -136,9 +138,10 @@ a colleague; it opens on the first page.
   duration, and sorts last.
 - **Statement type** is set when the run is recorded: `select`, `insert`, `create` and so on, or `other` for
   statements like `USE`. A run whose SQL did not parse has no type, and is hidden only when you filter by type.
-- **Client** appears once a run from a tool is in view: `dbt-duckhaven`, `dlt-duckhaven`, `duckhaven-cli`, or
-  `duckhaven-assistant` and `duckhaven-mcp` for the [assistant](../ai/assistant.md) and the
-  [MCP server](../ai/mcp-server.md). **Tags** a tool attached appear beneath the SQL.
+- **Client** appears once a run from a tool is in view: `dbt-duckhaven`, `dlt-duckhaven`, `duckhaven-cli`,
+  `duckhaven-sql-connector` for [Python](use-python-data-tools.md), or `duckhaven-assistant` and `duckhaven-mcp` for
+  the [assistant](../ai/assistant.md) and the [MCP server](../ai/mcp-server.md). **Tags** a tool attached appear
+  beneath the SQL.
 
 Every member sees every member's runs in the workspace. Filtering to **another person's** runs, or reading **across
 workspaces**, needs `queries:admin`. Table previews, metadata lookups and the [maintenance](../data/maintenance.md)
@@ -164,6 +167,7 @@ Messages are listed in [Troubleshoot queries](troubleshooting.md). The common on
 ## Related
 
 - [Saved queries](saved-queries.md) — share SQL with the workspace.
+- [Use Python data tools](use-python-data-tools.md) — the same queries from pandas, Polars and marimo.
 - [Query execution](query-execution.md) — what happens after **Run**.
 - [Read query profiles](query-profiles.md) — why a query was slow.
 - [Troubleshoot queries](troubleshooting.md) — every message, and what to do.

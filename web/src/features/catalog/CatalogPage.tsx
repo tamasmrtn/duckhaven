@@ -1,13 +1,15 @@
 import { useEffect, useState } from "react";
 import { useParams, useNavigate, useSearch } from "@tanstack/react-router";
 import { useDocumentTitle } from "@/hooks/useDocumentTitle";
-import { Pencil, ExternalLink, Trash2, Clock } from "lucide-react";
+import { ChevronLeft, Pencil, ExternalLink, Trash2, Clock } from "lucide-react";
 import { toast } from "sonner";
 import { Breadcrumb } from "@/components/ui/breadcrumb";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ApiError } from "@/api/client";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
+import { cn } from "@/utils";
 import { useTable, useTableSample } from "@/queries/schemas";
 import { useDeleteTable } from "@/queries/schemas.mutations";
 import { ResultsTable } from "@/features/worksheet/ResultsTable";
@@ -141,7 +143,7 @@ function TableDetail({
     <div className="flex h-full flex-col overflow-hidden">
       {/* Header */}
       <div className="border-b border-[var(--border-subtle)] bg-[var(--bg-surface)] px-4 py-2 shrink-0">
-        <div className="flex items-start justify-between">
+        <div className="flex flex-wrap items-start justify-between gap-2">
           <div className="space-y-1">
             <div className="flex items-center gap-2">
               {workspace && (
@@ -175,7 +177,7 @@ function TableDetail({
             )}
             <TableMetaLine table={tableData} />
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <Button
               variant="outline"
               size="sm"
@@ -211,9 +213,12 @@ function TableDetail({
         </div>
       </div>
 
-      <div className="flex flex-1 gap-0 overflow-hidden">
+      {/* Side by side from md up. Below that the schema stacks above the
+          tabs and the pair scrolls, because a 320px column beside the tabs
+          leaves them a sliver on a phone. */}
+      <div className="flex flex-1 flex-col gap-0 overflow-auto md:flex-row md:overflow-hidden">
         {/* Schema column */}
-        <div className="w-80 shrink-0 border-r border-[var(--border-subtle)] overflow-auto">
+        <div className="max-h-48 w-full shrink-0 overflow-auto border-b border-[var(--border-subtle)] md:max-h-none md:w-80 md:border-b-0 md:border-r">
           <div className="px-4 py-3">
             <SectionLabel className="mb-2">Schema</SectionLabel>
             <table className="w-full text-sm">
@@ -273,7 +278,7 @@ function TableDetail({
               replace: true,
             })
           }
-          className="flex flex-1 flex-col overflow-hidden gap-0"
+          className="flex min-h-[20rem] flex-1 flex-col overflow-hidden gap-0 md:min-h-0"
         >
           <TabsList className={detailTabsListClass}>
             <TabsTrigger value="sample">Sample</TabsTrigger>
@@ -405,6 +410,12 @@ export function CatalogPage() {
   const navigate = useNavigate();
   const { data: workspace } = useWorkspace(ws);
   useDocumentTitle(table ?? schema ?? catalog ?? "Catalog");
+  // Below md the tree and the selected object's detail cannot share a row, so
+  // it is one or the other: the tree until something is picked, then the
+  // detail with a way back to the tree.
+  const isMobile = useMediaQuery("(max-width: 767px)");
+  const showTree = !isMobile || !catalog;
+  const showDetail = !isMobile || Boolean(catalog);
   // Only relevant on the bare landing state (nothing selected yet) — no need
   // to read localStorage on every render once a catalog/schema/table is picked.
   const recentlyViewed = !catalog
@@ -419,12 +430,28 @@ export function CatalogPage() {
           the same place on both pages, so moving between them never shifts
           it. */}
       <div className="flex h-9 shrink-0 border-b border-[var(--border-subtle)] bg-[var(--bg-surface)]">
-        <div className="flex w-[280px] shrink-0 items-center border-r border-[var(--border-subtle)] px-4">
+        <div
+          className={cn(
+            "flex shrink-0 items-center gap-1 border-r border-[var(--border-subtle)]",
+            isMobile ? "pl-1 pr-3" : "w-[280px] px-4",
+          )}
+        >
+          {isMobile && catalog && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-7"
+              aria-label="Back to catalog tree"
+              onClick={() => navigate({ to: "/$ws/catalog", params: { ws } })}
+            >
+              <ChevronLeft className="size-4" />
+            </Button>
+          )}
           <h1 className="text-sm font-semibold">Catalog</h1>
         </div>
         {catalog && (
           <Breadcrumb
-            className="min-w-0 px-4"
+            className="min-w-0 flex-1 overflow-x-auto whitespace-nowrap px-4"
             items={[
               { label: ws, emphasis: true },
               { label: catalog, emphasis: !schema },
@@ -438,79 +465,83 @@ export function CatalogPage() {
         {/* Catalog tree — the same component the worksheet sidebar uses.
             Fixed at 280px to match the worksheet's resizable sidebar's
             default width, so the two don't visibly jump between pages. */}
-        <div className="w-[280px] shrink-0 overflow-hidden border-r border-[var(--border-subtle)] bg-[var(--bg-surface)]">
-          <CatalogTree
-            ws={ws}
-            workspaceName={workspace?.name}
-            onCatalogClick={(c) =>
-              navigate({
-                to: "/$ws/catalog/$catalog",
-                params: { ws, catalog: c },
-              })
-            }
-            onSchemaClick={(c, s) =>
-              navigate({
-                to: "/$ws/catalog/$catalog/$schema",
-                params: { ws, catalog: c, schema: s },
-              })
-            }
-            onTableClick={(c, s, t) =>
-              navigate({
-                to: "/$ws/catalog/$catalog/$schema/$table",
-                params: { ws, catalog: c, schema: s, table: t },
-              })
-            }
-          />
-        </div>
-
-        <div className="flex-1 overflow-hidden">
-          {catalog && schema && table ? (
-            <TableDetail
+        {showTree && (
+          <div className="w-full shrink-0 overflow-hidden border-r border-[var(--border-subtle)] bg-[var(--bg-surface)] md:w-[280px]">
+            <CatalogTree
               ws={ws}
-              catalog={catalog}
-              schema={schema}
-              table={table}
-              tab={tab}
+              workspaceName={workspace?.name}
+              onCatalogClick={(c) =>
+                navigate({
+                  to: "/$ws/catalog/$catalog",
+                  params: { ws, catalog: c },
+                })
+              }
+              onSchemaClick={(c, s) =>
+                navigate({
+                  to: "/$ws/catalog/$catalog/$schema",
+                  params: { ws, catalog: c, schema: s },
+                })
+              }
+              onTableClick={(c, s, t) =>
+                navigate({
+                  to: "/$ws/catalog/$catalog/$schema/$table",
+                  params: { ws, catalog: c, schema: s, table: t },
+                })
+              }
             />
-          ) : catalog && schema ? (
-            <SchemaDetail ws={ws} catalog={catalog} schema={schema} />
-          ) : catalog ? (
-            <CatalogDetail ws={ws} catalog={catalog} />
-          ) : recentlyViewed.length > 0 ? (
-            <div className="flex h-full flex-col gap-2 overflow-auto p-4">
-              <SectionLabel>Recently viewed</SectionLabel>
-              <div className="max-w-sm space-y-0.5">
-                {recentlyViewed.map((r) => (
-                  <button
-                    key={`recent-${r.type}-${r.catalog}-${r.schema}-${r.name}`}
-                    type="button"
-                    onClick={() =>
-                      navigate({
-                        to: objectPath(ws, {
-                          type: r.type,
-                          catalog: r.catalog,
-                          schema_name: r.schema,
-                          name: r.name,
-                        }),
-                      } as Parameters<typeof navigate>[0])
-                    }
-                    className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-text-primary hover:bg-accent"
-                  >
-                    <Clock className="size-4 shrink-0 text-text-secondary" />
-                    <span className="truncate">{r.name}</span>
-                    <span className="ml-auto truncate text-2xs text-text-tertiary">
-                      {r.catalog}.{r.schema}
-                    </span>
-                  </button>
-                ))}
+          </div>
+        )}
+
+        {showDetail && (
+          <div className="min-w-0 flex-1 overflow-hidden">
+            {catalog && schema && table ? (
+              <TableDetail
+                ws={ws}
+                catalog={catalog}
+                schema={schema}
+                table={table}
+                tab={tab}
+              />
+            ) : catalog && schema ? (
+              <SchemaDetail ws={ws} catalog={catalog} schema={schema} />
+            ) : catalog ? (
+              <CatalogDetail ws={ws} catalog={catalog} />
+            ) : recentlyViewed.length > 0 ? (
+              <div className="flex h-full flex-col gap-2 overflow-auto p-4">
+                <SectionLabel>Recently viewed</SectionLabel>
+                <div className="max-w-sm space-y-0.5">
+                  {recentlyViewed.map((r) => (
+                    <button
+                      key={`recent-${r.type}-${r.catalog}-${r.schema}-${r.name}`}
+                      type="button"
+                      onClick={() =>
+                        navigate({
+                          to: objectPath(ws, {
+                            type: r.type,
+                            catalog: r.catalog,
+                            schema_name: r.schema,
+                            name: r.name,
+                          }),
+                        } as Parameters<typeof navigate>[0])
+                      }
+                      className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-text-primary hover:bg-accent"
+                    >
+                      <Clock className="size-4 shrink-0 text-text-secondary" />
+                      <span className="truncate">{r.name}</span>
+                      <span className="ml-auto truncate text-2xs text-text-tertiary">
+                        {r.catalog}.{r.schema}
+                      </span>
+                    </button>
+                  ))}
+                </div>
               </div>
-            </div>
-          ) : (
-            <div className="flex h-full items-center justify-center text-sm text-text-tertiary">
-              Select a catalog, schema, or table to view its details.
-            </div>
-          )}
-        </div>
+            ) : (
+              <div className="flex h-full items-center justify-center text-sm text-text-tertiary">
+                Select a catalog, schema, or table to view its details.
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

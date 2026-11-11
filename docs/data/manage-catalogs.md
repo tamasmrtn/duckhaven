@@ -31,6 +31,9 @@ its columns and types, owner, row count and size, last-write provenance, and Ice
 delete files are present). You can preview sample rows without writing a query. Owner and last write are known only for
 tables written through DuckHaven, and are left out of the hover card otherwise.
 
+On a narrow screen (under 768 px) the browser shows the tree until you pick an object, then only that object's
+detail, with a back button in the header that returns to the tree.
+
 A table's **size** is the bytes of its live data files, shown in B, KB, MB, GB or TB, whichever reads best. A DuckLake
 table reports it directly. An Iceberg table's size is in its snapshot only when the engine that wrote it recorded one,
 and DuckDB does not, so an agent measures it: each time the table is opened or refreshed, it reads the Parquet footer of

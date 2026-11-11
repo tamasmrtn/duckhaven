@@ -445,6 +445,9 @@ Notes:
   the selected object's path. The tree therefore sits at the same place on both pages, and the detail panes use the
   worksheet's toolbar padding and its *Results | Profile* tab style, so moving between the two pages never shifts the
   tree. Other top-level pages keep the page header and pill tabs.
+- **Under `md` (768 px) it is one pane at a time.** The tree shows until something is selected, then only the detail,
+  with a back button before the title that returns to the tree; a table's schema column stacks above its tabs instead
+  of sitting beside them. The worksheet toolbar wraps, and its Save labels collapse to named icons below `sm`.
 - **Breadcrumb is clickable** all the way up. ⌘-click to open in a new tab.
 - **No edit-schema form** — the pencil icon top-right opens "Rename / Drop".
   Column changes are offered as generated `ALTER TABLE` SQL dropped into a

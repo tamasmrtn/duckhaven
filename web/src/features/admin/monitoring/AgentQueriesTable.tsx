@@ -154,7 +154,7 @@ export function AgentQueriesTable({
                   ["SQL", false],
                   ["User", false],
                   ["Wait", true],
-                  ["Duration", false],
+                  ["Duration", true],
                   ["Peak memory", true],
                   ["CPU time", true],
                   ["Spill", true],

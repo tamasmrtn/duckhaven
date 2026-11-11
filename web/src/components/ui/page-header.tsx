@@ -59,7 +59,9 @@ export function PageHeader({
     >
       <div
         className={cn(
-          "flex gap-3",
+          // Wraps so a wide actions group drops under the title on a phone
+          // instead of being clipped off the right edge.
+          "flex flex-wrap gap-3",
           breadcrumb ? "items-start" : "items-center",
           actions && "justify-between",
         )}

@@ -31,6 +31,16 @@ describe('LakehouseHealthPage', () => {
     expect(screen.getByText(/needs attention when it scores below 70/i)).toBeInTheDocument()
   })
 
+  it('lets a long table name truncate instead of running into its size on a phone', async () => {
+    renderWithProviders({ initialRoute: HEALTH_ROUTE })
+    const name = await screen.findByText('analytics.users')
+    expect(name).toHaveClass('truncate')
+    // The size sits in its own non-shrinking cell beside the name.
+    const row = name.closest('a')!
+    expect(row).toHaveClass('gap-3')
+    expect(name.parentElement).toHaveClass('min-w-0')
+  })
+
   it('surfaces how many tables need attention', async () => {
     renderWithProviders({ initialRoute: HEALTH_ROUTE })
     expect(await screen.findByText(/1 need attention/)).toBeInTheDocument()

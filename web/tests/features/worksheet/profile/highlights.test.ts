@@ -6,6 +6,7 @@ import {
   isSpilled,
   isTimeHotspot,
   nodeBadges,
+  rowsLabel,
   rowsReadByScan,
 } from '@/features/worksheet/profile/highlights'
 import type { QueryProfileNode, QueryProfileSummary } from '@/types/query'
@@ -221,5 +222,25 @@ describe('nodeBadges', () => {
 
   it('is empty for an unremarkable operator', () => {
     expect(nodeBadges(node({ rows_produced: 10, time_ms: 1 }), summary())).toEqual([])
+  })
+})
+
+describe('rowsLabel', () => {
+  it('says "1 row", not "1 rows"', () => {
+    expect(rowsLabel(node({ rows_produced: 1 }), summary())).toBe('1 row')
+  })
+
+  it('pluralises everything else, including zero', () => {
+    expect(rowsLabel(node({ rows_produced: 0 }), summary())).toBe('0 rows')
+    expect(rowsLabel(node({ rows_produced: 1_500 }), summary())).toBe('1,500 rows')
+  })
+
+  it('shows a dash for an unknown count', () => {
+    expect(rowsLabel(node({ rows_produced: null }), summary())).toBe('— rows')
+  })
+
+  it('shows rows read then kept for a scan, with no unit', () => {
+    const scan = node({ name: 'SEQ_SCAN', rows_scanned: 200, rows_produced: 40, extra_info: { Table: 't' } })
+    expect(rowsLabel(scan, summary())).toBe('200 → 40')
   })
 })

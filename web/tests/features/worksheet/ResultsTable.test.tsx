@@ -113,6 +113,22 @@ describe('ResultsTable error state', () => {
   })
 })
 
+describe('ResultsTable error title', () => {
+  it('lets a caller that is not running a query say so', () => {
+    render(
+      <ResultsTable
+        columns={[]}
+        rows={[]}
+        total={0}
+        error="No compatible agent is connected to preview this table."
+        errorTitle="Can't preview this table"
+      />,
+    )
+    expect(screen.getByText("Can't preview this table")).toBeInTheDocument()
+    expect(screen.queryByText('Query failed')).not.toBeInTheDocument()
+  })
+})
+
 describe('ResultsTable — Fix with Assistant', () => {
   it('shows the button when a handler is passed', () => {
     render(

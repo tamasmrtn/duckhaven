@@ -487,7 +487,11 @@ export function AgentDetailPage() {
             >
               <ArrowLeft className="size-4" />
             </Button>
-            {statusIcon[agent.status]}
+            {agent.lifecycle === "terminated" ? (
+              <Circle className="size-4 text-[var(--status-cancelled)]" />
+            ) : (
+              statusIcon[agent.status]
+            )}
           </>
         }
         title={agent.name}

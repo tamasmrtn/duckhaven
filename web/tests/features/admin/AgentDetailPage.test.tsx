@@ -242,6 +242,13 @@ describe('AgentDetailPage', () => {
     expect(within(section).getByText(/Failed by cause: .*queue full/)).toBeInTheDocument()
   })
 
+  it('exposes each chart as a named image', async () => {
+    renderWithProviders({ initialRoute: ELASTIC })
+    const chart = await screen.findByTestId('chart-queries')
+    expect(chart).toHaveAttribute('role', 'img')
+    expect(chart).toHaveAttribute('aria-label', 'Queries')
+  })
+
   it('lists the agent’s runs in the range, sortable by what they cost', async () => {
     const requests: URLSearchParams[] = []
     server.use(

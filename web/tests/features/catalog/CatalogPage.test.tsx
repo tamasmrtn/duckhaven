@@ -190,6 +190,42 @@ describe("CatalogPage", () => {
     ).toBeInTheDocument();
   });
 
+  it("explains a failed sample instead of calling it 'No results yet'", async () => {
+    // No compute is connected: the API says so, and the page must pass that on.
+    const unavailable = () =>
+      HttpResponse.json(
+        {
+          error: "unavailable",
+          message: "No compatible agent is connected to preview this table.",
+          details: null,
+        },
+        { status: 503 },
+      );
+    server.use(
+      http.get(
+        "/api/workspaces/:ws/catalogs/:catalog/schemas/:schema/tables/:table/sample",
+        unavailable,
+      ),
+      http.get(
+        "/api/workspaces/:ws/schemas/:schema/tables/:table/sample",
+        unavailable,
+      ),
+    );
+    renderWithProviders({
+      initialRoute: "/acme-analytics/catalog/acme_analytics/raw/events",
+    });
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent(
+      "No compatible agent is connected to preview this table.",
+    );
+    expect(screen.getByText("Can't preview this table")).toBeInTheDocument();
+    expect(screen.queryByText("No results yet")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("link", { name: "Manage compute" }),
+    ).toHaveAttribute("href", "/acme-analytics/compute");
+  });
+
   it("surfaces Iceberg-native metadata on the table detail view", async () => {
     renderWithProviders({
       initialRoute: "/acme-analytics/catalog/acme_analytics/raw/events",

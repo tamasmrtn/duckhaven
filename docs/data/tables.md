@@ -52,6 +52,10 @@ agent-computed row counts and size, plus format-native facts: the data-file coun
 are present for either kind, and the latest snapshot for Iceberg tables.
 See [Metadata](../metadata/table-metadata.md).
 
+A preview needs a running agent that can read the table. When none is connected, the **Sample** tab shows
+**Can't preview this table** with the reason (for example "No compatible agent is connected to preview this table.")
+and a **Manage compute** link, instead of an empty grid.
+
 ## Related
 
 - [Catalogs & Polaris](catalogs.md) — the catalog a table lives in.

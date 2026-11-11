@@ -32,7 +32,7 @@ type Timed = Pick<
 
 export function DurationCell({ query }: { query: Timed }) {
   return (
-    <TableCell className="px-4 py-2 font-mono text-xs text-text-secondary font-tabular">
+    <TableCell className="px-4 py-2 text-right font-mono text-xs text-text-secondary font-tabular">
       <span title={durationBreakdown(query)}>
         {formatDuration(query.duration_ms)}
       </span>
@@ -67,7 +67,7 @@ export function SqlCell({
 }) {
   const tags = Object.entries(query.tags ?? {});
   return (
-    <TableCell className="px-4 py-2 max-w-xs">
+    <TableCell className="px-4 py-2 max-w-[18rem]">
       <pre className="truncate font-mono text-xs text-text-primary">
         {query.sql}
       </pre>

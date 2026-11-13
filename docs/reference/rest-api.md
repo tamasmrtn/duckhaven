@@ -191,7 +191,7 @@ The OpenAPI schema groups endpoints by tag:
 | `search` | Finding catalogs, schemas, tables and saved queries by name |
 | `lineage` | A table's [lineage](#lineage), and importing lineage |
 | `semantic` | [Semantic models](#semantic-layer) |
-| `dashboards` | The [dashboard file format](dashboard-spec.md)'s JSON Schema |
+| `dashboards` | [Dashboards](#dashboards), and the [dashboard file format](dashboard-spec.md)'s JSON Schema |
 | `agents` | The agents you may use |
 | `admin-agents` | Agent detail, monitoring, lifecycle and [access](#per-agent-access) |
 | `admin-users` | User accounts and their workspace roles |
@@ -583,6 +583,62 @@ the `sql` of the same question over that earlier window. It is `null` when not a
 
 A file the provider cannot read, such as YAML sent to `dbt` or an empty body, answers **422** naming the format that
 provider expects. It is not a 5xx, because resending the same file will never work.
+
+## Dashboards
+
+Store [dashboard files](dashboard-spec.md), edit drafts and publish them. A dashboard has a published file, which every
+workspace member sees, and a draft, which writers edit. Saving replaces the draft; publishing makes it the published
+file and keeps the old one as a revision.
+
+| Method and path | Purpose |
+|---|---|
+| `GET …/dashboards` | The dashboards, by name, as a [page](#pagination). Optional `status`, `source`, `source_id`, `q`, and `uses` |
+| `POST …/dashboards` | Create one, as a draft, from its file (**201**). `writer` |
+| `GET …/dashboards/{dashboard}` | One dashboard and its published file. `?draft=true` shows the draft instead. `writer` for the draft |
+| `PATCH …/dashboards/{dashboard}` | Save the draft, with `base_version`. `writer` |
+| `DELETE …/dashboards/{dashboard}` | Delete it with its revisions (**204**). `owner` |
+| `DELETE …/dashboards/{dashboard}/draft` | Discard the draft (**204**). `writer` |
+| `POST …/dashboards/{dashboard}/publish` | Publish the draft, with `base_version` and an optional `message`. `owner` |
+| `GET …/dashboards/{dashboard}/source` | The file as YAML. `?draft=true` for the draft |
+| `GET …/dashboards/{dashboard}/revisions` | Every publish, newest first, as a page |
+| `GET …/dashboards/{dashboard}/revisions/{revision}` | One revision and its file, numbered from 1 |
+| `POST …/dashboard-validations` | Check a file the way publishing does, and store nothing. `writer` |
+
+`…` stands for `/api/workspaces/{workspace}`.
+
+Send a file as exactly one of `spec`, the file as JSON, or `source_text`, the file as YAML. YAML is kept as written,
+comments included, and `GET …/source` returns it unchanged. A file sent as JSON comes back from `…/source` as YAML that
+loads to the same dashboard.
+
+A file is checked twice:
+
+- **On every save.** The file must match the [format](dashboard-spec.md): its shape, its `$name` references, and its
+  limits. A file that does not is a **422** `invalid_dashboard`, with every problem under `details.diagnostics`, each
+  with a `path`, a `line` and `col` when it was YAML, a `message` and a `hint`. Warnings, such as an unused parameter,
+  come back in `warnings` and do not stop the save.
+- **On publish, as the publisher.** Every model the file reads is published and visible to you, every dimension
+  parameter names a real dimension, every query widget compiles, and every SQL widget is one `SELECT`. A draft may
+  fail these, so you can save work in progress; publishing it is a **422** `invalid_dashboard` until it passes.
+  `POST …/dashboard-validations` runs both checks and answers `valid`, `errors`, `warnings` and `refs`.
+
+SQL widgets are not checked against grants on publish. Each viewer's grants apply when the widget runs.
+
+Each dashboard has a `version`, which every change increases. `PATCH` and `…/publish` take the `version` you read as
+`base_version`. If the dashboard changed since, the answer is **409** `dashboard_conflict`, with the current draft under
+`details.current`.
+
+A response's `spec` is the published file, or the draft when `draft` is `true`. A dashboard never published shows its
+draft, and is invisible to readers: they get **404**, as for a dashboard that does not exist. `refs` lists the models,
+metrics, dimensions and tables the file reads, and `GET …/dashboards?uses=orders` or `?uses=orders.revenue` finds the
+dashboards that read a model, or one of its metrics or dimensions. `updated_via` says how the last change arrived:
+`ui` from the web app, `cli` from `dh`, `rest` from any other client, whose `User-Agent` is kept in `client`.
+
+A file's `name` is the dashboard's name, unique in the workspace. Saving a new `name` renames a dashboard never
+published at once, and a published one when it is next published. A taken name is **409** `dashboard_name_taken`.
+The old name keeps working in every path until another dashboard takes it.
+
+A dashboard managed in git (`managed: true`) is changed only by applying its file. Every write here answers **409**
+`managed_dashboard`.
 
 ## Lineage
 

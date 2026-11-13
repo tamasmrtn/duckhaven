@@ -134,6 +134,11 @@ Each message has an entry in [Troubleshoot sign-in and access](../access/trouble
 | Code | Status | Meaning and what to do |
 |---|---|---|
 | `unsupported_spec_version` | 422 | The [dashboard file](dashboard-spec.md#versions) is for a format version this server does not read. The message says whether to upgrade DuckHaven or the file. |
+| `invalid_dashboard` | 422 | The [dashboard file](dashboard-spec.md) is not valid, or cannot be published as it stands. `details.diagnostics` lists every problem, with its path, line and column. |
+| `dashboard_conflict` | 409 | The dashboard changed since your `base_version`. `details.current` has the latest draft. |
+| `dashboard_name_taken` | 409 | Another dashboard in the workspace has that name. Choose another `name` in the file. |
+| `managed_dashboard` | 409 | The dashboard is managed in git. Change its file there and apply it again. |
+| `dashboard_unpublished` | 409 | The dashboard was never published, so its draft is all there is. Delete the dashboard instead of discarding the draft. |
 
 ## Administration
 

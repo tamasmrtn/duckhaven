@@ -9,8 +9,8 @@ metric from the [semantic layer](../metadata/semantic-layer.md) or runs its own 
 the file format, version 1.
 
 !!! note "What exists today"
-    The server validates this format and publishes its JSON Schema at `GET /api/dashboard-schema`. It does not
-    store, publish or show dashboards.
+    The server validates, stores and publishes dashboard files through the [REST API](rest-api.md#dashboards), and
+    publishes the format's JSON Schema at `GET /api/dashboard-schema`. Dashboards do not run or show in the web app.
 
 ## An example
 
@@ -235,13 +235,18 @@ is a likely fix:
 }
 ```
 
-The JSON Schema checks each part's shape. Rules that span the file are checked when the dashboard is validated:
+The JSON Schema checks each part's shape. Rules that span the file are checked whenever the dashboard is saved:
 
 - a `$name` names a declared parameter of the right type,
 - widget ids are unique, and
 - the dashboard is within its limits.
 
 A parameter that no widget uses is a warning.
+
+Publishing also checks the file against the workspace, as the person publishing it: every model it reads is
+published, every dimension parameter names a real dimension, every query compiles, and every SQL widget is one
+`SELECT`. A draft can fail these, so work in progress can be saved. `POST …/dashboard-validations` runs every check
+without storing the file.
 
 ## Versions
 
@@ -256,4 +261,5 @@ it.
 ## Related
 
 - [Semantic layer](../metadata/semantic-layer.md): the models, metrics and dimensions widgets read.
-- [Errors](errors.md#dashboards): `unsupported_spec_version`.
+- [REST API](rest-api.md#dashboards): storing, editing and publishing dashboards.
+- [Errors](errors.md#dashboards): `invalid_dashboard`, `unsupported_spec_version` and the rest.

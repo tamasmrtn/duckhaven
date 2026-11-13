@@ -335,27 +335,32 @@ describe("semantic contract", () => {
     }
   });
 
-  it("a metric carries its calculation, its time axis and its trust state", async () => {
+  it("a metric carries its calculation, its time axis, how it is shown and its trust state", async () => {
     const model = await semanticApi.getModel("acme-analytics", "sales");
     const revenue = model.metrics.find((m) => m.name === "revenue")!;
     expect(Object.keys(revenue).sort()).toEqual([
       "agg",
       "caveat",
+      "currency",
       "dataset",
       "description",
       "display_name",
       "expr",
       "expression",
       "filter",
+      "format",
       "id",
       "name",
+      "polarity",
       "status",
       "synonyms",
       "time_dimension",
+      "unit",
       "validation_detail",
       "validation_state",
     ]);
     expect(revenue.time_dimension).toBe("event_time");
+    expect([revenue.format, revenue.currency]).toEqual(["currency", "USD"]);
   });
 
   it("search returns items plus an explicit ambiguity list", async () => {
@@ -498,7 +503,11 @@ describe("saved queries overwrite contract", () => {
       name: "daily events",
       sql: "SELECT 2",
     });
-    expect(saved).toMatchObject({ id: "sq-1", sql: "SELECT 2", updated_by: "u-1" });
+    expect(saved).toMatchObject({
+      id: "sq-1",
+      sql: "SELECT 2",
+      updated_by: "u-1",
+    });
   });
 
   it("dispatch sends timeout_s", async () => {

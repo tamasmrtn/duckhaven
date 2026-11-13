@@ -50,6 +50,16 @@ export type FilterOp =
  */
 export type WindowKind = "last_complete" | "trailing" | "to_date" | "absolute";
 
+/**
+ * How a metric's value is shown. Showing never changes the value: a percent is
+ * a ratio (0.25 shows as 25%), a duration is in seconds and bytes are bytes.
+ */
+export type MetricFormat =
+  "number" | "percent" | "currency" | "duration" | "bytes";
+
+/** Which direction of change is good news. Unset is neutral. */
+export type Polarity = "up_good" | "down_good" | "neutral";
+
 export interface JoinColumn {
   left: string;
   right: string;
@@ -108,6 +118,12 @@ export interface SemanticMetric {
    */
   time_dimension: string | null;
   caveat: string | null;
+  format: MetricFormat | null;
+  /** What a plain number counts, such as "orders". */
+  unit: string | null;
+  /** ISO 4217 code of a currency metric, such as "EUR". */
+  currency: string | null;
+  polarity: Polarity | null;
   status: ModelStatus;
   /** A readable rendering of the calculation, e.g. `SUM(total_amount) FILTER (…)`. */
   expression: string | null;
@@ -290,6 +306,10 @@ export interface MetricInput {
   description?: string | null;
   synonyms?: string[];
   caveat?: string | null;
+  format?: MetricFormat | null;
+  unit?: string | null;
+  currency?: string | null;
+  polarity?: Polarity | null;
 }
 
 export interface MetricPatch {
@@ -302,6 +322,11 @@ export interface MetricPatch {
   time_dimension?: string | null;
   caveat?: string | null;
   status?: ModelStatus;
+  /** Unlike the fields above, `null` clears these four. */
+  format?: MetricFormat | null;
+  unit?: string | null;
+  currency?: string | null;
+  polarity?: Polarity | null;
 }
 
 export interface RelationshipInput {

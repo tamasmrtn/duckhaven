@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
-import { ChartFrame } from "@/features/admin/monitoring/ChartFrame";
+import { ChartFrame } from "@/components/charts/ChartFrame";
 
 describe("ChartFrame", () => {
   it("names the chart and points at its description", () => {

@@ -1,17 +1,13 @@
 import { useId, type ReactNode } from "react";
-import {
-  formatAbsoluteTimestamp,
-  formatWindowTick,
-  windowTicks,
-} from "../metricsTime";
 import { SectionLabel } from "@/components/ui/section-label";
 
 /**
- * Shared chrome for every chart on the monitoring page.
+ * Shared chrome for every chart in the app.
  *
- * The charts are read as a stack — a spike in one is only meaningful next to the
- * others at the same instant — so title placement, height, axis treatment and the
- * time scale all live here rather than being re-specified per chart and drifting.
+ * Charts are read side by side, so title placement, height and axis treatment
+ * live here rather than being re-specified per chart and drifting. What the
+ * x-axis measures belongs to the caller: a time scale is the monitoring page's
+ * (`timeAxisProps` there), not something every chart has.
  */
 export function ChartFrame({
   title,
@@ -70,9 +66,8 @@ export function ChartFrame({
 
 /**
  * The identity channel. Always rendered for two or more series so nothing depends
- * on matching colours by eye, and it carries each series' window total — which
- * doubles as the visible-value relief the lighter categorical hues need to be
- * legible on a light surface.
+ * on matching colours by eye, and it can carry each series' value, so the figures
+ * are readable without hovering.
  */
 export function Legend({
   items,
@@ -101,21 +96,12 @@ export function Legend({
   );
 }
 
-/** Shared x-axis config: a real time scale with round clock ticks. */
-export function timeAxisProps(startMs: number, endMs: number) {
-  return {
-    dataKey: "x",
-    type: "number" as const,
-    scale: "time" as const,
-    domain: [startMs, endMs],
-    ticks: windowTicks(startMs, endMs),
-    tickFormatter: (value: number) =>
-      formatWindowTick(Number(value), endMs - startMs),
-    tick: { fontSize: 11, fill: "var(--text-tertiary)" },
-    tickLine: false,
-    axisLine: { stroke: "var(--border-subtle)" },
-  };
-}
+/** Tick text and baseline for an x-axis; the caller adds what it measures. */
+export const X_AXIS_PROPS = {
+  tick: { fontSize: 11, fill: "var(--text-tertiary)" },
+  tickLine: false,
+  axisLine: { stroke: "var(--border-subtle)" },
+};
 
 export const Y_AXIS_PROPS = {
   tick: { fontSize: 11, fill: "var(--text-tertiary)" },
@@ -132,10 +118,8 @@ export const GRID_PROPS = {
   vertical: false,
 };
 
+/** Tooltip styling; the caller adds a `labelFormatter` for its x values. */
 export const TOOLTIP_PROPS = {
-  // Recharts types the label as ReactNode; every chart here plots a numeric time
-  // scale, so the value really is epoch milliseconds.
-  labelFormatter: (label: ReactNode) => formatAbsoluteTimestamp(Number(label)),
   contentStyle: {
     background: "var(--bg-elevated)",
     border: "1px solid var(--border-subtle)",

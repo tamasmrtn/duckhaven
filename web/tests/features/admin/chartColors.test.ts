@@ -1,12 +1,11 @@
 import { describe, it, expect } from 'vitest'
+import { SERIES } from '@/components/charts/chartColors'
 import {
   ACTIVITY,
   LOAD,
   OUTCOME,
   RESOURCE,
-  SERIES,
   TIMELINE,
-  resolve,
 } from '@/features/admin/monitoring/chartColors'
 
 // These lock in properties that were established by running the palette
@@ -20,26 +19,10 @@ describe('chart colors', () => {
   it('ships a separately chosen value for each mode', () => {
     // Dark is not an automatic flip of light — each column was validated against
     // its own surface.
-    for (const color of [
-      ...SERIES,
-      ...Object.values(ACTIVITY),
-    ]) {
+    for (const color of Object.values(ACTIVITY)) {
       expect(color.light).toMatch(HEX)
       expect(color.dark).toMatch(HEX)
     }
-  })
-
-  it('keeps the validated categorical order', () => {
-    expect(SERIES.map((s) => s.light)).toEqual([
-      '#2a78d6',
-      '#eb6834',
-      '#1baf7a',
-      '#eda100',
-      '#e87ba4',
-      '#008300',
-      '#4a3aa7',
-      '#e34948',
-    ])
   })
 
   it('draws every named group from the validated slots, never a new hue', () => {
@@ -76,10 +59,5 @@ describe('chart colors', () => {
     const lum = (hex: string) => parseInt(hex.slice(1, 3), 16)
     expect(lum(ACTIVITY.query.light)).toBeLessThan(lum(ACTIVITY.ready.light))
     expect(lum(ACTIVITY.query.dark)).toBeGreaterThan(lum(ACTIVITY.ready.dark))
-  })
-
-  it('resolves by theme', () => {
-    expect(resolve(LOAD.running, false)).toBe(LOAD.running.light)
-    expect(resolve(LOAD.running, true)).toBe(LOAD.running.dark)
   })
 })

@@ -15,15 +15,15 @@ import {
 } from "recharts";
 import type { AgentMonitoring, MonitoringBucket } from "@/types/agent";
 import { formatDuration } from "../metricsTime";
-import { LOAD, OUTCOME, RESOURCE, TIMELINE, resolve } from "./chartColors";
+import { resolve } from "@/components/charts/chartColors";
 import {
   ChartFrame,
   GRID_PROPS,
   Legend,
-  TOOLTIP_PROPS,
   Y_AXIS_PROPS,
-  timeAxisProps,
-} from "./ChartFrame";
+} from "@/components/charts/ChartFrame";
+import { LOAD, OUTCOME, RESOURCE, TIMELINE } from "./chartColors";
+import { TIME_TOOLTIP_PROPS, timeAxisProps } from "./timeAxis";
 
 /** One bucket, with its position on the shared time axis. */
 export interface BucketRow extends MonitoringBucket {
@@ -211,7 +211,7 @@ export function TimelinePanel({ ctx }: { ctx: PanelContext }) {
           <XAxis {...timeAxisProps(ctx.startMs, ctx.endMs)} hide />
           <YAxis hide domain={[0, 1]} />
           <Tooltip
-            {...TOOLTIP_PROPS}
+            {...TIME_TOOLTIP_PROPS}
             formatter={(value, name) => [
               `${Math.round(Number(value) * 100)}%`,
               name,
@@ -303,7 +303,7 @@ export function QueriesPanel({ ctx }: { ctx: PanelContext }) {
           <XAxis {...timeAxisProps(ctx.startMs, ctx.endMs)} />
           <YAxis {...Y_AXIS_PROPS} allowDecimals={false} />
           <Tooltip
-            {...TOOLTIP_PROPS}
+            {...TIME_TOOLTIP_PROPS}
             formatter={(value, name, item) => {
               if (name !== "Failed" || !value) return [value, name];
               const detail = Object.entries(
@@ -386,7 +386,7 @@ export function ConcurrencyPanel({ ctx }: { ctx: PanelContext }) {
           <XAxis {...timeAxisProps(ctx.startMs, ctx.endMs)} />
           <YAxis {...Y_AXIS_PROPS} allowDecimals />
           <Tooltip
-            {...TOOLTIP_PROPS}
+            {...TIME_TOOLTIP_PROPS}
             formatter={(value, name, item) => {
               if (name === "Peak running") return [value, name];
               const row = item?.payload as BucketRow | undefined;
@@ -471,7 +471,7 @@ function ResourcePanel({
           <XAxis {...timeAxisProps(ctx.startMs, ctx.endMs)} />
           <YAxis {...Y_AXIS_PROPS} domain={[0, 100]} unit="%" width={44} />
           <Tooltip
-            {...TOOLTIP_PROPS}
+            {...TIME_TOOLTIP_PROPS}
             formatter={(value, name) => {
               if (value == null) return [NOT_MEASURED, name];
               if (Array.isArray(value)) return [pct(value[1]), "Peak"];

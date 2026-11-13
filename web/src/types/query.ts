@@ -8,6 +8,9 @@ export interface Query {
   user_id?: string | null;
   // Display name of who ran the query (resolved from user_id server-side).
   user_name?: string | null;
+  // The person the assistant ran it for, and their name; null on every other run.
+  on_behalf_of_id?: string | null;
+  on_behalf_of_name?: string | null;
   sql: string;
   status: QueryStatus;
   // Tags non-interactive runs (e.g. "scheduled"); null/absent for user runs.

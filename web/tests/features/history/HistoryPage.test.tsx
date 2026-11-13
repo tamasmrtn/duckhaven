@@ -319,6 +319,41 @@ describe("HistoryPage", () => {
     expect(screen.getByText("dashboard=sales")).toBeInTheDocument();
   });
 
+  it("says who an assistant run was for", async () => {
+    server.use(
+      http.get("/api/workspaces/:ws/queries", () =>
+        HttpResponse.json({
+          items: [
+            {
+              id: "q-assistant",
+              workspace_id: "137f7947-0000-4000-8000-000000000001",
+              agent_id: "ag-1",
+              user_id: "u-assistant",
+              user_name: "Assistant",
+              on_behalf_of_id: CURRENT_USER.id,
+              on_behalf_of_name: "Marton",
+              sql: "SELECT for_marton",
+              status: "done",
+              row_count: 1,
+              duration_ms: 5,
+              error: null,
+              progress: null,
+              started_at: "2026-05-15T10:00:00Z",
+              finished_at: "2026-05-15T10:00:00.005Z",
+            },
+          ],
+          cursor: null,
+          has_more: false,
+        }),
+      ),
+    );
+    renderWithProviders({ initialRoute: "/acme-analytics/history" });
+    await screen.findByText("SELECT for_marton");
+    const row = screen.getByText("SELECT for_marton").closest("tr")!;
+    expect(within(row).getByText("Assistant")).toBeInTheDocument();
+    expect(within(row).getByText("for Marton")).toBeInTheDocument();
+  });
+
   it("leaves the Client column out when no run in view came from a tool", async () => {
     renderWithProviders({ initialRoute: "/acme-analytics/history?user=all" });
     await screen.findByText(/raw\.users/);

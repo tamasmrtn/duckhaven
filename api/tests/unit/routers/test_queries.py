@@ -408,15 +408,15 @@ async def test_the_result_cache_keys_on_the_chosen_schema(
     authed_client: AsyncClient, workspace, connected_agent, monkeypatch
 ):
     """The same SQL in two schemas reads two tables, so it must not share a result."""
-    from api.routers import queries as queries_router
+    from api.services.result_cache import service as result_cache
 
     seen = []
 
     async def lookup(db, **kwargs):
         seen.append(kwargs["context"].current_schema)
-        return queries_router.result_cache.Lookup(status=queries_router.result_cache.BYPASS)
+        return result_cache.Lookup(status=result_cache.BYPASS)
 
-    monkeypatch.setattr(queries_router.result_cache, "lookup", lookup)
+    monkeypatch.setattr(result_cache, "lookup", lookup)
     agent, _ = connected_agent
     for extra in ({"schema": "marts"}, {}):
         await authed_client.post(
@@ -3042,10 +3042,10 @@ async def test_a_run_can_be_cancelled_by_its_chosen_id_while_its_submit_waits(
 async def test_a_cache_hit_keeps_the_chosen_id(
     authed_client, workspace, connected_agent, monkeypatch
 ):
-    from api.routers import queries as queries_router
+    from api.services import query_submit
     from api.services.result_cache import service as result_cache
 
-    async def hit(db, workspace, catalogs, body, agent, polaris):
+    async def hit(db, workspace, catalogs, body, agent, polaris, **kwargs):
         return result_cache.Lookup(status=result_cache.HIT)
 
     async def serve(db, cache, query, **kwargs):
@@ -3054,7 +3054,7 @@ async def test_a_cache_hit_keeps_the_chosen_id(
         await db.commit()
         return query
 
-    monkeypatch.setattr(queries_router, "_cache_lookup", hit)
+    monkeypatch.setattr(query_submit, "_cache_lookup", hit)
     monkeypatch.setattr(result_cache, "serve_hit", serve)
     agent, mock_ws = connected_agent
     chosen = str(uuid.uuid4())

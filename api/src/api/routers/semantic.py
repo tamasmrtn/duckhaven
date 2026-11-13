@@ -78,7 +78,7 @@ from api.services.semantic.ingest import (
     reconcile_provider_run,
     upsert_models,
 )
-from api.services.semantic.model import load_model
+from api.services.semantic.model import load_model, presentation_problem
 from api.services.semantic.providers import SemanticDocumentError, get_adapter
 from api.services.semantic.retrieve import ambiguous, search, search_broken
 from api.services.semantic.timespec import TimeRange
@@ -278,6 +278,10 @@ def _full(
                 filter=m.filter,
                 time_dimension=dim_names.get(m.time_dimension_id) if m.time_dimension_id else None,
                 caveat=m.caveat,
+                format=m.format,
+                unit=m.unit,
+                currency=m.currency,
+                polarity=m.polarity,
                 status=m.status,
                 expression=_render(m),
                 validation_state=m.validation_state,
@@ -757,6 +761,10 @@ async def add_metric(
         filter=body.filter,
         time_dimension_id=time_dimension_id,
         caveat=body.caveat,
+        format=body.format,
+        unit=body.unit,
+        currency=body.currency,
+        polarity=body.polarity,
         owner_id=ctx.user.id,
     )
     db.add(metric)
@@ -774,6 +782,10 @@ async def add_metric(
         filter=metric.filter,
         time_dimension=body.time_dimension,
         caveat=metric.caveat,
+        format=metric.format,
+        unit=metric.unit,
+        currency=metric.currency,
+        polarity=metric.polarity,
         status=metric.status,
         expression=_render(metric),
         validation_state=metric.validation_state,
@@ -804,6 +816,18 @@ async def update_metric(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=f"No metric {metric_name!r}."
         )
+
+    # Checked as the metric will stand after the edit, and before anything
+    # changes: a currency is valid or not depending on the format beside it.
+    presentation = {
+        attr: getattr(body, attr) if attr in body.model_fields_set else getattr(metric, attr)
+        for attr in ("format", "unit", "currency", "polarity")
+    }
+    problem = presentation_problem(*presentation.values())
+    if problem:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=problem)
+    for attr, value in presentation.items():
+        setattr(metric, attr, value)
 
     for attr in ("display_name", "description", "agg", "expr", "filter", "caveat", "status"):
         value = getattr(body, attr)
@@ -856,6 +880,10 @@ async def update_metric(
         filter=metric.filter,
         time_dimension=dim_name,
         caveat=metric.caveat,
+        format=metric.format,
+        unit=metric.unit,
+        currency=metric.currency,
+        polarity=metric.polarity,
         status=metric.status,
         expression=_render(metric),
         validation_state=metric.validation_state,

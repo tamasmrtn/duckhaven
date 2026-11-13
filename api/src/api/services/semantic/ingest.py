@@ -76,6 +76,10 @@ class CanonicalMetric:
     description: str | None = None
     synonyms: tuple[str, ...] = ()
     caveat: str | None = None
+    format: str | None = None
+    unit: str | None = None
+    currency: str | None = None
+    polarity: str | None = None
 
 
 @dataclass(frozen=True)
@@ -273,6 +277,10 @@ async def upsert_models(
                     filter=metric.filter,
                     time_dimension_id=axis,
                     caveat=metric.caveat,
+                    format=metric.format,
+                    unit=metric.unit,
+                    currency=metric.currency,
+                    polarity=metric.polarity,
                     owner_id=owner_id,
                     # Published *within a draft model*. The trust gate for an
                     # import is the model, which a person publishes deliberately;

@@ -250,6 +250,107 @@ async def test_editing_a_metric_invalidates_its_previous_verdict(auth_client, ws
     assert resp.json()["validation_state"] == "unchecked"
 
 
+async def _add_metric(client, ws, **fields):
+    return await client.post(
+        f"/workspaces/{ws}/semantic/models/sales/metrics",
+        json={"name": "aov", "dataset": "orders", "agg": "avg", "expr": "total_amount", **fields},
+    )
+
+
+async def _metric(client, ws, name):
+    body = (await client.get(f"/workspaces/{ws}/semantic/models/sales")).json()
+    return next(m for m in body["metrics"] if m["name"] == name)
+
+
+async def test_a_metric_says_how_its_number_is_shown(auth_client, ws):
+    """A dashboard needs to know 12.5 is euros and that up is good news."""
+    await build_model(auth_client, ws)
+
+    resp = await _add_metric(auth_client, ws, format="currency", currency="EUR", polarity="up_good")
+
+    assert resp.status_code == 201
+    metric = await _metric(auth_client, ws, "aov")
+    assert (metric["format"], metric["unit"], metric["currency"], metric["polarity"]) == (
+        "currency",
+        None,
+        "EUR",
+        "up_good",
+    )
+
+
+async def test_a_metric_without_display_settings_reads_back_unset(auth_client, ws):
+    await build_model(auth_client, ws)
+
+    metric = await _metric(auth_client, ws, "revenue")
+
+    assert (metric["format"], metric["unit"], metric["currency"], metric["polarity"]) == (
+        None,
+        None,
+        None,
+        None,
+    )
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"format": "currency"},
+        {"format": "number", "currency": "EUR"},
+        {"format": "percent", "unit": "points"},
+        {"format": "money"},
+        {"polarity": "higher"},
+    ],
+)
+async def test_unsound_display_settings_are_rejected(auth_client, ws, fields):
+    await build_model(auth_client, ws)
+
+    resp = await _add_metric(auth_client, ws, **fields)
+
+    assert resp.status_code == 422
+
+
+async def test_an_edit_can_change_one_setting_and_keep_the_rest(auth_client, ws):
+    await build_model(auth_client, ws)
+    await _add_metric(auth_client, ws, format="currency", currency="EUR")
+
+    resp = await auth_client.patch(
+        f"/workspaces/{ws}/semantic/models/sales/metrics/aov", json={"polarity": "down_good"}
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert (body["format"], body["currency"], body["polarity"]) == ("currency", "EUR", "down_good")
+
+
+async def test_an_edit_clears_a_setting_sent_as_null(auth_client, ws):
+    """Moving off currency has to drop the currency, or no edit could ever do it."""
+    await build_model(auth_client, ws)
+    await _add_metric(auth_client, ws, format="currency", currency="EUR")
+
+    resp = await auth_client.patch(
+        f"/workspaces/{ws}/semantic/models/sales/metrics/aov",
+        json={"format": "number", "currency": None, "unit": "euros"},
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert (body["format"], body["unit"], body["currency"]) == ("number", "euros", None)
+
+
+async def test_an_edit_that_leaves_unsound_settings_changes_nothing(auth_client, ws):
+    await build_model(auth_client, ws)
+    await _add_metric(auth_client, ws, format="currency", currency="EUR")
+
+    resp = await auth_client.patch(
+        f"/workspaces/{ws}/semantic/models/sales/metrics/aov", json={"format": "percent"}
+    )
+
+    assert resp.status_code == 422
+    assert "only to a metric whose format is currency" in str(resp.json()["message"])
+    metric = await _metric(auth_client, ws, "aov")
+    assert (metric["format"], metric["currency"]) == ("currency", "EUR")
+
+
 # ── Validation and publishing ─────────────────────────────────────────────────
 
 
@@ -362,6 +463,35 @@ async def test_compile_reports_the_definitions_it_used(auth_client, ws):
 
     assert any(d["kind"] == "metric" and d["name"] == "revenue" for d in body["definitions_used"])
     assert any("test orders" in w for w in body["warnings"])
+
+
+async def test_compile_reports_how_each_metric_is_shown(auth_client, ws):
+    await build_model(auth_client, ws)
+    await auth_client.patch(
+        f"/workspaces/{ws}/semantic/models/sales/metrics/revenue",
+        json={
+            "format": "currency",
+            "currency": "USD",
+            "polarity": "up_good",
+            "status": "published",
+        },
+    )
+    await auth_client.post(f"/workspaces/{ws}/semantic/models/sales/publish")
+
+    body = (
+        await auth_client.post(
+            f"/workspaces/{ws}/semantic/compile",
+            json={"model": "sales", "metrics": ["revenue"]},
+        )
+    ).json()
+
+    (used,) = [d for d in body["definitions_used"] if d["kind"] == "metric"]
+    assert (used["format"], used["unit"], used["currency"], used["polarity"]) == (
+        "currency",
+        None,
+        "USD",
+        "up_good",
+    )
 
 
 async def test_compile_refuses_an_unknown_metric_and_names_the_real_ones(auth_client, ws):

@@ -31,6 +31,10 @@ SEMANTIC_TABLES = {
     "semantic_relationships",
 }
 
+# Later migrations that change these tables. The drift check applies them on top
+# of 0036, so it compares the schema a deployment ends up with to the models.
+LATER_MIGRATIONS = ("0056_metric_presentation.py",)
+
 
 def _load(name: str, path: Path):
     spec = importlib.util.spec_from_file_location(name, path)
@@ -276,6 +280,10 @@ def test_the_migration_and_the_models_agree(migration_module):
     engine = create_engine("sqlite://")
     with engine.begin() as conn:
         _upgraded(conn, migration_module)
+        for filename in LATER_MIGRATIONS:
+            later = _load(f"migration_{filename[:4]}", VERSIONS / filename)
+            _rebind(later, conn)
+            later.upgrade()
         inspector = inspect(conn)
 
         for table in sorted(SEMANTIC_TABLES):

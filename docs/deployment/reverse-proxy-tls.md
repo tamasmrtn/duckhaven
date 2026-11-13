@@ -186,6 +186,28 @@ setting makes the API take the agent's address from the `X-Forwarded-For` header
 while the proxy is the API's only ingress, as in both setups above: with port 8000 published, a client could name any
 address in the header.
 
+## Security headers
+
+DuckHaven sets its own security headers, so the proxy needs to add none. Every response carries
+`X-Content-Type-Options: nosniff` and `Referrer-Policy: same-origin`. The web app's page also carries a
+Content-Security-Policy that allows scripts, styles, images, fonts and requests from DuckHaven's own origin only:
+
+```
+default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:;
+connect-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'
+```
+
+To see it through the proxy:
+
+```sh
+curl -sI https://duckhaven.example.com/ | grep -i content-security-policy
+```
+
+The browser refuses anything the proxy or a CDN injects into the page from another origin, such as an analytics
+snippet or Cloudflare Rocket Loader, and `frame-ancestors 'none'` stops another site from showing DuckHaven in a frame.
+If the proxy sends a Content-Security-Policy of its own, the browser applies both, and a resource loads only if each
+policy allows it. To have only the proxy's policy apply, set `CSP_ENABLED=false` in `.env` and restart the API.
+
 ## Check that it worked
 
 Open `https://duckhaven.example.com`, sign in, and stay signed in after a reload. In **Compute → Generate bootstrap**,
@@ -202,6 +224,12 @@ the snippet's `CONTROL_PLANE_URL` starts with `wss://`.
 - **Query results from an agent behind the proxy fail to load.** `TRUSTED_PROXY_INGRESS` is not `true`, so the
   control plane recorded the proxy's address for the agent. Set it, restart the API, then restart the agent so it
   reconnects; see [What the agent sees](#what-the-agent-sees).
+
+- **The page is blank or partly missing, and the browser console says the page "violates the following Content
+  Security Policy directive".** Something between the browser and DuckHaven added a script, style or font from another
+  origin. Set `CSP_REPORT_ONLY=true` and restart the API: the page works, and the console lists each thing the policy
+  would block. Then remove the injection, or set `CSP_ENABLED=false` and have the proxy send a policy that allows it;
+  see [Security headers](#security-headers).
 
 ## Private-network deploys
 

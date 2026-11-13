@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 
 from api.services.lineage.resolve import Skipped
 from api.services.semantic.ingest import CanonicalModel
+from api.services.semantic.model import presentation_problem
 
 
 class SemanticDocumentError(ValueError):
@@ -54,6 +55,24 @@ class ProviderModels:
     # Reconciliation is scoped to these rather than to `models`, so a model whose
     # last metric was deleted is still recognised as declared and is not pruned.
     model_slugs: set[str] = field(default_factory=set)
+
+
+PRESENTATION_FIELDS = ("format", "unit", "currency", "polarity")
+
+
+def read_presentation(entry: dict, ref: str, out: ProviderModels) -> dict[str, str | None]:
+    """A metric's display settings from a producer's entry, or none of them.
+
+    Unsound settings are reported and dropped together rather than one by one: a
+    currency kept without its format would show something nobody wrote. The
+    metric itself still imports, since how a number is shown is never a reason to
+    lose the number.
+    """
+    values = {k: None if entry.get(k) is None else str(entry[k]) for k in PRESENTATION_FIELDS}
+    if presentation_problem(*values.values()):
+        out.skipped.append(Skipped(ref=ref, reason="invalid_presentation"))
+        return dict.fromkeys(PRESENTATION_FIELDS)
+    return values
 
 
 # Registered lazily so importing this package does not drag in every producer's

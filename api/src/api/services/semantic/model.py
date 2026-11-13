@@ -13,6 +13,7 @@ to remember to check.
 
 from __future__ import annotations
 
+import re
 import uuid
 from dataclasses import dataclass, field
 
@@ -34,6 +35,45 @@ from api.models.semantic import (
 TIME_GRAINS = ("day", "week", "month", "quarter", "year")
 
 AGGREGATIONS = ("sum", "count", "count_distinct", "avg", "min", "max")
+
+# How a metric's value is shown. Showing never changes the value, so the value
+# has to be in the unit its format expects: a percent is a ratio (0.25 shows as
+# 25%), a duration is in seconds, and bytes are bytes.
+METRIC_FORMATS = ("number", "percent", "currency", "duration", "bytes")
+
+# Which direction of change is good news, for colouring a comparison. Unset is
+# neutral: no colour, since a wrong guess is worse than none.
+POLARITIES = ("up_good", "down_good", "neutral")
+
+MAX_UNIT_LENGTH = 32
+_CURRENCY_CODE = re.compile(r"^[A-Z]{3}$")
+
+
+def presentation_problem(
+    fmt: str | None, unit: str | None, currency: str | None, polarity: str | None
+) -> str | None:
+    """Why these display settings cannot go together, or None when they can.
+
+    The one rule set for every path a definition arrives by, so the REST API and
+    the importers cannot disagree about what a metric may say about itself.
+    """
+    if fmt is not None and fmt not in METRIC_FORMATS:
+        return f"Unknown format {fmt!r}; use one of {', '.join(METRIC_FORMATS)}."
+    if polarity is not None and polarity not in POLARITIES:
+        return f"Unknown polarity {polarity!r}; use one of {', '.join(POLARITIES)}."
+    if fmt == "currency" and currency is None:
+        return "A currency metric needs a currency: an ISO 4217 code, such as EUR."
+    if currency is not None:
+        if fmt != "currency":
+            return "A currency belongs only to a metric whose format is currency."
+        if not _CURRENCY_CODE.match(currency):
+            return f"{currency!r} is not an ISO 4217 code; use three capital letters, such as EUR."
+    if unit is not None:
+        if fmt not in (None, "number"):
+            return f"A unit belongs only to a plain number; a {fmt} metric shows its own."
+        if not unit.strip() or len(unit) > MAX_UNIT_LENGTH:
+            return f"A unit is 1 to {MAX_UNIT_LENGTH} characters, such as 'orders'."
+    return None
 
 
 @dataclass(frozen=True)
@@ -107,6 +147,11 @@ class Metric:
     #: a metric that *had* a binding measures it on a column somebody explicitly
     #: decided it should not be measured on.
     time_axis_lost: bool = False
+    #: How the number is shown; see METRIC_FORMATS and POLARITIES.
+    format: str | None = None
+    unit: str | None = None
+    currency: str | None = None
+    polarity: str | None = None
 
     @property
     def label(self) -> str:
@@ -298,6 +343,10 @@ def to_loaded(
             dataset=parent.name,
             validation_state=m.validation_state,
             time_axis_lost=bool(m.time_dimension_id) and resolved_axis is None,
+            format=m.format,
+            unit=m.unit,
+            currency=m.currency,
+            polarity=m.polarity,
         )
 
     rel_out: list[Relationship] = []

@@ -41,7 +41,11 @@ from api.services.semantic.ingest import (
     CanonicalRelationship,
 )
 from api.services.semantic.model import AGGREGATIONS, TIME_GRAINS
-from api.services.semantic.providers import ProviderModels, SemanticDocumentError
+from api.services.semantic.providers import (
+    ProviderModels,
+    SemanticDocumentError,
+    read_presentation,
+)
 
 # dbt's aggregation vocabulary onto DuckHaven's. The ones with no entry —
 # median, percentile, sum_boolean — have no V1 equivalent and skip the metric.
@@ -380,6 +384,12 @@ async def models_from_manifest(payload, *, resolve: Resolver) -> ProviderModels:
             out.skipped.append(Skipped(ref=unique_id, reason="untranslatable_filter"))
             continue
 
+        # What dbt has no field for goes under meta.duckhaven. dbt 1.10 keeps a
+        # metric's meta in its config; earlier versions put it beside the config.
+        meta = {**(metric.get("meta") or {}), **((metric.get("config") or {}).get("meta") or {})}
+        own = meta.get("duckhaven")
+        own = own if isinstance(own, dict) else {}
+
         canonical_metrics.append(
             CanonicalMetric(
                 name=name,
@@ -390,6 +400,8 @@ async def models_from_manifest(payload, *, resolve: Resolver) -> ProviderModels:
                 time_dimension=str(axis) if axis else None,
                 display_name=metric.get("label"),
                 description=metric.get("description"),
+                caveat=str(own["caveat"]) if own.get("caveat") else None,
+                **read_presentation(own, unique_id, out),
             )
         )
 

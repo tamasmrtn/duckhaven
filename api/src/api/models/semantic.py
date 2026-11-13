@@ -301,6 +301,14 @@ class SemanticMetric(Base):
             "agg IN ('sum', 'count', 'count_distinct', 'avg', 'min', 'max')",
             name="ck_semantic_metrics_agg",
         ),
+        CheckConstraint(
+            "format IN ('number', 'percent', 'currency', 'duration', 'bytes')",
+            name="ck_semantic_metrics_format",
+        ),
+        CheckConstraint(
+            "polarity IN ('up_good', 'down_good', 'neutral')",
+            name="ck_semantic_metrics_polarity",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -336,6 +344,13 @@ class SemanticMetric(Base):
     # internal orders" or "restated before 2024" — the things a reader needs at the
     # moment they see the number, not a month later.
     caveat: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # How the number is shown, so a dashboard or an answer reads 0.25 as 25% and
+    # knows a rise in churn is bad news. All unset means a plain, neutral number.
+    # The combinations allowed are checked in services/semantic/model.py.
+    format: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    unit: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    currency: Mapped[str | None] = mapped_column(String(3), nullable=True)
+    polarity: Mapped[str | None] = mapped_column(String(16), nullable=True)
 
     status: Mapped[str] = mapped_column(
         String(20), nullable=False, default="draft", server_default="draft"

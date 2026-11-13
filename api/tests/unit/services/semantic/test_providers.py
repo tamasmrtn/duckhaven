@@ -193,6 +193,42 @@ async def test_a_metric_naming_a_dimension_that_is_not_there_still_imports(resol
     assert any(s.reason == "unknown_time_dimension" for s in out.skipped)
 
 
+async def test_display_settings_are_imported(resolver):
+    document = GOOD.replace(
+        "        caveat: Excludes internal test orders.\n",
+        "        caveat: Excludes internal test orders.\n"
+        "        format: currency\n"
+        "        currency: EUR\n"
+        "        polarity: up_good\n",
+    )
+
+    out = await models_from_yaml(document, resolve=resolver)
+
+    metric = out.models[0].metrics[0]
+    assert (metric.format, metric.unit, metric.currency, metric.polarity) == (
+        "currency",
+        None,
+        "EUR",
+        "up_good",
+    )
+    assert out.skipped == []
+
+
+async def test_unsound_display_settings_are_dropped_but_the_metric_imports(resolver):
+    """How a number is shown is never a reason to lose the number."""
+    document = GOOD.replace(
+        "        caveat: Excludes internal test orders.\n",
+        "        caveat: Excludes internal test orders.\n        format: currency\n",
+    )
+
+    out = await models_from_yaml(document, resolve=resolver)
+
+    metric = out.models[0].metrics[0]
+    assert metric.name == "revenue"
+    assert (metric.format, metric.currency, metric.polarity) == (None, None, None)
+    assert [(s.ref, s.reason) for s in out.skipped] == [("sales.revenue", "invalid_presentation")]
+
+
 async def test_a_model_without_a_slug_is_skipped(resolver):
     out = await models_from_yaml("models:\n  - name: No Slug\n", resolve=resolver)
 

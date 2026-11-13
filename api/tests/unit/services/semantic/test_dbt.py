@@ -122,6 +122,56 @@ async def test_time_granularity_becomes_the_supported_grains(manifest, resolver)
     assert order_date.time_grains == ("day", "week", "month", "quarter", "year")
 
 
+async def test_duckhaven_meta_sets_how_a_metric_is_shown(manifest, resolver):
+    doctored = deepcopy(manifest)
+    doctored["metrics"]["metric.semdemo.revenue"]["config"]["meta"] = {
+        "duckhaven": {
+            "format": "currency",
+            "currency": "USD",
+            "polarity": "up_good",
+            "caveat": "Excludes refunds.",
+        }
+    }
+
+    out = await models_from_manifest(doctored, resolve=resolver)
+
+    revenue = next(m for m in out.models[0].metrics if m.name == "revenue")
+    assert (revenue.format, revenue.currency, revenue.polarity, revenue.caveat) == (
+        "currency",
+        "USD",
+        "up_good",
+        "Excludes refunds.",
+    )
+
+
+async def test_top_level_meta_is_read_too(manifest, resolver):
+    """Older dbt versions put a metric's meta beside its config, not inside it."""
+    doctored = deepcopy(manifest)
+    doctored["metrics"]["metric.semdemo.order_count"]["meta"] = {
+        "duckhaven": {"format": "number", "unit": "orders"}
+    }
+
+    out = await models_from_manifest(doctored, resolve=resolver)
+
+    count = next(m for m in out.models[0].metrics if m.name == "order_count")
+    assert (count.format, count.unit) == ("number", "orders")
+
+
+async def test_unsound_duckhaven_meta_is_dropped_and_reported(manifest, resolver):
+    doctored = deepcopy(manifest)
+    doctored["metrics"]["metric.semdemo.revenue"]["config"]["meta"] = {
+        "duckhaven": {"format": "percent", "currency": "USD"}
+    }
+
+    out = await models_from_manifest(doctored, resolve=resolver)
+
+    revenue = next(m for m in out.models[0].metrics if m.name == "revenue")
+    assert (revenue.format, revenue.currency) == (None, None)
+    assert ("metric.semdemo.revenue", "invalid_presentation") in [
+        (s.ref, s.reason) for s in out.skipped
+    ]
+
+
 async def test_a_ratio_metric_is_skipped_and_reported(manifest, resolver):
     """V1 has no composition, so there is nothing honest to map it onto."""
     out, model = await only_model(manifest, resolver)

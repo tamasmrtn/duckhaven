@@ -394,6 +394,10 @@ def compile_metric_query(
                 "time_dimension": metric.time_dimension,
                 "caveat": metric.caveat,
                 "status": metric.status,
+                "format": metric.format,
+                "unit": metric.unit,
+                "currency": metric.currency,
+                "polarity": metric.polarity,
             }
         )
         if metric.caveat:

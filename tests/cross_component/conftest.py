@@ -37,6 +37,9 @@ BOOTSTRAP_TOKEN = "dh_xc_bootstrap_token"
 SETUP_TOKEN = "dh_xc_setup_token"
 ADMIN_EMAIL = "admin@xc.test"
 ADMIN_PASSWORD = "xc-password-123"
+# Lets a test play a second API replica: frames it sends for the agent are
+# relayed through the live API's `/internal` endpoint (see test_batch_dispatch).
+INTERNAL_SECRET = "xc-internal-secret"
 
 _STARTUP_TIMEOUT_S = 90.0
 
@@ -229,6 +232,8 @@ def stack(_require_env, tmp_path_factory) -> Iterator[Stack]:
     _migrate(api_env)
 
     api_port = _free_port()
+    api_env["REPLICA_INTERNAL_URL"] = f"http://127.0.0.1:{api_port}"
+    api_env["INTERNAL_API_SECRET"] = INTERNAL_SECRET
     api_log = tmp / "api.log"
     agent_log = tmp / "agent.log"
     procs: list[subprocess.Popen] = []
@@ -566,3 +571,23 @@ async def catalog(api_client, workspace) -> str:
     r = await api_client.get(f"/api/workspaces/{workspace}/catalogs")
     r.raise_for_status()
     return r.json()[0]["slug"]
+
+
+@pytest_asyncio.fixture
+async def replica(stack, monkeypatch):
+    """A session factory for the API's services run in this process, configured as
+    the live API is, so this process can act as a second replica. A frame it sends
+    the agent is relayed through the live API's `/internal` endpoint."""
+    for key, value in _api_env(os.environ["DATABASE_URL"], Path(os.devnull)).items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setenv("REPLICA_ID", "xc-second-replica")
+    monkeypatch.setenv("INTERNAL_API_SECRET", INTERNAL_SECRET)
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from api.config import settings
+
+    # In case another test imported the settings before the environment was set.
+    monkeypatch.setattr(settings, "internal_api_secret", INTERNAL_SECRET)
+    engine = create_async_engine(os.environ["DATABASE_URL"])
+    yield async_sessionmaker(engine, expire_on_commit=False)
+    await engine.dispose()

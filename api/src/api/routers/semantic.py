@@ -81,7 +81,7 @@ from api.services.semantic.ingest import (
 from api.services.semantic.model import load_model
 from api.services.semantic.providers import SemanticDocumentError, get_adapter
 from api.services.semantic.retrieve import ambiguous, search, search_broken
-from api.services.semantic.timespec import TimeRange
+from api.services.semantic.timespec import TimeRange, today_in
 from api.services.semantic.validate import validate_model
 from api.services.workspace import (
     ROLE_ORDER,
@@ -1190,10 +1190,11 @@ async def compile_query(
         ),
         order_by=tuple(OrderTerm(field=o.field, descending=o.descending) for o in body.order_by),
         limit=body.limit,
+        compare=body.compare,
     )
 
     try:
-        compiled = compile_metric_query(loaded, query)
+        compiled = compile_metric_query(loaded, query, today=today_in(ctx.workspace.timezone))
     except SemanticError as exc:
         raise _semantic_error(exc) from exc
 
@@ -1201,6 +1202,7 @@ async def compile_query(
         sql=compiled.sql,
         definitions_used=compiled.definitions_used,
         warnings=compiled.warnings,
+        compare=compiled.compare,
     )
 
 

@@ -19,12 +19,17 @@ its inputs, which is what makes it testable.
 All windows are half-open, ``start <= t < end``. Half-open is what makes adjacent
 periods tile without double-counting the boundary row — the off-by-one that
 inflates a daily series by one day's worth at each end.
+
+"Today" is the date in the workspace's time zone, not the server's: at 23:00 in
+New York a UTC server is already on tomorrow, and "month to date" on the 1st
+would quietly become last month.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
+from zoneinfo import ZoneInfo
 
 from api.services.semantic.errors import SemanticError
 
@@ -46,6 +51,16 @@ WINDOW_KINDS = {
         "(to_date/year = year to date)"
     ),
     "absolute": "an explicit start and end date; end is exclusive",
+}
+
+
+# What each comparison means, in the words the assistant sees.
+COMPARE_KINDS = {
+    "previous_period": (
+        "the same span just before the window: the month before a complete month, "
+        "the same number of days into last month for month to date"
+    ),
+    "previous_year": ("the same dates one year earlier; 29 February compares with 28 February"),
 }
 
 
@@ -88,6 +103,56 @@ def _shift(d: date, grain: str, periods: int) -> date:
     if grain == "year":
         return d.replace(year=d.year + periods)
     raise SemanticError(f"Unknown time grain {grain!r}.", alternatives=list(GRAINS))
+
+
+def _utcnow() -> datetime:
+    return datetime.now(UTC)
+
+
+def today_in(timezone: str, *, now: datetime | None = None) -> date:
+    """Today's date in an IANA time zone, which the caller has already validated."""
+    return (now or _utcnow()).astimezone(ZoneInfo(timezone)).date()
+
+
+def _year_earlier(d: date) -> date:
+    """The same date a year earlier; 29 February, which has none, becomes the 28th."""
+    try:
+        return d.replace(year=d.year - 1)
+    except ValueError:
+        return d.replace(year=d.year - 1, day=28)
+
+
+def compare_window(window: TimeRange, compare: str, *, today: date) -> tuple[date, date]:
+    """The window a comparison measures against, half-open like :func:`resolve`.
+
+    A comparison never overlaps the window it is compared with, so no row counts
+    on both sides of a delta.
+    """
+    start, end = resolve(window, today=today)
+    if compare == "previous_year":
+        if end - start > timedelta(days=366):
+            raise SemanticError(
+                "A window longer than a year overlaps the same dates a year earlier; "
+                "compare it with previous_period instead."
+            )
+        return _year_earlier(start), _year_earlier(end - timedelta(days=1)) + timedelta(days=1)
+    if compare != "previous_period":
+        raise SemanticError(f"Unknown comparison {compare!r}.", alternatives=list(COMPARE_KINDS))
+
+    if window.kind == "absolute":
+        return start - (end - start), start
+
+    # Relative windows start on a period boundary, so whole periods move them.
+    grain = window.grain
+    periods = 1 if window.kind == "to_date" else window.n
+    current = _start_of(today, grain)
+    if end <= current:
+        # Only complete periods: the same number of complete periods before.
+        return _shift(start, grain, -periods), _shift(end, grain, -periods)
+    # The window runs into the period in progress. Compare the same number of
+    # days into the matching earlier period, but never past that period's end.
+    earlier = _shift(current, grain, -periods)
+    return _shift(start, grain, -periods), min(earlier + (end - current), _shift(earlier, grain, 1))
 
 
 def resolve(window: TimeRange, *, today: date) -> tuple[date, date]:

@@ -37,6 +37,7 @@ FilterOp = Literal[
     "eq", "ne", "in", "not_in", "gt", "gte", "lt", "lte", "contains", "is_null", "is_not_null"
 ]
 WindowKind = Literal["last_complete", "trailing", "to_date", "absolute"]
+CompareKind = Literal["previous_period", "previous_year"]
 
 # Names become SQL aliases and table aliases, so they have to be identifiers.
 # Enforced at the edge rather than escaped later: a definition whose name needs
@@ -395,12 +396,30 @@ class MetricQueryIn(BaseModel):
     filters: list[DimensionFilterIn] = Field(default_factory=list, max_length=20)
     order_by: list[OrderTermIn] = Field(default_factory=list, max_length=5)
     limit: int | None = Field(default=None, ge=1, le=5000)
+    compare: CompareKind | None = Field(
+        default=None,
+        description=(
+            "Also compile the same question over an earlier window. previous_period: "
+            "the same span just before (month to date compares the same days of last "
+            "month). previous_year: the same dates a year earlier. Needs time_range."
+        ),
+    )
+
+
+class CompareOut(BaseModel):
+    """The same question over the comparison window, as its own statement."""
+
+    kind: CompareKind
+    start: date
+    end: date = Field(description="Exclusive, like the window it is compared with.")
+    sql: str
 
 
 class CompiledQueryOut(BaseModel):
     sql: str
     definitions_used: list[dict] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+    compare: CompareOut | None = None
 
 
 # ── Impact ────────────────────────────────────────────────────────────────────

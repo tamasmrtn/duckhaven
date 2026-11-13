@@ -23,7 +23,7 @@ there is none to get wrong.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date
 
 import sqlglot
@@ -32,7 +32,7 @@ from sqlglot import exp
 from api.services.semantic.errors import SemanticError
 from api.services.semantic.joins import merge_paths, reachable, resolve_path
 from api.services.semantic.model import LoadedModel, Metric
-from api.services.semantic.timespec import TimeRange
+from api.services.semantic.timespec import TimeRange, compare_window
 from api.services.semantic.timespec import resolve as resolve_window
 
 # Comparison operators a caller may use. Restricted rather than open so a filter
@@ -91,6 +91,8 @@ class MetricQuery:
     filters: tuple[DimensionFilter, ...] = ()
     order_by: tuple[OrderTerm, ...] = ()
     limit: int | None = None
+    #: previous_period or previous_year; needs a time_range to move.
+    compare: str | None = None
 
 
 @dataclass
@@ -100,6 +102,8 @@ class CompiledQuery:
     sql: str
     definitions_used: list[dict] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    #: The same question over the comparison window: its kind, start, end and sql.
+    compare: dict | None = None
 
 
 def _scalar(sql: str, *, alias: str, what: str) -> exp.Expression:
@@ -287,6 +291,11 @@ def compile_metric_query(
     """
     if not query.metrics:
         raise SemanticError("No metric was requested.", alternatives=sorted(model.metrics))
+    if query.compare is not None and query.time_range is None:
+        raise SemanticError(
+            "A comparison needs a time range to compare against; add one to the request."
+        )
+    today = today or date.today()
 
     metrics: list[Metric] = []
     for name in query.metrics:
@@ -403,7 +412,7 @@ def compile_metric_query(
     conditions: list[exp.Expression] = []
 
     if query.time_range is not None:
-        start, end = resolve_window(query.time_range, today=today or date.today())
+        start, end = resolve_window(query.time_range, today=today)
         conditions.append(
             exp.GTE(
                 this=time_expr.copy(),
@@ -487,10 +496,32 @@ def compile_metric_query(
         limit = MAX_LIMIT
     statement = statement.limit(limit)
 
+    compared = None
+    if query.compare is not None:
+        # The same question with only the window moved, compiled as its own
+        # statement so each side is a plain query anyone can read and re-run.
+        prev_start, prev_end = compare_window(query.time_range, query.compare, today=today)
+        earlier = compile_metric_query(
+            model,
+            replace(
+                query,
+                time_range=TimeRange(kind="absolute", start=prev_start, end=prev_end),
+                compare=None,
+            ),
+            today=today,
+        )
+        compared = {
+            "kind": query.compare,
+            "start": prev_start.isoformat(),
+            "end": prev_end.isoformat(),
+            "sql": earlier.sql,
+        }
+
     return CompiledQuery(
         sql=statement.sql(dialect="duckdb", pretty=True),
         definitions_used=definitions,
         warnings=warnings,
+        compare=compared,
     )
 
 

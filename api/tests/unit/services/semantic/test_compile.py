@@ -423,6 +423,40 @@ def test_a_time_window_bounds_the_bound_column(star):
     assert "orders.order_date < CAST('2026-08-01' AS DATE)" in sql
 
 
+def test_a_comparison_compiles_the_same_question_over_the_earlier_window(star):
+    window = TimeRange(kind="last_complete", grain="month", n=1)
+    result = compile_metric_query(
+        star,
+        MetricQuery(metrics=("revenue",), time_range=window, compare="previous_year"),
+        today=TODAY,
+    )
+
+    assert "CAST('2026-07-01' AS DATE)" in result.sql
+    assert result.compare["kind"] == "previous_year"
+    assert (result.compare["start"], result.compare["end"]) == ("2025-07-01", "2025-08-01")
+    assert "orders.order_date >= CAST('2025-07-01' AS DATE)" in result.compare["sql"]
+    assert "orders.order_date < CAST('2025-08-01' AS DATE)" in result.compare["sql"]
+    # Only the window moves: the comparison asks the same question.
+    assert (
+        result.compare["sql"]
+        .replace("2025-07-01", "2026-07-01")
+        .replace("2025-08-01", "2026-08-01")
+        == result.sql
+    )
+
+
+def test_without_a_comparison_there_is_none(star):
+    result = compile_metric_query(star, MetricQuery(metrics=("revenue",)), today=TODAY)
+    assert result.compare is None
+
+
+def test_a_comparison_needs_a_window_to_compare(star):
+    with pytest.raises(SemanticError, match="needs a time range"):
+        compile_metric_query(
+            star, MetricQuery(metrics=("revenue",), compare="previous_period"), today=TODAY
+        )
+
+
 def test_a_broken_metric_says_it_is_broken_rather_than_missing():
     """The two are not the same, and they call for opposite responses.
 

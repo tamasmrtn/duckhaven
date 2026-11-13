@@ -8,8 +8,8 @@ Turn on the AI assistant with a model of your choice, then give its service acco
 should serve.
 
 The assistant acts as a service account named **Assistant**, which DuckHaven creates when the assistant is enabled,
-with no access at all. What it can see and do is exactly what you grant that account; see
-[AI data assistant](assistant.md#identity).
+with no access at all. What it can see and do is at most what you grant that account, and in each conversation no more
+than the person asking may do themselves; see [Whose access applies](assistant.md#whose-access-applies).
 
 ## Before you begin
 
@@ -63,11 +63,17 @@ The API creates the **Assistant** service account on startup.
 Leave it out of a workspace and the assistant cannot be used there. The same assistant can be broad in a sandbox and
 narrow in production.
 
+!!! note "Each person's own access narrows it"
+    The account sets the most the assistant can reach. Someone asking it gets only what both the account and they may
+    do, so a `reader` asking a `writer` assistant gets a reader's answers, and a table they have no grant on stays
+    hidden from them. If people see refusals the account's access does not explain, check their own membership and
+    grants.
+
 ## Check that it worked
 
 Open a worksheet in a workspace you gave it, open the assistant panel, and ask "Which tables are in this workspace?".
-It answers with the tables its grants show it. Its queries appear in History under the **Assistant** account, with the
-client `duckhaven-assistant`.
+It answers with the tables both its grants and yours show. Its queries appear in History under the **Assistant**
+account, with the client `duckhaven-assistant` and your name beneath.
 
 ## If it goes wrong
 

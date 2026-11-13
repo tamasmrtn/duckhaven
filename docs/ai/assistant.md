@@ -77,7 +77,8 @@ than as a shared service account.
 
 The assistant is built on a general agent harness ([Pydantic AI](https://ai.pydantic.dev/)) that supplies the
 conversation loop, the model abstraction, and the tool-calling machinery. DuckHaven supplies the tools, and the tools
-are deliberately thin: each one is an authenticated call to DuckHaven's own REST API, made **as the service account**.
+are deliberately thin: each one is an authenticated call to DuckHaven's own REST API, made **as the service account,
+on behalf of the person asking**.
 
 That single design choice is what makes the assistant safe. Because the tools go through the same endpoints the web app
 uses, they inherit the same checks, in the same order:
@@ -88,7 +89,7 @@ workspace membership  →  SQL statement allowlist  →  scoped catalog grants  
 
 None of that enforcement lives in the assistant. Even if the language model were confused, or a hostile value in a
 table cell tried to talk it into running something it shouldn't (a *prompt injection*), the worst it could achieve is
-what the service account was already allowed to do — and every attempt is recorded.
+what both you and the service account were already allowed to do — and every attempt is recorded.
 
 On top of that server-side boundary, the assistant adds an **audit and UX layer**: every tool call is logged with its
 arguments and outcome, and a proposed write is paused for human approval rather than executed. The outcome is `ok`;
@@ -121,6 +122,25 @@ out. You govern its data access per workspace with [workspace membership](../acc
 Because access is scoped per workspace, the same assistant can have different reach in different workspaces — broad in a
 sandbox, narrow in production.
 
+### Whose access applies
+
+Each turn acts for the person who asked as well as for the account. A call goes through only when **both** of you may
+make it:
+
+- **Workspace.** Both of you must be members, and the lower of your two roles applies. An `owner` asking an assistant
+  that is a `reader` gets a reader's answers, and so does a `reader` asking a `writer` assistant.
+- **Scoped catalogs.** The lower of your two grant tiers applies to every table. Listings show only the schemas and
+  tables both of you can see, and a [semantic model](../metadata/semantic-layer.md) is hidden unless both of you can
+  see every table it reads. A [cached result](../querying/result-cache.md) is served only to a turn that could have
+  run the query.
+- **Compute and permissions.** It runs only on an agent both of you may use, and holds only the global permissions
+  both of your roles grant.
+- **Writes.** The assistant offers a write only when both of you could make it, and it still waits for your approval.
+
+So give the account the widest reach the assistant should ever have, and let each person's own access narrow it. A
+conversation can never show someone data they could not query themselves. Deactivating either account stops the
+assistant at its next call.
+
 Disabling the account in the admin UI is a kill switch: the assistant stops working everywhere, a restart will not
 re-enable it, and the panel says the account is unavailable rather than pointing you at workspace membership. Disabling
 is also the only option once the assistant has run anything — deleting a service account that has query history is
@@ -128,18 +148,20 @@ refused, to keep the audit trail intact. Where deletion *is* still possible, it 
 recreates the account — again with no access.
 
 When the assistant makes a call, the runtime mints a **short-lived personal access token** for the service account, uses
-it for that turn, and deletes it immediately after. Nothing long-lived or reconstructable is stored, and every query the
-assistant runs is attributed to the service account in the query history and audit trail, with `duckhaven-assistant`
-as its client. Each query also carries an `assistant.conversation`
-[tag](../querying/run-queries.md#find-an-earlier-run) with the conversation's id, so History can tell one conversation's
-queries from another's. A query answered from a metric definition is also tagged with the `semantic.model` and
-`semantic.metrics` it used.
+it for that turn, and deletes it immediately after. The token names the person whose turn it is. Nothing long-lived or
+reconstructable is stored, and every query the assistant runs is attributed to the service account in the query history
+and audit trail, with `duckhaven-assistant` as its client, and records who it ran for. History shows such a run as
+**Assistant** with **for** and your name beneath it, and your own view of History includes it. Each query also carries
+an `assistant.conversation` [tag](../querying/run-queries.md#find-an-earlier-run) with the conversation's id, so History
+can tell one conversation's queries from another's. A query answered from a metric definition is also tagged with the
+`semantic.model` and `semantic.metrics` it used.
 
 ## Write approval
 
-When the assistant proposes a write and its service account is permitted to write, the turn pauses and the UI shows the
-exact SQL for you to **approve or deny**. Only on approval does the statement run — and it still passes through the SQL
-guard and grant checks like any other query. This keeps a human in the loop for anything that changes data.
+When the assistant proposes a write and both you and its service account are permitted to write, the turn pauses and the
+UI shows the exact SQL for you to **approve or deny**. Only on approval does the statement run — and it still passes
+through the SQL guard and grant checks like any other query. This keeps a human in the loop for anything that changes
+data.
 
 ## Model configuration
 

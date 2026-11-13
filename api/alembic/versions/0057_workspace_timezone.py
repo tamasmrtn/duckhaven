@@ -1,7 +1,7 @@
 """Workspace time zone
 
-Revision ID: 0056
-Revises: 0055
+Revision ID: 0057
+Revises: 0056
 Create Date: 2026-11-13
 
 ``workspaces.timezone`` is the IANA zone a workspace's relative time windows
@@ -15,8 +15,8 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "0056"
-down_revision: str | None = "0055"
+revision: str = "0057"
+down_revision: str | None = "0056"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

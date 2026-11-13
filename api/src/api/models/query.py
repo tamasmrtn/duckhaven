@@ -18,9 +18,10 @@ from sqlalchemy import (
     func,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column, object_session, relationship
 
 from api.db.base import Base
+from api.services.delegation import bound as bound_delegation
 from api.services.sql_classify import classify_statement
 
 
@@ -40,6 +41,12 @@ class Query(Base):
     # can't answer that later: a static agent can be re-imaged onto another one.
     runtime_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
     user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    # The person `user_id` ran this for: set on the assistant's runs, null on
+    # everything else. Stamped by the `before_insert` listener at the bottom of
+    # this module, and indexed because History lists a person's runs by it.
+    on_behalf_of_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     sql: Mapped[str] = mapped_column(Text, nullable=False)
     # Coarse kind of statement, classified from `sql` at insert time by the
     # `before_insert` listener at the bottom of this module. Persisted rather
@@ -240,6 +247,23 @@ def _classify_statement_type(_mapper, _connection, target: Query) -> None:
     """
     if target.statement_type is None and target.sql:
         target.statement_type = classify_statement(target.sql)
+
+
+@event.listens_for(Query, "before_insert")
+def _stamp_on_behalf_of(_mapper, _connection, target: Query) -> None:
+    """Record who a delegated run was for, from the session that writes it.
+
+    A listener for the same reason as the one above: every way a run starts
+    writes a ``Query``, and only the request's session knows it is acting for
+    someone (``services.delegation``). Only a run of the delegation's own actor
+    is stamped.
+    """
+    if target.on_behalf_of_id is not None or target.user_id is None:
+        return
+    session = object_session(target)
+    delegation = bound_delegation(session) if session is not None else None
+    if delegation is not None and delegation.actor_id == target.user_id:
+        target.on_behalf_of_id = delegation.delegator_id
 
 
 @event.listens_for(SavedQuery, "before_insert")

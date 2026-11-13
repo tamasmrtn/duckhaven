@@ -8,8 +8,9 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from api.db.session import async_session_factory
 from api.models.agent import Agent
 from api.models.user import User
+from api.services import delegation
 from api.services.agent_access import ResolvedAgent, assert_agent_tier
-from api.services.auth import get_pat_user, get_session_user
+from api.services.auth import get_pat_credential, get_session_user
 from api.services.permissions import Permission
 from api.services.polaris import PolarisClient
 from api.services.rbac import has_permission
@@ -52,13 +53,26 @@ async def get_current_user(
     Bearer takes precedence when present. Both paths return the same ``User``
     type and feed the identical ``require_permission``/workspace enforcement — a
     service account is not a second authorization branch. ``is_active`` is
-    enforced for both (the PAT path checks it inside ``get_pat_user``).
+    enforced for both (the PAT path checks it inside ``get_pat_credential``).
+
+    A delegated PAT (the assistant's, minted for one person) returns its service
+    account and binds the person to the request's session, so every access check
+    on it holds for both (see ``services.delegation``).
     """
     if _bearer(authorization) is not None:
-        user = await get_pat_user(db, _bearer(authorization))
-        if user is None:
+        cred = await get_pat_credential(db, _bearer(authorization))
+        if cred is None:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
-        return user
+        # Set or cleared on every request, so no check on this session can see a
+        # delegation that is not this token's.
+        delegation.bind(
+            db,
+            None
+            if cred.on_behalf_of_id is None
+            else delegation.Delegation(actor_id=cred.user_id, delegator_id=cred.on_behalf_of_id),
+        )
+        return cred.user
+    delegation.bind(db, None)
     if session:
         user = await get_session_user(db, session)
         if user is not None and user.is_active:

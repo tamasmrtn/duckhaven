@@ -117,12 +117,14 @@ async def get_session_user(db: AsyncSession, token: str) -> User | None:
     return cred.user
 
 
-async def get_pat_user(db: AsyncSession, token: str) -> User | None:
-    """Resolve a presented PAT bearer token to its service-account user, or None.
+async def get_pat_credential(db: AsyncSession, token: str) -> Credential | None:
+    """Resolve a presented PAT bearer token to its credential, or None.
 
     Parallels ``get_session_user`` but matches ``kind == "pat"`` against the
     SHA-256 hash of the token, so PATs and session cookies never cross-resolve.
-    Rejects an expired token or one whose owning account is disabled.
+    Rejects an expired token or one whose owning account is disabled, and a
+    delegated token (``on_behalf_of_id``, the assistant's) whose person is
+    disabled: it acts for both, so either one being switched off stops it.
     """
     if not token.startswith(PAT_PREFIX):
         return None
@@ -131,7 +133,7 @@ async def get_pat_user(db: AsyncSession, token: str) -> User | None:
         select(Credential)
         # joinedload for the same reason as get_session_user: one credential, so the
         # extra SELECT is pure cost on the hottest path in the API.
-        .options(joinedload(Credential.user))
+        .options(joinedload(Credential.user), joinedload(Credential.on_behalf_of))
         .where(
             Credential.token_hash == hash_token(token),
             Credential.kind == "pat",
@@ -143,7 +145,20 @@ async def get_pat_user(db: AsyncSession, token: str) -> User | None:
         return None
     if cred.user is None or not cred.user.is_active:
         return None
-    return cred.user
+    if cred.on_behalf_of_id is not None and (
+        cred.on_behalf_of is None or not cred.on_behalf_of.is_active
+    ):
+        return None
+    return cred
+
+
+async def get_pat_user(db: AsyncSession, token: str) -> User | None:
+    """Resolve a presented PAT bearer token to its user, or None.
+
+    See :func:`get_pat_credential` for what is refused.
+    """
+    cred = await get_pat_credential(db, token)
+    return cred.user if cred is not None else None
 
 
 async def delete_session(db: AsyncSession, token: str) -> None:

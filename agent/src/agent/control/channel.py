@@ -93,6 +93,11 @@ _opening: dict[str, _OpeningSession] = {}
 # while they were already running on the executor.
 _abandoned: set[str] = set()
 
+# Batched queries that have not started, by query id. Filled as the frame is read,
+# so a CANCEL_QUERY read straight after it finds them; a cancel removes the query
+# and the batch then skips it.
+_batch_pending: set[str] = set()
+
 
 def _make_pool_getter(prefix: str) -> Callable[[], ThreadPoolExecutor]:
     """A lazily-created, cgroup-sized thread pool getter.
@@ -124,7 +129,13 @@ _session_open_executor = _make_pool_getter("dh-open")
 
 # Control-plane protocol features this agent implements, advertised so the API can
 # gate on them without a version number (see duckhaven_shared.schemas).
-_PROTOCOL_FEATURES = ["statement_ack", "on_demand_attach", "exact_hugeint", "use_schema"]
+_PROTOCOL_FEATURES = [
+    "statement_ack",
+    "on_demand_attach",
+    "exact_hugeint",
+    "use_schema",
+    "batch_dispatch",
+]
 
 
 def _spawn(coro) -> asyncio.Task:
@@ -1195,6 +1206,159 @@ async def _traced_exec_statement(ws, msg: Frame, results_dir: Path, admission: A
         await _handle_exec_statement(ws, msg.payload, results_dir, admission)
 
 
+def _batch_ids(payload: dict) -> list[str]:
+    return [str(q["query_id"]) for q in payload.get("queries") or [] if q.get("query_id")]
+
+
+async def _fail_pending(ws, query_ids: list[str], error: str) -> None:
+    """Fail every query of a batch that has neither run nor been cancelled."""
+    for query_id in query_ids:
+        if query_id in _batch_pending:
+            _batch_pending.discard(query_id)
+            await _send_failed(ws, query_id, error)
+
+
+async def _run_batched(
+    ws, state, query_id: str, sql: str, timeout_s: float, results_dir: Path, admission: Admission
+) -> bool:
+    """Run one query of a batch and report it. False when it poisoned the connection."""
+    try:
+        done = await _run_on_state(ws, state, query_id, sql, timeout_s, results_dir, admission)
+    except StatementAbandoned as exc:
+        trace.get_current_span().set_status(Status(StatusCode.ERROR, "statement abandoned"))
+        await _send_failed(ws, query_id, str(exc))
+        return False
+    except Exception as exc:  # noqa: BLE001 - a query's own error fails only that query
+        trace.get_current_span().set_status(Status(StatusCode.ERROR, str(exc)))
+        await _send_failed(ws, query_id, str(exc))
+        return True
+    finally:
+        _in_flight.pop(query_id, None)
+    await ws.send(Frame(type=FrameType.QUERY_DONE, payload=done).model_dump_json())
+    return True
+
+
+async def _handle_dispatch_batch(
+    ws, payload: dict, results_dir: Path, admission: Admission
+) -> None:
+    """Run a batch of reads one after another on one connection.
+
+    One reservation and one open and attach serve every query, where dispatching
+    them one by one pays for both each time. The reservation is a held session's
+    idle baseline, and each query grows from it and shrinks back, as a session's
+    statements do. The connection is registered as an internal session while the
+    batch runs, so admission sees it like any other held connection.
+
+    Each query reports its own QUERY_PROGRESS and QUERY_DONE and fails on its own,
+    except when one leaves its worker abandoned (``StatementAbandoned``): that
+    connection may never be touched again, so the queries after it fail with
+    ``batch_aborted`` for the control plane to send again.
+    """
+    query_ids = _batch_ids(payload)
+    session_id = f"batch:{payload['batch_id']}"
+    catalogs = payload.get("catalogs") or []
+    active_catalog = payload.get("active_catalog")
+    # From agent config, as for a one-shot query.
+    polaris = {
+        "endpoint": settings.polaris_base_url,
+        "client_id": settings.polaris_client_id,
+        "client_secret": settings.polaris_client_secret,
+    }
+    try:
+        try:
+            reservation = await admission.acquire(
+                _session_reservation_request(admission) if admission.is_auto else None
+            )
+        except QueueFull:
+            await _fail_pending(ws, query_ids, "queue full")
+            return
+        except QueuedTimeout:
+            await _fail_pending(ws, query_ids, "queued timeout")
+            return
+        await admission.apply_pending_resizes()
+
+        opened = False
+        try:
+            conn = await _open_connection(
+                admission,
+                catalogs=catalogs,
+                active_catalog=active_catalog,
+                polaris=polaris,
+                disabled_filesystems=settings.sandbox_disabled_filesystems,
+                lock_config=settings.sandbox_lock_configuration,
+                **_preload(payload),
+            )
+            opened = True
+        except Exception as exc:  # noqa: BLE001 - every query reports the open's error
+            await _fail_pending(ws, query_ids, str(exc))
+            return
+        finally:
+            if not opened:
+                admission.release(reservation)
+
+        now = time.monotonic()
+        workspace_catalogs = _workspace_catalogs(payload)
+        active = next((c for c in catalogs if c["slug"] == active_catalog), None) or (
+            catalogs[0] if catalogs else {}
+        )
+        state = session.SessionState(
+            session_id=session_id,
+            conn=conn,
+            reservation=reservation,
+            opened_at=now,
+            last_active_at=now,
+            catalogs=workspace_catalogs or frozenset(c["slug"] for c in catalogs),
+            schema=str(active.get("use_schema") or active.get("default_schema") or ""),
+            workspace_catalogs=workspace_catalogs,
+            polaris=polaris,
+            internal=True,
+        )
+        session.register(state)
+        try:
+            default_timeout_s = float(payload.get("timeout_s", 600.0))
+            for query in payload.get("queries") or []:
+                query_id = str(query.get("query_id"))
+                if query_id not in _batch_pending:
+                    continue  # cancelled before it started
+                _batch_pending.discard(query_id)
+                timeout_s = min(
+                    float(query.get("timeout_s") or default_timeout_s), settings.max_timeout_s
+                )
+                state.touch()
+                task = asyncio.create_task(
+                    _run_batched(
+                        ws, state, query_id, query["sql"], timeout_s, results_dir, admission
+                    )
+                )
+                # Its own task, so CANCEL_QUERY cancels this query and not the batch.
+                _in_flight[query_id] = task
+                await asyncio.wait({task})
+                if task.cancelled():
+                    continue
+                if not task.result():
+                    await session.discard_poisoned(session_id, admission)
+                    await _fail_pending(ws, query_ids, "batch_aborted")
+                    return
+        finally:
+            # A no-op when the connection was discarded above, or by a reconnect.
+            await session.remove(session_id, admission)
+    finally:
+        _batch_pending.difference_update(query_ids)
+
+
+async def _traced_dispatch_batch(ws, msg: Frame, results_dir: Path, admission: Admission) -> None:
+    with _tracer.start_as_current_span(
+        "handle_dispatch_batch",
+        context=extract_trace_context(msg.trace_context),
+        kind=trace.SpanKind.CONSUMER,
+        attributes={
+            "duckhaven.batch_id": msg.payload.get("batch_id", ""),
+            "duckhaven.batch_size": len(msg.payload.get("queries") or []),
+        },
+    ):
+        await _handle_dispatch_batch(ws, msg.payload, results_dir, admission)
+
+
 async def _handle_dispatch(ws, payload: dict, results_dir: Path, admission: Admission) -> None:
     query_id = payload["query_id"]
     sql = payload["sql"]
@@ -1600,8 +1764,14 @@ async def _consume(ws, results_dir: Path, admission: Admission) -> None:
             task = asyncio.create_task(_traced_dispatch(ws, msg, results_dir, admission))
             _in_flight[query_id] = task
 
+        elif msg.type == FrameType.DISPATCH_BATCH:
+            _batch_pending.update(_batch_ids(msg.payload))
+            _spawn(_traced_dispatch_batch(ws, msg, results_dir, admission))
+
         elif msg.type == FrameType.CANCEL_QUERY:
             query_id = msg.payload.get("query_id", "")
+            # A batched query that has not started is skipped when its turn comes.
+            _batch_pending.discard(query_id)
             task = _in_flight.pop(query_id, None)
             if task:
                 task.cancel()

@@ -545,6 +545,8 @@ export const semanticHandlers = [
       warnings: chosen
         .filter((m) => m.caveat)
         .map((m) => `${m.display_name ?? m.name}: ${m.caveat}`),
+      // The mock resolves no time windows, so it has no comparison to offer.
+      compare: null,
     });
   }),
 

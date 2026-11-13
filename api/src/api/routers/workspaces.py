@@ -64,6 +64,7 @@ async def _workspace_out(db: AsyncSession, workspace: Workspace) -> WorkspaceOut
         result_cache_enabled=workspace.result_cache_enabled,
         default_agent_id=workspace.default_agent_id,
         default_agent=default_agent,
+        timezone=workspace.timezone,
     )
 
 
@@ -181,8 +182,8 @@ async def update_workspace(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> WorkspaceOut:
-    """Rename a workspace, change its description, turn its result cache on or off, or
-    set its default compute.
+    """Rename a workspace, change its description, turn its result cache on or off,
+    set its default compute, or set the time zone its relative time windows use.
 
     A partial update: an omitted field is left alone, and an explicit ``null``
     description clears it. The slug is immutable -- it addresses the workspace."""
@@ -213,6 +214,7 @@ async def update_workspace(
         description=description,
         result_cache_enabled=body.result_cache_enabled,
         default_agent_id=default_agent_id,
+        timezone=body.timezone,
     )
     return await _workspace_out(db, workspace)
 

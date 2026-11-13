@@ -7,12 +7,12 @@ one produces a defensible-looking number.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
 
 from api.services.semantic.errors import SemanticError
-from api.services.semantic.timespec import TimeRange, resolve
+from api.services.semantic.timespec import TimeRange, compare_window, resolve, today_in
 
 # A Monday-adjacent mid-month, mid-quarter date, so week/month/quarter boundaries
 # are all visibly different from each other.
@@ -121,3 +121,157 @@ def test_quarter_arithmetic_crosses_a_year_boundary():
     assert resolve(
         TimeRange(kind="last_complete", grain="quarter", n=2), today=date(2026, 2, 10)
     ) == (date(2025, 7, 1), date(2026, 1, 1))
+
+
+# ── Comparison windows ───────────────────────────────────────────────────────
+
+
+def compared(compare, kind, *, today=TODAY, **kwargs):
+    return compare_window(TimeRange(kind=kind, **kwargs), compare, today=today)
+
+
+@pytest.mark.parametrize(
+    ("today", "kwargs", "expected"),
+    [
+        # A complete month compares with the whole month before, whatever its length.
+        (
+            date(2026, 11, 13),
+            {"kind": "last_complete", "grain": "month", "n": 1},
+            (date(2026, 9, 1), date(2026, 10, 1)),
+        ),
+        (
+            date(2026, 3, 13),
+            {"kind": "last_complete", "grain": "month", "n": 1},
+            (date(2026, 1, 1), date(2026, 2, 1)),
+        ),
+        (
+            date(2026, 1, 15),
+            {"kind": "last_complete", "grain": "quarter", "n": 1},
+            (date(2025, 7, 1), date(2025, 10, 1)),
+        ),
+        (
+            date(2026, 11, 13),
+            {"kind": "last_complete", "grain": "month", "n": 3},
+            (date(2026, 5, 1), date(2026, 8, 1)),
+        ),
+        # A to-date window compares the same elapsed span of the period before...
+        (
+            date(2026, 11, 13),
+            {"kind": "to_date", "grain": "month"},
+            (date(2026, 10, 1), date(2026, 10, 14)),
+        ),
+        (
+            date(2026, 5, 31),
+            {"kind": "to_date", "grain": "quarter"},
+            (date(2026, 1, 1), date(2026, 3, 3)),
+        ),
+        # ...but never runs past that period's end.
+        (
+            date(2026, 3, 31),
+            {"kind": "to_date", "grain": "month"},
+            (date(2026, 2, 1), date(2026, 3, 1)),
+        ),
+        # A trailing window compares with the same span just before it.
+        (
+            date(2026, 11, 13),
+            {"kind": "trailing", "grain": "day", "n": 30},
+            (date(2026, 9, 15), date(2026, 10, 15)),
+        ),
+        (
+            date(2026, 11, 13),
+            {"kind": "trailing", "grain": "month", "n": 3},
+            (date(2026, 6, 1), date(2026, 8, 14)),
+        ),
+        # An absolute window compares with the same number of days before it.
+        (
+            TODAY,
+            {"kind": "absolute", "start": date(2026, 1, 10), "end": date(2026, 1, 20)},
+            (date(2025, 12, 31), date(2026, 1, 10)),
+        ),
+    ],
+)
+def test_previous_period(today, kwargs, expected):
+    assert compared("previous_period", today=today, **kwargs) == expected
+
+
+@pytest.mark.parametrize(
+    ("today", "kwargs", "expected"),
+    [
+        (
+            date(2026, 11, 13),
+            {"kind": "last_complete", "grain": "month", "n": 1},
+            (date(2025, 10, 1), date(2025, 11, 1)),
+        ),
+        # 29 February has no twin a year earlier, so it compares with the 28th.
+        (
+            date(2028, 2, 29),
+            {"kind": "to_date", "grain": "year"},
+            (date(2027, 1, 1), date(2027, 3, 1)),
+        ),
+        (
+            TODAY,
+            {"kind": "absolute", "start": date(2028, 2, 29), "end": date(2028, 3, 1)},
+            (date(2027, 2, 28), date(2027, 3, 1)),
+        ),
+    ],
+)
+def test_previous_year(today, kwargs, expected):
+    assert compared("previous_year", today=today, **kwargs) == expected
+
+
+def test_a_comparison_never_overlaps_the_window_it_compares():
+    """Overlap would count the same rows on both sides of a delta."""
+    windows = (
+        [
+            {"kind": "last_complete", "grain": g, "n": n}
+            for g in ("week", "month", "quarter", "year")
+            for n in (1, 3)
+        ]
+        + [
+            {"kind": "trailing", "grain": "day", "n": 30},
+            {"kind": "trailing", "grain": "month", "n": 3},
+        ]
+        + [{"kind": "to_date", "grain": g} for g in ("week", "month", "quarter", "year")]
+    )
+    day = date(2024, 1, 1)
+    while day < date(2027, 1, 1):
+        for w in windows:
+            start, end = resolve(TimeRange(**w), today=day)
+            for compare in ("previous_period", "previous_year"):
+                if compare == "previous_year" and end - start > timedelta(days=366):
+                    continue  # refused; see the next test
+                prev_start, prev_end = compared(compare, today=day, **w)
+                assert prev_start < prev_end <= start, (day, w, compare)
+        day += timedelta(days=5)
+
+
+def test_a_window_longer_than_a_year_has_no_previous_year():
+    """The same dates a year earlier would overlap it."""
+    with pytest.raises(SemanticError, match="previous_period"):
+        compared("previous_year", "last_complete", grain="year", n=3)
+
+
+def test_an_unknown_comparison_lists_the_real_ones():
+    with pytest.raises(SemanticError) as exc:
+        compared("previous_decade", "last_complete", grain="month", n=1)
+    assert set(exc.value.alternatives) == {"previous_period", "previous_year"}
+
+
+# ── Today, in the workspace's time zone ──────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("now", "timezone", "expected"),
+    [
+        (datetime(2026, 11, 13, 12, tzinfo=UTC), "UTC", date(2026, 11, 13)),
+        (datetime(2026, 11, 13, 12, tzinfo=UTC), "Pacific/Kiritimati", date(2026, 11, 14)),
+        (datetime(2026, 11, 13, 12, tzinfo=UTC), "Pacific/Pago_Pago", date(2026, 11, 13)),
+        (datetime(2026, 11, 13, 1, tzinfo=UTC), "America/New_York", date(2026, 11, 12)),
+        # Either side of the end of British Summer Time (01:00 UTC, 25 October):
+        # 23:30 UTC is past midnight in London before it, and not after.
+        (datetime(2026, 10, 24, 23, 30, tzinfo=UTC), "Europe/London", date(2026, 10, 25)),
+        (datetime(2026, 10, 25, 23, 30, tzinfo=UTC), "Europe/London", date(2026, 10, 25)),
+    ],
+)
+def test_today_is_the_date_in_the_workspace_time_zone(now, timezone, expected):
+    assert today_in(timezone, now=now) == expected

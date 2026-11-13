@@ -21,6 +21,10 @@ dependencies = [
     # TIMESTAMP WITH TIME ZONE cell (decode_parquet_page); it isn't pulled in
     # transitively, so bundle it explicitly. See issue #162.
     "pytz>=2026.4",
+    # The IANA time zone database, for a workspace's time zone. zoneinfo reads it
+    # from the host, and the runtime image ships none, so without this package
+    # every zone but UTC is unknown there.
+    "tzdata>=2026.1",
     # Re-encodes a result's Parquet as an Arrow IPC stream for
     # GET /queries/{id}/result?format=arrow (decoding only; no SQL runs in the API).
     "pyarrow>=26.0.0",

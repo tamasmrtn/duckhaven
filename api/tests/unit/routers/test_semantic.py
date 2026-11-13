@@ -8,6 +8,8 @@ minimum useful governance is exactly the power to stop that happening by acciden
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import pytest
 from httpx import AsyncClient
 
@@ -463,6 +465,82 @@ async def test_compile_reports_the_definitions_it_used(auth_client, ws):
 
     assert any(d["kind"] == "metric" and d["name"] == "revenue" for d in body["definitions_used"])
     assert any("test orders" in w for w in body["warnings"])
+
+
+async def _compile_to_date(client, ws):
+    body = (
+        await client.post(
+            f"/workspaces/{ws}/semantic/compile",
+            json={
+                "model": "sales",
+                "metrics": ["revenue"],
+                "time_range": {"kind": "to_date", "grain": "day"},
+            },
+        )
+    ).json()
+    (window,) = [d for d in body["definitions_used"] if d["kind"] == "time_range"]
+    return window["start"]
+
+
+async def test_windows_resolve_in_the_workspace_time_zone(auth_client, ws, monkeypatch):
+    """At noon UTC it is already tomorrow in Kiritimati and still today in Pago Pago."""
+    from api.services.semantic import timespec
+
+    monkeypatch.setattr(timespec, "_utcnow", lambda: datetime(2026, 11, 13, 12, tzinfo=UTC))
+    await _published(auth_client, ws)
+
+    await auth_client.patch(f"/workspaces/{ws}", json={"timezone": "Pacific/Kiritimati"})
+    assert await _compile_to_date(auth_client, ws) == "2026-11-14"
+    await auth_client.patch(f"/workspaces/{ws}", json={"timezone": "Pacific/Pago_Pago"})
+    assert await _compile_to_date(auth_client, ws) == "2026-11-13"
+
+
+async def test_compile_returns_the_comparison_query(auth_client, ws):
+    await _published(auth_client, ws)
+
+    body = (
+        await auth_client.post(
+            f"/workspaces/{ws}/semantic/compile",
+            json={
+                "model": "sales",
+                "metrics": ["revenue"],
+                "time_range": {"kind": "last_complete", "grain": "month", "n": 1},
+                "compare": "previous_period",
+            },
+        )
+    ).json()
+
+    assert body["compare"]["kind"] == "previous_period"
+    assert body["compare"]["start"] in body["compare"]["sql"]
+    assert body["compare"]["sql"] != body["sql"]
+
+
+async def test_compile_without_a_comparison_returns_none(auth_client, ws):
+    await _published(auth_client, ws)
+
+    body = (
+        await auth_client.post(
+            f"/workspaces/{ws}/semantic/compile", json={"model": "sales", "metrics": ["revenue"]}
+        )
+    ).json()
+
+    assert body["compare"] is None
+
+
+async def test_an_unknown_comparison_is_rejected(auth_client, ws):
+    await _published(auth_client, ws)
+
+    resp = await auth_client.post(
+        f"/workspaces/{ws}/semantic/compile",
+        json={
+            "model": "sales",
+            "metrics": ["revenue"],
+            "time_range": {"kind": "last_complete", "grain": "month", "n": 1},
+            "compare": "previous_decade",
+        },
+    )
+
+    assert resp.status_code == 422
 
 
 async def test_compile_reports_how_each_metric_is_shown(auth_client, ws):

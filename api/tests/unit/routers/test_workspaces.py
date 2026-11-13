@@ -541,3 +541,29 @@ async def test_resaving_an_unchanged_default_is_not_revalidated(
     again = await auth_client.patch("/workspaces/dc-lost", json={"default_agent_id": str(agent.id)})
     assert again.status_code == 200, again.text
     assert again.json()["default_agent_id"] == str(agent.id)
+
+
+async def test_a_new_workspace_keeps_time_in_utc(auth_client: AsyncClient):
+    await auth_client.post("/workspaces", json={"slug": "tz-new", "name": "Ws"})
+
+    assert (await auth_client.get("/workspaces/tz-new")).json()["timezone"] == "UTC"
+
+
+async def test_owner_sets_the_time_zone(auth_client: AsyncClient):
+    await auth_client.post("/workspaces", json={"slug": "tz-set", "name": "Ws"})
+
+    resp = await auth_client.patch("/workspaces/tz-set", json={"timezone": "Europe/London"})
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["timezone"] == "Europe/London"
+    assert (await auth_client.get("/workspaces/tz-set")).json()["timezone"] == "Europe/London"
+
+
+@pytest.mark.parametrize("timezone", ["Mars/Olympus_Mons", "", "europe/london", "+01:00", None])
+async def test_a_time_zone_that_is_not_an_iana_name_is_refused(auth_client: AsyncClient, timezone):
+    await auth_client.post("/workspaces", json={"slug": "tz-bad", "name": "Ws"})
+
+    resp = await auth_client.patch("/workspaces/tz-bad", json={"timezone": timezone})
+
+    assert resp.status_code == 422, resp.text
+    assert (await auth_client.get("/workspaces/tz-bad")).json()["timezone"] == "UTC"

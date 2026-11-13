@@ -129,6 +129,12 @@ Each message has an entry in [Troubleshoot sign-in and access](../access/trouble
 | `published_model` | 403 | `'⟨model⟩' is published; only a workspace owner can change it.` A published or deprecated model is changed by a workspace `owner`; ask one, or work in a draft model. |
 | `dataset_in_use`, `dimension_in_use` | 409 | Other definitions depend on it; the message names them. Remove those first. |
 
+## Dashboards
+
+| Code | Status | Meaning and what to do |
+|---|---|---|
+| `unsupported_spec_version` | 422 | The [dashboard file](dashboard-spec.md#versions) is for a format version this server does not read. The message says whether to upgrade DuckHaven or the file. |
+
 ## Administration
 
 | Code | Status | Meaning and what to do |

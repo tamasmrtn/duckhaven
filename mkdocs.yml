@@ -243,6 +243,7 @@ nav:
   - Reference:
       - Configuration: reference/configuration.md
       - SQL support: reference/sql-support.md
+      - Dashboard files: reference/dashboard-spec.md
       - Permissions: reference/permissions.md
       - Agent configuration: reference/agent-configuration.md
       - CLI reference: reference/cli.md

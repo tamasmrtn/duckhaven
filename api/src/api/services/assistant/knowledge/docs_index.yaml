@@ -349,6 +349,10 @@ pages:
   section: Reference
   summary: DuckHaven runs DuckDB SQL, checked against an allowlist before an agent runs it; statements
     such as ATTACH, INSTALL and SET are rejected.
+- path: reference/dashboard-spec.md
+  title: Dashboard files
+  section: Reference
+  summary: A dashboard is one YAML file, <name>.dashboard.yml, that lists parameters and rows of widgets.
 - path: reference/permissions.md
   title: Permissions
   section: Reference

@@ -28,6 +28,7 @@ from api.routers import (
     assistant,
     auth,
     catalogs,
+    dashboards,
     grants,
     health,
     internal,
@@ -336,6 +337,7 @@ api_app.include_router(metadata.router, tags=["catalog"])
 api_app.include_router(grants.router, tags=["grants"])
 api_app.include_router(lineage.router, tags=["lineage"])
 api_app.include_router(semantic.router, tags=["semantic"])
+api_app.include_router(dashboards.router, tags=["dashboards"])
 api_app.include_router(queries.router, tags=["queries"])
 api_app.include_router(worksheets.router, tags=["worksheets"])
 api_app.include_router(sql_sessions.router, tags=["sql-sessions"])

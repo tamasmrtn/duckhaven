@@ -2,7 +2,12 @@ import { http, HttpResponse } from "msw";
 import { SEMANTIC_MODELS, reportFor, summarize } from "../fixtures/semantic";
 import { httpError, validationError } from "../lib/errors";
 import { nextId } from "../lib/seed";
-import type { SemanticHit, SemanticModel } from "@/types/semantic";
+import type {
+  MetricFormat,
+  Polarity,
+  SemanticHit,
+  SemanticModel,
+} from "@/types/semantic";
 
 function find(slug: string): SemanticModel | undefined {
   return SEMANTIC_MODELS.find((m) => m.slug === slug);
@@ -363,6 +368,10 @@ export const semanticHandlers = [
         filter,
         time_dimension: (body.time_dimension as unknown as string) ?? null,
         caveat: (body.caveat as unknown as string) ?? null,
+        format: (body.format as unknown as MetricFormat) ?? null,
+        unit: (body.unit as unknown as string) ?? null,
+        currency: (body.currency as unknown as string) ?? null,
+        polarity: (body.polarity as unknown as Polarity) ?? null,
         // Mirrors the API: a new metric is a draft until somebody publishes it.
         status: "draft" as const,
         expression: filter ? `${call} FILTER (WHERE ${filter})` : call,
@@ -528,6 +537,10 @@ export const semanticHandlers = [
         description: m.description,
         expression: m.expression,
         caveat: m.caveat,
+        format: m.format,
+        unit: m.unit,
+        currency: m.currency,
+        polarity: m.polarity,
       })),
       warnings: chosen
         .filter((m) => m.caveat)

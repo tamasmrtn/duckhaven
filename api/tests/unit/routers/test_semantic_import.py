@@ -150,6 +150,24 @@ async def test_imported_definitions_read_back_intact(auth_client, ws):
     assert metric["synonyms"] == ["turnover"]
 
 
+async def test_imported_display_settings_read_back(auth_client, ws):
+    document = DOCUMENT.replace(
+        "        synonyms: [turnover]\n",
+        "        synonyms: [turnover]\n        format: currency\n        currency: EUR\n"
+        "        polarity: up_good\n",
+    )
+    await _import(auth_client, ws, document)
+
+    body = (await auth_client.get(f"/workspaces/{ws}/semantic/models/sales")).json()
+
+    metric = body["metrics"][0]
+    assert (metric["format"], metric["currency"], metric["polarity"]) == (
+        "currency",
+        "EUR",
+        "up_good",
+    )
+
+
 async def test_an_import_arrives_as_a_draft(auth_client, ws):
     """An import is a pipeline publishing, not a person deciding."""
     await _import(auth_client, ws)

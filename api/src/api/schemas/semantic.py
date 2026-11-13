@@ -23,7 +23,12 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from api.services.semantic.compile import FILTER_OPS
-from api.services.semantic.model import AGGREGATIONS, TIME_GRAINS
+from api.services.semantic.model import (
+    AGGREGATIONS,
+    MAX_UNIT_LENGTH,
+    TIME_GRAINS,
+    presentation_problem,
+)
 from api.services.semantic.timespec import GRAINS, WINDOW_KINDS
 
 ModelStatus = Literal["draft", "published", "deprecated"]
@@ -38,6 +43,16 @@ FilterOp = Literal[
 ]
 WindowKind = Literal["last_complete", "trailing", "to_date", "absolute"]
 CompareKind = Literal["previous_period", "previous_year"]
+MetricFormat = Literal["number", "percent", "currency", "duration", "bytes"]
+Polarity = Literal["up_good", "down_good", "neutral"]
+
+_FORMAT_HELP = (
+    "How the value is shown. Showing never changes the value: a percent is a ratio "
+    "(0.25 shows as 25%), a duration is in seconds and bytes are bytes."
+)
+_UNIT_HELP = "What a plain number counts, such as 'orders'. Only with format number or unset."
+_CURRENCY_HELP = "The ISO 4217 code of a currency metric, such as EUR. Required with currency."
+_POLARITY_HELP = "Which direction of change is good news. Unset is neutral."
 
 # Names become SQL aliases and table aliases, so they have to be identifiers.
 # Enforced at the edge rather than escaped later: a definition whose name needs
@@ -132,6 +147,10 @@ class MetricIn(BaseModel):
         ),
     )
     caveat: str | None = None
+    format: MetricFormat | None = Field(default=None, description=_FORMAT_HELP)
+    unit: str | None = Field(default=None, max_length=MAX_UNIT_LENGTH, description=_UNIT_HELP)
+    currency: str | None = Field(default=None, description=_CURRENCY_HELP)
+    polarity: Polarity | None = Field(default=None, description=_POLARITY_HELP)
 
     @model_validator(mode="after")
     def _needs_an_expression(self) -> MetricIn:
@@ -139,6 +158,13 @@ class MetricIn(BaseModel):
             raise ValueError(
                 f"{self.agg} needs an expression to aggregate; only count may omit one."
             )
+        return self
+
+    @model_validator(mode="after")
+    def _sound_presentation(self) -> MetricIn:
+        problem = presentation_problem(self.format, self.unit, self.currency, self.polarity)
+        if problem:
+            raise ValueError(problem)
         return self
 
     @field_validator("agg")
@@ -159,6 +185,12 @@ class MetricUpdate(BaseModel):
     time_dimension: str | None = None
     caveat: str | None = None
     status: MetricStatus | None = None
+    # Unlike the fields above, an explicit null clears these: moving a metric off
+    # currency has to be able to drop its currency.
+    format: MetricFormat | None = Field(default=None, description=_FORMAT_HELP)
+    unit: str | None = Field(default=None, max_length=MAX_UNIT_LENGTH, description=_UNIT_HELP)
+    currency: str | None = Field(default=None, description=_CURRENCY_HELP)
+    polarity: Polarity | None = Field(default=None, description=_POLARITY_HELP)
 
 
 class RelationshipIn(BaseModel):
@@ -231,6 +263,10 @@ class MetricOut(BaseModel):
     filter: str | None
     time_dimension: str | None = None
     caveat: str | None
+    format: MetricFormat | None = None
+    unit: str | None = None
+    currency: str | None = None
+    polarity: Polarity | None = None
     status: MetricStatus
     # A readable rendering of the calculation, so "how is this computed?" has an
     # answer that does not require reading two other fields and knowing SQL.

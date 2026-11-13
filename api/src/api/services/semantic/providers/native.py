@@ -50,6 +50,9 @@ rest of the file still lands.
             measured_on: order_date
             synonyms: [turnover, gmv]
             caveat: Excludes internal test orders.
+            format: currency
+            currency: USD
+            polarity: up_good
 """
 
 from __future__ import annotations
@@ -67,7 +70,11 @@ from api.services.semantic.ingest import (
     CanonicalRelationship,
 )
 from api.services.semantic.model import AGGREGATIONS, TIME_GRAINS
-from api.services.semantic.providers import ProviderModels, SemanticDocumentError
+from api.services.semantic.providers import (
+    ProviderModels,
+    SemanticDocumentError,
+    read_presentation,
+)
 
 CARDINALITIES = ("many_to_one", "one_to_one")
 
@@ -243,6 +250,7 @@ async def models_from_yaml(payload, *, resolve: Resolver) -> ProviderModels:
                     description=entry.get("description"),
                     synonyms=_strings(entry.get("synonyms")),
                     caveat=entry.get("caveat"),
+                    **read_presentation(entry, f"{slug}.{name}", out),
                 )
             )
 

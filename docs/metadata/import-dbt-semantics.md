@@ -70,6 +70,7 @@ a project *is* the subject area, and dbt expresses no finer grouping.
 | Measure `agg_time_dimension` | Metric's bound time axis | The field that decides whether "last month" is right |
 | Metric `filter` | Metric filter | dbt's Jinja is translated to SQL — see below |
 | Metric `label` / `description` | Display name / description | |
+| Metric `meta.duckhaven` | Caveat and display settings | See below |
 
 !!! note "A name two semantic models both use gets qualified"
     dbt scopes dimension names per semantic model; DuckHaven scopes them per
@@ -77,6 +78,31 @@ a project *is* the subject area, and dbt expresses no finer grouping.
     `customers` declare `status`, they arrive as `orders_status` and
     `customers_status`. A name only one semantic model declares keeps its bare
     form, and metrics keep pointing at the right axis either way.
+
+### Settings dbt has no field for
+
+dbt has no field for a metric's caveat or for how its number is shown, so set them
+under `meta.duckhaven` on the metric. The keys are the ones a DuckHaven metric
+takes, described in [Define metrics](define-metrics.md#say-how-the-number-is-shown):
+
+```yaml
+metrics:
+  - name: revenue
+    type: simple
+    type_params:
+      measure: order_total
+    config:
+      meta:
+        duckhaven:
+          caveat: Excludes refunds.
+          format: currency
+          currency: USD
+          polarity: up_good
+```
+
+Both `config.meta` and a `meta` beside `config` are read. Display settings that do
+not fit together are dropped together and reported as `invalid_presentation`; the
+metric still imports, as a plain number.
 
 ## What is skipped, and why
 
@@ -88,6 +114,7 @@ than approximated. Each entry comes back in `skipped` with a reason.
 | `unsupported_metric_type_*` | Ratio, derived, cumulative and conversion metrics. V1 metrics do not compose out of other metrics, so there is nothing honest to map them onto. |
 | `unsupported_aggregation_*` | `median`, `percentile` and `sum_boolean` have no V1 equivalent. |
 | `untranslatable_filter` | Part of the metric's filter could not be resolved to a column. |
+| `invalid_presentation` | The metric's `meta.duckhaven` display settings do not fit together. Only the settings are dropped; the metric imports. |
 | `no_primary_entity` | A foreign entity nobody declares as a key — there is no provable unique side, so the join could multiply rows. |
 | `unknown_catalog` | The relation lives in a catalog this workspace does not attach. |
 

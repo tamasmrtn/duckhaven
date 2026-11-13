@@ -49,6 +49,7 @@ revenue
   filter:       status <> 'test'
   measured on:  order_date
   caveat:       Excludes internal test orders.
+  shown as:     currency, USD; up is good
 ```
 
 From that, DuckHaven generates the SQL itself. The assistant chooses *which*

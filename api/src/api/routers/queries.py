@@ -912,7 +912,8 @@ async def list_workspace_queries(
     The cross-principal filters stay admin-only: ``all_workspaces``, and a
     ``user_id`` other than the caller's own. Filtering to *yourself* is not
     cross-principal, so it is open to anyone — it is how the default History
-    view scopes itself.
+    view scopes itself. ``user_id`` matches the runs the assistant made for that
+    person as well as their own.
     """
     is_admin = await has_permission(db, user, Permission.QUERIES_ADMIN)
 
@@ -950,11 +951,14 @@ async def list_workspace_queries(
     # value the database computed, not one recomputed in Python.
     sort_value = query_history.duration_expr() if sort == "duration" else Query.started_at
 
-    # Left-join the user so History can show who ran each query (the name is
-    # attached to each Query row below for QueryOut serialization).
+    # Left-join the user so History can show who ran each query, and who it was
+    # run for (the names are attached to each Query row below for QueryOut
+    # serialization).
+    delegator = aliased(User)
     stmt = (
-        select(Query, User.name, sort_value)
+        select(Query, User.name, delegator.name, sort_value)
         .outerjoin(User, Query.user_id == User.id)
+        .outerjoin(delegator, Query.on_behalf_of_id == delegator.id)
         .where(
             or_(
                 Query.origin.is_(None),
@@ -982,7 +986,8 @@ async def list_workspace_queries(
         # above), so this reveals nothing a member could not already see.
         stmt = stmt.where(Query.agent_id == agent_id)
     if user_id is not None:
-        stmt = stmt.where(Query.user_id == user_id)
+        # A person's own runs include the ones the assistant made for them.
+        stmt = stmt.where(or_(Query.user_id == user_id, Query.on_behalf_of_id == user_id))
     if since is not None:
         stmt = stmt.where(Query.started_at >= since)
     if until is not None:
@@ -1025,11 +1030,12 @@ async def list_workspace_queries(
     rows = rows[:limit]
 
     queries: list[Query] = []
-    for query, user_name, _value in rows:
+    for query, user_name, on_behalf_of_name, _value in rows:
         query.user_name = user_name
+        query.on_behalf_of_name = on_behalf_of_name
         queries.append(query)
     next_cursor = (
-        query_history.encode_cursor(rows[-1][0].id, rows[-1][2]) if has_more and rows else None
+        query_history.encode_cursor(rows[-1][0].id, rows[-1][3]) if has_more and rows else None
     )
     return Page[QueryOut](items=queries, cursor=next_cursor, has_more=has_more)
 

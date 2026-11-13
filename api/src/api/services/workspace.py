@@ -166,6 +166,7 @@ async def update_workspace(
     description: str | None | _Unset = UNSET,
     result_cache_enabled: bool | None = None,
     default_agent_id: uuid.UUID | None | _Unset = UNSET,
+    timezone: str | None = None,
 ) -> Workspace:
     """Rename and/or re-describe a workspace. Slug is not renameable here — it
     is the routable `/$ws/...` segment, and rescoping it risks breaking
@@ -182,6 +183,8 @@ async def update_workspace(
         workspace.result_cache_enabled = result_cache_enabled
     if default_agent_id is not UNSET:
         workspace.default_agent_id = default_agent_id
+    if timezone is not None:
+        workspace.timezone = timezone
     await db.commit()
     await db.refresh(workspace)
     return workspace

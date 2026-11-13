@@ -1,7 +1,13 @@
+from __future__ import annotations
+
 import uuid
 from datetime import datetime
+from zoneinfo import available_timezones
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+# Read once: the set is the IANA database, which changes only with a new tzdata.
+_ZONES = frozenset(available_timezones())
 
 
 class WorkspaceCreate(BaseModel):
@@ -42,6 +48,8 @@ class WorkspaceOut(BaseModel):
     # picks a connected agent (or starts one when elastic compute is on).
     default_agent_id: uuid.UUID | None = None
     default_agent: DefaultAgentOut | None = None
+    # The IANA zone relative time windows ("month to date") resolve in.
+    timezone: str = "UTC"
 
 
 class WorkspaceUpdate(BaseModel):
@@ -53,6 +61,22 @@ class WorkspaceUpdate(BaseModel):
     # omitted field leaves it alone. Setting it needs ``use`` on an open agent and
     # ``operate`` on a restricted one.
     default_agent_id: uuid.UUID | None = None
+    # Owner only. An IANA name such as Europe/London; there is no null, since
+    # every workspace keeps time somewhere.
+    timezone: str | None = Field(default=None, description="An IANA time zone name.")
+
+    @field_validator("timezone")
+    @classmethod
+    def _known_zone(cls, value: str | None) -> str | None:
+        if value is not None and value not in _ZONES:
+            raise ValueError(f"{value!r} is not an IANA time zone name, such as Europe/London.")
+        return value
+
+    @model_validator(mode="after")
+    def _zone_is_never_null(self) -> WorkspaceUpdate:
+        if "timezone" in self.model_fields_set and self.timezone is None:
+            raise ValueError("timezone cannot be null; send an IANA name such as UTC.")
+        return self
 
 
 class MemberOut(BaseModel):

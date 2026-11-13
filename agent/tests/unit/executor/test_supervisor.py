@@ -8,6 +8,8 @@ run_query_sync explicitly, not rely on the worker thread seeing it itself.
 
 from __future__ import annotations
 
+import asyncio
+import threading
 import time
 from pathlib import Path
 from typing import Any
@@ -134,3 +136,71 @@ async def test_a_cleanly_interrupted_statement_is_a_plain_timeout_not_abandoned(
             threads=1,
         )
     assert not isinstance(exc_info.value, StatementAbandoned)
+
+
+class _InterruptibleConn:
+    """Stands in for a connection whose statement stops a moment after interrupt()."""
+
+    def __init__(self) -> None:
+        self.interrupted = threading.Event()
+
+    def interrupt(self) -> None:
+        self.interrupted.set()
+
+
+async def test_a_cancelled_statement_returns_only_once_its_worker_has_stopped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """The caller runs its next statement on the same connection as soon as the
+    cancel returns. A worker still unwinding then fails it ("closed pending query
+    result"), so the cancel waits for the worker first."""
+    conn = _InterruptibleConn()
+    stopped = threading.Event()
+
+    def unwinding_run_statement_sync(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        conn.interrupted.wait(5)
+        time.sleep(0.2)  # DuckDB unwinding the interrupted statement
+        stopped.set()
+        raise duckdb.InterruptException("interrupted")
+
+    monkeypatch.setattr(supervisor_module, "run_statement_sync", unwinding_run_statement_sync)
+    task = asyncio.create_task(
+        supervisor_module.run_statement(
+            "SELECT 1", tmp_path / "out.parquet", 30, conn=conn, memory_bytes=1, threads=1
+        )
+    )
+    await asyncio.sleep(0.05)
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert stopped.is_set()
+
+
+async def test_a_cancelled_statement_whose_worker_will_not_stop_is_abandoned(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """A planner that ignores the interrupt holds the connection for good."""
+    monkeypatch.setattr(supervisor_module, "_UNWIND_GRACE_S", 0.1)
+
+    def stuck_run_statement_sync(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        time.sleep(1)
+        return {"row_count": 0, "duration_ms": 1, "wrote_result": False}
+
+    monkeypatch.setattr(supervisor_module, "run_statement_sync", stuck_run_statement_sync)
+    task = asyncio.create_task(
+        supervisor_module.run_statement(
+            "SELECT 1",
+            tmp_path / "out.parquet",
+            30,
+            conn=_InterruptibleConn(),
+            memory_bytes=1,
+            threads=1,
+        )
+    )
+    await asyncio.sleep(0.05)
+
+    task.cancel()
+    with pytest.raises(StatementAbandoned):
+        await task

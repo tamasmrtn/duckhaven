@@ -9,8 +9,8 @@ metric from the [semantic layer](../metadata/semantic-layer.md) or runs its own 
 the file format, version 1.
 
 !!! note "What exists today"
-    The server validates this format and publishes its JSON Schema at `GET /api/dashboard-schema`. Storing,
-    publishing and viewing dashboards are not available yet; they arrive in later releases.
+    The server validates this format and publishes its JSON Schema at `GET /api/dashboard-schema`. It does not
+    store, publish or show dashboards.
 
 ## An example
 

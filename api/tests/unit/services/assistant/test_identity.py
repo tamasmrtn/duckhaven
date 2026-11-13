@@ -10,7 +10,7 @@ from api.services.assistant.identity import (
     ephemeral_pat,
     resolve_service_account,
 )
-from api.services.auth import get_pat_user
+from api.services.auth import get_pat_credential, get_pat_user
 
 
 @pytest_asyncio.fixture
@@ -60,14 +60,37 @@ async def test_resolve_errors_when_the_principal_is_not_a_service_account(
         await resolve_service_account(db_session)
 
 
-async def test_ephemeral_pat_minted_usable_then_deleted(factory, service_account):
-    async with ephemeral_pat(factory, service_account.id) as token:
+@pytest_asyncio.fixture
+async def person(db_session):
+    human = User(email="human@p.local", name="Human", role="user")
+    db_session.add(human)
+    await db_session.commit()
+    await db_session.refresh(human)
+    return human
+
+
+async def test_ephemeral_pat_minted_usable_then_deleted(factory, service_account, person):
+    async with ephemeral_pat(factory, service_account.id, person.id) as token:
         assert token.startswith("dh_pat_")
         async with factory() as db:
-            user = await get_pat_user(db, token)
-            assert user is not None
-            assert user.id == service_account.id
+            cred = await get_pat_credential(db, token)
+            assert cred is not None
+            assert cred.user_id == service_account.id
+            # The token acts for the person whose turn it is.
+            assert cred.on_behalf_of_id == person.id
     # After the context exits, the credential is gone.
     async with factory() as db:
         count = (await db.execute(select(func.count()).select_from(Credential))).scalar_one()
         assert count == 0
+
+
+async def test_ephemeral_pat_stops_working_when_the_person_is_disabled(
+    factory, db_session, service_account, person
+):
+    """Either principal being switched off stops the token: it acts for both."""
+    async with ephemeral_pat(factory, service_account.id, person.id) as token:
+        person.is_active = False
+        await db_session.commit()
+        async with factory() as db:
+            assert await get_pat_credential(db, token) is None
+            assert await get_pat_user(db, token) is None

@@ -61,6 +61,7 @@ async def _run_stream(factory, ws, conv, prompt):
         workspace_slug=ws.slug,
         prompt=prompt,
         catalog=None,
+        user_id=conv.user_id,
     ):
         pass
 

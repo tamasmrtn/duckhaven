@@ -287,6 +287,7 @@ async def send_message(
         workspace_slug=ws,
         prompt=body.prompt,
         catalog=body.catalog,
+        user_id=user.id,
         editor_sql=body.editor_sql,
         selection_sql=body.selection_sql,
     )
@@ -336,5 +337,6 @@ async def approve_write(
         approved=body.approved,
         reason=body.reason,
         catalog=body.catalog,
+        user_id=user.id,
     )
     return StreamingResponse(stream, media_type="text/event-stream", headers=_SSE_HEADERS)

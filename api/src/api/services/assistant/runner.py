@@ -190,16 +190,24 @@ async def _turn_context(
     workspace_id: uuid.UUID,
     workspace_slug: str,
     catalog: str | None,
+    user_id: uuid.UUID,
     editor_sql: str | None = None,
     selection_sql: str | None = None,
 ) -> AsyncIterator[AssistantDeps]:
-    """Resolve identity, mint an ephemeral PAT, and build the governed gateway."""
+    """Resolve identity, mint an ephemeral PAT, and build the governed gateway.
+
+    The PAT acts for ``user_id``, the person whose turn it is, so the turn can do
+    only what both they and the service account may do. Writes are offered on
+    the same terms.
+    """
     async with session_factory() as db:
         service_account = await resolve_service_account(db)
-        can_write = await service_account_can_write(db, workspace_id, service_account.id)
+        can_write = await service_account_can_write(
+            db, workspace_id, service_account.id
+        ) and await service_account_can_write(db, workspace_id, user_id)
         service_account_id = service_account.id
 
-    async with ephemeral_pat(session_factory, service_account_id) as token:
+    async with ephemeral_pat(session_factory, service_account_id, user_id) as token:
         # Import here to avoid a circular import at module load (main imports the
         # assistant router, which imports this module).
         from api.main import api_app
@@ -221,6 +229,7 @@ async def _turn_context(
                 row_cap=settings.assistant_result_row_cap,
                 byte_cap=settings.assistant_result_byte_cap,
                 service_account_id=str(service_account_id),
+                on_behalf_of_id=str(user_id),
                 # Every query the conversation runs, findable from History.
                 tags={"assistant.conversation": str(conversation_id)},
             )
@@ -320,6 +329,7 @@ async def _stream(
     catalog: str | None,
     prompt: str | None,
     deferred_results: DeferredToolResults | None,
+    user_id: uuid.UUID,
     editor_sql: str | None = None,
     selection_sql: str | None = None,
 ) -> AsyncIterator[str]:
@@ -331,6 +341,7 @@ async def _stream(
             workspace_id,
             workspace_slug,
             catalog,
+            user_id,
             editor_sql,
             selection_sql,
         ) as deps:
@@ -451,10 +462,11 @@ def stream_turn(
     workspace_slug: str,
     prompt: str,
     catalog: str | None,
+    user_id: uuid.UUID,
     editor_sql: str | None = None,
     selection_sql: str | None = None,
 ) -> AsyncIterator[str]:
-    """Stream a new user turn as SSE frames."""
+    """Stream a new user turn as SSE frames, acting for ``user_id``."""
     return _stream(
         session_factory,
         conversation_id=conversation_id,
@@ -463,6 +475,7 @@ def stream_turn(
         catalog=catalog,
         prompt=prompt,
         deferred_results=None,
+        user_id=user_id,
         editor_sql=editor_sql,
         selection_sql=selection_sql,
     )
@@ -478,8 +491,9 @@ def resume_turn(
     approved: bool,
     reason: str | None,
     catalog: str | None,
+    user_id: uuid.UUID,
 ) -> AsyncIterator[str]:
-    """Resume a turn after the user approves or denies a pending write."""
+    """Resume a turn after the user approves or denies a pending write, acting for ``user_id``."""
     decision = (
         ToolApproved() if approved else ToolDenied(reason or "The user did not approve this write.")
     )
@@ -492,4 +506,5 @@ def resume_turn(
         catalog=catalog,
         prompt=None,
         deferred_results=results,
+        user_id=user_id,
     )

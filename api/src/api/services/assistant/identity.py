@@ -1,10 +1,11 @@
 """Identity for the assistant: the bound service account and its ephemeral PAT.
 
-The assistant acts as an ordinary service-account principal. Because PATs are
-stored only as a SHA-256 digest (unreconstructable) and there is no secret-at-rest
-mechanism, the runtime **mints a short-lived PAT per turn** for the bound account,
-uses it for that turn's loopback calls, and deletes it afterwards. This reuses the
-exact audited PAT path (``generate_pat``/``hash_token``/``get_pat_user``) with no
+The assistant acts as an ordinary service-account principal, on behalf of the
+person whose turn it is. Because PATs are stored only as a SHA-256 digest
+(unreconstructable) and there is no secret-at-rest mechanism, the runtime **mints
+a short-lived PAT per turn** for the bound account and that person, uses it for
+that turn's loopback calls, and deletes it afterwards. This reuses the
+exact audited PAT path (``generate_pat``/``hash_token``/``get_pat_credential``) with no
 crypto and no recoverable secret persisted.
 """
 
@@ -61,20 +62,25 @@ async def resolve_service_account(db: AsyncSession) -> User:
 
 @contextlib.asynccontextmanager
 async def ephemeral_pat(
-    session_factory: async_sessionmaker[AsyncSession], service_account_id
+    session_factory: async_sessionmaker[AsyncSession], service_account_id, on_behalf_of_id
 ) -> AsyncIterator[str]:
     """Mint a short-lived PAT for the service account, yield the raw token, delete it.
 
+    The token acts for ``on_behalf_of_id``, the person whose turn it is: every
+    call made with it may do only what both the account and that person may do
+    (``services.delegation``).
+
     Uses its own committed session so the loopback (which resolves the PAT in a
-    separate session via ``get_pat_user``) can see it. A crash before cleanup leaves
-    a row that expires within ``assistant_pat_ttl_s`` and is ignored by the expiry
-    filter in ``get_pat_user``.
+    separate session via ``get_pat_credential``) can see it. A crash before cleanup
+    leaves a row that expires within ``assistant_pat_ttl_s`` and is ignored by the
+    expiry filter in ``get_pat_credential``.
     """
     token = generate_pat()
     expires_at = datetime.now(tz=UTC) + timedelta(seconds=settings.assistant_pat_ttl_s)
     async with session_factory() as db:
         cred = Credential(
             user_id=service_account_id,
+            on_behalf_of_id=on_behalf_of_id,
             kind="pat",
             token=None,
             token_hash=hash_token(token),

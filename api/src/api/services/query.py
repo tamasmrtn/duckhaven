@@ -44,7 +44,7 @@ from api.services import agent_access, delegation
 from api.services import grants as grant_service
 from api.services import runtimes as runtime_service
 from api.services.addresses import result_url
-from api.services.agent_capabilities import agent_supports_catalog
+from api.services.agent_capabilities import agent_supports_catalog, agent_supports_feature
 from api.services.agent_dispatch import (
     connected_agent_ids,
     is_agent_connected,
@@ -159,7 +159,84 @@ async def dispatch_query(
 ) -> None:
     if query.agent_id is None or not await is_agent_connected(db, query.agent_id):
         raise AgentUnavailable("Agent not connected")
+    prepared = await _prepare(
+        db,
+        query,
+        active_catalog=active_catalog,
+        active_schema=active_schema,
+        principal_id=principal_id,
+        stats_for=stats_for,
+        health_for=health_for,
+        maintain_for=maintain_for,
+    )
+    payload: dict[str, object] = {
+        "query_id": str(query.id),
+        "sql": query.sql,
+        "timeout_s": timeout_s,
+        "active_catalog": prepared.active_catalog,
+    }
+    payload.update(await _catalog_fields(prepared, prepared.attach, active_schema))
+    if stats_for is not None:
+        # Ask the agent to also compute true table stats for this table.
+        payload["stats_for"] = stats_for
+    if health_for is not None:
+        # Ask the agent to run the maintenance health probe for this table.
+        payload["health_for"] = health_for
+    if maintain_for is not None:
+        payload["maintain_for"] = maintain_for
 
+    # Producer span for the WebSocket hop; its context rides in the frame so
+    # the agent's consumer span joins this trace.
+    with _tracer.start_as_current_span(
+        "dispatch_query",
+        kind=trace.SpanKind.PRODUCER,
+        attributes={
+            "duckhaven.query_id": str(query.id),
+            "duckhaven.agent_id": str(query.agent_id),
+            "duckhaven.runtime": query.runtime_id or "",
+            # null origin = a user's interactive query; else "scheduled"/etc.
+            "duckhaven.origin": query.origin or "interactive",
+        },
+    ):
+        frame = Frame(
+            type=FrameType.DISPATCH_QUERY,
+            payload=payload,
+            trace_context=inject_trace_context(),
+        )
+        if not await send_to_agent(db, query.agent_id, frame.model_dump_json()):
+            # The socket vanished between the presence check and the send, or its
+            # owning replica is unreachable. Fail fast so the caller surfaces it.
+            raise AgentUnavailable("Agent not connected")
+    await _dispatched(db, query.agent_id, [query])
+
+
+@dataclass(frozen=True)
+class _Prepared:
+    """A query that passed dispatch's checks, and what its frame needs."""
+
+    agent: Agent
+    # The workspace's catalogs, and the ones the statement names.
+    catalogs: list[Catalog]
+    attach: list[Catalog]
+    active_catalog: str
+
+
+async def _prepare(
+    db: AsyncSession,
+    query: Query,
+    *,
+    active_catalog: str | None,
+    active_schema: str | None,
+    principal_id: uuid.UUID | None = None,
+    stats_for: dict[str, str] | None = None,
+    health_for: dict[str, object] | None = None,
+    maintain_for: dict[str, object] | None = None,
+) -> _Prepared:
+    """Check that ``query`` may be sent to its agent, and stamp what it ran with.
+
+    Raises a ``ValueError`` (``GrantDenied``, ``AgentNotDispatchable``, …) for a
+    query that may not be sent.
+    """
     workspace = await db.get(Workspace, query.workspace_id)
     if workspace is None:
         raise ValueError("Workspace missing for query")
@@ -220,65 +297,164 @@ async def dispatch_query(
         if target is not None
     }
     query.probe = {kind: t for kind, t in probes.items() if t is not None} or None
-    payload: dict[str, object] = {
-        "query_id": str(query.id),
-        "sql": query.sql,
-        "timeout_s": timeout_s,
-        "active_catalog": active_catalog,
-    }
     # Only the catalogs the statement can name, for an agent that fetches the
     # rest on demand. Internal probes name their table's catalog explicitly.
     probed = [t["catalog"] for t in (stats_for, health_for, maintain_for) if t and t.get("catalog")]
     attach = statement_catalogs(query.sql, catalogs, active_catalog, also=probed)
-    payload.update(await dispatch_catalogs(agent, catalogs, attach))
+    return _Prepared(agent, catalogs, attach, active_catalog)
+
+
+async def _catalog_fields(
+    prepared: _Prepared, attach: list[Catalog], active_schema: str | None
+) -> dict[str, object]:
+    """A dispatch frame's catalog fields, attaching ``attach``."""
+    fields = await dispatch_catalogs(prepared.agent, prepared.catalogs, attach)
     if active_schema is not None:
         # `USE`d in place of the active catalog's `default_schema`, which the agent
         # also creates on a DuckLake attach: a chosen schema must never be created.
         # `statement_catalogs` always attaches the active catalog.
-        for descriptor in payload["catalogs"]:
-            if descriptor["slug"] == active_catalog:
+        for descriptor in fields["catalogs"]:
+            if descriptor["slug"] == prepared.active_catalog:
                 descriptor["use_schema"] = active_schema
-    if stats_for is not None:
-        # Ask the agent to also compute true table stats for this table.
-        payload["stats_for"] = stats_for
-    if health_for is not None:
-        # Ask the agent to run the maintenance health probe for this table.
-        payload["health_for"] = health_for
-    if maintain_for is not None:
-        payload["maintain_for"] = maintain_for
+    return fields
 
-    # Producer span for the WebSocket hop; its context rides in the frame so
-    # the agent's consumer span joins this trace.
-    with _tracer.start_as_current_span(
-        "dispatch_query",
-        kind=trace.SpanKind.PRODUCER,
-        attributes={
-            "duckhaven.query_id": str(query.id),
-            "duckhaven.agent_id": str(query.agent_id),
-            "duckhaven.runtime": query.runtime_id or "",
-            # null origin = a user's interactive query; else "scheduled"/etc.
-            "duckhaven.origin": query.origin or "interactive",
-        },
-    ):
-        frame = Frame(
-            type=FrameType.DISPATCH_QUERY,
-            payload=payload,
-            trace_context=inject_trace_context(),
-        )
-        if not await send_to_agent(db, query.agent_id, frame.model_dump_json()):
-            # The socket vanished between the presence check and the send, or its
-            # owning replica is unreachable. Fail fast so the caller surfaces it.
-            raise AgentUnavailable("Agent not connected")
+
+async def _dispatched(db: AsyncSession, agent_id: uuid.UUID, queries: list[Query]) -> None:
+    """Bookkeeping once ``queries`` are on their way to ``agent_id``."""
     # Mark the (possibly elastic) agent as having done work now, so the idle
     # reaper doesn't scale it in under an active workload. No-op for static agents.
     from api.services.compute.service import record_activity
 
-    await record_activity(db, query.agent_id)
+    await record_activity(db, agent_id)
     # Status stays "queued" until the agent admits the query and emits
     # QUERY_PROGRESS; the agent may hold it in its admission queue first.
-    if query.origin in INTERACTIVE_ORIGINS:
-        record_query_submitted()
+    for query in queries:
+        if query.origin in INTERACTIVE_ORIGINS:
+            record_query_submitted()
     await db.commit()
+
+
+#: The most queries one DISPATCH_BATCH frame carries. A longer batch goes in parts.
+BATCH_MAX_QUERIES = 20
+
+
+async def dispatch_batch(
+    db: AsyncSession,
+    queries: list[Query],
+    *,
+    timeout_s: float = 600.0,
+    active_catalog: str | None = None,
+    active_schema: str | None = None,
+) -> list[ValueError | None]:
+    """Dispatch one person's reads to one agent, in as few frames as it takes.
+
+    The agent runs a batch one query after another on a single connection, which
+    saves each query its own admission wait, connection and attach. Every query
+    passes the checks ``dispatch_query`` applies and fails alone: the result says,
+    per query, what refused it, or None once it is sent. Recording a refusal is
+    the caller's. An agent without the ``batch_dispatch`` feature gets the queries
+    one at a time, as do the queries of a frame that could not be sent.
+    """
+    if not queries:
+        return []
+
+    def owner(q: Query) -> tuple:
+        return (q.workspace_id, q.agent_id, q.user_id, q.on_behalf_of_id)
+
+    # One connection serves the whole batch, so what one query leaves behind is
+    # seen by the next: only reads, and only one person's.
+    if any(owner(q) != owner(queries[0]) for q in queries):
+        raise ValueError("A batch holds one person's queries for one agent")
+    if not all(is_read_only(q.sql) for q in queries):
+        raise ValueError("Only reads can be batched")
+
+    def alone(q: Query):
+        return _dispatch_alone(
+            db, q, timeout_s=timeout_s, active_catalog=active_catalog, active_schema=active_schema
+        )
+
+    agent_id = queries[0].agent_id
+    agent = await db.get(Agent, agent_id) if agent_id is not None else None
+    if (
+        agent is None
+        or not agent_supports_feature(agent.capabilities, runtime_service.BATCH_DISPATCH)
+        or not await is_agent_connected(db, agent.id)
+    ):
+        return [await alone(q) for q in queries]
+
+    outcomes: list[ValueError | None] = [None] * len(queries)
+    sent: list[Query] = []
+    for start in range(0, len(queries), BATCH_MAX_QUERIES):
+        part: list[tuple[int, _Prepared]] = []
+        for i in range(start, min(start + BATCH_MAX_QUERIES, len(queries))):
+            try:
+                prepared = await _prepare(
+                    db, queries[i], active_catalog=active_catalog, active_schema=active_schema
+                )
+            except ValueError as exc:
+                outcomes[i] = exc
+                continue
+            part.append((i, prepared))
+        if not part:
+            continue
+        if await _send_batch(db, [(queries[i], p) for i, p in part], timeout_s, active_schema):
+            sent.extend(queries[i] for i, _ in part)
+            continue
+        for i, _ in part:
+            outcomes[i] = await alone(queries[i])
+    if sent:
+        await _dispatched(db, agent.id, sent)
+    return outcomes
+
+
+async def _dispatch_alone(db: AsyncSession, query: Query, **kwargs) -> ValueError | None:
+    try:
+        await dispatch_query(db, query, **kwargs)
+    except ValueError as exc:
+        return exc
+    return None
+
+
+async def _send_batch(
+    db: AsyncSession,
+    part: list[tuple[Query, _Prepared]],
+    timeout_s: float,
+    active_schema: str | None,
+) -> bool:
+    """Send one DISPATCH_BATCH frame; False when the agent could not be reached."""
+    first = part[0][1]
+    # Every catalog any of the queries names, attached once.
+    attach: list[Catalog] = []
+    for _, prepared in part:
+        for catalog in prepared.attach:
+            if catalog not in attach:
+                attach.append(catalog)
+    payload: dict[str, object] = {
+        "batch_id": str(uuid.uuid4()),
+        "active_catalog": first.active_catalog,
+        "timeout_s": timeout_s,
+        "queries": [
+            {"query_id": str(q.id), "sql": q.sql}
+            | ({"timeout_s": q.timeout_s} if q.timeout_s is not None else {})
+            for q, _ in part
+        ],
+    }
+    payload.update(await _catalog_fields(first, attach, active_schema))
+    with _tracer.start_as_current_span(
+        "dispatch_batch",
+        kind=trace.SpanKind.PRODUCER,
+        attributes={
+            "duckhaven.batch_id": payload["batch_id"],
+            "duckhaven.batch_size": len(part),
+            "duckhaven.agent_id": str(first.agent.id),
+            "duckhaven.runtime": part[0][0].runtime_id or "",
+            "duckhaven.origin": part[0][0].origin or "interactive",
+        },
+    ):
+        frame = Frame(
+            type=FrameType.DISPATCH_BATCH, payload=payload, trace_context=inject_trace_context()
+        )
+        return await send_to_agent(db, first.agent.id, frame.model_dump_json())
 
 
 def _probe_target(target: dict[str, Any], catalogs: list[Catalog]) -> dict[str, Any] | None:

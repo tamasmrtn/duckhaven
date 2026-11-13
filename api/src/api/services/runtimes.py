@@ -48,6 +48,8 @@ DISPATCHABLE_STATES = frozenset({"ok", "inferred"})
 
 # The agent protocol feature that says it `USE`s a descriptor's `use_schema`.
 USE_SCHEMA = "use_schema"
+# The agent protocol feature that says it runs a DISPATCH_BATCH on one connection.
+BATCH_DISPATCH = "batch_dispatch"
 
 
 class AgentNotDispatchable(ValueError):

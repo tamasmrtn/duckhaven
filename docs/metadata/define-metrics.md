@@ -115,7 +115,10 @@ curl -X POST "$DH/api/workspaces/$WS/semantic/models/sales/metrics" \
         "filter": "status <> '\''test'\''",
         "time_dimension": "order_date",
         "synonyms": ["turnover", "gmv"],
-        "caveat": "Excludes internal test orders."
+        "caveat": "Excludes internal test orders.",
+        "format": "currency",
+        "currency": "USD",
+        "polarity": "up_good"
       }'
 ```
 
@@ -128,6 +131,37 @@ Two fields do the most work here:
 
 `caveat` is surfaced with every answer the metric produces, so a reader sees it
 at the moment they see the number.
+
+### Say how the number is shown
+
+`format`, `unit`, `currency` and `polarity` say how the number reads: that 0.25 is
+25%, that 1250 is US dollars, that a fall in churn is good news. They never change
+the value, so the value has to be in the unit its format expects.
+
+| Field | Values | Meaning |
+| --- | --- | --- |
+| `format` | `number`, `percent`, `currency`, `duration`, `bytes` | A percent is a ratio, so 0.25 shows as 25%. A duration is in seconds and bytes are bytes; convert in `expr` when the column holds something else, such as `latency_ms / 1000.0`. |
+| `unit` | 1 to 32 characters | What a plain number counts, such as `orders`. Only with `number`, or with no format. |
+| `currency` | An ISO 4217 code, such as `USD` | Required with `currency`, and allowed only with it. |
+| `polarity` | `up_good`, `down_good`, `neutral` | Which direction of change is good news, such as `down_good` for churn. Unset means neutral. |
+
+All four are optional; a metric without them is a plain, neutral number. A
+combination that does not fit, such as a currency on a percent metric, is refused
+with a 422 that names the problem. They come back on the metric and in
+`definitions_used` of every compiled query. The web app's semantic pages do not
+show them; set and read them through the API or an import.
+
+To change one later, send only that field. Unlike the other fields, `null` clears
+one of these four, so moving a metric off currency drops its currency:
+
+```bash
+curl -X PATCH "$DH/api/workspaces/$WS/semantic/models/sales/metrics/revenue" \
+  -H 'Content-Type: application/json' \
+  -d '{"format": "number", "currency": null, "unit": "dollars"}'
+```
+
+The response is the metric with `"format": "number"`, `"unit": "dollars"` and
+`"currency": null`.
 
 ### The shortcut: save one from a worksheet
 
@@ -230,6 +264,9 @@ models:
         measured_on: order_date
         synonyms: [turnover]
         caveat: Excludes internal test orders.
+        format: currency
+        currency: USD
+        polarity: up_good
 ```
 
 ```bash
@@ -245,6 +282,9 @@ Notes on importing:
   publishing a subset.
 - A typo in one metric costs that metric, not the whole file. Anything unusable
   comes back in `skipped` with a reason.
+- Display settings that do not fit together, such as `format: percent` with a
+  `currency`, are dropped together and reported as `invalid_presentation`. The
+  metric itself still imports, as a plain number.
 - Imported models are **read-only in the UI**. A model has exactly one owner, so
   edit it at the source and import again.
 - Imports arrive as drafts. Publishing stays a person's decision.

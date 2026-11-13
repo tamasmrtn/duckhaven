@@ -976,6 +976,117 @@ def _inline_result(stats: dict, result_path: Path) -> str | None:
         return None
 
 
+async def _run_on_state(
+    ws,
+    state,
+    statement_id: str,
+    sql: str,
+    timeout_s: float,
+    results_dir: Path,
+    admission: Admission,
+    descriptors: list[dict] | None = None,
+) -> dict[str, object]:
+    """Run one statement on a held connection and return its QUERY_DONE payload.
+
+    Holds the state's lock for the statement. Raises what the statement raised; a
+    ``StatementAbandoned`` means nothing may touch the connection again.
+    """
+    result_path = results_dir / f"{statement_id}.parquet"
+    async with state.lock:
+        # The catalogs this statement names that the session has not attached
+        # yet. Before the estimate, which has to bind against them too.
+        if descriptors:
+            await _attach_for_statement(state, descriptors)
+        # Inside the lock: the size applies to this statement only, and the
+        # session runs one statement at a time.
+        estimate_key = await _resize_for_statement(state, sql, admission, timeout_s)
+        # The statement starts executing now: past the session lock and any
+        # wait for memory to grow into. The control plane stamps running_at
+        # from this, so its wait/run split and its concurrency see the run
+        # while it is in progress rather than only once it has finished.
+        await ws.send(
+            Frame(
+                type=FrameType.QUERY_PROGRESS, payload={"query_id": statement_id}
+            ).model_dump_json()
+        )
+        # `peak_memory_bytes` is only this statement's own peak if nothing has
+        # raised the connection's watermark yet; after that the runner reports
+        # a delta (see `runner._apply_watermarks`). Read it before the run,
+        # because the run is what moves it.
+        #
+        # Tracks profiled statements only, so a DDL earlier in the session can
+        # leave DuckDB's real watermark above this dict's. The peak then reads
+        # high rather than low, which over-grants — the direction that was
+        # already the status quo — and the DDL has invalidated the shape's
+        # feedback anyway, so it cannot compound.
+        peak_is_this_statements = not state.watermarks.get("peak_memory_bytes")
+        # A statement that waited for admission budget already spent part of
+        # its declared timeout doing so; without subtracting that, it gets a
+        # second, fresh full window here, and can run up to 2x its declared
+        # timeout under exactly the saturated-agent load this PR targets.
+        remaining_timeout_s = max(0.0, timeout_s - state.admission_wait_ms / 1000)
+        abandoned = False
+        try:
+            stats = await run_statement(
+                sql,
+                result_path,
+                remaining_timeout_s,
+                conn=state.conn,
+                memory_bytes=state.memory_bytes,
+                threads=state.threads,
+                enable_profiling=settings.profiling_enabled,
+                watermarks=state.watermarks,
+                admission_wait_ms=state.admission_wait_ms,
+                attach_missing=_attach_missing_for(
+                    ws, statement_id, state.workspace_catalogs, state.polaris
+                ),
+            )
+        except StatementAbandoned:
+            # The executor worker never returned -- it may still be running
+            # against `state.conn` on its own thread. Nothing below this
+            # point may touch that connection again: skip the shrink and
+            # the schema refresh (both would race the orphaned thread), and
+            # let the outer handler discard the session instead of
+            # returning it to the pool of reusable connections.
+            abandoned = True
+            raise
+        finally:
+            if not abandoned:
+                await _shrink_to_baseline(state, admission)
+        # Only on the success path: `stats` is unbound if the statement raised,
+        # and a statement that failed measured nothing worth remembering.
+        if estimate_key is not None and peak_is_this_statements:
+            _record_grant_feedback(estimate_key, stats["profile"])
+        # What the connection now resolves names and reads values in, read by
+        # the runner on the statement's own thread (see run_statement_sync).
+        # The control plane's result cache keys a session's next statements on
+        # it; reported by the engine, so a `USE` that failed half-way can never
+        # be mistaken for one that moved. It used to be a separate job behind
+        # the estimate pool's capacity guard, which a burst of sessions filled:
+        # the report was then left out and the next lookup keyed on a stale
+        # schema.
+        context = stats.get("session_context")
+        if context is not None:
+            # `USE` moves what unqualified names bind to, which is part of the
+            # estimate cache key.
+            state.schema = context["schema"]
+    done_payload: dict[str, object] = {
+        "query_id": statement_id,
+        "status": "done",
+        "row_count": stats["row_count"],
+        "duration_ms": stats["duration_ms"],
+        "result_bytes": stats["result_bytes"],
+        "result_path": str(result_path) if stats["wrote_result"] else None,
+        "profile": stats["profile"],
+        "result_schema": stats["result_schema"],
+    }
+    if context is not None:
+        done_payload["session_context"] = context
+    if (inline := _inline_result(stats, result_path)) is not None:
+        done_payload["result_parquet"] = inline
+    return done_payload
+
+
 async def _handle_exec_statement(
     ws, payload: dict, results_dir: Path, admission: Admission
 ) -> None:
@@ -1001,104 +1112,14 @@ async def _handle_exec_statement(
         return
     state.touch()
 
-    result_path = results_dir / f"{statement_id}.parquet"
     try:
-        async with state.lock:
-            # The catalogs this statement names that the session has not attached
-            # yet. Before the estimate, which has to bind against them too.
-            if descriptors := payload.get("catalogs"):
-                await _attach_for_statement(state, descriptors)
-            # Inside the lock: the size applies to this statement only, and the
-            # session runs one statement at a time.
-            estimate_key = await _resize_for_statement(state, sql, admission, timeout_s)
-            # The statement starts executing now: past the session lock and any
-            # wait for memory to grow into. The control plane stamps running_at
-            # from this, so its wait/run split and its concurrency see the run
-            # while it is in progress rather than only once it has finished.
-            await ws.send(
-                Frame(
-                    type=FrameType.QUERY_PROGRESS, payload={"query_id": statement_id}
-                ).model_dump_json()
-            )
-            # `peak_memory_bytes` is only this statement's own peak if nothing has
-            # raised the connection's watermark yet; after that the runner reports
-            # a delta (see `runner._apply_watermarks`). Read it before the run,
-            # because the run is what moves it.
-            #
-            # Tracks profiled statements only, so a DDL earlier in the session can
-            # leave DuckDB's real watermark above this dict's. The peak then reads
-            # high rather than low, which over-grants — the direction that was
-            # already the status quo — and the DDL has invalidated the shape's
-            # feedback anyway, so it cannot compound.
-            peak_is_this_statements = not state.watermarks.get("peak_memory_bytes")
-            # A statement that waited for admission budget already spent part of
-            # its declared timeout doing so; without subtracting that, it gets a
-            # second, fresh full window here, and can run up to 2x its declared
-            # timeout under exactly the saturated-agent load this PR targets.
-            remaining_timeout_s = max(0.0, timeout_s - state.admission_wait_ms / 1000)
-            abandoned = False
-            try:
-                stats = await run_statement(
-                    sql,
-                    result_path,
-                    remaining_timeout_s,
-                    conn=state.conn,
-                    memory_bytes=state.memory_bytes,
-                    threads=state.threads,
-                    enable_profiling=settings.profiling_enabled,
-                    watermarks=state.watermarks,
-                    admission_wait_ms=state.admission_wait_ms,
-                    attach_missing=_attach_missing_for(
-                        ws, statement_id, state.workspace_catalogs, state.polaris
-                    ),
-                )
-            except StatementAbandoned:
-                # The executor worker never returned -- it may still be running
-                # against `state.conn` on its own thread. Nothing below this
-                # point may touch that connection again: skip the shrink and
-                # the schema refresh (both would race the orphaned thread), and
-                # let the outer handler discard the session instead of
-                # returning it to the pool of reusable connections.
-                abandoned = True
-                raise
-            finally:
-                if not abandoned:
-                    await _shrink_to_baseline(state, admission)
-            # Only on the success path: `stats` is unbound if the statement raised,
-            # and a statement that failed measured nothing worth remembering.
-            if estimate_key is not None and peak_is_this_statements:
-                _record_grant_feedback(estimate_key, stats["profile"])
-            # What the connection now resolves names and reads values in, read by
-            # the runner on the statement's own thread (see run_statement_sync).
-            # The control plane's result cache keys a session's next statements on
-            # it; reported by the engine, so a `USE` that failed half-way can never
-            # be mistaken for one that moved. It used to be a separate job behind
-            # the estimate pool's capacity guard, which a burst of sessions filled:
-            # the report was then left out and the next lookup keyed on a stale
-            # schema.
-            context = stats.get("session_context")
-            if context is not None:
-                # `USE` moves what unqualified names bind to, which is part of the
-                # estimate cache key.
-                state.schema = context["schema"]
-        done_payload: dict[str, object] = {
-            "query_id": statement_id,
-            "status": "done",
-            "row_count": stats["row_count"],
-            "duration_ms": stats["duration_ms"],
-            "result_bytes": stats["result_bytes"],
-            "result_path": str(result_path) if stats["wrote_result"] else None,
-            "profile": stats["profile"],
-            "result_schema": stats["result_schema"],
-        }
-        if context is not None:
-            done_payload["session_context"] = context
-        if (inline := _inline_result(stats, result_path)) is not None:
-            done_payload["result_parquet"] = inline
+        done_payload = await _run_on_state(
+            ws, state, statement_id, sql, timeout_s, results_dir, admission, payload.get("catalogs")
+        )
         await ws.send(Frame(type=FrameType.QUERY_DONE, payload=done_payload).model_dump_json())
     except StatementAbandoned as exc:
-        # The lock has already been released (the `async with` block above
-        # exited via this exception), so the session is safe to remove from
+        # The lock has already been released (`_run_on_state` left its
+        # `async with` via this exception), so the session is safe to remove from
         # the registry now -- but never safe to interrupt/close (see
         # `session.discard_poisoned`).
         trace.get_current_span().set_status(Status(StatusCode.ERROR, "statement abandoned"))

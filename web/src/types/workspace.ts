@@ -26,6 +26,8 @@ export interface Workspace {
   // Every member can run on this agent whether or not a grant reaches them.
   default_agent_id?: string | null;
   default_agent?: DefaultAgent | null;
+  // The IANA zone relative time windows ("month to date") resolve in.
+  timezone?: string;
   created_at: string;
 }
 

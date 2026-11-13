@@ -46,8 +46,10 @@ export const workspaceHandlers = [
       description?: string;
       result_cache_enabled?: boolean;
       default_agent_id?: string | null;
+      timezone?: string;
     };
     if (body.name != null) ws.name = body.name;
+    if (body.timezone != null) ws.timezone = body.timezone;
     if (body.description != null) ws.description = body.description;
     if (body.result_cache_enabled != null)
       ws.result_cache_enabled = body.result_cache_enabled;

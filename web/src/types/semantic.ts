@@ -211,12 +211,26 @@ export interface MetricQueryInput {
   filters?: DimensionFilterInput[];
   order_by?: { field: string; descending: boolean }[];
   limit?: number;
+  /** Also compile the question over an earlier window; needs `time_range`. */
+  compare?: CompareKind;
+}
+
+export type CompareKind = "previous_period" | "previous_year";
+
+/** The same question over the comparison window, as its own statement. */
+export interface CompiledComparison {
+  kind: CompareKind;
+  start: string;
+  /** Exclusive, like the window it is compared with. */
+  end: string;
+  sql: string;
 }
 
 export interface CompiledQuery {
   sql: string;
   definitions_used: Record<string, unknown>[];
   warnings: string[];
+  compare?: CompiledComparison | null;
 }
 
 export interface SemanticDependent {

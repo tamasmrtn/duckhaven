@@ -371,11 +371,14 @@ describe("semantic contract", () => {
       metrics: ["revenue"],
     });
     expect(Object.keys(compiled).sort()).toEqual([
+      "compare",
       "definitions_used",
       "sql",
       "warnings",
     ]);
     expect(compiled).not.toHaveProperty("query_id");
+    // Present on every response, null unless a comparison was asked for.
+    expect(compiled.compare).toBeNull();
   });
 
   it("an unknown metric is a 422 naming the ones that exist", async () => {

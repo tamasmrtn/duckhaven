@@ -11,6 +11,7 @@ function makeWorkspaces(): Workspace[] {
       storage_backend_id: "sb-1",
       storage_backend_kind: "s3",
       result_cache_enabled: true,
+      timezone: "UTC",
       created_at: "2026-01-01T00:00:00Z",
     },
     {

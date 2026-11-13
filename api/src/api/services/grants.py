@@ -34,6 +34,7 @@ from sqlglot import exp
 from api.models.catalog import Catalog, WorkspaceCatalog
 from api.models.catalog_grant import CatalogGrant
 from api.models.workspace import WorkspaceMember
+from api.services.delegation import principals_for
 from api.services.sql_denylist import function_name
 from api.services.statement_policy import StatementNotAllowed, check_file_reads
 
@@ -186,11 +187,16 @@ async def node_tier(
     """Effective tier for a principal at a node in a *scoped* catalog.
 
     Only meaningful when the attachment is scoped (callers gate on
-    :func:`attachment_access_mode`); loads the principal's grants + role.
+    :func:`attachment_access_mode`); loads the principal's grants + role. A
+    principal acting for someone (``services.delegation``) gets the lower of the
+    two tiers, and no access when either has none.
     """
-    grants = await load_grants(db, user_id, catalog.id)
-    role = await _member_role(db, workspace_id, user_id)
-    return access_tier(grants, role, schema, table)
+    tiers = []
+    for principal in principals_for(db, user_id):
+        grants = await load_grants(db, principal, catalog.id)
+        role = await _member_role(db, workspace_id, principal)
+        tiers.append(access_tier(grants, role, schema, table))
+    return min(tiers, key=tier_rank)
 
 
 async def visible_schemas(
@@ -200,9 +206,15 @@ async def visible_schemas(
     user_id: uuid.UUID,
     names: list[str],
 ) -> set[str]:
-    """Subset of ``names`` the principal may discover in a scoped catalog."""
-    grants = await load_grants(db, user_id, catalog.id)
-    return {n for n in names if schema_visible(grants, n)}
+    """Subset of ``names`` the principal may discover in a scoped catalog.
+
+    Acting for someone, only what both may discover (``services.delegation``).
+    """
+    visible = set(names)
+    for principal in principals_for(db, user_id):
+        grants = await load_grants(db, principal, catalog.id)
+        visible = {n for n in visible if schema_visible(grants, n)}
+    return visible
 
 
 async def visible_tables(
@@ -213,10 +225,16 @@ async def visible_tables(
     schema: str,
     names: list[str],
 ) -> set[str]:
-    """Subset of tables in ``schema`` the principal may discover (metadata+)."""
-    grants = await load_grants(db, user_id, catalog.id)
-    role = await _member_role(db, workspace_id, user_id)
-    return {n for n in names if access_tier(grants, role, schema, n) is not None}
+    """Subset of tables in ``schema`` the principal may discover (metadata+).
+
+    Acting for someone, only what both may discover (``services.delegation``).
+    """
+    visible = set(names)
+    for principal in principals_for(db, user_id):
+        grants = await load_grants(db, principal, catalog.id)
+        role = await _member_role(db, workspace_id, principal)
+        visible = {n for n in visible if access_tier(grants, role, schema, n) is not None}
+    return visible
 
 
 async def is_scoped(db: AsyncSession, workspace_id: uuid.UUID, catalog: Catalog) -> bool:
@@ -796,10 +814,11 @@ async def assert_chosen_schema_reachable(
         return
     if principal_id is None:
         raise GrantDenied("A scoped catalog requires an authenticated principal")
-    if await _member_role(db, workspace_id, principal_id) is None or not schema_visible(
-        await load_grants(db, principal_id, catalog.id), schema
-    ):
-        raise GrantDenied(f"Not authorized on schema {catalog.slug}.{schema}")
+    for principal in principals_for(db, principal_id):
+        if await _member_role(db, workspace_id, principal) is None or not schema_visible(
+            await load_grants(db, principal, catalog.id), schema
+        ):
+            raise GrantDenied(f"Not authorized on schema {catalog.slug}.{schema}")
 
 
 # Settings that move where unqualified names resolve. The session statement policy

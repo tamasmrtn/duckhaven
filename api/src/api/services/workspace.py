@@ -3,7 +3,7 @@ import re
 import uuid
 
 from fastapi import HTTPException, status
-from sqlalchemy import delete, select
+from sqlalchemy import ColumnElement, and_, delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, selectinload
 
@@ -16,6 +16,7 @@ from api.models.sql_session import SqlSession
 from api.models.storage_backend import StorageBackend
 from api.models.worksheet import Worksheet
 from api.models.workspace import Workspace, WorkspaceMember
+from api.services.delegation import principals_for
 from api.services.polaris import (
     PolarisCatalog,
     PolarisClient,
@@ -144,18 +145,42 @@ async def assert_workspace_member(
     user_id: uuid.UUID,
     min_role: str = "reader",
 ) -> WorkspaceMember:
-    result = await db.execute(
-        select(WorkspaceMember).where(
-            WorkspaceMember.workspace_id == workspace_id,
-            WorkspaceMember.user_id == user_id,
+    """Require ``user_id`` to hold ``min_role`` in the workspace, returning the membership.
+
+    Acting for someone (``services.delegation``), both must be members and hold
+    the role, and the membership returned is the one with the lower role.
+    """
+    members = []
+    for principal in principals_for(db, user_id):
+        result = await db.execute(
+            select(WorkspaceMember).where(
+                WorkspaceMember.workspace_id == workspace_id,
+                WorkspaceMember.user_id == principal,
+            )
+        )
+        member = result.scalar_one_or_none()
+        if member is None:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
+        if ROLE_ORDER.get(member.role, -1) < ROLE_ORDER.get(min_role, 0):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
+        members.append(member)
+    return min(members, key=lambda m: ROLE_ORDER.get(m.role, -1))
+
+
+def member_of(db: AsyncSession, user_id: uuid.UUID) -> ColumnElement[bool]:
+    """A filter on ``Workspace`` for the workspaces ``user_id`` belongs to.
+
+    For listings, which filter rather than refuse. Acting for someone, only the
+    workspaces both belong to.
+    """
+    return and_(
+        *(
+            Workspace.id.in_(
+                select(WorkspaceMember.workspace_id).where(WorkspaceMember.user_id == principal)
+            )
+            for principal in principals_for(db, user_id)
         )
     )
-    member = result.scalar_one_or_none()
-    if member is None:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
-    if ROLE_ORDER.get(member.role, -1) < ROLE_ORDER.get(min_role, 0):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
-    return member
 
 
 async def update_workspace(

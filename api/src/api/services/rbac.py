@@ -3,17 +3,29 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.models.rbac import Role, RolePermission
 from api.models.user import User
+from api.services.delegation import principals_for
 from api.services.permissions import SYSTEM_ROLE_PERMISSIONS, Permission
 
 
-async def user_permissions(db: AsyncSession, user: User) -> set[str]:
-    """Return the set of permission strings granted to ``user`` via its role."""
+async def _role_permissions(db: AsyncSession, role: str) -> set[str]:
     result = await db.execute(
         select(RolePermission.permission)
         .join(Role, RolePermission.role_id == Role.id)
-        .where(Role.name == user.role)
+        .where(Role.name == role)
     )
     return set(result.scalars().all())
+
+
+async def user_permissions(db: AsyncSession, user: User) -> set[str]:
+    """Return the set of permission strings granted to ``user`` via its role.
+
+    Acting for someone (``services.delegation``), only those both roles grant.
+    """
+    granted = await _role_permissions(db, user.role)
+    for principal in principals_for(db, user.id)[1:]:
+        other = await db.get(User, principal)
+        granted &= await _role_permissions(db, other.role) if other is not None else set()
+    return granted
 
 
 async def has_permission(db: AsyncSession, user: User, permission: Permission) -> bool:

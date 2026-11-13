@@ -75,7 +75,7 @@ Under `auto`, the agent runs `EXPLAIN` before each query and reserves memory fro
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `SESSION_BASELINE_BYTES` | `67108864` (64 MiB) | Memory a [SQL session](../querying/sql-sessions.md) holds between statements. Each statement grows it to its own estimate and shrinks back. It sets how many sessions an agent holds |
+| `SESSION_BASELINE_BYTES` | `67108864` (64 MiB) | Memory a [SQL session](../querying/sql-sessions.md) holds between statements, and a [batch of reads](../querying/query-execution.md#batches-of-reads) between reads. Each statement grows it to its own estimate and shrinks back. It sets how many sessions an agent holds |
 | `SESSION_MAX_BUCKET_FRACTION` | `0.333` | Largest share of the budget one statement may require at admission, so at least three can run at once. It does not limit what a statement uses on an idle agent |
 | `SESSION_QUEUED_TIMEOUT_S` | `30` | How long a session open may wait for capacity. Keep it below the control plane's `SQL_SESSION_OPENING_DEADLINE_S` |
 | `SESSION_IDLE_TIMEOUT_S` | `1200` | The agent closes a session idle this long, in case the control plane's close was lost. Longer than the control plane's own timeout on purpose. `0` turns the check off |

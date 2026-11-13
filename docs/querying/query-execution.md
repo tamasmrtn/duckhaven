@@ -181,6 +181,31 @@ admitted.
     grant, so consecutive statements against the same tables do not re-read them from object storage. An idle session
     holding cache never blocks another query — see above.
 
+## Batches of reads
+
+The control plane can send an agent several reads as one **batch**, such as the widgets of a dashboard. The agent
+takes one reservation (a session's idle baseline, `SESSION_BASELINE_BYTES`), opens one connection with every catalog
+the reads name, and runs them one after another, each sized as a
+[session](sql-sessions.md#pinning-lifetime-and-failure) statement is.
+
+Each read stays its own query, with its own status, result and error; one that fails does not stop the rest.
+Cancelling a read skips it if it has not started and interrupts it if it has. A read whose worker cannot be stopped
+leaves the connection unusable, so the reads after it fail with `batch_aborted`. A batch holds one person's reads
+only. An agent that does not support batches gets the reads one at a time.
+
+!!! note "Nothing sends batches yet"
+    They are in place for dashboards.
+
+Measured on one agent, 16 reads from first submitted to last finished:
+
+| Reads | One batch | 16 queries at once | 4 queries at a time |
+|---|---|---|---|
+| `SELECT n` | 0.36 s | 1.2 to 1.4 s | 1.3 to 1.4 s |
+| `count(*)` of an Iceberg table | 1.5 to 2.0 s | 1.4 to 1.7 s | 1.7 to 1.9 s |
+
+When each read does real work, a batch is no faster, since its reads run in turn, but it holds one connection
+instead of sixteen.
+
 ## Scheduled vs. interactive runs
 
 Most queries are **interactive**: a person presses Run, picks the agent, and waits

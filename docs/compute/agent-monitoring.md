@@ -18,7 +18,8 @@ A row of tiles shows the present moment, from the agent's own 2-second samples:
 - **Status**, with how long ago the last sample arrived.
 - **Executing** — statements running at this moment. An open SQL session with nothing running (a dbt or BI connection
   waiting for its next statement) holds an admission slot but is idle, so it appears as *+N idle connections* beside
-  the count, never in it.
+  the count, never in it. A [batch of reads](../querying/query-execution.md#batches-of-reads) holds one connection
+  the same way while it runs, and counts as one executing statement while a read runs.
 - **Queued** — work waiting for an admission slot, plus any statement waiting for memory to grow into.
 - **CPU** and **Memory**, as a share of the agent's size ("of 4 vCPU", "of 16 GB").
 

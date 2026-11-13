@@ -85,6 +85,10 @@ Sessions end on their own when the client does not end them:
 - **Agent gone.** If the agent disconnects, its sessions fail at once, along with any statement in flight. The next
   statement answers **409** `session_not_open`; the client opens a new session.
 
+- **A cancelled statement that will not stop.** Cancelling a statement interrupts it, and the session runs nothing
+  else until DuckDB has stopped it. One that is still being planned can ignore the interrupt. After 5 seconds the
+  agent drops the session's connection, and the session's next statement fails with `session not found`.
+
 Sessions survive an API restart or failover as long as their agent stays connected.
 
 A statement that never reaches the agent, or whose result is lost, is failed rather than left `queued` or `running`. It

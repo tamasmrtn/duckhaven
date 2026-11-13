@@ -1,0 +1,1171 @@
+{
+  "$defs": {
+    "BarColumns": {
+      "additionalProperties": false,
+      "properties": {
+        "x": {
+          "description": "The category column.",
+          "title": "X",
+          "type": "string"
+        },
+        "y": {
+          "description": "One bar per column.",
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 10,
+          "minItems": 1,
+          "title": "Y",
+          "type": "array"
+        }
+      },
+      "required": [
+        "x",
+        "y"
+      ],
+      "title": "BarColumns",
+      "type": "object"
+    },
+    "BarWidget": {
+      "additionalProperties": false,
+      "description": "Metrics compared across the values of one dimension.",
+      "properties": {
+        "columns": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BarColumns"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "description": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "id": {
+          "description": "Unique in the dashboard. Links and filters refer to it.",
+          "maxLength": 64,
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "title": "Id",
+          "type": "string"
+        },
+        "ignore": {
+          "description": "Dimension parameters this widget does not apply.",
+          "items": {
+            "maxLength": 64,
+            "pattern": "^[a-z][a-z0-9_]*$",
+            "type": "string"
+          },
+          "maxItems": 8,
+          "title": "Ignore",
+          "type": "array"
+        },
+        "params": {
+          "description": "SQL placeholders and the parameters they take: $region, $period.start.",
+          "maxProperties": 20,
+          "patternProperties": {
+            "^[a-z][a-z0-9_]*$": {
+              "maxLength": 71,
+              "pattern": "^\\$[a-z][a-z0-9_]*(\\.(start|end))?$",
+              "type": "string"
+            }
+          },
+          "propertyNames": {
+            "maxLength": 64
+          },
+          "title": "Params",
+          "type": "object"
+        },
+        "query": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DashboardQuery"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "A metric query."
+        },
+        "sql": {
+          "anyOf": [
+            {
+              "maxLength": 20000,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Inline SQL. Use $name placeholders for the values params binds.",
+          "title": "Sql"
+        },
+        "title": {
+          "maxLength": 120,
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        },
+        "type": {
+          "const": "bar",
+          "title": "Type",
+          "type": "string"
+        },
+        "width": {
+          "anyOf": [
+            {
+              "maximum": 12,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Columns of the 12-column row. Omitted widths share what is left.",
+          "title": "Width"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "type"
+      ],
+      "title": "BarWidget",
+      "type": "object"
+    },
+    "DashboardFilter": {
+      "additionalProperties": false,
+      "properties": {
+        "dimension": {
+          "title": "Dimension",
+          "type": "string"
+        },
+        "op": {
+          "enum": [
+            "eq",
+            "ne",
+            "in",
+            "not_in",
+            "gt",
+            "gte",
+            "lt",
+            "lte",
+            "contains",
+            "is_null",
+            "is_not_null"
+          ],
+          "title": "Op",
+          "type": "string"
+        },
+        "values": {
+          "items": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "title": "Values",
+          "type": "array"
+        }
+      },
+      "required": [
+        "dimension",
+        "op"
+      ],
+      "title": "DashboardFilter",
+      "type": "object"
+    },
+    "DashboardOrder": {
+      "additionalProperties": false,
+      "properties": {
+        "descending": {
+          "default": false,
+          "title": "Descending",
+          "type": "boolean"
+        },
+        "field": {
+          "title": "Field",
+          "type": "string"
+        }
+      },
+      "required": [
+        "field"
+      ],
+      "title": "DashboardOrder",
+      "type": "object"
+    },
+    "DashboardQuery": {
+      "additionalProperties": false,
+      "description": "A metric query whose time range may be a dashboard parameter.",
+      "properties": {
+        "compare": {
+          "anyOf": [
+            {
+              "enum": [
+                "previous_period",
+                "previous_year"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Also compile the same question over an earlier window. previous_period: the same span just before (month to date compares the same days of last month). previous_year: the same dates a year earlier. Needs time_range.",
+          "title": "Compare"
+        },
+        "dimensions": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 10,
+          "title": "Dimensions",
+          "type": "array"
+        },
+        "filters": {
+          "items": {
+            "$ref": "#/$defs/DashboardFilter"
+          },
+          "maxItems": 20,
+          "title": "Filters",
+          "type": "array"
+        },
+        "grain": {
+          "anyOf": [
+            {
+              "enum": [
+                "day",
+                "week",
+                "month",
+                "quarter",
+                "year"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Grain"
+        },
+        "limit": {
+          "anyOf": [
+            {
+              "maximum": 5000,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Limit"
+        },
+        "metrics": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 10,
+          "minItems": 1,
+          "title": "Metrics",
+          "type": "array"
+        },
+        "model": {
+          "title": "Model",
+          "type": "string"
+        },
+        "order_by": {
+          "items": {
+            "$ref": "#/$defs/DashboardOrder"
+          },
+          "maxItems": 5,
+          "title": "Order By",
+          "type": "array"
+        },
+        "time_range": {
+          "anyOf": [
+            {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/DashboardTimeRange"
+                },
+                {
+                  "maxLength": 65,
+                  "pattern": "^\\$[a-z][a-z0-9_]*$",
+                  "type": "string"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "A window, or $name to use a time_range parameter.",
+          "title": "Time Range"
+        }
+      },
+      "required": [
+        "model",
+        "metrics"
+      ],
+      "title": "DashboardQuery",
+      "type": "object"
+    },
+    "DashboardTimeRange": {
+      "additionalProperties": false,
+      "properties": {
+        "end": {
+          "anyOf": [
+            {
+              "format": "date",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "End"
+        },
+        "grain": {
+          "anyOf": [
+            {
+              "enum": [
+                "day",
+                "week",
+                "month",
+                "quarter",
+                "year"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Grain"
+        },
+        "kind": {
+          "enum": [
+            "last_complete",
+            "trailing",
+            "to_date",
+            "absolute"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "n": {
+          "anyOf": [
+            {
+              "maximum": 1000,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "N"
+        },
+        "start": {
+          "anyOf": [
+            {
+              "format": "date",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Start"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "title": "DashboardTimeRange",
+      "type": "object"
+    },
+    "DimensionParameter": {
+      "additionalProperties": false,
+      "description": "One value of a dimension, applied to every query widget that can use it.",
+      "properties": {
+        "default": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Default"
+        },
+        "dimension": {
+          "maxLength": 255,
+          "minLength": 1,
+          "title": "Dimension",
+          "type": "string"
+        },
+        "label": {
+          "anyOf": [
+            {
+              "maxLength": 80,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Label"
+        },
+        "model": {
+          "description": "The semantic model the dimension belongs to.",
+          "maxLength": 64,
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "title": "Model",
+          "type": "string"
+        },
+        "multiple": {
+          "default": false,
+          "description": "Reserved; only false is accepted.",
+          "title": "Multiple",
+          "type": "boolean"
+        },
+        "type": {
+          "const": "dimension",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "model",
+        "dimension"
+      ],
+      "title": "DimensionParameter",
+      "type": "object"
+    },
+    "KpiColumns": {
+      "additionalProperties": false,
+      "properties": {
+        "value": {
+          "description": "The result column holding the number.",
+          "title": "Value",
+          "type": "string"
+        }
+      },
+      "required": [
+        "value"
+      ],
+      "title": "KpiColumns",
+      "type": "object"
+    },
+    "KpiWidget": {
+      "additionalProperties": false,
+      "description": "One number, optionally beside the same number for an earlier window.",
+      "properties": {
+        "columns": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/KpiColumns"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "description": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "id": {
+          "description": "Unique in the dashboard. Links and filters refer to it.",
+          "maxLength": 64,
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "title": "Id",
+          "type": "string"
+        },
+        "ignore": {
+          "description": "Dimension parameters this widget does not apply.",
+          "items": {
+            "maxLength": 64,
+            "pattern": "^[a-z][a-z0-9_]*$",
+            "type": "string"
+          },
+          "maxItems": 8,
+          "title": "Ignore",
+          "type": "array"
+        },
+        "params": {
+          "description": "SQL placeholders and the parameters they take: $region, $period.start.",
+          "maxProperties": 20,
+          "patternProperties": {
+            "^[a-z][a-z0-9_]*$": {
+              "maxLength": 71,
+              "pattern": "^\\$[a-z][a-z0-9_]*(\\.(start|end))?$",
+              "type": "string"
+            }
+          },
+          "propertyNames": {
+            "maxLength": 64
+          },
+          "title": "Params",
+          "type": "object"
+        },
+        "query": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DashboardQuery"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "A metric query."
+        },
+        "sql": {
+          "anyOf": [
+            {
+              "maxLength": 20000,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Inline SQL. Use $name placeholders for the values params binds.",
+          "title": "Sql"
+        },
+        "title": {
+          "maxLength": 120,
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        },
+        "type": {
+          "const": "kpi",
+          "title": "Type",
+          "type": "string"
+        },
+        "width": {
+          "anyOf": [
+            {
+              "maximum": 12,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Columns of the 12-column row. Omitted widths share what is left.",
+          "title": "Width"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "type"
+      ],
+      "title": "KpiWidget",
+      "type": "object"
+    },
+    "LineColumns": {
+      "additionalProperties": false,
+      "properties": {
+        "series": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Split one y column into a line per value of this column.",
+          "title": "Series"
+        },
+        "x": {
+          "description": "The time column.",
+          "title": "X",
+          "type": "string"
+        },
+        "y": {
+          "description": "One line per column.",
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 10,
+          "minItems": 1,
+          "title": "Y",
+          "type": "array"
+        }
+      },
+      "required": [
+        "x",
+        "y"
+      ],
+      "title": "LineColumns",
+      "type": "object"
+    },
+    "LineWidget": {
+      "additionalProperties": false,
+      "description": "Metrics over time: one line per metric, or per value of one dimension.",
+      "properties": {
+        "columns": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LineColumns"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "description": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "id": {
+          "description": "Unique in the dashboard. Links and filters refer to it.",
+          "maxLength": 64,
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "title": "Id",
+          "type": "string"
+        },
+        "ignore": {
+          "description": "Dimension parameters this widget does not apply.",
+          "items": {
+            "maxLength": 64,
+            "pattern": "^[a-z][a-z0-9_]*$",
+            "type": "string"
+          },
+          "maxItems": 8,
+          "title": "Ignore",
+          "type": "array"
+        },
+        "params": {
+          "description": "SQL placeholders and the parameters they take: $region, $period.start.",
+          "maxProperties": 20,
+          "patternProperties": {
+            "^[a-z][a-z0-9_]*$": {
+              "maxLength": 71,
+              "pattern": "^\\$[a-z][a-z0-9_]*(\\.(start|end))?$",
+              "type": "string"
+            }
+          },
+          "propertyNames": {
+            "maxLength": 64
+          },
+          "title": "Params",
+          "type": "object"
+        },
+        "query": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DashboardQuery"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "A metric query."
+        },
+        "sql": {
+          "anyOf": [
+            {
+              "maxLength": 20000,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Inline SQL. Use $name placeholders for the values params binds.",
+          "title": "Sql"
+        },
+        "title": {
+          "maxLength": 120,
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        },
+        "type": {
+          "const": "line",
+          "title": "Type",
+          "type": "string"
+        },
+        "width": {
+          "anyOf": [
+            {
+              "maximum": 12,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Columns of the 12-column row. Omitted widths share what is left.",
+          "title": "Width"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "type"
+      ],
+      "title": "LineWidget",
+      "type": "object"
+    },
+    "Row": {
+      "additionalProperties": false,
+      "properties": {
+        "widgets": {
+          "items": {
+            "discriminator": {
+              "mapping": {
+                "bar": "#/$defs/BarWidget",
+                "kpi": "#/$defs/KpiWidget",
+                "line": "#/$defs/LineWidget",
+                "table": "#/$defs/TableWidget",
+                "text": "#/$defs/TextWidget"
+              },
+              "propertyName": "type"
+            },
+            "oneOf": [
+              {
+                "$ref": "#/$defs/KpiWidget"
+              },
+              {
+                "$ref": "#/$defs/LineWidget"
+              },
+              {
+                "$ref": "#/$defs/BarWidget"
+              },
+              {
+                "$ref": "#/$defs/TableWidget"
+              },
+              {
+                "$ref": "#/$defs/TextWidget"
+              }
+            ]
+          },
+          "maxItems": 8,
+          "minItems": 1,
+          "title": "Widgets",
+          "type": "array"
+        }
+      },
+      "required": [
+        "widgets"
+      ],
+      "title": "Row",
+      "type": "object"
+    },
+    "TableWidget": {
+      "additionalProperties": false,
+      "description": "Rows as they come: dimensions first, then metrics.",
+      "properties": {
+        "description": {
+          "anyOf": [
+            {
+              "maxLength": 500,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "id": {
+          "description": "Unique in the dashboard. Links and filters refer to it.",
+          "maxLength": 64,
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "title": "Id",
+          "type": "string"
+        },
+        "ignore": {
+          "description": "Dimension parameters this widget does not apply.",
+          "items": {
+            "maxLength": 64,
+            "pattern": "^[a-z][a-z0-9_]*$",
+            "type": "string"
+          },
+          "maxItems": 8,
+          "title": "Ignore",
+          "type": "array"
+        },
+        "params": {
+          "description": "SQL placeholders and the parameters they take: $region, $period.start.",
+          "maxProperties": 20,
+          "patternProperties": {
+            "^[a-z][a-z0-9_]*$": {
+              "maxLength": 71,
+              "pattern": "^\\$[a-z][a-z0-9_]*(\\.(start|end))?$",
+              "type": "string"
+            }
+          },
+          "propertyNames": {
+            "maxLength": 64
+          },
+          "title": "Params",
+          "type": "object"
+        },
+        "query": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DashboardQuery"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "A metric query."
+        },
+        "sql": {
+          "anyOf": [
+            {
+              "maxLength": 20000,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Inline SQL. Use $name placeholders for the values params binds.",
+          "title": "Sql"
+        },
+        "title": {
+          "maxLength": 120,
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        },
+        "type": {
+          "const": "table",
+          "title": "Type",
+          "type": "string"
+        },
+        "width": {
+          "anyOf": [
+            {
+              "maximum": 12,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Columns of the 12-column row. Omitted widths share what is left.",
+          "title": "Width"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "type"
+      ],
+      "title": "TableWidget",
+      "type": "object"
+    },
+    "TextWidget": {
+      "additionalProperties": false,
+      "description": "A heading or a short note, in Markdown.",
+      "properties": {
+        "id": {
+          "maxLength": 64,
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "title": "Id",
+          "type": "string"
+        },
+        "markdown": {
+          "maxLength": 4000,
+          "minLength": 1,
+          "title": "Markdown",
+          "type": "string"
+        },
+        "title": {
+          "anyOf": [
+            {
+              "maxLength": 120,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Title"
+        },
+        "type": {
+          "const": "text",
+          "title": "Type",
+          "type": "string"
+        },
+        "width": {
+          "anyOf": [
+            {
+              "maximum": 12,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Width"
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "markdown"
+      ],
+      "title": "TextWidget",
+      "type": "object"
+    },
+    "TimeRangeParameter": {
+      "additionalProperties": false,
+      "description": "A window that widgets opt into by writing ``time_range: $name``.",
+      "properties": {
+        "default": {
+          "anyOf": [
+            {
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/DashboardTimeRange"
+                },
+                {
+                  "enum": [
+                    "today",
+                    "last_7_days",
+                    "last_30_days",
+                    "last_90_days",
+                    "last_12_months",
+                    "week_to_date",
+                    "month_to_date",
+                    "quarter_to_date",
+                    "year_to_date",
+                    "last_week",
+                    "last_month",
+                    "last_quarter",
+                    "last_year"
+                  ],
+                  "type": "string"
+                }
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "A preset such as last_30_days, or a window. Omitted: all time.",
+          "title": "Default"
+        },
+        "label": {
+          "anyOf": [
+            {
+              "maxLength": 80,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Label"
+        },
+        "type": {
+          "const": "time_range",
+          "title": "Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "TimeRangeParameter",
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "A dashboard, as written in its file.",
+  "properties": {
+    "description": {
+      "anyOf": [
+        {
+          "maxLength": 2000,
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Description"
+    },
+    "labels": {
+      "items": {
+        "maxLength": 40,
+        "minLength": 1,
+        "type": "string"
+      },
+      "maxItems": 20,
+      "title": "Labels",
+      "type": "array"
+    },
+    "name": {
+      "description": "Unique in the workspace; the file is <name>.dashboard.yml.",
+      "maxLength": 64,
+      "pattern": "^[a-z][a-z0-9_-]*$",
+      "title": "Name",
+      "type": "string"
+    },
+    "parameters": {
+      "maxProperties": 8,
+      "patternProperties": {
+        "^[a-z][a-z0-9_]*$": {
+          "discriminator": {
+            "mapping": {
+              "dimension": "#/$defs/DimensionParameter",
+              "time_range": "#/$defs/TimeRangeParameter"
+            },
+            "propertyName": "type"
+          },
+          "oneOf": [
+            {
+              "$ref": "#/$defs/TimeRangeParameter"
+            },
+            {
+              "$ref": "#/$defs/DimensionParameter"
+            }
+          ]
+        }
+      },
+      "propertyNames": {
+        "maxLength": 64
+      },
+      "title": "Parameters",
+      "type": "object"
+    },
+    "rows": {
+      "items": {
+        "$ref": "#/$defs/Row"
+      },
+      "maxItems": 20,
+      "minItems": 1,
+      "title": "Rows",
+      "type": "array"
+    },
+    "title": {
+      "maxLength": 120,
+      "minLength": 1,
+      "title": "Title",
+      "type": "string"
+    },
+    "version": {
+      "const": 1,
+      "description": "The format version this file is written for.",
+      "title": "Version",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "version",
+    "name",
+    "title",
+    "rows"
+  ],
+  "title": "DuckHaven dashboard",
+  "type": "object"
+}

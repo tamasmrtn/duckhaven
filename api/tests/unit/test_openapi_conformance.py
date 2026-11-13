@@ -77,6 +77,7 @@ ALLOWED_TAGS = {
     "assistant",
     "auth",
     "catalog",
+    "dashboards",
     "grants",
     "health",
     "lineage",
@@ -105,6 +106,7 @@ UNAUTHENTICATED = {
     "/auth/logout",
     "/auth/oidc/{provider}/login",
     "/auth/oidc/{provider}/callback",
+    "/dashboard-schema",
 }
 
 #: Abbreviations and kind-names this migration removed. The general rule is

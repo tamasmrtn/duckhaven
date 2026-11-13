@@ -52,9 +52,7 @@ export const TIMELINE = {
  * Average concurrency by state, stacked. Identity rather than status (these are
  * shares of one quantity), so fixed categorical slots: 0 running, 3 waiting to
  * run, 6 waiting for compute. Validated in stack order — the adjacent pairs are
- * the ones a reader compares — light and dark, all checks passing; amber sits
- * under 3:1 on the light surface, which the legend's values and the query table
- * give the required text relief for.
+ * the ones a reader compares — light and dark, all checks passing.
  */
 export const LOAD = {
   running: SERIES[0],

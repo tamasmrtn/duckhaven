@@ -22,13 +22,33 @@ describe('chart colors', () => {
     expect(SERIES.map((s) => s.light)).toEqual([
       '#2a78d6',
       '#eb6834',
-      '#1baf7a',
-      '#eda100',
-      '#e87ba4',
+      '#05a26f',
+      '#bd7f03',
+      '#d76c95',
       '#008300',
       '#4a3aa7',
       '#e34948',
     ])
+  })
+
+  it('keeps every slot at 3:1 or more against the chart surface in both modes', () => {
+    // WCAG 2 contrast, against `--bg-surface` in styles/tokens.css. Aqua, yellow
+    // and magenta once sat at 2.69, 2.07 and 2.57 on the light surface.
+    const luminance = (hex: string) => {
+      const [r, g, b] = [1, 3, 5].map((i) => {
+        const c = parseInt(hex.slice(i, i + 2), 16) / 255
+        return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4
+      })
+      return 0.2126 * r + 0.7152 * g + 0.0722 * b
+    }
+    const contrast = (a: string, b: string) => {
+      const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x)
+      return (hi + 0.05) / (lo + 0.05)
+    }
+    for (const slot of SERIES) {
+      expect(contrast(slot.light, '#f8fafc'), slot.light).toBeGreaterThanOrEqual(3)
+      expect(contrast(slot.dark, '#111827'), slot.dark).toBeGreaterThanOrEqual(3)
+    }
   })
 
   it('resolves by theme', () => {

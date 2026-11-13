@@ -66,9 +66,8 @@ export function ChartFrame({
 
 /**
  * The identity channel. Always rendered for two or more series so nothing depends
- * on matching colours by eye, and it carries each series' window total — which
- * doubles as the visible-value relief the lighter categorical hues need to be
- * legible on a light surface.
+ * on matching colours by eye, and it can carry each series' value, so the figures
+ * are readable without hovering.
  */
 export function Legend({
   items,

@@ -366,7 +366,8 @@ async def test_queue_wait_is_not_recorded_for_a_session_statement(db_session):
         db_session,
         Frame(type=FrameType.QUERY_PROGRESS, payload={"query_id": str(query.id)}),
     )
-    assert _value("duckhaven_query_queue_wait_seconds_count", {"replica_id": RID}) == before
+    # The series does not exist until some query records a wait, so absent is 0.
+    assert (_value("duckhaven_query_queue_wait_seconds_count", {"replica_id": RID}) or 0) == before
 
 
 async def test_queue_rejection_counted(db_session):

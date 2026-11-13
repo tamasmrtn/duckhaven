@@ -64,6 +64,9 @@ than as a shared service account.
 - It cannot use a draft or broken semantic definition. Only *published* models reach it, and a definition whose column
   is gone is withheld: the assistant says a metric is defined but broken rather than substituting its own calculation.
 - It cannot draw a chart or any other visualisation; it gives the numbers, which you can chart in a worksheet.
+- It cannot show an image. An image in an answer appears as its description in brackets, such as `[image: chart]`,
+  and is never loaded, so text the model reads in a table or a tool result cannot make your browser send data to
+  another site.
 - It cannot search the *contents* of tables. It can match a question to a metric by name or synonym in the
   [semantic layer](../metadata/semantic-layer.md).
 - It cannot run on a schedule or unattended. It answers one turn at a time, in one conversation.

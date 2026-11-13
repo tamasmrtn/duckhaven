@@ -130,3 +130,25 @@ async def test_outer_app_exposes_the_catalog_client_the_websocket_needs(monkeypa
 
     async with _outer_lifespan(app):
         assert app.state.polaris_client is sentinel
+
+
+async def test_every_response_carries_the_security_headers():
+    """nosniff on every response, so a browser never runs one as a type it was
+    not served as; same-origin referrers, so the workspace and query names in the
+    app's URLs never reach the sites its links open. Checked on a response from
+    the mounted API and on one from the outer app itself."""
+
+    async def _no_db():
+        yield None
+
+    api_app.dependency_overrides[get_db] = _no_db
+    try:
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as c:
+            responses = [await c.post("/api/auth/login", json={}), await c.get("/nowhere")]
+    finally:
+        api_app.dependency_overrides.clear()
+
+    for resp in responses:
+        assert resp.headers["x-content-type-options"] == "nosniff", resp.url
+        assert resp.headers["referrer-policy"] == "same-origin", resp.url

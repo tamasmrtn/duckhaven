@@ -10,8 +10,11 @@ import { stabilizeStreamingMarkdown } from "./streamingMarkdown";
 const STREAM_FRAME_MS = 60;
 
 // Styled renderers for assistant messages. Only GFM markdown is parsed — no raw
-// HTML — so there's no injection surface. Tables scroll horizontally because the
-// panel is narrow.
+// HTML. Images are the one construct that makes a request on its own: the model
+// can be steered by text it reads (tool output, metadata) into writing an image
+// whose URL carries data, which the browser would send on render. So an image
+// renders as its alt text and never loads. Tables scroll horizontally because
+// the panel is narrow.
 const COMPONENTS: Components = {
   p: ({ node: _n, ...props }) => (
     <p className="my-1.5 first:mt-0 last:mb-0" {...props} />
@@ -82,6 +85,11 @@ const COMPONENTS: Components = {
   ),
   hr: ({ node: _n, ...props }) => (
     <hr className="my-2 border-[var(--border-subtle)]" {...props} />
+  ),
+  img: ({ alt }) => (
+    <span className="text-text-secondary">
+      {alt ? `[image: ${alt}]` : "[image]"}
+    </span>
   ),
 };
 

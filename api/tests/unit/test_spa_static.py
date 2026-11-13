@@ -7,6 +7,7 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
+from api.config import settings
 from api.main import SPAStaticFiles
 
 
@@ -59,3 +60,29 @@ async def test_index_is_revalidated_on_every_load(spa_app: FastAPI):
 async def test_hashed_assets_are_cached_for_good(spa_app: FastAPI):
     resp = await _get(spa_app, "/assets/app.js")
     assert resp.headers["cache-control"] == "public, max-age=31536000, immutable"
+
+
+async def test_index_carries_the_content_security_policy(spa_app: FastAPI):
+    """The page refuses scripts, images and requests from anywhere but its own
+    origin, so injected markup can neither run nor send data out."""
+    for path in ("/", "/index.html", "/local/worksheets"):
+        policy = (await _get(spa_app, path)).headers["content-security-policy"]
+        directives = {d.split()[0]: d for d in policy.split("; ")}
+        assert directives["script-src"] == "script-src 'self'", path
+        assert directives["img-src"] == "img-src 'self' data:", path
+        assert directives["connect-src"] == "connect-src 'self'", path
+        assert directives["frame-ancestors"] == "frame-ancestors 'none'", path
+
+
+async def test_report_only_mode_reports_without_blocking(spa_app: FastAPI, monkeypatch):
+    monkeypatch.setattr(settings, "csp_report_only", True)
+    resp = await _get(spa_app, "/")
+    assert "content-security-policy" not in resp.headers
+    assert "script-src 'self'" in resp.headers["content-security-policy-report-only"]
+
+
+async def test_policy_can_be_turned_off(spa_app: FastAPI, monkeypatch):
+    monkeypatch.setattr(settings, "csp_enabled", False)
+    resp = await _get(spa_app, "/")
+    assert "content-security-policy" not in resp.headers
+    assert "content-security-policy-report-only" not in resp.headers

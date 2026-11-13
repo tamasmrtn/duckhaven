@@ -10,12 +10,13 @@ from fastapi import FastAPI, Request, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.datastructures import MutableHeaders
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 from starlette.staticfiles import StaticFiles
-from starlette.types import Scope
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from api.config import Settings, settings
 from api.db.session import async_session_factory
@@ -356,6 +357,28 @@ api_app.include_router(admin_maintenance.router, prefix="/admin", tags=["admin-m
 apply_conventions(api_app)
 
 
+# Everything the built app loads comes from its own origin: its scripts, styles,
+# fonts and the Monaco editor worker, and every request it makes goes to /api.
+# Styles allow 'unsafe-inline' because Monaco and Radix set them at runtime; that
+# lets injected markup restyle the page but not run a script or reach another
+# origin. data: covers the small images and fonts the build inlines.
+CONTENT_SECURITY_POLICY = "; ".join(
+    (
+        "default-src 'self'",
+        "script-src 'self'",
+        "style-src 'self' 'unsafe-inline'",
+        "img-src 'self' data:",
+        "font-src 'self' data:",
+        "connect-src 'self'",
+        "worker-src 'self'",
+        "object-src 'none'",
+        "base-uri 'self'",
+        "form-action 'self'",
+        "frame-ancestors 'none'",
+    )
+)
+
+
 class SPAStaticFiles(StaticFiles):
     """Serve index.html for client-side routes, so the router handles deep links
     and refreshes. Missing files that look like assets (anything with a file
@@ -366,7 +389,11 @@ class SPAStaticFiles(StaticFiles):
     without a Cache-Control a browser caches it heuristically for hours, and
     after an upgrade keeps loading asset hashes that no longer exist — a blank
     page. Files under assets/ carry a content hash in their name, so they never
-    change and can be cached for good."""
+    change and can be cached for good.
+
+    index.html also carries the Content-Security-Policy: a policy governs the
+    page its document loads, and index.html is the web app's only document. The
+    API's /api/docs page gets none, since it loads Swagger UI from a CDN."""
 
     async def get_response(self, path: str, scope: Scope) -> Response:
         try:
@@ -379,9 +406,40 @@ class SPAStaticFiles(StaticFiles):
                 raise
         if str(getattr(response, "path", "")).endswith("index.html"):
             response.headers["Cache-Control"] = "no-cache"
+            if settings.csp_enabled:
+                header = (
+                    "Content-Security-Policy-Report-Only"
+                    if settings.csp_report_only
+                    else "Content-Security-Policy"
+                )
+                response.headers[header] = CONTENT_SECURITY_POLICY
         elif path.startswith("assets/"):
             response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
         return response
+
+
+class SecurityHeadersMiddleware:
+    """Set two headers on every HTTP response. nosniff stops a browser from
+    running a response as a type other than the one it was served as. A
+    same-origin Referrer-Policy keeps the workspace and query names in the app's
+    URLs from reaching the sites its links open."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        async def send_with_headers(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                headers = MutableHeaders(scope=message)
+                headers["X-Content-Type-Options"] = "nosniff"
+                headers["Referrer-Policy"] = "same-origin"
+            await send(message)
+
+        await self.app(scope, receive, send_with_headers)
 
 
 @asynccontextmanager
@@ -405,6 +463,7 @@ async def _outer_lifespan(outer: FastAPI) -> AsyncIterator[None]:
 # REST API under /api, the MCP endpoint at /mcp, and the built SPA at / (only
 # present in the image).
 app = FastAPI(lifespan=_outer_lifespan, telemetry={"auto_configure": False})
+app.add_middleware(SecurityHeadersMiddleware)
 app.include_router(agents_ws.router, tags=["agents"])
 # Network-private inter-replica dispatch; never exposed past the internal network.
 app.include_router(internal.router)

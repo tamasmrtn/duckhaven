@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import difflib
 import re
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 
 import yaml
 from pydantic import BaseModel, ValidationError
@@ -68,6 +68,11 @@ class UnsupportedSpecVersion(DashboardInvalid):
 class Loaded:
     spec: DashboardSpec
     warnings: list[Diagnostic]
+    positions: _Positions | None = field(default=None, repr=False, compare=False)
+
+    def at(self, path: str, message: str, hint: str | None = None) -> Diagnostic:
+        """A diagnostic at the dotted ``path``, with its line and column when read from YAML."""
+        return (self.positions or _Positions()).diagnostic(_parse_path(path), message, hint=hint)
 
 
 def load(source: str | bytes) -> Loaded:
@@ -129,7 +134,7 @@ def _validate(data: object, positions: _Positions) -> Loaded:
         target.append(positions.diagnostic(_parse_path(problem.path), problem.message))
     if errors:
         raise DashboardInvalid(errors)
-    return Loaded(spec=spec, warnings=warnings)
+    return Loaded(spec=spec, warnings=warnings, positions=positions)
 
 
 def _check_version(data: dict, positions: _Positions) -> None:

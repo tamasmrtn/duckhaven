@@ -58,6 +58,11 @@ A literal path segment may sit beside a sibling id segment — `/admin/agents/me
 collide with a real identifier. With a slug or a name in that position, the literal is a
 routing hazard and is not allowed.
 
+An action on a collection whose members are named by slug becomes its own collection
+instead: checking a dashboard file without storing it is
+`POST /workspaces/{workspace}/dashboard-validations`, not `POST .../dashboards/validate`,
+which a dashboard called `validate` would shadow.
+
 ## Identifiers
 
 **The rule:** a path parameter is named for the **singular of the collection segment

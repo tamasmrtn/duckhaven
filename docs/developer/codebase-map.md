@@ -104,6 +104,7 @@ surface:
 | `services/grants.py` | Scoped-access grant resolution: walks the `table → schema → catalog` hierarchy (inherits downward, including future tables), additive/no-deny, effective tier capped at the workspace role. Extracts referenced objects from SQL via `sqlglot`. | `routers/schemas.py` (browsing filter/404), `services/query.py::dispatch_query` (per-table enforcement), `routers/grants.py` (admin API) |
 | `services/assistant/` | The governed AI data assistant (package, not a single module). Thin tools that are authenticated loopback calls to DuckHaven's own REST API (`httpx` + `ASGITransport`) so authorization never leaves the normal API boundary; wraps them in a governance/audit capability; mints an ephemeral per-turn PAT as the assistant's identity; persists conversation state to Postgres; runs turns via Pydantic AI with human-in-the-loop write approval. | `routers/assistant.py`, the loopback REST API, Pydantic AI, `services/grants.py`/`sql_guard.py` (via the loopback) |
 | `services/mcp/` | The Model Context Protocol server mounted at `/mcp` (package). Reuses the assistant's loopback `Gateway`, but authenticated as the *caller*: an ASGI middleware validates the presented access token by asking the REST API `GET /me` over the loopback, then hands the authenticated client to the tools on the ASGI scope (not a `ContextVar` — the SDK dispatches handlers into a task group started at boot). Read-only unless `MCP_ALLOW_WRITES`. Also re-exposes the assistant's `knowledge/` documentation tools, gated on the same `ASSISTANT_DOCS_ENABLED` switch. | `main.py` (the `/mcp` route), `services/assistant/gateway.py`, `services/assistant/knowledge/`, `services/sql_guard.py`, the `mcp` SDK |
+| `services/dashboards/` | Dashboards as code (package): `spec.py` (the file format as strict Pydantic models), `loader.py` (strict YAML with line-mapped diagnostics), `resolve.py` (parameters into widget queries, pure), `chart_spec.py` (a library-neutral chart description), `store.py` (canonical form, hashes, refs, names, and `assert_writable`, the guard every write path calls), `validate.py` (the publish-time check against the semantic layer). | `routers/dashboards.py`, `services/semantic/`, `services/grants.py` |
 | `services/migration/` | The catalog storage-backend migration engine (package): a `pending → copying → verifying → cutover → completed` state machine run by a leader-elected background loop (Postgres advisory lock). Provisions a shadow Polaris catalog at the target backend, copies/rewrites Iceberg files, verifies snapshot counts, then atomically re-points the catalog row at cutover; all progress is checkpointed so a crash resumes from the last completed table. | `routers/catalogs.py`, Polaris, the storage backends |
 
 ### 2.3 `agent/` — `duckhaven-agent` (compute)
@@ -231,6 +232,10 @@ erDiagram
     users ||--o{ assistant_conversations : owns
     assistant_conversations ||--o{ assistant_messages : contains
     assistant_messages ||--o{ assistant_tool_calls : logs
+    workspaces ||--o{ dashboards : holds
+    dashboards ||--o{ dashboard_revisions : "published as"
+    dashboards ||--o{ dashboard_refs : reads
+    dashboards ||--o{ dashboard_aliases : "formerly named"
 
     users {
         uuid id
@@ -392,6 +397,11 @@ Notes that matter for changes:
   session, its messages serialized via Pydantic AI's
   `ModelMessagesTypeAdapter`, and each tool invocation logged for audit; see
   `services/assistant/`.
+- **`dashboards`** holds each dashboard's published file (`spec`) and its draft
+  (`draft_spec`), with `version` guarding concurrent edits. `dashboard_revisions`
+  keeps every publish; `dashboard_refs` indexes the models, metrics, dimensions and
+  tables each file reads, for impact lookups; `dashboard_aliases` keeps old names
+  after a rename. See `services/dashboards/`.
 - **`agents.capabilities`** is the last advertised `AgentCapabilities` JSON;
   `result_host`/`result_port` tell the API where to fetch the result Parquet.
 - **`queries` is also the audit log** — there is no separate audit table.

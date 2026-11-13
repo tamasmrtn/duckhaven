@@ -1,6 +1,6 @@
+import { KpiTile } from "@/components/charts/KpiTile";
 import { useAgentMetrics } from "@/queries/metrics";
 import type { Agent, MetricsSample } from "@/types/agent";
-import { cn } from "@/utils";
 
 /** The agent's size: what CPU% and memory% are percentages *of*. */
 export function agentSize(agent: Agent): {
@@ -12,45 +12,6 @@ export function agentSize(agent: Agent): {
     memoryGb:
       agent.requested_memory_gb ?? agent.capabilities?.memory_limit_gb ?? null,
   };
-}
-
-function Tile({
-  label,
-  value,
-  detail,
-  tone,
-  word,
-}: {
-  label: string;
-  value: string;
-  detail?: string;
-  tone?: string;
-  // A status word ("terminated") rather than a measurement: set smaller so a
-  // state does not shout at the size of the numbers beside it.
-  word?: boolean;
-}) {
-  return (
-    <div className="rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-4 py-3">
-      <p className="text-2xs uppercase tracking-wide text-text-tertiary">
-        {label}
-      </p>
-      <p
-        className={cn(
-          // One line box for both sizes, so the detail line under every tile
-          // sits at the same height whatever the value's type size.
-          "mt-1 font-mono font-tabular leading-8",
-          word ? "text-md capitalize" : "text-xl",
-          tone,
-        )}
-        data-testid={`live-${label.toLowerCase().replace(/\s+/g, "-")}`}
-      >
-        {value}
-      </p>
-      <p className="mt-0.5 min-h-4 text-2xs text-text-tertiary">
-        {detail ?? ""}
-      </p>
-    </div>
-  );
 }
 
 function ago(iso: string): string {
@@ -77,8 +38,9 @@ export function LiveTiles({ agent }: { agent: Agent }) {
 
   return (
     <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-      <Tile
+      <KpiTile
         label="Status"
+        testId="live-status"
         value={
           agent.lifecycle && agent.lifecycle !== "running"
             ? agent.lifecycle
@@ -98,8 +60,9 @@ export function LiveTiles({ agent }: { agent: Agent }) {
               : "text-[var(--status-failed)]"
         }
       />
-      <Tile
+      <KpiTile
         label="Executing"
+        testId="live-executing"
         value={
           latest?.executing_queries != null
             ? `${latest.executing_queries}`
@@ -111,18 +74,21 @@ export function LiveTiles({ agent }: { agent: Agent }) {
             : "queries running now"
         }
       />
-      <Tile
+      <KpiTile
         label="Queued"
+        testId="live-queued"
         value={latest ? `${latest.queued_queries}` : DASH}
         detail={parked ? `+${parked} waiting for memory` : "waiting for a slot"}
       />
-      <Tile
+      <KpiTile
         label="CPU"
+        testId="live-cpu"
         value={latest ? `${Math.round(latest.cpu_percent)}%` : DASH}
         detail={cores ? `of ${cores} vCPU` : undefined}
       />
-      <Tile
+      <KpiTile
         label="Memory"
+        testId="live-memory"
         value={latest ? `${Math.round(latest.memory_percent)}%` : DASH}
         detail={memoryGb ? `of ${memoryGb} GB` : undefined}
       />

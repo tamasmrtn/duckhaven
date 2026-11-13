@@ -1,6 +1,7 @@
+import { resolve } from "@/components/charts/chartColors";
 import { useIsDark } from "@/hooks/useIsDark";
 import type { MetricsSample } from "@/types/agent";
-import { RESOURCE, resolve } from "./monitoring/chartColors";
+import { RESOURCE } from "./monitoring/chartColors";
 
 const DASH = "—";
 const WIDTH = 64;

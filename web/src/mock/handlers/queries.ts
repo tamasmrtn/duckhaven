@@ -248,7 +248,10 @@ export const queryHandlers = [
     const hidden = ["sample", "metadata", "maintenance"];
     const rows = pool
       .filter((r) => !r.origin || !hidden.includes(r.origin))
-      .filter((r) => !userId || r.user_id === userId)
+      // A person's runs include the ones the assistant made for them.
+      .filter(
+        (r) => !userId || r.user_id === userId || r.on_behalf_of_id === userId,
+      )
       .filter((r) => !agentId || r.agent_id === agentId)
       // Interactive runs carry a null origin; mirror the server's alias for it.
       .filter((r) =>

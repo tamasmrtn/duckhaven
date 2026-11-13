@@ -16,7 +16,8 @@ that applies to it.
 
 The exact permissions behind each value are in the [permissions reference](../reference/permissions.md). The same four
 layers apply to people and to [service accounts](service-accounts.md), including the one the
-[AI assistant](../ai/assistant.md) acts as.
+[AI assistant](../ai/assistant.md) acts as. The assistant also acts for the person asking, so each of its calls must
+pass these layers for both of them; see [Whose access applies](../ai/assistant.md#whose-access-applies).
 
 !!! note "The layers are independent"
     A global `admin` cannot read your data without workspace membership, and a workspace `owner` is not an admin.

@@ -42,9 +42,10 @@ conversation goes — which is also what bounds a [prompt injection](assistant.m
 was already permitted to do.
 
 !!! note "It differs from the assistant here"
-    The assistant acts as one fixed `Assistant` service account, which an administrator grants access to centrally. The
-    MCP server has no identity of its own at all — each connection carries its own. Two people connecting the same
-    client to the same deployment see different data, and revoking one person's token affects only them.
+    The assistant acts as one fixed `Assistant` service account, which an administrator grants access to centrally, and
+    narrows each turn to what the person asking may also do. The MCP server has no identity of its own at all — each
+    connection carries its own token, and only that token's access applies. Two people connecting the same client to
+    the same deployment see different data, and revoking one person's token affects only them.
 
 ## Read-only by default
 

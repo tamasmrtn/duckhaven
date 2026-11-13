@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.deps import get_current_user, get_db
 from api.models.maintenance import MaintenanceRecommendation, TableHealthSample
 from api.models.user import User
-from api.models.workspace import Workspace, WorkspaceMember
+from api.models.workspace import Workspace
 from api.schemas.maintenance import (
     DeploymentHealthOut,
     HealthHistoryPoint,
@@ -34,7 +34,12 @@ from api.services.maintenance import scoring
 from api.services.maintenance.read import latest_samples, sample_for_aggregate
 from api.services.maintenance.recommend import SEVERITY_RANK
 from api.services.paging import paginate
-from api.services.workspace import assert_workspace_member, get_workspace, resolve_catalog
+from api.services.workspace import (
+    assert_workspace_member,
+    get_workspace,
+    member_of,
+    resolve_catalog,
+)
 
 router = APIRouter()
 
@@ -44,15 +49,7 @@ _HISTORY_LIMIT = 90
 
 async def _member_workspaces(db: AsyncSession, user: User) -> list[Workspace]:
     return list(
-        (
-            await db.execute(
-                sa.select(Workspace)
-                .join(WorkspaceMember, WorkspaceMember.workspace_id == Workspace.id)
-                .where(WorkspaceMember.user_id == user.id)
-            )
-        )
-        .scalars()
-        .all()
+        (await db.execute(sa.select(Workspace).where(member_of(db, user.id)))).scalars().all()
     )
 
 

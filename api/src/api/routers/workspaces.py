@@ -32,6 +32,7 @@ from api.services.workspace import (
     UNSET,
     assert_workspace_member,
     get_default_catalog,
+    member_of,
     mirror_member_grant,
     resolve_workspace_catalogs,
 )
@@ -128,11 +129,7 @@ async def list_workspaces(
 
     Membership is the filter: this is not an admin listing, and a workspace the
     caller has no role in is invisible rather than forbidden."""
-    result = await db.execute(
-        select(Workspace)
-        .join(WorkspaceMember, WorkspaceMember.workspace_id == Workspace.id)
-        .where(WorkspaceMember.user_id == user.id)
-    )
+    result = await db.execute(select(Workspace).where(member_of(db, user.id)))
     return [await _workspace_out(db, ws) for ws in result.scalars().all()]
 
 

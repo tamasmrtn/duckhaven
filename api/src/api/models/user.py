@@ -67,6 +67,12 @@ class Credential(Base):
     # unique index gives an O(1) lookup by the hash of a presented bearer token.
     token_hash: Mapped[str | None] = mapped_column(String(64), unique=True, nullable=True)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Set on the assistant's per-turn PAT: the person the turn is for. A request
+    # with it may do only what both that person and ``user_id`` may do (see
+    # services/delegation.py). The person's deletion takes the token with them.
+    on_behalf_of_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -74,3 +80,4 @@ class Credential(Base):
     user: Mapped[User | None] = relationship(
         "User", back_populates="credentials", foreign_keys=[user_id]
     )
+    on_behalf_of: Mapped[User | None] = relationship("User", foreign_keys=[on_behalf_of_id])

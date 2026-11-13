@@ -117,8 +117,10 @@ workspace can open and [schedule](schedule-queries.md).
 ## Find an earlier run
 
 **History**, in the left navigation, lists the runs in the workspace. It opens on **your runs from the last 7 days**;
-the user picker shows your name and the time control reads *Last 7 days*. Change either to widen the view, or click
-**Clear filters** to return to it. The list is paged: **Load more** adds the next page. There is no total count.
+the user picker shows your name and the time control reads *Last 7 days*. Your runs include the ones the
+[assistant](../ai/assistant.md#whose-access-applies) made for you, shown as **Assistant** with your name beneath. Change
+either to widen the view, or click **Clear filters** to return to it. The list is paged: **Load more** adds the next
+page. There is no total count.
 
 Click a run to open its profile and full SQL. Every filter is kept in the URL, so you can bookmark a view or send it to
 a colleague; it opens on the first page.

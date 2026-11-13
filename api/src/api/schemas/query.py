@@ -208,6 +208,11 @@ class QueryOut(BaseModel):
     # Display name of the user/service account that ran the query, resolved from
     # user_id for the History view. Null for internal runs with no user.
     user_name: str | None = None
+    # The person `user_id` ran it for: set on the assistant's runs, which may do
+    # only what both could. The name is resolved for the History view, like
+    # user_name.
+    on_behalf_of_id: uuid.UUID | None = None
+    on_behalf_of_name: str | None = None
     sql: str
     status: str
     # Tags non-interactive runs (e.g. "scheduled") so the UI can label them.

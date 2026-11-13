@@ -201,6 +201,7 @@ class Gateway:
         row_cap: int,
         byte_cap: int,
         service_account_id: str,
+        on_behalf_of_id: str | None = None,
         tags: dict[str, str] | None = None,
         queue_wait_s: float | None = None,
     ) -> None:
@@ -211,6 +212,9 @@ class Gateway:
         # The id the assistant's queries are attributed to; used to refuse paging
         # results of queries run by *other* principals.
         self._service_account_id = service_account_id
+        # The person the assistant acts for, whose runs those are; None for an MCP
+        # caller, which acts for no one but itself.
+        self._on_behalf_of_id = on_behalf_of_id
         # Sent with every query this gateway runs, so History can tell whose
         # conversation or which MCP client a run came from.
         self._tags = tags or {}
@@ -664,10 +668,14 @@ class Gateway:
 
     async def get_query_result(self, query_id: str, *, cursor: str | None, limit: int) -> dict:
         # The rows endpoint re-checks the reader's grants, but paging stays limited
-        # to queries this principal ran: a query id from a colleague's History is
+        # to queries this principal ran for this person: a query id from a
+        # colleague's History, or from the assistant's runs for a colleague, is
         # not something a conversation should be able to pull results from.
         record = (await self._get(f"/queries/{query_id}")).json()
-        if str(record.get("user_id")) != self._service_account_id:
+        if (
+            str(record.get("user_id")) != self._service_account_id
+            or record.get("on_behalf_of_id") != self._on_behalf_of_id
+        ):
             raise GatewayError(
                 "I can only page results of queries I ran in this conversation.", kind="denied"
             )

@@ -69,6 +69,7 @@ async def _run_stream(factory, ws, conv, prompt):
         workspace_slug=ws.slug,
         prompt=prompt,
         catalog=None,
+        user_id=conv.user_id,
     ):
         pass
 
@@ -129,6 +130,7 @@ async def _collect_stream(factory, ws, conv, prompt) -> list[dict]:
         workspace_slug=ws.slug,
         prompt=prompt,
         catalog=None,
+        user_id=conv.user_id,
     ):
         chunks.append(chunk)
     return parse_sse(chunks)
@@ -264,7 +266,7 @@ async def test_streamed_segments_match_the_persisted_transcript(client, db_sessi
 
 async def test_a_turn_tags_its_queries_with_the_conversation(client, db_session, factory):
     ws, _catalog, conv = await _seed(db_session, sa_role="reader")
-    async with runner._turn_context(factory, conv.id, ws.id, ws.slug, None) as deps:
+    async with runner._turn_context(factory, conv.id, ws.id, ws.slug, None, conv.user_id) as deps:
         assert deps.gateway._tags == {"assistant.conversation": str(conv.id)}
 
 
@@ -339,6 +341,7 @@ async def test_stream_turn_emits_tokens_and_done(client, db_session, factory):
                 workspace_slug=ws.slug,
                 prompt="hi",
                 catalog=None,
+                user_id=conv.user_id,
             )
         ]
     frames = parse_sse(chunks)
@@ -360,6 +363,7 @@ async def test_stop_cancels_and_discards_the_turn(client, db_session, factory):
             workspace_slug=ws.slug,
             prompt="hi",
             catalog=None,
+            user_id=conv.user_id,
         )
         # Start pulling the stream so the turn actually begins (mints identity,
         # starts the model run). The model emits one token before it blocks, so
@@ -416,6 +420,7 @@ async def test_write_with_grant_requests_approval(client, db_session, factory):
                 workspace_slug=ws.slug,
                 prompt="delete everything",
                 catalog=None,
+                user_id=conv.user_id,
             )
         ]
     frames = parse_sse(chunks)
@@ -443,6 +448,7 @@ async def test_first_turn_generates_a_title(client, db_session, factory):
             workspace_slug=ws.slug,
             prompt="hello",
             catalog=None,
+            user_id=conv.user_id,
         ):
             pass
 
@@ -470,6 +476,7 @@ async def test_propose_sql_edit_emits_propose_edit_frame(client, db_session, fac
                 workspace_slug=ws.slug,
                 prompt="write me a query",
                 catalog=None,
+                user_id=conv.user_id,
             )
         ]
     frames = parse_sse(chunks)
@@ -502,6 +509,7 @@ async def test_propose_sql_edit_with_selection_is_scoped(client, db_session, fac
                 workspace_slug=ws.slug,
                 prompt="change this to id = 2",
                 catalog=None,
+                user_id=conv.user_id,
                 selection_sql="id = 1",
             )
         ]
@@ -526,6 +534,7 @@ async def test_request_limit_surfaces_friendly_error(client, db_session, factory
                 workspace_slug=ws.slug,
                 prompt="loop forever",
                 catalog=None,
+                user_id=conv.user_id,
             )
         ]
     frames = parse_sse(chunks)

@@ -40,7 +40,7 @@ from api.models.table_metadata import TableMetadata
 from api.models.user import Credential
 from api.models.workspace import Workspace
 from api.schemas.query import RowsPageOut
-from api.services import agent_access
+from api.services import agent_access, delegation
 from api.services import grants as grant_service
 from api.services import runtimes as runtime_service
 from api.services.addresses import result_url
@@ -187,24 +187,27 @@ async def dispatch_query(
 
     # Scoped-catalog grant check: reject before dispatch if the principal lacks
     # tier on any referenced object. No-op unless a catalog is in scoped mode.
-    await grant_service.assert_query_access(
-        db,
-        workspace.id,
-        principal_id if principal_id is not None else query.user_id,
-        query.sql,
-        active_catalog,
-        catalogs,
-        active_schema=active_schema,
-    )
-    if active_schema is not None:
-        await grant_service.assert_chosen_schema_reachable(
+    # A run made for someone is checked for them too, including when it is
+    # replayed outside the request that made it (a run parked on cold compute).
+    with delegation.acting_for(db, query.user_id, query.on_behalf_of_id):
+        await grant_service.assert_query_access(
             db,
             workspace.id,
             principal_id if principal_id is not None else query.user_id,
+            query.sql,
             active_catalog,
-            active_schema,
             catalogs,
+            active_schema=active_schema,
         )
+        if active_schema is not None:
+            await grant_service.assert_chosen_schema_reachable(
+                db,
+                workspace.id,
+                principal_id if principal_id is not None else query.user_id,
+                active_catalog,
+                active_schema,
+                catalogs,
+            )
     # Committed with the dispatch, so what the agent reports for a probe is held
     # to the table asked for here.
     probes = {

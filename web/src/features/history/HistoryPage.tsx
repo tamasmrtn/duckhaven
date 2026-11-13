@@ -503,6 +503,13 @@ export function HistoryPage() {
                     </TableCell>
                     <TableCell className="px-4 py-2 text-xs text-text-secondary">
                       {q.user_name ?? "—"}
+                      {/* The assistant runs as its own account, for whoever
+                          asked; both are named so neither is hidden. */}
+                      {q.on_behalf_of_name && (
+                        <div className="whitespace-nowrap text-text-tertiary">
+                          for {q.on_behalf_of_name}
+                        </div>
+                      )}
                     </TableCell>
                     {!all && anySession && (
                       <TableCell className="px-4 py-2 text-xs">

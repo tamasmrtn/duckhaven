@@ -55,6 +55,7 @@ from api.models.agent import Agent
 from api.models.agent_grant import AgentGrant
 from api.models.user import User
 from api.models.workspace import Workspace, WorkspaceMember
+from api.services.delegation import principals_for
 from api.services.permissions import Permission
 from api.services.rbac import has_permission
 
@@ -158,9 +159,28 @@ async def visible_tiers(
 
         tiers = await visible_tiers(db, user, agents)
         [... for a in agents if a.id in tiers]
+
+    Acting for someone (``services.delegation``), an agent is listed only when both
+    can see it, at the lower of their two tiers.
     """
     if not agents:
         return {}
+    resolved = await _visible_tiers_of(db, user, agents)
+    for principal in principals_for(db, user.id)[1:]:
+        other = await db.get(User, principal)
+        theirs = await _visible_tiers_of(db, other, agents) if other is not None else {}
+        resolved = {
+            agent_id: min(tier, theirs[agent_id], key=tier_rank)
+            for agent_id, tier in resolved.items()
+            if agent_id in theirs
+        }
+    return resolved
+
+
+async def _visible_tiers_of(
+    db: AsyncSession, user: User, agents: Sequence[Agent]
+) -> dict[uuid.UUID, str]:
+    """:func:`visible_tiers` for one principal, from their permission and grants."""
     is_admin = await has_permission(db, user, Permission.AGENTS_MANAGE)
     granted = {} if is_admin else await load_caller_grants(db, user.id)
     resolved: dict[uuid.UUID, str] = {}
@@ -189,16 +209,21 @@ async def is_workspace_default_for(
     workspace, whatever their own grants. Read from the workspace row each time, never
     cached, so clearing or changing the default withdraws it on the next request.
     Membership is checked here rather than trusted from the caller, so a route that
-    forgets to assert it cannot hand the grant to an outsider.
+    forgets to assert it cannot hand the grant to an outsider. Acting for someone
+    (``services.delegation``), both must be members.
     """
     if workspace is None or workspace.default_agent_id != agent_id:
         return False
-    member = await db.execute(
-        select(WorkspaceMember.user_id).where(
-            WorkspaceMember.workspace_id == workspace.id, WorkspaceMember.user_id == user_id
+    for principal in principals_for(db, user_id):
+        member = await db.execute(
+            select(WorkspaceMember.user_id).where(
+                WorkspaceMember.workspace_id == workspace.id,
+                WorkspaceMember.user_id == principal,
+            )
         )
-    )
-    return member.first() is not None
+        if member.first() is None:
+            return False
+    return True
 
 
 async def tier_for_principal(

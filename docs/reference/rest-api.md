@@ -400,7 +400,9 @@ opts out on a query, a session statement, or a whole session when sent to `POST 
 the cache off for a workspace with `result_cache_enabled` on `PATCH /api/workspaces/{workspace}`. The same call sets
 `default_agent_id`, the workspace's [default compute](../access/workspaces.md#default-compute); `null` clears it. The
 workspace shows it as `default_agent_id` and `default_agent` (`id`, `name`, `provider`, `lifecycle`, `status`) to every
-member.
+member. It also sets `timezone`, an IANA name such as `Europe/London`, which is the
+[time zone](../access/workspaces.md#time-zone) semantic time windows resolve in; it is `UTC` until set, and cannot be
+`null`.
 
 | Field | Meaning |
 |---|---|
@@ -574,7 +576,9 @@ metrics for an unknown one, both candidates for an ambiguous join path, the supp
 
 Time windows are stated explicitly, because "last month" means different windows to different people: `last_complete`
 (the last N complete periods), `trailing` (a rolling window ending today), `to_date` (period start through today) or
-`absolute` (explicit dates, end exclusive).
+`absolute` (explicit dates, end exclusive). "Today" is the date in the workspace's `timezone`. Add `compare`
+(`previous_period` or `previous_year`) to also get `compare` in the response: `kind`, `start`, `end` (exclusive) and
+the `sql` of the same question over that earlier window. It is `null` when not asked for, and needs a `time_range`.
 
 A file the provider cannot read, such as YAML sent to `dbt` or an empty body, answers **422** naming the format that
 provider expects. It is not a 5xx, because resending the same file will never work.

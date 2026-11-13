@@ -100,7 +100,19 @@ month-to-date to a third:
 | `to_date` | From the start of the current period through today |
 | `absolute` | Explicit start and end dates; the end is exclusive |
 
-There is no default.
+There is no default. Relative windows count from today in the
+[workspace's time zone](../access/workspaces.md#time-zone).
+
+A question can also ask for a **comparison**, and compiling it returns a second
+statement for the earlier window beside the first:
+
+| Comparison | Meaning |
+| --- | --- |
+| `previous_period` | The same span just before: the month before a complete month, or the same number of days into last month for month to date |
+| `previous_year` | The same dates a year earlier; 29 February compares with 28 February |
+
+A comparison never overlaps the window it is compared with, so no row counts on
+both sides of a change. A window longer than a year has no `previous_year`.
 
 ## Business vocabulary
 

@@ -56,6 +56,19 @@ If the default is a stopped [elastic agent](../compute/elastic-compute.md), runn
 run the work, the request fails and names the agent and the reason; DuckHaven does not choose another. Clearing the
 default returns the workspace to automatic choice. Deleting the agent clears it too.
 
+## Time zone
+
+A workspace's time zone decides what **today** is for the semantic layer's relative
+[time windows](../metadata/semantic-layer.md#why-every-metric-names-a-time-column), so month to date on the 1st means
+this month wherever the server runs. It is UTC until an owner sets an IANA name, such as `Europe/London`, with
+`timezone` on `PATCH /api/workspaces/{workspace}`; **Settings** has no control for it. A name that is not in the IANA
+database, such as `+01:00` or `europe/london`, is refused with a 422.
+
+The time zone moves only the dates a window resolves to. Schedules still run on cron expressions in UTC, and
+timestamps in results are unchanged. For a `TIMESTAMPTZ` time dimension, a window's edges are midnight in the agent's
+time zone, usually UTC, rather than the workspace's, so a row stamped within a few hours of midnight can land in the
+neighbouring day. A `DATE` or plain `TIMESTAMP` column has no such gap.
+
 ## Related
 
 - [Catalogs](../data/catalogs.md) — what a workspace attaches.

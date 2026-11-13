@@ -177,6 +177,11 @@ curl -X POST "$DH/api/workspaces/$WS/semantic/compile?published_only=false" \
       }'
 ```
 
+Add `"compare": "previous_year"` to compile the same question over the same dates
+a year earlier. The response then carries `compare`, with that statement in `sql`
+and its window in `start` and `end`, beside the statement for the window you
+asked for.
+
 ## 8. Publish
 
 ```bash

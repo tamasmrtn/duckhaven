@@ -169,6 +169,15 @@ async def test_internal_queries_excluded(db_session):
     assert (_value("duckhaven_queries_total", label) or 0) == before
 
 
+async def test_a_dashboard_run_counts_as_interactive(db_session):
+    """A dashboard's widgets are run for someone waiting on them, like their own run."""
+    label = {"replica_id": RID, "status": "done"}
+    before = _value("duckhaven_queries_total", label) or 0
+    query = await _make_query(db_session, origin="dashboard")
+    await _apply(db_session, await _done_frame(query.id))
+    assert (_value("duckhaven_queries_total", label) or 0) == before + 1
+
+
 async def test_agent_gauges_from_local_registry(client: AsyncClient, db_session):
     agent = Agent(name="busy-agent", status="healthy")
     db_session.add(agent)

@@ -61,9 +61,10 @@ from api.services.result_cache.key import (
 logger = logging.getLogger(__name__)
 
 # Origins whose runs may use the cache: interactive runs (null, or `elastic` for
-# one sent to the pool), schedules and session statements. The rest are internal
-# (`sample`, `metadata`, `maintenance*`, `export`) and must always really run.
-CACHEABLE_ORIGINS = frozenset({None, "elastic", "scheduled", "session"})
+# one sent to the pool), dashboard widgets, schedules and session statements. The
+# rest are internal (`sample`, `metadata`, `maintenance*`, `export`) and must
+# always really run.
+CACHEABLE_ORIGINS = frozenset({None, "elastic", "dashboard", "scheduled", "session"})
 
 HIT, MISS, BYPASS, INELIGIBLE = "hit", "miss", "bypass", "ineligible"
 

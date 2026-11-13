@@ -240,6 +240,33 @@ async def test_a_repeated_query_is_answered_without_running(
         assert (hit.active_catalog, hit.active_schema) == (catalog, "analytics")
 
 
+async def test_a_dashboard_widget_is_answered_from_the_same_entries(
+    authed_client, workspace, connected, sessions, fake_polaris, user
+):
+    """A widget's run reads what anyone's run cached, and keeps its own origin."""
+    from api.schemas.query import QueryCreate
+    from api.services import query_submit
+
+    agent, ws = connected
+    _set_version(fake_polaris, 1)
+    first = await _run(authed_client, workspace, agent)
+    await _finish(sessions, fake_polaris, first["id"])
+
+    async with sessions() as db:
+        hit = await query_submit.submit_query(
+            db,
+            await db.get(Workspace, workspace.id),
+            QueryCreate(sql=SQL, agent_id=agent.id),
+            await db.get(User, user.id),
+            fake_polaris,
+            origin="dashboard",
+        )
+
+    assert (hit.status, hit.cache_status, hit.origin) == ("done", "hit", "dashboard")
+    assert str(hit.result_source_query_id) == first["id"]
+    assert len(ws.frames(FrameType.DISPATCH_QUERY)) == 1
+
+
 async def test_layout_and_comments_do_not_split_the_entry(
     authed_client, workspace, connected, sessions, fake_polaris
 ):

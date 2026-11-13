@@ -128,6 +128,31 @@ async def test_bind_queued_work_dispatches_matching_query(session_factory, elast
     assert len(dispatched) == 1
 
 
+async def test_bind_queued_work_dispatches_a_parked_dashboard_run(
+    session_factory, elastic_on, monkeypatch
+):
+    """A dashboard widget's pool run keeps its own origin and is bound like any pool run."""
+    from api.models.query import Query
+    from api.services.compute import service
+
+    dispatched: list = []
+
+    async def fake_dispatch(db, query, **kwargs):
+        dispatched.append(query.origin)
+
+    monkeypatch.setattr("api.services.query.dispatch_query", fake_dispatch)
+
+    async with session_factory() as db:
+        ws, _ = await seed_workspace(db, user_id=uuid.uuid4())
+        agent = await _seed_running_elastic_agent(db)
+        db.add(Query(workspace_id=ws.id, sql="SELECT 1", status="queued", origin="dashboard"))
+        await db.commit()
+        bound = await service.bind_queued_work(db, agent)
+
+    assert bound == 1
+    assert dispatched == ["dashboard"]
+
+
 async def test_bind_queued_work_skips_other_pools(session_factory, elastic_on, monkeypatch):
     """A queued query whose workspace needs a different pool is left for another agent."""
     from api.models.query import Query

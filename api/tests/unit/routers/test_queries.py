@@ -591,6 +591,37 @@ async def test_list_workspace_queries_filters_by_origin_and_session(
     assert rows[0]["session_id"] == str(session.id)
 
 
+async def test_history_lists_dashboard_runs_under_their_own_origin(
+    authed_client: AsyncClient, workspace: Workspace, agent: Agent, db_session
+):
+    """A widget's run is someone's run, so History shows it, but not as `interactive`."""
+    from datetime import UTC, datetime
+
+    from api.models.query import Query
+
+    now = datetime.now(UTC)
+    for sql, origin in (("SELECT 'mine'", None), ("SELECT 'widget'", "dashboard")):
+        db_session.add(
+            Query(
+                workspace_id=workspace.id,
+                agent_id=agent.id,
+                sql=sql,
+                status="done",
+                origin=origin,
+                started_at=now,
+            )
+        )
+    await db_session.commit()
+    base = f"/workspaces/{workspace.slug}/queries"
+
+    everything = (await authed_client.get(base)).json()["items"]
+    assert sorted(r["sql"] for r in everything) == ["SELECT 'mine'", "SELECT 'widget'"]
+    widgets = (await authed_client.get(base, params={"origin": "dashboard"})).json()["items"]
+    assert [(r["sql"], r["origin"]) for r in widgets] == [("SELECT 'widget'", "dashboard")]
+    mine = (await authed_client.get(base, params={"origin": "interactive"})).json()["items"]
+    assert [r["sql"] for r in mine] == ["SELECT 'mine'"]
+
+
 async def test_list_workspace_queries_non_member_forbidden(
     client: AsyncClient, workspace: Workspace, db_session
 ):

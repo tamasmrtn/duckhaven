@@ -1,6 +1,8 @@
 """The strict YAML loader: what it refuses, and where it says the problem is."""
 
+import re
 import textwrap
+from pathlib import Path
 
 import pytest
 
@@ -255,3 +257,19 @@ def test_a_json_body_is_validated_the_same_way_without_positions():
         parse(load(SOURCE).spec.model_dump(mode="json", exclude_defaults=True)).spec
         == load(SOURCE).spec
     )
+
+
+def test_the_reference_page_example_loads_cleanly():
+    """The example on the reference page is the one people copy; keep it valid."""
+    page = Path(__file__).parents[5] / "docs" / "reference" / "dashboard-spec.md"
+    blocks = re.findall(r"```yaml\n(.*?)```", page.read_text(encoding="utf-8"), flags=re.DOTALL)
+    example = next(b for b in blocks if b.lstrip().startswith("# yaml-language-server"))
+    loaded = load(example)
+    assert loaded.warnings == []
+    assert [w.id for _, w in loaded.spec.widgets()] == [
+        "revenue",
+        "revenue_trend",
+        "by_region",
+        "refunds",
+        "notes",
+    ]

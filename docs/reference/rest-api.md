@@ -191,6 +191,7 @@ The OpenAPI schema groups endpoints by tag:
 | `search` | Finding catalogs, schemas, tables and saved queries by name |
 | `lineage` | A table's [lineage](#lineage), and importing lineage |
 | `semantic` | [Semantic models](#semantic-layer) |
+| `dashboards` | The [dashboard file format](dashboard-spec.md)'s JSON Schema |
 | `agents` | The agents you may use |
 | `admin-agents` | Agent detail, monitoring, lifecycle and [access](#per-agent-access) |
 | `admin-users` | User accounts and their workspace roles |

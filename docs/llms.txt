@@ -107,6 +107,7 @@
 
 - [Configuration](https://tamasmrtn.github.io/duckhaven/reference/configuration/): Every DuckHaven environment variable, with its default and what it changes.
 - [SQL support](https://tamasmrtn.github.io/duckhaven/reference/sql-support/): DuckHaven runs DuckDB SQL, checked against an allowlist before an agent runs it; statements such as ATTACH, INSTALL and SET are rejected.
+- [Dashboard files](https://tamasmrtn.github.io/duckhaven/reference/dashboard-spec/): A dashboard is one YAML file, <name>.dashboard.yml, that lists parameters and rows of widgets.
 - [Permissions](https://tamasmrtn.github.io/duckhaven/reference/permissions/): Every global permission, workspace role, data-grant tier and agent tier in DuckHaven, and what each one allows.
 - [Agent configuration](https://tamasmrtn.github.io/duckhaven/reference/agent-configuration/): Every environment variable an agent reads; an agent needs only CONTROL_PLANE_URL and BOOTSTRAP_TOKEN.
 - [CLI reference](https://tamasmrtn.github.io/duckhaven/reference/cli/): Every dh command, its summary and its flags.

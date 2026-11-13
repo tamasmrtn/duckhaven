@@ -123,6 +123,16 @@ class Settings(BaseSettings):
     trusted_proxy_ingress: bool = False
     # Directory of the built SPA, served at / when present (baked into the image).
     static_dir: Path = Path("/app/static")
+    # A Content-Security-Policy on the web app's page. The app loads everything
+    # from its own origin, so the policy allows that and nothing else: injected
+    # markup can neither run a script nor send data to another site, even through
+    # an image. Set false to send no policy, for example when a reverse proxy in
+    # front sets its own.
+    csp_enabled: bool = True
+    # Send the policy as Content-Security-Policy-Report-Only instead: the browser
+    # logs each violation to its console and blocks nothing. For checking a
+    # deployment that adds its own scripts or styles before enforcing.
+    csp_report_only: bool = False
     # File holding the one-shot first-admin setup token, written by
     # api.entrypoint on first boot and deleted by the API after the
     # first admin is created.

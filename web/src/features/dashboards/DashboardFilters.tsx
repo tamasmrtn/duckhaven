@@ -15,7 +15,14 @@ import type {
   ParameterSpec,
   TimeRangeParameterSpec,
 } from "@/types/dashboard";
-import { searchKey, TIME_PRESETS, type DashboardSearch } from "./params";
+import {
+  hasParameters,
+  searchKey,
+  TIME_PRESETS,
+  withoutParameters,
+  withParameter,
+  type DashboardSearch,
+} from "./params";
 
 /** The select value standing for a window the file spells out. */
 const DEFAULT = "__default__";
@@ -172,12 +179,8 @@ export function DashboardFilters({
 }) {
   const entries = Object.entries(parameters);
   if (entries.length === 0) return null;
-  const set = (name: string, value: Value | undefined) => {
-    const next = { ...search };
-    if (value === undefined) delete next[searchKey(name)];
-    else next[searchKey(name)] = value;
-    onChange(next);
-  };
+  const set = (name: string, value: Value | undefined) =>
+    onChange(withParameter(search, name, value));
   return (
     <PageToolbar>
       {entries.map(([name, param]) =>
@@ -200,10 +203,10 @@ export function DashboardFilters({
           />
         ),
       )}
-      {Object.keys(search).length > 0 && (
+      {hasParameters(search) && (
         <button
           type="button"
-          onClick={() => onChange({})}
+          onClick={() => onChange(withoutParameters(search))}
           className="ml-auto inline-flex items-center gap-1 text-2xs text-text-tertiary hover:text-text-primary"
         >
           <X className="size-3" aria-hidden />

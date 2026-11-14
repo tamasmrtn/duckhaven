@@ -1,8 +1,11 @@
 import uuid
 from datetime import datetime
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
+
+from api.services.dashboards.spec import IDENTIFIER_PATTERN, MAX_PARAMETERS
+from api.services.dashboards.spec import NAME_PATTERN as DASHBOARD_NAME_PATTERN
 
 
 class AssistantStatusOut(BaseModel):
@@ -93,23 +96,57 @@ class ConversationDetailOut(ConversationOut):
     history_truncated: bool
 
 
-class TurnRequest(BaseModel):
-    prompt: str = Field(min_length=1, max_length=16_000)
-    # Active catalog slug for unqualified table names; defaults to the workspace default.
-    catalog: str | None = None
-    # Current worksheet-editor SQL, so the assistant can read and propose edits to it.
-    editor_sql: str | None = Field(default=None, max_length=100_000)
-    # The user's current worksheet text selection, if non-empty, so a proposed edit
-    # can be scoped to just that fragment instead of rewriting the whole worksheet.
-    selection_sql: str | None = Field(default=None, max_length=100_000)
+class WorksheetContext(BaseModel):
+    """The worksheet the person is editing."""
 
-    @field_validator("selection_sql")
+    model_config = ConfigDict(extra="forbid")
+
+    page: Literal["worksheet"]
+    # The editor's SQL, so the assistant can read and propose edits to it.
+    sql: str | None = Field(default=None, max_length=100_000)
+    # The person's text selection, if non-empty, so a proposed edit can be scoped
+    # to just that fragment instead of rewriting the whole worksheet.
+    selection: str | None = Field(default=None, max_length=100_000)
+
+    @field_validator("selection")
     @classmethod
     def _blank_selection_is_none(cls, v: str | None) -> str | None:
         # Normalize an empty/whitespace-only selection to None at the boundary, so
         # "scoped" (runner: `is not None`) and the selection tool (truthiness) can't
         # disagree about whether the user actually selected anything.
         return None if v is not None and not v.strip() else v
+
+
+class DashboardContext(BaseModel):
+    """The dashboard the person is looking at: where it is, never what it shows.
+
+    The browser sends no file and no rows. The assistant reads those itself, as
+    the person, so a page cannot hand it numbers to repeat."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    page: Literal["dashboard"]
+    name: str = Field(pattern=DASHBOARD_NAME_PATTERN, max_length=64)
+    # The version on screen, so the assistant can tell when it reads another.
+    version: int | None = Field(default=None, ge=1)
+    # The parameter values in the page's address, by parameter name.
+    params: dict[
+        Annotated[str, StringConstraints(pattern=IDENTIFIER_PATTERN, max_length=64)],
+        Annotated[str, StringConstraints(max_length=200)] | int | float | bool | None,
+    ] = Field(default_factory=dict, max_length=MAX_PARAMETERS)
+    # The widget the person picked, if any.
+    widget: str | None = Field(default=None, pattern=IDENTIFIER_PATTERN, max_length=64)
+
+
+PageContext = Annotated[WorksheetContext | DashboardContext, Field(discriminator="page")]
+
+
+class TurnRequest(BaseModel):
+    prompt: str = Field(min_length=1, max_length=16_000)
+    # Active catalog slug for unqualified table names; defaults to the workspace default.
+    catalog: str | None = None
+    # The page the person is on, so "this query" or "this number" means something.
+    page_context: PageContext | None = None
 
 
 class ApprovalRequest(BaseModel):

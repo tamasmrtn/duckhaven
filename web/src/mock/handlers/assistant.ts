@@ -115,10 +115,11 @@ export const assistantHandlers = [
     async ({ params, request }) => {
       const conv = CONVERSATIONS.find((c) => c.id === params.id);
       if (!conv) return httpError(404, "Conversation not found");
-      const { prompt, selection_sql } = (await request.json()) as {
+      const { prompt, page_context } = (await request.json()) as {
         prompt: string;
-        selection_sql?: string | null;
+        page_context?: { page: string; selection?: string | null } | null;
       };
+      const selection = page_context?.selection;
       conv.transcript.push({
         role: "user",
         text: prompt,
@@ -191,7 +192,7 @@ export const assistantHandlers = [
             type: "propose_edit",
             sql: proposed,
             explanation: "widen the date filter and sort newest first",
-            scoped: Boolean(selection_sql),
+            scoped: Boolean(selection),
           },
           { type: "token", text: "I updated two parts of your query." },
           {
@@ -216,7 +217,7 @@ export const assistantHandlers = [
             type: "propose_edit",
             sql: proposed,
             explanation: "select recent events",
-            scoped: Boolean(selection_sql),
+            scoped: Boolean(selection),
           },
           { type: "token", text: "I proposed a query in your editor." },
           {

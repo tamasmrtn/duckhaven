@@ -288,8 +288,7 @@ async def send_message(
         prompt=body.prompt,
         catalog=body.catalog,
         user_id=user.id,
-        editor_sql=body.editor_sql,
-        selection_sql=body.selection_sql,
+        page_context=body.page_context,
     )
     return StreamingResponse(stream, media_type="text/event-stream", headers=_SSE_HEADERS)
 

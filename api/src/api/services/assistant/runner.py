@@ -24,6 +24,8 @@ from pydantic_ai import DeferredToolRequests, DeferredToolResults, ToolApproved,
 from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.messages import (
     FunctionToolCallEvent,
+    FunctionToolResultEvent,
+    ModelResponse,
     PartDeltaEvent,
     PartStartEvent,
     TextPart,
@@ -35,10 +37,12 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.config import settings
 from api.models.assistant import AssistantConversation
+from api.schemas.assistant import DashboardContext, WorksheetContext
 from api.services.assistant.access import service_account_can_write
 from api.services.assistant.agent import get_agent
 from api.services.assistant.deps import AssistantDeps, DefaultCompute
 from api.services.assistant.gateway import Gateway, GatewayError
+from api.services.assistant.grounding import unsupported_numbers
 from api.services.assistant.identity import (
     AssistantIdentityError,
     ephemeral_pat,
@@ -66,6 +70,9 @@ def _safe_error_message(exc: BaseException) -> str:
 _QUERY_TIMEOUT_S = 120.0
 
 _run_semaphore: asyncio.Semaphore | None = None
+# Turns running per person on this process. The semaphore caps them all together;
+# this keeps one person's tabs from taking every slot.
+_user_turns: dict[uuid.UUID, int] = {}
 
 
 class AssistantDisabledError(RuntimeError):
@@ -77,6 +84,51 @@ def _semaphore() -> asyncio.Semaphore:
     if _run_semaphore is None:
         _run_semaphore = asyncio.Semaphore(settings.assistant_max_concurrency)
     return _run_semaphore
+
+
+def _take_turn(user_id: uuid.UUID) -> bool:
+    """Count a turn for ``user_id``, or say no when they have their share running."""
+    if _user_turns.get(user_id, 0) >= settings.assistant_max_concurrency_per_user:
+        return False
+    _user_turns[user_id] = _user_turns.get(user_id, 0) + 1
+    return True
+
+
+def _end_turn(user_id: uuid.UUID) -> None:
+    left = _user_turns.get(user_id, 0) - 1
+    if left > 0:
+        _user_turns[user_id] = left
+    else:
+        _user_turns.pop(user_id, None)
+
+
+def _busy_message() -> str:
+    limit = settings.assistant_max_concurrency_per_user
+    turns = "one turn" if limit == 1 else f"{limit} turns"
+    return (
+        f"You already have {turns} running with the assistant. "
+        "Wait for one to finish, or stop it, and ask again."
+    )
+
+
+def _page_values(page: WorksheetContext | DashboardContext | None) -> list[str]:
+    """What the page told the model, as text, for the grounding check."""
+    if isinstance(page, DashboardContext):
+        return [json.dumps(page.params, default=str)]
+    if isinstance(page, WorksheetContext):
+        return [page.sql or "", page.selection or ""]
+    return []
+
+
+def _said(result) -> str:
+    """Everything the model wrote this turn, every segment the person reads."""
+    return "\n".join(
+        part.content
+        for message in result.new_messages()
+        if isinstance(message, ModelResponse)
+        for part in message.parts
+        if isinstance(part, TextPart)
+    )
 
 
 def require_enabled() -> None:
@@ -191,8 +243,7 @@ async def _turn_context(
     workspace_slug: str,
     catalog: str | None,
     user_id: uuid.UUID,
-    editor_sql: str | None = None,
-    selection_sql: str | None = None,
+    page_context: WorksheetContext | DashboardContext | None = None,
 ) -> AsyncIterator[AssistantDeps]:
     """Resolve identity, mint an ephemeral PAT, and build the governed gateway.
 
@@ -248,8 +299,7 @@ async def _turn_context(
                 can_write=can_write,
                 query_timeout_s=_QUERY_TIMEOUT_S,
                 service_account_id=service_account_id,
-                editor_sql=editor_sql,
-                selection_sql=selection_sql,
+                page=page_context,
                 semantic_summary=format_summary(published) if published else None,
                 storage_kinds=storage_kinds,
                 catalog_kinds=catalog_kinds,
@@ -330,10 +380,41 @@ async def _stream(
     prompt: str | None,
     deferred_results: DeferredToolResults | None,
     user_id: uuid.UUID,
-    editor_sql: str | None = None,
-    selection_sql: str | None = None,
+    page_context: WorksheetContext | DashboardContext | None = None,
 ) -> AsyncIterator[str]:
     require_enabled()
+    if not _take_turn(user_id):
+        yield _sse({"type": "error", "message": _busy_message()})
+        return
+    try:
+        async for frame in _run_turn(
+            session_factory,
+            conversation_id=conversation_id,
+            workspace_id=workspace_id,
+            workspace_slug=workspace_slug,
+            catalog=catalog,
+            prompt=prompt,
+            deferred_results=deferred_results,
+            user_id=user_id,
+            page_context=page_context,
+        ):
+            yield frame
+    finally:
+        _end_turn(user_id)
+
+
+async def _run_turn(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    conversation_id: uuid.UUID,
+    workspace_id: uuid.UUID,
+    workspace_slug: str,
+    catalog: str | None,
+    prompt: str | None,
+    deferred_results: DeferredToolResults | None,
+    user_id: uuid.UUID,
+    page_context: WorksheetContext | DashboardContext | None,
+) -> AsyncIterator[str]:
     async with _semaphore():
         async with _turn_context(
             session_factory,
@@ -342,8 +423,7 @@ async def _stream(
             workspace_slug,
             catalog,
             user_id,
-            editor_sql,
-            selection_sql,
+            page_context,
         ) as deps:
             queue: asyncio.Queue = asyncio.Queue()
             scoped = deps.selection_sql is not None
@@ -358,6 +438,13 @@ async def _stream(
                 # text parts into one item, so only the first is marked.
                 first_text = True
                 async for event in events:
+                    if isinstance(event, FunctionToolResultEvent):
+                        # A chart is drawn from the rows its tool read, which the
+                        # model never echoes, so the frame comes from the tool.
+                        chart = deps.charts.pop(event.part.tool_call_id, None)
+                        if chart is not None:
+                            await queue.put({**chart, "tool_call_id": event.part.tool_call_id})
+                        continue
                     frame = _event_to_frame(event, scoped=scoped)
                     if frame is None:
                         continue
@@ -414,16 +501,24 @@ async def _stream(
                                 )
                         else:
                             usage = result.usage
-                            await queue.put(
-                                {
-                                    "type": "done",
-                                    "message_id": str(message_id),
-                                    "usage": {
-                                        "input": usage.input_tokens or 0,
-                                        "output": usage.output_tokens or 0,
-                                    },
-                                }
+                            done = {
+                                "type": "done",
+                                "message_id": str(message_id),
+                                "usage": {
+                                    "input": usage.input_tokens or 0,
+                                    "output": usage.output_tokens or 0,
+                                },
+                            }
+                            unsupported = unsupported_numbers(
+                                _said(result), result.all_messages(), *_page_values(deps.page)
                             )
+                            if unsupported:
+                                # Flagged, never edited: the reader decides.
+                                done["unsupported_numbers"] = unsupported
+                                span.set_attribute(
+                                    "duckhaven.assistant.unsupported_numbers", len(unsupported)
+                                )
+                            await queue.put(done)
                         if is_first_turn:
                             await _maybe_generate_title(session_factory, conversation_id, prompt)
                     except Exception as exc:  # noqa: BLE001 — surfaced as an SSE error frame
@@ -463,8 +558,7 @@ def stream_turn(
     prompt: str,
     catalog: str | None,
     user_id: uuid.UUID,
-    editor_sql: str | None = None,
-    selection_sql: str | None = None,
+    page_context: WorksheetContext | DashboardContext | None = None,
 ) -> AsyncIterator[str]:
     """Stream a new user turn as SSE frames, acting for ``user_id``."""
     return _stream(
@@ -476,8 +570,7 @@ def stream_turn(
         prompt=prompt,
         deferred_results=None,
         user_id=user_id,
-        editor_sql=editor_sql,
-        selection_sql=selection_sql,
+        page_context=page_context,
     )
 
 

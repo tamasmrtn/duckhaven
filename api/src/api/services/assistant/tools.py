@@ -22,6 +22,7 @@ import logging
 from pydantic_ai import ApprovalRequired, ModelRetry, RunContext
 
 from api.config import settings
+from api.services.assistant import charts
 from api.services.assistant.deps import AssistantDeps
 from api.services.assistant.gateway import GatewayError, metric_tags
 from api.services.assistant.knowledge.loader import (
@@ -141,7 +142,7 @@ async def run_sql(ctx: RunContext[AssistantDeps], sql: str) -> dict:
     reason over; the full result is available to the user in the UI. Qualify tables
     as ``schema.table`` (or ``catalog.schema.table``). Non-SELECT statements (writes)
     are only permitted when this assistant is granted write access, and require the
-    user to approve them.
+    user to approve them. From a dashboard, every statement must be a read.
 
     Args:
         sql: The SQL to execute.
@@ -149,6 +150,13 @@ async def run_sql(ctx: RunContext[AssistantDeps], sql: str) -> dict:
     if not is_read_only(sql):
         if not ctx.deps.can_write:
             raise ModelRetry("This assistant is read-only; only SELECT statements are permitted.")
+        if ctx.deps.dashboard is not None:
+            # Asking about a dashboard is reading it. A write from that page would
+            # be one approval away from changing the data its numbers come from.
+            raise ModelRetry(
+                "From a dashboard only SELECT statements are permitted; ask from a "
+                "worksheet to change data."
+            )
         if not ctx.tool_call_approved:
             # Defer to the human: the run ends with a DeferredToolRequests output and
             # the UI shows an approve/deny prompt. On approval the tool re-runs with
@@ -442,6 +450,224 @@ async def search_docs(ctx: RunContext[AssistantDeps], query: str, limit: int = 5
     return {"results": results, "version": settings.app_version}
 
 
+# ── Dashboards ────────────────────────────────────────────────────────────────
+
+
+def _dashboard_name(ctx: RunContext[AssistantDeps], name: str | None) -> str:
+    if name:
+        return name
+    if ctx.deps.dashboard is not None:
+        return ctx.deps.dashboard.name
+    raise ModelRetry("Name the dashboard. list_dashboards lists them.")
+
+
+async def list_dashboards(
+    ctx: RunContext[AssistantDeps], query: str | None = None, uses: str | None = None
+) -> dict:
+    """List the workspace's dashboards: name, title, description and labels.
+
+    Use it to find the dashboard a question is about. People who may only read
+    see published dashboards.
+
+    Args:
+        query: Part of a dashboard's name or title.
+        uses: Only dashboards reading a semantic model ("orders") or one of its
+            metrics or dimensions ("orders.revenue").
+    """
+    try:
+        return await ctx.deps.gateway.list_dashboards(query=query, uses=uses)
+    except GatewayError as exc:
+        raise ModelRetry(str(exc)) from exc
+
+
+async def get_dashboard(
+    ctx: RunContext[AssistantDeps], name: str | None = None, draft: bool = False
+) -> dict:
+    """Read a dashboard's file: its parameters, its rows of widgets, what each reads.
+
+    Each widget has an ``id``, a ``type`` (kpi, line, bar, table, text) and a
+    ``query`` over a semantic model or inline ``sql``. ``refs`` lists the models,
+    metrics and tables it reads. The file holds no numbers: read those with
+    run_widget.
+
+    Args:
+        name: The dashboard's name. Omit it for the dashboard the user is looking at.
+        draft: Read the unpublished draft instead of the published file.
+    """
+    try:
+        return await ctx.deps.gateway.get_dashboard(_dashboard_name(ctx, name), draft=draft)
+    except GatewayError as exc:
+        raise ModelRetry(str(exc)) from exc
+
+
+async def get_dashboard_schema(ctx: RunContext[AssistantDeps]) -> dict:
+    """The JSON Schema of a dashboard file: every widget type and field, described.
+
+    Read it before writing a widget for preview_widgets or show_chart.
+    """
+    try:
+        return await ctx.deps.gateway.dashboard_schema()
+    except GatewayError as exc:
+        raise ModelRetry(str(exc)) from exc
+
+
+async def run_widget(
+    ctx: RunContext[AssistantDeps],
+    widget: str,
+    dashboard: str | None = None,
+    params: dict | None = None,
+    compare_to: str | None = None,
+    draft: bool = False,
+) -> dict:
+    """Run one widget of a dashboard as the user, and read its numbers.
+
+    Use it to answer about a number on a dashboard: it runs exactly what the page
+    runs, with the user's access, so the answer matches what they see. The result
+    says which window the numbers cover (``window``), which parameters filtered
+    them (``filtered_by``) and which did not and why (``not_filtered_by``), and
+    how each metric is defined (``definitions``). Quote those rather than
+    describing the widget from its title.
+
+    Args:
+        widget: The widget's id, from get_dashboard.
+        dashboard: The dashboard's name. Omit it for the dashboard the user is
+            looking at.
+        params: Parameter values by name, such as ``{"period": "last_90_days",
+            "country": "NL"}``. Omitted, the user's page values apply on the
+            dashboard they are looking at, and the file's defaults elsewhere.
+        compare_to: For a kpi, the window to compare its number with:
+            "previous_period" or "previous_year". The result's ``compare`` then
+            holds both numbers, the change, and whether the change is good.
+        draft: Run the unpublished draft instead of the published file.
+    """
+    if compare_to not in (None, "previous_period", "previous_year"):
+        raise ModelRetry("compare_to is previous_period or previous_year.")
+    name = _dashboard_name(ctx, dashboard)
+    page = ctx.deps.dashboard
+    if params is None and page is not None and page.name == name:
+        params = dict(page.params)
+    try:
+        events = await ctx.deps.gateway.run_dashboard(
+            name,
+            params=params,
+            widgets=[widget],
+            draft=draft,
+            compare=compare_to,
+            timeout_s=ctx.deps.query_timeout_s,
+        )
+    except GatewayError as exc:
+        raise ModelRetry(str(exc)) from exc
+    start = next((e for e in events if e.get("type") == "start"), {})
+    shown = next((e for e in events if e.get("type") == "widget"), None)
+    if shown is None:
+        return {"widget": widget, "state": "text", "note": "A text widget runs no query."}
+    gateway = ctx.deps.gateway
+    out = charts.answer(shown, rows=gateway.row_cap)
+    if "rows" in out:
+        out["rows"], cut = gateway.cap_rows(out["rows"])
+        out["truncated"] = out["truncated"] or cut
+    out["dashboard"] = name
+    out["parameters"] = [
+        {"name": p["name"], "value": p["value"], "window": (p.get("window") or {}).get("text")}
+        for p in start.get("parameters", [])
+    ]
+    return out
+
+
+async def preview_widgets(
+    ctx: RunContext[AssistantDeps],
+    widgets: list[dict],
+    parameters: dict | None = None,
+    params: dict | None = None,
+) -> dict:
+    """Try out up to 8 dashboard widgets, as the user, without saving anything.
+
+    Each widget is a dashboard widget as get_dashboard_schema describes it, with
+    an ``id``, a ``type``, a ``title`` and a ``query`` or ``sql``. Each comes back
+    with its first 20 rows, how it would be drawn (``chart``), and ``lint``:
+    advice on what would make it read badly. Fix what the lint says before
+    suggesting a widget. A file the dashboard checks refuse comes back as an
+    error naming the field. Needs the writer role, for both the user and you.
+
+    Args:
+        widgets: The widgets to try, at most 8.
+        parameters: Parameters the widgets refer to as ``$name``, declared as in
+            a dashboard file.
+        params: Values for those parameters, by name.
+    """
+    if not 1 <= len(widgets) <= charts.MAX_PREVIEW_WIDGETS:
+        raise ModelRetry(f"Preview between 1 and {charts.MAX_PREVIEW_WIDGETS} widgets at once.")
+    spec = {
+        "version": 1,
+        "name": "assistant-preview",
+        "title": "Assistant preview",
+        "parameters": parameters or {},
+        "rows": [{"widgets": [{**w, "width": 12}]} for w in widgets],
+    }
+    gateway = ctx.deps.gateway
+    try:
+        ctx.deps.preview_id = await gateway.hold_preview(spec, preview_id=ctx.deps.preview_id)
+        events = await gateway.run_preview(
+            ctx.deps.preview_id, params=params, timeout_s=ctx.deps.query_timeout_s
+        )
+    except GatewayError as exc:
+        raise ModelRetry(str(exc)) from exc
+    shown = {e["id"]: e for e in events if e.get("type") == "widget"}
+    out = []
+    for w in widgets:
+        event = shown.get(w.get("id"))
+        result = (
+            charts.answer(event, rows=charts.PREVIEW_ROWS)
+            if event
+            else {"widget": w.get("id"), "state": "text"}
+        )
+        if event and event.get("chart"):
+            result["chart"] = event["chart"]
+        result["lint"] = charts.lint(w, event)
+        out.append(result)
+    return {"widgets": out}
+
+
+async def show_chart(ctx: RunContext[AssistantDeps], query_id: str, widget: dict) -> dict:
+    """Draw a chart in the chat from a query you ran in this conversation.
+
+    Run the query first, with query_metric or run_sql, shaped for the chart: one
+    row per bar or per point. Then name it here with how to draw it. ``widget``
+    is a dashboard widget without a ``query`` or ``sql``: an ``id``, a ``type``
+    (line, bar, kpi or table), a ``title`` that names what is measured and holds
+    no numbers, and ``columns`` naming the result's columns, such as ``{"x":
+    "month", "y": ["revenue"]}``. The rows are drawn from the query itself, so
+    the chart shows exactly what it returned. A result over 1,000 rows, or over
+    50 for a bar chart, is refused: aggregate it first.
+
+    Args:
+        query_id: The ``query_id`` of a result you ran.
+        widget: How to draw it.
+    """
+    try:
+        result = await ctx.deps.gateway.own_result(query_id, limit=charts.CHART_MAX_ROWS)
+        drawn, event = charts.chat_chart(widget, result)
+    except GatewayError as exc:
+        raise ModelRetry(str(exc)) from exc
+    except charts.ChartRefused as exc:
+        raise ModelRetry(str(exc)) from exc
+    digest = charts.result_hash(event)
+    ctx.deps.charts[ctx.tool_call_id] = {
+        "type": "chart",
+        "widget": drawn,
+        "event": event,
+        "result_hash": digest,
+    }
+    return {
+        "shown": True,
+        "query_id": query_id,
+        "widget": drawn,
+        "rows": len(event["rows"]["data"]),
+        "result_hash": digest,
+        "lint": charts.lint(drawn, event),
+    }
+
+
 DOCS_TOOLS = (read_doc_page, search_docs)
 
 ALL_TOOLS = [
@@ -459,6 +685,12 @@ ALL_TOOLS = [
     get_worksheet_sql,
     get_worksheet_selection,
     propose_sql_edit,
+    list_dashboards,
+    get_dashboard,
+    get_dashboard_schema,
+    run_widget,
+    preview_widgets,
+    show_chart,
     read_doc_page,
     search_docs,
 ]

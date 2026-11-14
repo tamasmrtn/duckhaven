@@ -618,6 +618,8 @@ async def _create_elastic_query(
             # agent had been available. Raising here would surface as a 500.
             logger.info("Elastic pool agent %s was unavailable; provisioning", agent.id)
             query.agent_id = None
+            # A failed send records the run failed; parked, it waits for the new agent.
+            query.status, query.error, query.finished_at = "queued", None, None
         else:
             return query
 

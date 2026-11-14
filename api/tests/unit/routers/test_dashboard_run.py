@@ -146,6 +146,22 @@ class FakeAgent:
         self.tasks.add(task)
         task.add_done_callback(self.tasks.discard)
 
+    async def release_once_running(self, count: int) -> None:
+        """Let held answers go once ``count`` queries are in flight together.
+
+        Answering at once lets one query finish before the next is sent, so how
+        many ran together would depend on how fast this machine is. Holding them
+        makes it what the runner sent. After 5s they go anyway, so a runner that
+        never sends ``count`` fails its assertion rather than hanging.
+        """
+        try:
+            async with asyncio.timeout(5):
+                while self.running < count:
+                    await asyncio.sleep(0.01)
+        except TimeoutError:
+            pass
+        self.hold = False
+
     async def _answer(self, work: list[dict], inline: bool) -> None:
         self.running += 1
         self.most_running = max(self.most_running, self.running)
@@ -658,9 +674,12 @@ async def test_an_agent_without_batches_gets_a_few_queries_at_a_time(
 
     monkeypatch.setattr(query_service, "proxy_rows", proxy_rows)
     await _publish(as_owner, ws, spec(*_many()))
+    fake.hold = True
+    releasing = asyncio.create_task(fake.release_once_running(2))
     try:
         events = await _view(as_owner, ws)
     finally:
+        await releasing
         registry.unregister(fake.agent_id)
 
     assert len(fake.of(FrameType.DISPATCH_QUERY)) == 8

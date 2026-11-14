@@ -11,7 +11,7 @@ the file format, version 1.
 !!! note "What exists today"
     The server validates, stores, publishes and [runs](../querying/dashboards.md) dashboard files through the
     [REST API](rest-api.md#dashboards), and publishes the format's JSON Schema at `GET /api/dashboard-schema`.
-    Dashboards do not show in the web app yet.
+    Dashboards do not show in the web app.
 
 ## An example
 

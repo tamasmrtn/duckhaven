@@ -10,7 +10,7 @@ each widget reads, where the queries run, and what the [result cache](result-cac
 
 !!! note "What exists today"
     Dashboards are stored, published and run through the [REST API](../reference/rest-api.md#dashboards). A view is
-    one request that streams each widget's data as it arrives. The web app does not show dashboards yet.
+    one request that streams each widget's data as it arrives. The web app does not show dashboards.
 
 ## Every widget runs as the viewer
 

@@ -7,6 +7,7 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
+import type { DashboardPageContext } from "@/types/assistant";
 
 /**
  * Bridge the worksheet editor exposes so the assistant can read its SQL and
@@ -33,6 +34,9 @@ interface AssistantContextValue {
   closePanel: () => void;
   toggle: () => void;
   editorRef: RefObject<EditorBridge | null>;
+  // The dashboard on screen, as a turn sends it: registered by the dashboard
+  // page, and null on every other page.
+  dashboardRef: RefObject<(() => DashboardPageContext) | null>;
   // AssistantPanel is unmounted while closed (see AppShell), so it reads this
   // once as its composer's initial state on mount rather than needing a
   // separate "consumed" flag. Cleared on every close (below) so reopening
@@ -46,6 +50,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
   const [open, setOpen] = useState(false);
   const [seedPrompt, setSeedPrompt] = useState<string | null>(null);
   const editorRef = useRef<EditorBridge | null>(null);
+  const dashboardRef = useRef<(() => DashboardPageContext) | null>(null);
 
   const value = useMemo<AssistantContextValue>(
     () => ({
@@ -67,6 +72,7 @@ export function AssistantProvider({ children }: { children: ReactNode }) {
         }
       },
       editorRef,
+      dashboardRef,
       seedPrompt,
     }),
     [open, seedPrompt],

@@ -63,7 +63,7 @@ function starterPrompts(catalogSlugs: string[]): string[] {
 }
 
 export function AssistantPanel({ ws }: { ws: string }) {
-  const { closePanel, editorRef, seedPrompt } = useAssistant();
+  const { closePanel, editorRef, dashboardRef, seedPrompt } = useAssistant();
   const { data: status } = useAssistantStatus(ws);
   const enabled = status?.enabled === true;
   // Off means there is nothing to show at all. Unusable is different: the feature
@@ -117,11 +117,16 @@ export function AssistantPanel({ ws }: { ws: string }) {
       editorRef.current?.proposeEdit(sql, explanation, scoped),
     [editorRef],
   );
+  const getDashboard = useCallback(
+    () => dashboardRef.current?.() ?? null,
+    [dashboardRef],
+  );
   const chat = useAssistantChat(ws, effectiveId, {
     getEditorSql,
     getCatalog,
     captureSelection,
     onProposeEdit,
+    getDashboard,
   });
   const throttledStreamingText = useThrottledText(chat.streamingText, 750);
 
@@ -172,6 +177,15 @@ export function AssistantPanel({ ws }: { ws: string }) {
     // looks at seedPrompt on this same initial render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  // A seed given while the panel is open, such as asking about a dashboard
+  // widget, fills the composer only when nothing is being written there.
+  const seenSeed = useRef(seedPrompt);
+  useEffect(() => {
+    if (!seedPrompt || seedPrompt === seenSeed.current) return;
+    seenSeed.current = seedPrompt;
+    setDraft((d) => (d.trim() ? d : seedPrompt));
+    composerRef.current?.focus();
+  }, [seedPrompt]);
 
   const submit = async (overrideText?: string) => {
     const prompt = (overrideText ?? draft).trim();

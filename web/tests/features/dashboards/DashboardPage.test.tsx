@@ -28,6 +28,31 @@ async function answered() {
   await screen.findByText(/answered in/);
 }
 
+/** What each assistant turn sent as its page. */
+function recordTurns() {
+  const pages: unknown[] = [];
+  server.use(
+    http.post(
+      "/api/workspaces/:ws/assistant/conversations/:id/messages",
+      async ({ request }) => {
+        pages.push(
+          ((await request.json()) as { page_context: unknown }).page_context,
+        );
+        return new HttpResponse(
+          `data: ${JSON.stringify({ type: "done", message_id: "m", usage: { input: 1, output: 1 } })}\n\n`,
+          { headers: { "Content-Type": "text/event-stream" } },
+        );
+      },
+    ),
+  );
+  return pages;
+}
+
+async function send(user: ReturnType<typeof userEvent.setup>, text: string) {
+  await user.type(screen.getByLabelText("Message"), text);
+  await user.click(screen.getByRole("button", { name: "Send" }));
+}
+
 describe("DashboardPage", () => {
   it("shows each number with how it moved, coloured by whether that is good", async () => {
     renderWithProviders({ initialRoute: `${ROUTE}/sales-overview` });
@@ -195,6 +220,64 @@ describe("DashboardPage", () => {
         "This widget was not answered.",
       ),
     ).toBeVisible();
+  });
+
+  it("tells the assistant which dashboard is on screen, and its filters", async () => {
+    const pages = recordTurns();
+    const user = userEvent.setup();
+    renderWithProviders({
+      initialRoute: `${ROUTE}/sales-overview?p.country=NL&p.unknown=1`,
+    });
+    await answered();
+    await user.click(
+      screen.getByRole("button", { name: "Toggle AI assistant" }),
+    );
+    await screen.findByText("There are 42 events in the events table.");
+    await send(user, "why is revenue up?");
+
+    // Only the file's own parameters: one it does not declare is left out.
+    await waitFor(() =>
+      expect(pages).toEqual([
+        {
+          page: "dashboard",
+          name: "sales-overview",
+          version: 3,
+          params: { country: "NL" },
+          widget: null,
+        },
+      ]),
+    );
+  });
+
+  it("asks the assistant about one widget until the panel closes", async () => {
+    const pages = recordTurns();
+    const user = userEvent.setup();
+    renderWithProviders({ initialRoute: `${ROUTE}/sales-overview` });
+    await answered();
+
+    await user.click(
+      within(await widget("Revenue")).getByRole("button", {
+        name: "Actions for Revenue",
+      }),
+    );
+    await user.click(
+      screen.getByRole("menuitem", { name: "Ask about this widget" }),
+    );
+    const composer = await screen.findByLabelText("Message");
+    expect(composer).toHaveValue("About “Revenue”: ");
+    await screen.findByText("There are 42 events in the events table.");
+    await send(user, "why?");
+    await waitFor(() => expect(pages).toHaveLength(1));
+    expect(pages[0]).toMatchObject({ widget: "revenue" });
+
+    await user.click(screen.getByRole("button", { name: "Close assistant" }));
+    await user.click(
+      screen.getByRole("button", { name: "Toggle AI assistant" }),
+    );
+    await screen.findByText("There are 42 events in the events table.");
+    await send(user, "and orders?");
+    await waitFor(() => expect(pages).toHaveLength(2));
+    expect(pages[1]).toMatchObject({ widget: null });
   });
 
   it("says when there is no such dashboard", async () => {

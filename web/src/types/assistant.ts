@@ -79,6 +79,20 @@ export type AssistantFrame =
     }
   | { type: "error"; message: string };
 
+/**
+ * The dashboard the person is looking at, sent with a turn: where it is, never
+ * what it shows. The assistant reads the file and rows itself, as the person.
+ */
+export interface DashboardPageContext {
+  page: "dashboard";
+  name: string;
+  version: number | null;
+  // The parameter values in the page's address, by parameter name.
+  params: Record<string, string | number | boolean | null>;
+  // The widget the person asked about, if any.
+  widget: string | null;
+}
+
 // A pending write awaiting the user's approve/deny decision.
 export interface PendingApproval {
   tool_call_id: string;

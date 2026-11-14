@@ -33,6 +33,17 @@ describe("streamMessage", () => {
     });
   });
 
+  it("sends the dashboard on screen when there is no worksheet", async () => {
+    const dashboard = {
+      page: "dashboard" as const,
+      name: "sales-overview",
+      version: 3,
+      params: { country: "NL" },
+      widget: null,
+    };
+    expect((await sentBody({ dashboard })).page_context).toEqual(dashboard);
+  });
+
   it("sends no page from outside a worksheet", async () => {
     expect((await sentBody({})).page_context).toBeNull();
   });

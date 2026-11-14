@@ -49,6 +49,8 @@ export interface WidgetContext {
    * Absent where a click filters nothing.
    */
   select?: (parameter: string, value: Cell) => void;
+  /** Asks the assistant about a widget. Absent where there is no assistant to ask. */
+  ask?: (widget: string, title: string) => void;
 }
 
 /**
@@ -178,7 +180,8 @@ function download(name: string, text: string) {
 
 /**
  * A widget's actions: switch between its chart and its rows, see or open the
- * SQL it ran, download its rows, and copy a link to it.
+ * SQL it ran, download its rows, copy a link to it, and ask the assistant
+ * about it.
  */
 export function WidgetMenu({
   spec,
@@ -254,6 +257,11 @@ export function WidgetMenu({
             </DropdownMenuItem>
           )}
           <DropdownMenuItem onSelect={copyLink}>Copy link</DropdownMenuItem>
+          {context.ask && (
+            <DropdownMenuItem onSelect={() => context.ask?.(spec.id, title)}>
+              Ask about this widget
+            </DropdownMenuItem>
+          )}
         </DropdownMenuContent>
       </DropdownMenu>
       {sql && (

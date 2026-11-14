@@ -1,7 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { streamApproval, streamMessage } from "@/api/assistant";
-import type { AssistantFrame, PendingApproval } from "@/types/assistant";
+import type {
+  AssistantFrame,
+  DashboardPageContext,
+  PendingApproval,
+} from "@/types/assistant";
 
 interface LiveTool {
   tool: string;
@@ -19,6 +23,8 @@ interface ChatOptions {
   captureSelection?: () => { text: string; start: number; end: number } | null;
   // Apply an assistant-proposed edit to the worksheet editor.
   onProposeEdit?: (sql: string, explanation: string, scoped: boolean) => void;
+  // The dashboard on screen, if the page is one.
+  getDashboard?: () => DashboardPageContext | null;
 }
 
 /**
@@ -31,7 +37,13 @@ export function useAssistantChat(
   conversationId: string | null,
   options: ChatOptions = {},
 ) {
-  const { getEditorSql, getCatalog, captureSelection, onProposeEdit } = options;
+  const {
+    getEditorSql,
+    getCatalog,
+    captureSelection,
+    onProposeEdit,
+    getDashboard,
+  } = options;
   const qc = useQueryClient();
   const [streaming, setStreaming] = useState(false);
   // One entry per assistant message in the turn, split on the `start` marker
@@ -179,11 +191,20 @@ export function useAssistantChat(
           editorSql: getEditorSql?.() ?? null,
           catalog: getCatalog?.() ?? null,
           selectionSql: captureSelection?.()?.text ?? null,
+          dashboard: getDashboard?.() ?? null,
           signal: controller.signal,
         }),
       );
     },
-    [ws, streaming, consume, getEditorSql, getCatalog, captureSelection],
+    [
+      ws,
+      streaming,
+      consume,
+      getEditorSql,
+      getCatalog,
+      captureSelection,
+      getDashboard,
+    ],
   );
 
   // Resend the last prompt as a new turn — used for both an inline Retry after

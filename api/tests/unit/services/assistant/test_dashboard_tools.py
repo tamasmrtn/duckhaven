@@ -254,27 +254,27 @@ TREND = {
 }
 
 
-async def test_a_chart_is_kept_for_the_chat_under_its_tool_call():
+async def test_a_chart_is_kept_for_the_chat_and_not_shown_to_the_model():
     rows = [{"month": "2026-09-01", "revenue": 4}, {"month": "2026-10-01", "revenue": 6}]
     gw = FakeGateway(result=_result(rows))
-    ctx = _ctx(gw)
 
-    out = await show_chart(ctx, query_id="q-7", widget=TREND)
+    out = await show_chart(_ctx(gw), query_id="q-7", widget=TREND)
 
     assert gw.calls[0] == ("own_result", {"query_id": "q-7", "limit": 1000})
-    assert out["shown"] is True and out["rows"] == 2 and out["lint"] == []
-    frame = ctx.deps.charts["call-1"]
-    assert frame["type"] == "chart" and frame["result_hash"] == out["result_hash"]
+    # What the model reads: that it was drawn, and how many rows, not the rows.
+    told = out.return_value
+    assert told["shown"] is True and told["rows"] == 2 and told["lint"] == []
+    frame = out.metadata["chart"]
+    assert frame["type"] == "chart" and frame["tool_call_id"] == "call-1"
+    assert frame["result_hash"] == told["result_hash"]
     assert frame["widget"]["sql"] == "SELECT month, revenue FROM t"
     assert frame["event"]["rows"]["data"] == [["2026-09-01", 4], ["2026-10-01", 6]]
 
 
 async def test_a_chart_that_cannot_be_drawn_is_for_the_model_to_fix():
     gw = FakeGateway(result=_result([{"month": 1, "revenue": 2}]))
-    ctx = _ctx(gw)
     with pytest.raises(ModelRetry, match="not a query or SQL"):
-        await show_chart(ctx, query_id="q-7", widget={**TREND, "sql": "SELECT 1"})
-    assert ctx.deps.charts == {}
+        await show_chart(_ctx(gw), query_id="q-7", widget={**TREND, "sql": "SELECT 1"})
 
 
 async def test_a_query_someone_else_ran_is_not_drawn():

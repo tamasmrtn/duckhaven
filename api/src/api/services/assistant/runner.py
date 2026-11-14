@@ -49,7 +49,7 @@ from api.services.assistant.identity import (
     resolve_service_account,
 )
 from api.services.assistant.knowledge.search import search_pages
-from api.services.assistant.persistence import load_history, save_turn
+from api.services.assistant.persistence import chart_of, load_history, save_turn
 from api.services.assistant.prompts import format_summary
 
 logger = logging.getLogger(__name__)
@@ -129,6 +129,17 @@ def _said(result) -> str:
         for part in message.parts
         if isinstance(part, TextPart)
     )
+
+
+def _flag(result, unsupported: list[str]) -> None:
+    """Note on the turn's last response the numbers no tool returned."""
+    if not unsupported:
+        return
+    response = next(
+        (m for m in reversed(result.new_messages()) if isinstance(m, ModelResponse)), None
+    )
+    if response is not None:
+        response.metadata = {**(response.metadata or {}), "unsupported_numbers": unsupported}
 
 
 def require_enabled() -> None:
@@ -441,9 +452,9 @@ async def _run_turn(
                     if isinstance(event, FunctionToolResultEvent):
                         # A chart is drawn from the rows its tool read, which the
                         # model never echoes, so the frame comes from the tool.
-                        chart = deps.charts.pop(event.part.tool_call_id, None)
+                        chart = chart_of(event.part)
                         if chart is not None:
-                            await queue.put({**chart, "tool_call_id": event.part.tool_call_id})
+                            await queue.put(chart)
                         continue
                     frame = _event_to_frame(event, scoped=scoped)
                     if frame is None:
@@ -482,13 +493,20 @@ async def _run_turn(
                             ),
                             event_stream_handler=handler,
                         )
+                        output = result.output
+                        unsupported: list[str] = []
+                        if not isinstance(output, DeferredToolRequests):
+                            unsupported = unsupported_numbers(
+                                _said(result), result.all_messages(), *_page_values(deps.page)
+                            )
+                            # Kept with the answer, so it is marked when read again.
+                            _flag(result, unsupported)
                         # Shield persistence: once the turn has run, its messages and
                         # audit rows must land even if this task is cancelled during
                         # cleanup (e.g. client disconnect / shutdown).
                         message_id = await asyncio.shield(
                             _persist(session_factory, conversation_id, result, deps)
                         )
-                        output = result.output
                         if isinstance(output, DeferredToolRequests):
                             for call in output.approvals:
                                 await queue.put(
@@ -509,9 +527,6 @@ async def _run_turn(
                                     "output": usage.output_tokens or 0,
                                 },
                             }
-                            unsupported = unsupported_numbers(
-                                _said(result), result.all_messages(), *_page_values(deps.page)
-                            )
                             if unsupported:
                                 # Flagged, never edited: the reader decides.
                                 done["unsupported_numbers"] = unsupported

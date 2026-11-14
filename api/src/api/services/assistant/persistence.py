@@ -15,8 +15,10 @@ from pydantic_ai import ModelMessagesTypeAdapter
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
+    ModelRequestPart,
     ModelResponse,
     TextPart,
+    ToolReturnPart,
     UserPromptPart,
     sanitize_messages,
 )
@@ -66,11 +68,22 @@ async def load_history(
     return sanitize_messages(messages, resolved_tool_call_ids=resolved_tool_call_ids)
 
 
-def render_transcript(messages: list[ModelMessage]) -> list[dict]:
-    """Flatten message history into displayable {role, text} lines.
+def chart_of(part: ModelRequestPart) -> dict | None:
+    """The chart a ``show_chart`` result carries for the chat, if it is one."""
+    if isinstance(part, ToolReturnPart) and isinstance(part.metadata, dict):
+        chart = part.metadata.get("chart")
+        return chart if isinstance(chart, dict) else None
+    return None
 
-    User prompts and assistant text are surfaced; system prompts and tool
-    request/return parts are omitted (tool activity is shown via the audit rows).
+
+def render_transcript(messages: list[ModelMessage]) -> list[dict]:
+    """Flatten message history into displayable lines, in the order they happened.
+
+    User prompts and assistant text are surfaced, and so is each chart the
+    assistant drew, as a ``chart`` line where its tool returned. System prompts
+    and other tool parts are omitted (tool activity is shown via the audit rows).
+    An answer carries the numbers the turn's grounding check found no tool had
+    returned.
     """
     items: list[dict] = []
     for message in messages:
@@ -78,10 +91,15 @@ def render_transcript(messages: list[ModelMessage]) -> list[dict]:
             for part in message.parts:
                 if isinstance(part, UserPromptPart) and isinstance(part.content, str):
                     items.append({"role": "user", "text": part.content})
+                elif (chart := chart_of(part)) is not None:
+                    items.append({"role": "chart", "text": "", "chart": chart})
         elif isinstance(message, ModelResponse):
             text = "".join(part.content for part in message.parts if isinstance(part, TextPart))
             if text.strip():
-                items.append({"role": "assistant", "text": text})
+                item = {"role": "assistant", "text": text}
+                if flagged := (message.metadata or {}).get("unsupported_numbers"):
+                    item["unsupported_numbers"] = flagged
+                items.append(item)
     return items
 
 

@@ -5,7 +5,14 @@ import pytest_asyncio
 from conftest import seed_workspace
 from httpx import AsyncClient
 from pydantic_ai import ModelMessagesTypeAdapter
-from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai.messages import (
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
 from pydantic_ai.usage import RunUsage
 
 from api.config import settings
@@ -262,6 +269,47 @@ async def test_history_truncated_false_under_cap(authed, workspace, db_session):
 
     detail = await authed.get(f"/workspaces/{workspace.slug}/assistant/conversations/{conv_id}")
     assert detail.json()["history_truncated"] is False
+
+
+async def test_a_chart_and_flagged_numbers_are_read_back_with_the_conversation(
+    authed, workspace, db_session
+):
+    created = await authed.post(f"/workspaces/{workspace.slug}/assistant/conversations", json={})
+    conv_id = created.json()["id"]
+    conversation = await db_session.get(AssistantConversation, uuid.UUID(conv_id))
+    chart = {
+        "type": "chart",
+        "tool_call_id": "c1",
+        "widget": {"id": "trend", "type": "line", "sql": "SELECT 1"},
+        "event": {"type": "widget", "id": "trend", "state": "ok"},
+        "result_hash": "abc",
+    }
+    messages = [
+        ModelRequest(parts=[UserPromptPart(content="chart revenue")]),
+        ModelResponse(parts=[ToolCallPart("show_chart", {}, "c1")]),
+        ModelRequest(
+            parts=[ToolReturnPart("show_chart", {"shown": True}, "c1", metadata={"chart": chart})]
+        ),
+        ModelResponse(
+            parts=[TextPart(content="It rose 37%.")],
+            metadata={"unsupported_numbers": ["37%"]},
+        ),
+    ]
+    await save_turn(
+        db_session,
+        conversation,
+        new_messages_json=ModelMessagesTypeAdapter.dump_json(messages),
+        usage=RunUsage(input_tokens=1, output_tokens=1),
+        records={},
+    )
+
+    detail = await authed.get(f"/workspaces/{workspace.slug}/assistant/conversations/{conv_id}")
+
+    transcript = detail.json()["transcript"]
+    assert [item["role"] for item in transcript] == ["user", "chart", "assistant"]
+    assert transcript[1]["chart"] == chart
+    assert transcript[2]["unsupported_numbers"] == ["37%"]
+    assert transcript[0]["chart"] is None and transcript[0]["unsupported_numbers"] is None
 
 
 async def test_tool_call_tables_are_returned_for_deep_links(authed, workspace, db_session):

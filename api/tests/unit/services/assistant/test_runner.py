@@ -7,6 +7,7 @@ identity minting, the gateway, the governance audit hooks, and persistence toget
 
 import asyncio
 import contextlib
+import uuid
 
 import pytest
 import pytest_asyncio
@@ -608,6 +609,7 @@ async def test_a_finished_turn_gives_its_slot_back(client, db_session, factory, 
 
 async def test_a_chart_reaches_the_chat_as_its_own_frame(client, db_session, factory, monkeypatch):
     ws, _catalog, conv = await _seed(db_session, sa_role="reader")
+    query_id = str(uuid.uuid4())
     rows = [{"month": "2026-09-01", "revenue": 4}, {"month": "2026-10-01", "revenue": 6}]
 
     async def own_result(self, query_id, *, limit):
@@ -629,12 +631,13 @@ async def test_a_chart_reaches_the_chat_as_its_own_frame(client, db_session, fac
         "columns": {"x": "month", "y": ["revenue"]},
     }
     responses = [
-        tool_step("show_chart", {"query_id": "q-7", "widget": widget}),
+        tool_step("show_chart", {"query_id": query_id, "widget": widget}),
         text_step("Here it is."),
     ]
     with get_agent().override(model=scripted_model(responses)):
         frames = await _frames(factory, ws, conv, "chart revenue by month")
 
+    assert frames[-1]["type"] == "done"
     charts = [f for f in frames if f["type"] == "chart"]
     assert len(charts) == 1
     chart = charts[0]
@@ -644,6 +647,15 @@ async def test_a_chart_reaches_the_chat_as_its_own_frame(client, db_session, fac
     assert len(chart["result_hash"]) == 64
     # The chart comes before the words about it.
     assert frames.index(chart) < next(i for i, f in enumerate(frames) if f["type"] == "token")
+
+    # Read again, the conversation draws it in the same place, and its audit row
+    # names the query it drew.
+    async with factory() as db:
+        transcript = await render_transcript_with_sql(db, conv.id)
+        calls = (await db.execute(select(AssistantToolCall))).scalars().all()
+    assert [item["role"] for item in transcript] == ["user", "chart", "assistant"]
+    assert transcript[1]["chart"] == chart
+    assert [(c.tool, c.query_id) for c in calls] == [("show_chart", uuid.UUID(query_id))]
 
 
 async def test_numbers_no_tool_returned_are_flagged_on_done(client, db_session, factory):
@@ -660,6 +672,12 @@ async def test_numbers_no_tool_returned_are_flagged_on_done(client, db_session, 
     with get_agent().override(model=scripted_model([text_step("Nothing to report.")])):
         frames = await _frames(factory, ws, conv, "and now?")
     assert "unsupported_numbers" not in frames[-1]
+
+    # Kept with the answer they were found in, so it is marked when read again.
+    async with factory() as db:
+        transcript = await render_transcript_with_sql(db, conv.id)
+    answers = [item for item in transcript if item["role"] == "assistant"]
+    assert [a.get("unsupported_numbers") for a in answers] == [["37%", "12,345"], None]
 
 
 async def test_a_number_on_the_page_is_grounded(client, db_session, factory):

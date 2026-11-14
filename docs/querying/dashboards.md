@@ -9,9 +9,9 @@ A dashboard is a page of widgets, each showing a number, a chart or a table, wri
 each widget reads, where the queries run, and what the [result cache](result-cache.md) saves.
 
 !!! note "What exists today"
-    Dashboards are stored and published through the [REST API](../reference/rest-api.md#dashboards). The web app lists
-    them under **Dashboards** and shows each one, but cannot edit them. A view is one request that streams each
-    widget's data as it arrives, so each widget fills in as its answer comes back.
+    Dashboards are made, edited and published in the web app under **Dashboards**, or through the
+    [REST API](../reference/rest-api.md#dashboards). A view is one request that streams each widget's data as it
+    arrives, so each widget fills in as its answer comes back.
 
 ## Every widget runs as the viewer
 
@@ -117,12 +117,49 @@ A refresh is a new view: widgets whose tables have not changed are answered from
 and the rest run. A dashboard over data that changes more often than compute's idle timeout keeps compute running for
 as long as it refreshes. A browser tab that is hidden skips its refreshes.
 
+## Editing a dashboard in the app
+
+Writers make and edit dashboards in the app. **New dashboard**, on the **Dashboards** page, asks for a title and a name,
+then opens a draft holding one text widget. **Edit**, on a dashboard's page, opens its file. Until a dashboard is first
+published, only writers see it.
+
+The editor holds the dashboard's file. It completes keys and values, and describes each one, from the
+[file's schema](../reference/dashboard-spec.md). As you type, the server checks the file as a save would, and marks
+each problem on its line and lists it under the editor.
+
+Beside the file, a [preview](#trying-out-a-file-before-saving-it) runs it a moment after you stop typing. **The
+preview runs as you**, so it shows the numbers your access allows; someone with other grants may see other numbers.
+While the file has a problem, the preview keeps showing the last file that loaded.
+
+The preview also arranges the file. Each widget's **Arrange** menu moves it left or right, and sets its width from a
+quarter of the row to the whole row, or lets it share what the row leaves. Each row moves up or down. These change the
+file's text as typing would, and keep its comments.
+
+A dashboard managed in git opens in the editor to be read only, because it changes where its file lives.
+
+### Drafts and publishing
+
+- **Save draft**, or Ctrl+S (⌘S on a Mac), saves the file as a draft. Readers go on seeing the published version, and
+  the workspace's owners see a note on the dashboard that a draft waits.
+- **Publish** saves the file and publishes it, with an optional message saying what changed. Only workspace owners
+  publish. Publishing checks every widget again, as you, and refuses a file with a problem.
+- **Revisions** lists every published version with its message. Opening one loads its file into the editor, and
+  publishing it makes it the newest revision.
+- **Discard draft** throws the draft away and goes back to the published version.
+
+Changing the file's `name` renames the dashboard: at once if nobody has published it, otherwise when it is next
+published. Its old address keeps working.
+
+If someone else saves the dashboard while you edit it, saving says so, and offers to load their version or to save
+yours over it. Leaving the editor with unsaved changes asks first.
+
 ## Trying out a file before saving it
 
 A writer can run a dashboard file without saving it, as a
-[preview](../reference/rest-api.md#previewing-a-dashboard-file). A preview runs as the person who made it, exactly as
-a dashboard would, so it shows the numbers that person would see, not what its eventual viewers will. Only they can
-see it. They replace its file as they edit it, and it expires two hours after it was last changed or run.
+[preview](../reference/rest-api.md#previewing-a-dashboard-file); the editor's preview is one. A preview runs as the
+person who made it, exactly as a dashboard would, so it shows the numbers that person would see, not what its eventual
+viewers will. Only they can see it. They replace its file as they edit it, and it expires two hours after it was last
+changed or run.
 
 ## Showing an aggregate to people who may not read the rows
 

@@ -22,6 +22,16 @@ describe("formatValue", () => {
     expect(formatValue(12890, {}, { compact: true })).toBe("12.9K");
   });
 
+  it("reads every tick on an axis in one style", () => {
+    // An axis that reaches 10,000 compacts its small ticks too, and drops
+    // the zero cents a tick has no use for.
+    const tick = { compact: "always" as const, trim: true };
+    expect(formatValue(8000, USD, tick)).toBe("$8K");
+    expect(formatValue(0, USD, tick)).toBe("$0");
+    expect(formatValue(0, USD, { trim: true })).toBe("$0");
+    expect(formatValue(2.5, USD, { trim: true })).toBe("$2.5");
+  });
+
   it("reads a percent as a ratio, and a change in one in points", () => {
     expect(formatValue(0.031, { format: "percent" })).toBe("3.1%");
     expect(formatValue(0.004, { format: "percent" }, { signed: true })).toBe(

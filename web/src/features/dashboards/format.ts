@@ -12,14 +12,18 @@ export interface ValueFormat {
 export interface FormatOptions {
   /**
    * 12.9K rather than 12,890: for a figure read at a glance, such as a KPI.
-   * Below 10,000 a number is short enough to read in full.
+   * Below 10,000 a number is short enough to read in full. `"always"`
+   * compacts whatever the size, so every tick on an axis that reaches
+   * 10,000 reads in one style.
    */
-  compact?: boolean;
+  compact?: boolean | "always";
   /**
    * A change rather than a value: always signed, and a change in a percent
    * reads in percentage points, since +0.4% of 3.1% would be a different thing.
    */
   signed?: boolean;
+  /** No trailing zero decimals, for an axis tick: €0 and €2.5, not €0.00. */
+  trim?: boolean;
 }
 
 const COMPACT_FROM = 10_000;
@@ -53,13 +57,13 @@ function duration(seconds: number, signed: boolean): string {
 export function formatValue(
   value: Cell,
   fmt: ValueFormat = {},
-  { compact = false, signed = false }: FormatOptions = {},
+  { compact = false, signed = false, trim = false }: FormatOptions = {},
 ): string {
   if (value === null || value === undefined) return "—";
   const n = toNumber(value);
   if (n === null) return String(value);
   const sign = signed ? ("exceptZero" as const) : ("auto" as const);
-  compact = compact && Math.abs(n) >= COMPACT_FROM;
+  compact = compact === "always" || (compact && Math.abs(n) >= COMPACT_FROM);
   switch (fmt.format) {
     case "percent":
       if (signed) {
@@ -81,6 +85,7 @@ export function formatValue(
           currency: fmt.currency,
           notation: compact ? "compact" : "standard",
           maximumFractionDigits: compact ? 1 : 2,
+          ...(trim && { minimumFractionDigits: 0 }),
           signDisplay: sign,
         }).format(n);
       }

@@ -9,6 +9,7 @@ import {
   Settings,
   SlidersHorizontal,
   HeartPulse,
+  LayoutDashboard,
   Ruler,
 } from "lucide-react";
 
@@ -32,6 +33,12 @@ export const navItems: NavItem[] = [
     icon: FileText,
     label: "Worksheets",
     matchSegment: "worksheets",
+  },
+  {
+    segment: "dashboards",
+    icon: LayoutDashboard,
+    label: "Dashboards",
+    matchSegment: "dashboards",
   },
   {
     segment: "catalog",

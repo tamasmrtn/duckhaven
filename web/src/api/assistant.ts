@@ -1,6 +1,5 @@
 import { get, post, patch, del, getAllPages } from "./client";
-import { ApiError } from "./client";
-import type { ApiErrorBody } from "./client";
+import { readSSE } from "./sse";
 import type {
   AssistantFrame,
   AssistantStatus,
@@ -32,54 +31,6 @@ export const assistantApi = {
     del(`/workspaces/${ws}/assistant/conversations/${id}`),
 };
 
-/** Read a `text/event-stream` body and yield decoded assistant frames. */
-async function* readSSE(
-  res: Response,
-  signal?: AbortSignal,
-): AsyncGenerator<AssistantFrame, void, unknown> {
-  if (!res.ok || !res.body) {
-    // The stream never opened, so the body is an ordinary error envelope.
-    let body: Partial<ApiErrorBody> | undefined;
-    try {
-      body = (await res.json()) as Partial<ApiErrorBody>;
-    } catch {
-      // A body that is absent or not JSON leaves the status as the only signal.
-    }
-    throw new ApiError(
-      res.status,
-      body?.message ?? `HTTP ${res.status}`,
-      body?.error,
-      body?.details,
-    );
-  }
-  const reader = res.body.getReader();
-  // Cancelling the reader unblocks a pending read() so Stop takes effect
-  // immediately, even where aborting the fetch doesn't reject the read.
-  const onAbort = () => void reader.cancel().catch(() => {});
-  signal?.addEventListener("abort", onAbort);
-  const decoder = new TextDecoder();
-  let buffer = "";
-  try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buffer += decoder.decode(value, { stream: true });
-      let sep: number;
-      while ((sep = buffer.indexOf("\n\n")) !== -1) {
-        const block = buffer.slice(0, sep);
-        buffer = buffer.slice(sep + 2);
-        for (const line of block.split("\n")) {
-          if (line.startsWith("data: ")) {
-            yield JSON.parse(line.slice(6)) as AssistantFrame;
-          }
-        }
-      }
-    }
-  } finally {
-    signal?.removeEventListener("abort", onAbort);
-  }
-}
-
 /** Send a user turn; yields streamed frames as the assistant works. */
 export async function* streamMessage(
   ws: string,
@@ -107,7 +58,7 @@ export async function* streamMessage(
       signal: opts?.signal,
     },
   );
-  yield* readSSE(res, opts?.signal);
+  yield* readSSE<AssistantFrame>(res, opts?.signal);
 }
 
 /** Approve or deny a pending write; yields the resumed turn's frames. */
@@ -132,5 +83,5 @@ export async function* streamApproval(
       signal: opts?.signal,
     },
   );
-  yield* readSSE(res, opts?.signal);
+  yield* readSSE<AssistantFrame>(res, opts?.signal);
 }

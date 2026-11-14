@@ -55,6 +55,9 @@ export interface TranscriptItem {
   // Documentation pages this turn opened. Null on most turns.
   sources: DocSource[] | null;
   chart?: ChatChart | null;
+  // Numbers in this answer that no tool returned, as written. Absent or null
+  // when every number was found.
+  unsupported_numbers?: string[] | null;
 }
 
 export interface AssistantToolCallTableRef {
@@ -99,6 +102,7 @@ export type AssistantFrame =
       type: "done";
       message_id: string;
       usage: { input: number; output: number };
+      unsupported_numbers?: string[];
     }
   | { type: "error"; message: string };
 

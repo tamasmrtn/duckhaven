@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import {
+  AlertTriangle,
   Sparkles,
   Plus,
   Send,
@@ -363,6 +364,7 @@ export function AssistantPanel({ ws }: { ws: string }) {
                   text={item.text}
                   sql={item.sql}
                   sources={item.sources}
+                  unsupported={item.unsupported_numbers}
                 />
               ),
             )}
@@ -583,12 +585,15 @@ function Bubble({
   text,
   sql,
   sources,
+  unsupported,
   streaming = false,
 }: {
   role: "user" | "assistant";
   text: string;
   sql?: string | null;
   sources?: DocSource[] | null;
+  // Numbers in the answer that no tool returned.
+  unsupported?: string[] | null;
   streaming?: boolean;
 }) {
   return (
@@ -637,6 +642,20 @@ function Bubble({
             ),
           )}
         </div>
+      )}
+      {unsupported && unsupported.length > 0 && (
+        // Flagged, not removed: the number may be fine (worked out from
+        // others, or quoted from the question), but nothing the assistant
+        // read holds it as written.
+        <p className="mt-2 flex items-start gap-1.5 border-t border-[var(--border-subtle)] pt-2 text-xs text-[var(--text-muted)]">
+          <AlertTriangle className="mt-0.5 size-3 shrink-0" aria-hidden />
+          <span>
+            Not in your question or any result the assistant read:{" "}
+            {unsupported.join(", ")}. Check{" "}
+            {unsupported.length === 1 ? "it" : "them"} before relying on{" "}
+            {unsupported.length === 1 ? "it" : "them"}.
+          </span>
+        </p>
       )}
     </div>
   );

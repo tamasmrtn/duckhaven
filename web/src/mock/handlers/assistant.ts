@@ -195,6 +195,27 @@ export const assistantHandlers = [
         ]);
       }
 
+      // Simulate an answer quoting a number no tool returned.
+      if (/\bguess\b/i.test(prompt)) {
+        const answer = "Revenue grew about 12% on last year.";
+        conv.transcript.push({
+          role: "assistant",
+          text: answer,
+          sql: null,
+          sources: null,
+          unsupported_numbers: ["12%"],
+        });
+        return sse([
+          { type: "token", text: answer },
+          {
+            type: "done",
+            message_id: nextId("msg"),
+            usage: { input: 6, output: 8 },
+            unsupported_numbers: ["12%"],
+          },
+        ]);
+      }
+
       // Simulate proposing an edit with two separate, non-adjacent changed
       // lines — exercises the multi-hunk review flow.
       if (/\bmulti-hunk\b/i.test(prompt)) {

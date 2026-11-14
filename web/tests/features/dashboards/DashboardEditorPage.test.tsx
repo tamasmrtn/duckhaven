@@ -234,6 +234,37 @@ describe("DashboardEditorPage", () => {
     expect(publishes[0]).toMatchObject({ base_version: 4 });
   });
 
+  it("gets out of the way of the problems when publishing is refused", async () => {
+    server.use(
+      http.post(PUBLISH_URL, () =>
+        HttpResponse.json(
+          {
+            error: "invalid_dashboard",
+            message: "Model 'sales' has no metric 'revenu'.",
+            details: { diagnostics: [] },
+          },
+          { status: 422 },
+        ),
+      ),
+    );
+    renderWithProviders({ initialRoute: `${ROUTE}/sales-overview/edit` });
+    await screen.findByRole("textbox", { name: "Dashboard file" });
+
+    await userEvent.click(await screen.findByRole("button", { name: "Publish" }));
+    const dialog = await screen.findByRole("dialog", { name: "Publish dashboard" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "Publish" }));
+
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith(
+        "Model 'sales' has no metric 'revenu'.",
+        { description: "The problems are listed under the editor." },
+      ),
+    );
+    expect(
+      screen.queryByRole("dialog", { name: "Publish dashboard" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("puts an earlier revision in the editor, to save and publish again", async () => {
     renderWithProviders({ initialRoute: `${ROUTE}/sales-overview/edit` });
     await screen.findByRole("textbox", { name: "Dashboard file" });

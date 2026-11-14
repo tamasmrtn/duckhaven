@@ -19,6 +19,7 @@ import { lineageHandlers } from '@/mock/handlers/lineage'
 import { semanticHandlers } from '@/mock/handlers/semantic'
 import { worksheetHandlers } from '@/mock/handlers/worksheets'
 import { searchHandlers } from '@/mock/handlers/search'
+import { dashboardHandlers } from '@/mock/handlers/dashboards'
 
 export const server = setupServer(
   ...authHandlers,
@@ -41,4 +42,5 @@ export const server = setupServer(
   ...semanticHandlers,
   ...searchHandlers,
   ...worksheetHandlers,
+  ...dashboardHandlers,
 )

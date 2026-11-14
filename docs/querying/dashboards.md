@@ -96,7 +96,9 @@ numbers their own access allows.
 
 Each widget's menu shows its rows as a table, shows the SQL it ran or opens it in a worksheet, and downloads its rows
 as CSV. **Copy link** copies a link that opens the dashboard at that widget. The info button beside the menu shows how
-the widget's metrics are defined.
+the widget's metrics are defined. **Ask about this widget** opens the
+[assistant](../ai/assistant.md#dashboards-and-charts) to ask about that widget, which it runs as you, with the filters
+the page shows.
 
 ### Filtering by clicking a bar
 
@@ -136,6 +138,17 @@ quarter of the row to the whole row, or lets it share what the row leaves. Each 
 file's text as typing would, and keep its comments.
 
 A dashboard managed in git opens in the editor to be read only, because it changes where its file lives.
+
+### Adding a chart from the assistant
+
+A chart the [assistant](../ai/assistant.md#dashboards-and-charts) draws in the chat can go on a dashboard. **Add to
+dashboard**, under the chart, lists the dashboards made in the app; one managed in git is not listed. Picking one opens
+its editor with the chart in a new row at the end of the file. Nothing is saved: check the chart in the preview, then
+save the draft. If the file has a widget with the chart's id, the chart takes the next free one, such as `trend_2`.
+**New dashboard…** starts a draft that holds only the chart.
+
+The widget keeps the SQL of the query the assistant ran. On the dashboard it runs as each viewer, like every widget, so
+someone with other grants may see other numbers than the chat showed.
 
 ### Drafts and publishing
 

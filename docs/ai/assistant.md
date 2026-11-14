@@ -252,8 +252,8 @@ Asked why a number moved, it compares a KPI with an earlier period and breaks th
 where a change came from, such as which country fell, but not what caused it.
 
 A turn's `page_context` names the page it came from: a worksheet's SQL and selection, or a dashboard's name, version,
-parameter values and chosen widget. A dashboard context carries no file and no numbers, so a page cannot hand the
-assistant figures to repeat, and a turn from a dashboard runs no write.
+parameter values and the widget picked with **Ask about this widget**. A dashboard context carries no file and no
+numbers, so a page cannot hand the assistant figures to repeat, and a turn from a dashboard runs no write.
 
 It can try out up to eight widgets it writes, without saving them, with advice on what reads badly, such as a number
 in a title or more than 12 bars. This uses [dashboard previews](../reference/rest-api.md#previewing-a-dashboard-file),
@@ -261,11 +261,13 @@ so both you and its service account need `writer`.
 
 It draws a chart from a query it ran in the conversation, as a dashboard widget: a line, a bar, a KPI or a table. The
 rows come from the query's stored result, never from the model, and a result over 1,000 rows, or 50 bars, is refused
-rather than cut. The turn's stream carries the chart as a `chart` frame.
+rather than cut. It streams as a `chart` frame and is kept, with its rows, in the conversation. **Add to dashboard**
+puts it [on a dashboard](../querying/dashboards.md#adding-a-chart-from-the-assistant), unsaved in the editor, or on a
+new draft.
 
-After each answer, numbers that no tool returned and you did not write are listed as `unsupported_numbers` in the turn's
-`done` frame, allowing for rounding, percentages and K, M or B. The answer is never edited: a listed number may be
-right, and the list says which figures to check.
+Under an answer, the panel lists numbers no tool returned and you did not write (`unsupported_numbers` in the `done`
+frame), allowing for rounding, percentages and K, M or B. The answer is never edited: a listed number may be right,
+and the list says which figures to check.
 
 ## Related
 

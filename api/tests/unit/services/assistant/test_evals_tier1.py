@@ -137,6 +137,7 @@ def test_every_case_declares_a_category_and_provenance():
         "semantic_routing",
         "governance",
         "unanswerable",
+        "dashboards",
     }
     cases = metrics.load_cases()
 
@@ -155,6 +156,7 @@ def test_every_category_is_represented():
         "semantic_routing",
         "governance",
         "unanswerable",
+        "dashboards",
     }
 
 
@@ -1353,3 +1355,72 @@ def test_the_eval_gateway_accepts_what_the_real_gateway_accepts():
         if params(Gateway, name) - params(EvalGateway, name)
     }
     assert mismatched == {}
+
+
+async def test_the_dashboard_agrees_with_the_same_question_asked_as_a_metric():
+    """A widget and a metric query over one window must give one number, or a
+    careful assistant cross-checking them reports a discrepancy that is not there."""
+    from decimal import Decimal
+
+    from tests.evals.fixtures import EvalGateway
+
+    gateway = EvalGateway()
+    events = await gateway.run_dashboard(
+        "sales-overview", params=None, widgets=None, draft=False, compare=None, timeout_s=30
+    )
+    widgets = {e["id"]: e for e in events if e["type"] == "widget"}
+    compiled = await gateway.compile_metric_query(
+        {
+            "model": "sales",
+            "metrics": ["revenue"],
+            "time_range": {"kind": "last_complete", "grain": "month", "n": 1},
+        }
+    )
+    (row,) = (await gateway.run_sql(compiled["sql"], catalog="warehouse", timeout_s=30))["rows"]
+
+    kpi = widgets["revenue"]
+    assert Decimal(kpi["rows"]["data"][0][0]) == Decimal(row["revenue"])
+    assert kpi["compare"]["current"] == kpi["rows"]["data"][0][0]
+    assert kpi["scope"]["window"]["text"].startswith("last_month: 1 ")
+    by_region = widgets["revenue_by_region"]["rows"]["data"]
+    assert sum(Decimal(v) for _, v in by_region) == Decimal(row["revenue"])
+
+
+async def test_the_dashboard_refuses_what_the_server_would():
+    from api.services.assistant.gateway import GatewayError
+    from tests.evals.fixtures import EvalGateway
+
+    gateway = EvalGateway()
+    run = dict(params=None, widgets=None, draft=False, compare=None, timeout_s=30)
+    with pytest.raises(GatewayError, match="Not found"):
+        await gateway.run_dashboard("ops", **run)
+    with pytest.raises(GatewayError, match="no parameter"):
+        await gateway.run_dashboard("sales-overview", **{**run, "params": {"country": "NL"}})
+    with pytest.raises(GatewayError, match="not a data widget"):
+        await gateway.run_dashboard("sales-overview", **{**run, "widgets": ["about"]})
+    # The eval account reads only, and previews are for writers.
+    with pytest.raises(GatewayError) as exc:
+        await gateway.hold_preview({}, preview_id=None)
+    assert exc.value.kind == "denied"
+
+
+async def test_a_chart_draws_from_a_query_the_fixture_ran():
+    from api.services.assistant.charts import chat_chart
+    from tests.evals.fixtures import EvalGateway
+
+    gateway = EvalGateway()
+    compiled = await gateway.compile_metric_query(
+        {"model": "sales", "metrics": ["revenue"], "grain": "month"}
+    )
+    ran = await gateway.run_sql(compiled["sql"], catalog="warehouse", timeout_s=30)
+    result = await gateway.own_result(ran["query_id"], limit=1000)
+    widget = {
+        "id": "trend",
+        "type": "bar",
+        "title": "Revenue by month",
+        "columns": {"x": "month", "y": ["revenue"]},
+    }
+
+    _, event = chat_chart(widget, result)
+
+    assert len(event["rows"]["data"]) == ran["total"] > 1

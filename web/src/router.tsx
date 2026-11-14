@@ -4,6 +4,7 @@ import {
   createRootRoute,
   redirect,
   notFound,
+  lazyRouteComponent,
 } from "@tanstack/react-router";
 import { ApiError } from "@/api/client";
 import { authApi } from "@/api/auth";
@@ -149,6 +150,16 @@ const dashboardRoute = createRoute({
   // can be bookmarked and shared.
   validateSearch: (search: Record<string, unknown>): DashboardSearch =>
     parseDashboardSearch(search),
+});
+
+const dashboardEditorRoute = createRoute({
+  getParentRoute: () => wsRoute,
+  path: "/dashboards/$dashboard/edit",
+  // Its own chunk, with the YAML library it edits files with.
+  component: lazyRouteComponent(
+    () => import("@/features/dashboards/editor/DashboardEditorPage"),
+    "DashboardEditorPage",
+  ),
 });
 
 const catalogRoute = createRoute({
@@ -325,6 +336,7 @@ export const routeTree = rootRoute.addChildren([
     worksheetsRoute,
     dashboardsRoute,
     dashboardRoute,
+    dashboardEditorRoute,
     catalogRoute,
     catalogDetailRoute,
     schemaDetailRoute,

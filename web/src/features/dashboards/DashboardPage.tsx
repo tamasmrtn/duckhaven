@@ -1,4 +1,10 @@
-import { useCallback, useEffect, useMemo, type CSSProperties } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import {
   Link,
@@ -11,6 +17,7 @@ import {
   GitBranch,
   LayoutDashboard,
   Loader2,
+  PenLine,
   Presentation,
   RefreshCw,
   X,
@@ -22,12 +29,18 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { PageHeader } from "@/components/ui/page-header";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useDashboard } from "@/queries/dashboards";
-import type { Cell, Dashboard, RowSpec } from "@/types/dashboard";
+import type {
+  Cell,
+  Dashboard,
+  ParameterSpec,
+  RowSpec,
+  WidgetSpec,
+} from "@/types/dashboard";
 import { plural } from "@/utils";
 import { DashboardBadges } from "./DashboardBadges";
 import { DashboardFilters } from "./DashboardFilters";
 import { rowLayout } from "./layout";
-import { runParams, withParameter, type DashboardSearch } from "./params";
+import { runParams, withSelection, type DashboardSearch } from "./params";
 import {
   enterFullscreen,
   exitFullscreen,
@@ -35,17 +48,21 @@ import {
   useAutoRefresh,
 } from "./present";
 import { useDashboardRun, type RunView } from "./useDashboardRun";
+import { useIsOwner } from "./useIsOwner";
 import type { WidgetContext } from "./widgets/WidgetChrome";
 import { WidgetCard } from "./widgets/WidgetCard";
 
-function Row({
+/** A row of widgets. `arrange` adds controls above each, as the editor does. */
+export function Row({
   row,
   run,
   context,
+  arrange,
 }: {
   row: RowSpec;
   run: RunView;
   context: WidgetContext;
+  arrange?: (spec: WidgetSpec, index: number) => ReactNode;
 }) {
   const { widths, rest } = rowLayout(row.widgets);
   return (
@@ -55,14 +72,18 @@ function Row({
       {row.widgets.map((spec, i) => (
         <div
           key={spec.id}
-          className="min-w-0 md:[flex:var(--share)_1_0%]"
+          // A column, so controls above the card leave it the rest of the height.
+          className="flex min-w-0 flex-col md:[flex:var(--share)_1_0%]"
           style={{ "--share": widths[i] } as CSSProperties}
         >
-          <WidgetCard
-            spec={spec}
-            slot={run.widgets[spec.id]}
-            context={context}
-          />
+          {arrange?.(spec, i)}
+          <div className="min-h-0 flex-1">
+            <WidgetCard
+              spec={spec}
+              slot={run.widgets[spec.id]}
+              context={context}
+            />
+          </div>
         </div>
       ))}
       {rest > 0 && (
@@ -76,7 +97,7 @@ function Row({
   );
 }
 
-function RunStatus({ run }: { run: RunView }) {
+export function RunStatus({ run }: { run: RunView }) {
   if (run.running) {
     return (
       <span className="inline-flex items-center gap-1.5">
@@ -101,9 +122,95 @@ function RunStatus({ run }: { run: RunView }) {
   );
 }
 
-function Banners({ dashboard, run }: { dashboard: Dashboard; run: RunView }) {
+/** What the widgets need to know about the page, from the file and the run. */
+export function useWidgetContext(
+  ws: string,
+  dashboard: string,
+  parameters: Record<string, ParameterSpec> | undefined,
+  run: RunView,
+  select?: (parameter: string, value: Cell) => void,
+): WidgetContext {
+  return useMemo<WidgetContext>(() => {
+    const values = new Map(
+      (run.start?.parameters ?? []).map((p) => [p.name, p.value]),
+    );
+    return {
+      ws,
+      dashboard,
+      parameters: Object.fromEntries(
+        Object.entries(parameters ?? {}).map(([name, p]) => [
+          name,
+          {
+            label: p.label ?? name,
+            type: p.type,
+            value: values.get(name),
+            ...(p.type === "dimension"
+              ? { model: p.model, dimension: p.dimension }
+              : {}),
+          },
+        ]),
+      ),
+      select,
+    };
+  }, [ws, dashboard, parameters, run.start, select]);
+}
+
+/** Compute starting, and a run that could not go on. */
+export function RunBanners({ run }: { run: RunView }) {
   return (
     <>
+      {run.running && run.waiting.length > 0 && (
+        <Banner>
+          <Loader2 className="size-3.5 shrink-0 animate-spin" aria-hidden />
+          <span>
+            Compute is starting. {plural(run.waiting.length, "widget")}{" "}
+            {run.waiting.length === 1 ? "waits" : "wait"} for it.
+          </span>
+        </Banner>
+      )}
+      {run.error && (
+        <div
+          role="alert"
+          className="flex items-center gap-2 rounded-md border border-[var(--status-failed)]/40 bg-[var(--status-failed)]/10 px-3 py-2 text-xs text-text-secondary"
+        >
+          <AlertTriangle
+            className="size-3.5 shrink-0 text-[var(--status-failed)]"
+            aria-hidden
+          />
+          <span>{run.error.message}</span>
+        </div>
+      )}
+    </>
+  );
+}
+
+function Banners({
+  ws,
+  dashboard,
+  run,
+}: {
+  ws: string;
+  dashboard: Dashboard;
+  run: RunView;
+}) {
+  const isOwner = useIsOwner(ws);
+  return (
+    <>
+      {isOwner && dashboard.status === "published" && dashboard.has_draft && (
+        <Banner>
+          <PenLine className="size-3.5 shrink-0" aria-hidden />
+          <span>
+            Unpublished changes wait in a draft.{" "}
+            <Link
+              to="/$ws/dashboards/$dashboard/edit"
+              params={{ ws, dashboard: dashboard.name }}
+              className="text-[var(--brand-slate-blue)] underline"
+            >
+              Review and publish them
+            </Link>
+          </span>
+        </Banner>
+      )}
       {dashboard.managed && (
         <Banner>
           <GitBranch className="size-3.5 shrink-0" aria-hidden />
@@ -127,27 +234,7 @@ function Banners({ dashboard, run }: { dashboard: Dashboard; run: RunView }) {
           </span>
         </Banner>
       )}
-      {run.running && run.waiting.length > 0 && (
-        <Banner>
-          <Loader2 className="size-3.5 shrink-0 animate-spin" aria-hidden />
-          <span>
-            Compute is starting. {plural(run.waiting.length, "widget")}{" "}
-            {run.waiting.length === 1 ? "waits" : "wait"} for it.
-          </span>
-        </Banner>
-      )}
-      {run.error && (
-        <div
-          role="alert"
-          className="flex items-center gap-2 rounded-md border border-[var(--status-failed)]/40 bg-[var(--status-failed)]/10 px-3 py-2 text-xs text-text-secondary"
-        >
-          <AlertTriangle
-            className="size-3.5 shrink-0 text-[var(--status-failed)]"
-            aria-hidden
-          />
-          <span>{run.error.message}</span>
-        </div>
-      )}
+      <RunBanners run={run} />
     </>
   );
 }
@@ -179,40 +266,17 @@ function Loaded({ ws, dashboard }: { ws: string; dashboard: Dashboard }) {
   // A click on a bar sets its parameter. Choosing what the file sets leaves
   // the URL, as the filter bar does.
   const select = useCallback(
-    (name: string, value: Cell) => {
-      const param = spec.parameters?.[name];
-      const fallback =
-        param?.type === "dimension" ? (param.default ?? null) : null;
-      setSearch(
-        withParameter(search, name, value === fallback ? undefined : value),
-      );
-    },
+    (name: string, value: Cell) =>
+      setSearch(withSelection(search, spec.parameters, name, value)),
     [spec.parameters, search, setSearch],
   );
-
-  const context = useMemo<WidgetContext>(() => {
-    const values = new Map(
-      (run.start?.parameters ?? []).map((p) => [p.name, p.value]),
-    );
-    return {
-      ws,
-      dashboard: dashboard.name,
-      parameters: Object.fromEntries(
-        Object.entries(spec.parameters ?? {}).map(([name, p]) => [
-          name,
-          {
-            label: p.label ?? name,
-            type: p.type,
-            value: values.get(name),
-            ...(p.type === "dimension"
-              ? { model: p.model, dimension: p.dimension }
-              : {}),
-          },
-        ]),
-      ),
-      select,
-    };
-  }, [ws, dashboard.name, spec.parameters, run.start, select]);
+  const context = useWidgetContext(
+    ws,
+    dashboard.name,
+    spec.parameters,
+    run,
+    select,
+  );
 
   // A copied link to one widget lands on it.
   useEffect(() => {
@@ -254,6 +318,22 @@ function Loaded({ ws, dashboard }: { ws: string; dashboard: Dashboard }) {
         actions={
           <div className="flex items-center gap-3 text-2xs text-text-tertiary">
             <RunStatus run={run} />
+            {!present && !dashboard.managed && (
+              <Button
+                asChild
+                variant="outline"
+                size="sm"
+                className="h-7 gap-1.5 text-xs"
+              >
+                <Link
+                  to="/$ws/dashboards/$dashboard/edit"
+                  params={{ ws, dashboard: dashboard.name }}
+                >
+                  <PenLine className="size-3.5" aria-hidden />
+                  Edit
+                </Link>
+              </Button>
+            )}
             {present && (
               <RefreshEvery minutes={minutes} onChange={setRefresh} />
             )}
@@ -300,7 +380,7 @@ function Loaded({ ws, dashboard }: { ws: string; dashboard: Dashboard }) {
       />
       <div className="min-h-0 flex-1 overflow-auto">
         <div className="flex flex-col gap-4 p-4 md:p-6">
-          <Banners dashboard={dashboard} run={run} />
+          <Banners ws={ws} dashboard={dashboard} run={run} />
           {spec.rows.map((row, i) => (
             <Row key={i} row={row} run={run} context={context} />
           ))}

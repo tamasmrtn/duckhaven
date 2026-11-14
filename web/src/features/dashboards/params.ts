@@ -1,4 +1,4 @@
-import type { SkipReason } from "@/types/dashboard";
+import type { Cell, ParameterSpec, SkipReason } from "@/types/dashboard";
 
 /**
  * A dashboard's view as the URL holds it, so it can be bookmarked and shared:
@@ -73,6 +73,21 @@ export function withParameter(
   if (value === undefined) delete next[searchKey(name)];
   else next[searchKey(name)] = value;
   return next;
+}
+
+/**
+ * The search with a dimension parameter set from a click on a bar. Choosing
+ * what the file sets leaves the URL, as the filter bar does.
+ */
+export function withSelection(
+  search: DashboardSearch,
+  parameters: Record<string, ParameterSpec> | undefined,
+  name: string,
+  value: Cell,
+): DashboardSearch {
+  const param = parameters?.[name];
+  const fallback = param?.type === "dimension" ? (param.default ?? null) : null;
+  return withParameter(search, name, value === fallback ? undefined : value);
 }
 
 /** The search without its parameters; present mode and its refresh stay. */

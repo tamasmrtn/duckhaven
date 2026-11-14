@@ -34,6 +34,10 @@ const RUN_URL = "/api/workspaces/:ws/dashboards/:name/run";
 // can take over 1s under coverage. Same headroom as DashboardPage.test.tsx.
 configure({ asyncUtilTimeout: 3000 });
 
+// A test that runs the dashboard again after each click draws every chart each
+// time, and under coverage on CI that passed vitest's 5s default.
+const SLOW = { timeout: 15_000 };
+
 function recordRuns(): DashboardRunRequest[] {
   const bodies: DashboardRunRequest[] = [];
   server.use(
@@ -58,7 +62,7 @@ function bands(widget: HTMLElement) {
   ] as Element[];
 }
 
-describe("cross-filtering", () => {
+describe("cross-filtering", SLOW, () => {
   it("filters the dashboard by a clicked bar, and a second click clears it", async () => {
     const runs = recordRuns();
     renderWithProviders({ initialRoute: ROUTE });
@@ -95,7 +99,7 @@ describe("cross-filtering", () => {
   });
 });
 
-describe("present mode", () => {
+describe("present mode", SLOW, () => {
   it("shows the dashboard alone, refreshes on request, and runs nothing to enter", async () => {
     const runs = recordRuns();
     const user = userEvent.setup();

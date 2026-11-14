@@ -2,10 +2,11 @@
  * A dashboard stored through the REST API, then viewed in the app: it opens
  * from the list, each widget's query runs as the viewer, and the answers
  * stream into the page, charts included, without tripping the
- * Content-Security-Policy.
+ * Content-Security-Policy. A dashboard is also made and published in the
+ * editor.
  */
 import { expect, test } from "../fixtures/test";
-import { BASE_URL, DEFAULT_CATALOG, WS_SLUG } from "../helpers";
+import { BASE_URL, DEFAULT_CATALOG, setMonacoValue, WS_SLUG } from "../helpers";
 
 test("a published dashboard opens from the list and shows its widgets' data", async ({
   page,
@@ -192,5 +193,71 @@ test("a click on a bar filters the other widgets, and a second click restores th
     await page.request.delete(`${api}/semantic/models/${model}`);
     await worksheetPage.goto();
     await worksheetPage.run(`DROP TABLE ${DEFAULT_CATALOG}.analytics.${table}`);
+  }
+});
+
+test("a dashboard made in the editor previews each change, then publishes", async ({ page }) => {
+  const stamp = Date.now();
+  const title = `Editor e2e ${stamp}`;
+  const name = `editor-e2e-${stamp}`;
+  const violations: string[] = [];
+  page.on("console", (msg) => {
+    if (msg.text().startsWith("CSP violation:")) violations.push(msg.text());
+  });
+  await page.addInitScript(() => {
+    document.addEventListener("securitypolicyviolation", (e) => {
+      console.log(`CSP violation: ${e.effectiveDirective} ${e.blockedURI}`);
+    });
+  });
+
+  await page.goto(`${BASE_URL}/${WS_SLUG}/dashboards`);
+  await page.getByRole("button", { name: "New dashboard" }).first().click();
+  const create = page.getByRole("dialog", { name: "New dashboard" });
+  await create.getByLabel("Title").fill(title);
+  await create.getByLabel("Name").fill(name);
+  await create.getByRole("button", { name: "Create" }).click();
+  try {
+    await expect(page).toHaveURL(new RegExp(`/dashboards/${name}/edit`));
+    await expect(page.getByText("Preview, viewing as you")).toBeVisible();
+    // The starter file previews once the editor is ready for typing.
+    await expect(page.getByRole("region", { name: "about" })).toBeVisible();
+
+    // The file is edited through Monaco, whose YAML worker must load under the
+    // CSP. The rows are in flow style, because Monaco indents each new line.
+    await setMonacoValue(
+      page,
+      [
+        "version: 1",
+        `name: ${name}`,
+        `title: ${title}`,
+        "rows: [{widgets: [{id: answer, type: kpi, title: The answer, " +
+          "sql: SELECT 42 AS answer, columns: {value: answer}}]}]",
+      ].join("\n"),
+    );
+    const kpi = page.getByRole("region", { name: "The answer" }).getByTestId("kpi-value");
+    await expect(kpi).toHaveText("42", { timeout: 60_000 });
+    await expect(page.getByText("No problems: it can be published as it stands.")).toBeVisible();
+
+    await page.getByRole("button", { name: "Save draft" }).click();
+    await expect(page.getByText(/^Draft saved .+ from the app$/)).toBeVisible();
+
+    await page.getByRole("button", { name: "Publish" }).click();
+    const dialog = page.getByRole("dialog", { name: "Publish dashboard" });
+    await dialog.getByLabel("What changed (optional)").fill("First version");
+    await dialog.getByRole("button", { name: "Publish" }).click();
+    await expect(dialog).toBeHidden();
+    await expect(page.getByText("No changes since it was published")).toBeVisible();
+
+    await page.getByRole("button", { name: "Revisions" }).click();
+    await expect(page.getByText("First version")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Open revision 1 in the editor" })).toBeVisible();
+    await page.keyboard.press("Escape");
+
+    await page.getByRole("link", { name: "Done" }).click();
+    await expect(page).toHaveURL(new RegExp(`/dashboards/${name}$`));
+    await expect(kpi).toHaveText("42", { timeout: 60_000 });
+    expect(violations).toEqual([]);
+  } finally {
+    await page.request.delete(`/api/workspaces/${WS_SLUG}/dashboards/${name}`);
   }
 });

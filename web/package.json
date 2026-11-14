@@ -38,6 +38,7 @@
     "diff": "^9.0.0",
     "lucide-react": "^1.70.0",
     "monaco-editor": "^0.57.0",
+    "monaco-yaml": "^5.5.1",
     "msw": "^3.0.4",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
@@ -46,7 +47,8 @@
     "recharts": "^3.10.1",
     "remark-gfm": "^4.0.1",
     "sonner": "^2.0.8",
-    "tailwind-merge": "^3.7.0"
+    "tailwind-merge": "^3.7.0",
+    "yaml": "^2.9.1"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

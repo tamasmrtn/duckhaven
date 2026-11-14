@@ -105,6 +105,42 @@ export interface Dashboard extends DashboardSummary {
   warnings: Diagnostic[];
 }
 
+// ── Editing ──────────────────────────────────────────────────────────────────
+
+/** One publish, as the revision list shows it. */
+export interface DashboardRevisionSummary {
+  number: number;
+  spec_hash: string;
+  message: string | null;
+  published_by: string | null;
+  published_at: string;
+}
+
+export interface DashboardRevision extends DashboardRevisionSummary {
+  spec: DashboardFile;
+  source_text: string | null;
+}
+
+/** A file held on the server to try out, without saving it as a dashboard. */
+export interface DashboardPreview {
+  id: string;
+  spec: DashboardFile;
+  source_text: string | null;
+  spec_hash: string;
+  created_at: string;
+  updated_at: string;
+  expires_at: string;
+  warnings: Diagnostic[];
+}
+
+/** A file checked the way publishing checks it. */
+export interface DashboardValidation {
+  valid: boolean;
+  errors: Diagnostic[];
+  warnings: Diagnostic[];
+  refs: DashboardRef[];
+}
+
 // ── A run ────────────────────────────────────────────────────────────────────
 
 /** What a request asks a run for. Every field may be left out. */

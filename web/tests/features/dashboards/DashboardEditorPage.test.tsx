@@ -43,6 +43,11 @@ vi.mock("@/features/dashboards/editor/yamlLoader", () => ({
 // The file is checked once typing pauses, and the preview then runs.
 configure({ asyncUtilTimeout: 4000 });
 
+// Each edit waits out that pause (SETTLE_MS) before its preview runs, and a
+// test that makes several edits spends seconds in those pauses alone. Under
+// coverage on CI that passed vitest's 5s default.
+const SLOW = { timeout: 15_000 };
+
 const ROUTE = "/acme-analytics/dashboards";
 const PATCH_URL = "/api/workspaces/:ws/dashboards/:name";
 const PUBLISH_URL = "/api/workspaces/:ws/dashboards/:name/publish";
@@ -76,7 +81,7 @@ function record(url: string, method: "patch" | "post") {
   return bodies;
 }
 
-describe("DashboardEditorPage", () => {
+describe("DashboardEditorPage", SLOW, () => {
   beforeEach(() => vi.mocked(toast.success).mockClear());
 
   it("opens the draft beside a preview that runs it as you", async () => {

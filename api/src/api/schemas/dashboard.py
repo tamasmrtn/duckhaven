@@ -41,8 +41,8 @@ class DashboardPublish(BaseModel):
     message: str | None = Field(default=None, max_length=500, description="What changed.")
 
 
-class DashboardRunIn(BaseModel):
-    """One view of a dashboard: the parameter values to run it with."""
+class DashboardPreviewRunIn(BaseModel):
+    """One view of a preview: the parameter values to run it with."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -54,13 +54,18 @@ class DashboardRunIn(BaseModel):
             "one value, or null for every value."
         ),
     )
-    draft: bool = Field(default=False, description="Run the draft. Needs the writer role.")
     widgets: list[str] | None = Field(
         default=None,
         max_length=MAX_WIDGETS,
         description="Run only these widgets, by id; every data widget when left out.",
     )
     use_cache: bool = Field(default=True, description="Answer from the result cache when it can.")
+
+
+class DashboardRunIn(DashboardPreviewRunIn):
+    """One view of a dashboard: the parameter values to run it with."""
+
+    draft: bool = Field(default=False, description="Run the draft. Needs the writer role.")
 
 
 class DiagnosticOut(BaseModel):
@@ -132,3 +137,16 @@ class DashboardValidationOut(BaseModel):
     errors: list[DiagnosticOut]
     warnings: list[DiagnosticOut]
     refs: list[RefOut]
+
+
+class DashboardPreviewOut(BaseModel):
+    id: uuid.UUID
+    spec: dict
+    source_text: str | None = Field(description="The YAML as written, when it was sent as YAML.")
+    spec_hash: str = Field(
+        description="sha256 of `spec` as canonical JSON; it changes with the file."
+    )
+    created_at: datetime
+    updated_at: datetime
+    expires_at: datetime = Field(description="Two hours after the last change.")
+    warnings: list[DiagnosticOut]

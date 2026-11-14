@@ -351,6 +351,7 @@ async def test_a_view_streams_every_widget_with_what_its_query_computed(as_owner
     start = events[0]
     assert start["dashboard"]["name"] == "sales-overview"
     assert start["dashboard"]["draft"] is False
+    assert start["dashboard"]["preview"] is None
     assert start["today"] == TODAY.isoformat()
     assert start["timezone"] == "UTC"
     [period, country] = start["parameters"]

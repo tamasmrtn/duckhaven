@@ -239,6 +239,7 @@ erDiagram
     dashboards ||--o{ dashboard_revisions : "published as"
     dashboards ||--o{ dashboard_refs : reads
     dashboards ||--o{ dashboard_aliases : "formerly named"
+    workspaces ||--o{ dashboard_previews : "tried out in"
 
     users {
         uuid id
@@ -404,7 +405,9 @@ Notes that matter for changes:
   (`draft_spec`), with `version` guarding concurrent edits. `dashboard_revisions`
   keeps every publish; `dashboard_refs` indexes the models, metrics, dimensions and
   tables each file reads, for impact lookups; `dashboard_aliases` keeps old names
-  after a rename. See `services/dashboards/`.
+  after a rename. `dashboard_previews` holds files a writer is trying out before
+  saving them, each visible to its creator only and gone two hours after it was
+  last used. See `services/dashboards/`.
 - **`agents.capabilities`** is the last advertised `AgentCapabilities` JSON;
   `result_host`/`result_port` tell the API where to fetch the result Parquet.
 - **`queries` is also the audit log** — there is no separate audit table.

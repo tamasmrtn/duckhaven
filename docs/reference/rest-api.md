@@ -604,6 +604,10 @@ file and keeps the old one as a revision.
 | `GET …/dashboards/{dashboard}/revisions/{revision}` | One revision and its file, numbered from 1 |
 | `POST …/dashboards/{dashboard}/run` | [Run it](#running-a-dashboard) as you, streaming each widget's data. `writer` for the draft |
 | `POST …/dashboard-validations` | Check a file the way publishing does, and store nothing. `writer` |
+| `POST …/dashboard-previews` | [Hold a file to try out](#previewing-a-dashboard-file) without saving it (**201**). `writer` |
+| `GET …/dashboard-previews/{dashboard_preview_id}` | Your preview and its file. `writer` |
+| `PUT …/dashboard-previews/{dashboard_preview_id}` | Replace your preview's file. `writer` |
+| `POST …/dashboard-previews/{dashboard_preview_id}/run` | Run your preview as you, as a dashboard runs. `writer` |
 
 `…` stands for `/api/workspaces/{workspace}`.
 
@@ -668,7 +672,7 @@ The events, in order:
 
 | `type` | When | Holds |
 |---|---|---|
-| `start` | First | `run_id`; `dashboard` with its `name`, `version`, `spec_hash` and `draft`; `today` and `timezone`; each parameter's `value` and resolved `window`; the `widgets` that will be answered |
+| `start` | First | `run_id`; `dashboard` with its `name`, `version`, `spec_hash`, `draft` and `preview`; `today` and `timezone`; each parameter's `value` and resolved `window`; the `widgets` that will be answered |
 | `compute` | When some queries wait for compute to start | `state` (`starting`) and the `widgets` waiting |
 | `widget` | Once per data widget, as soon as it is answered | See below |
 | `done` | Last | `elapsed_ms`, a count of widgets by state, the number of `statements` run, `cache_hits`, and `batch` with `used` and the number of `batches` |
@@ -705,6 +709,24 @@ Values of `DECIMAL` and 64-bit or wider integer columns arrive as strings, as [q
 so `delta` is a string when its values are.
 
 Closing the stream cancels the view's queries still waiting or running.
+
+### Previewing a dashboard file
+
+A preview holds a dashboard file you are trying out, so a page can run it before it is saved anywhere. Create one with
+`POST …/dashboard-previews`, sending the file as for `POST …/dashboards`, and replace its file with
+`PUT …/dashboard-previews/{dashboard_preview_id}` as it changes, for example each time an editor or a watched file
+does. The response has the preview's `id`, its `spec` and `source_text`, a `spec_hash` that changes whenever the file
+does, its `warnings`, and `expires_at`. A file that is not valid is a **422** `invalid_dashboard`, and the preview
+keeps the file it had.
+
+`POST …/dashboard-previews/{dashboard_preview_id}/run` runs the file as you and streams the same events as
+[running a dashboard](#running-a-dashboard). It takes the same body, except `draft`. The `start` event's `dashboard` has
+the file's `name`, a `version` of `null`, and the preview's id as `preview`; for a stored dashboard `preview` is `null`.
+Each query is recorded in History with origin `dashboard`, tagged `dashboard.preview` with the preview's id.
+
+Every request needs `writer`, and only the person who made a preview can read, replace or run it: to anyone else it is
+a **404**, as is a preview that does not exist. A preview expires two hours after it was last changed or run, and is
+then a **404** too.
 
 ## Lineage
 

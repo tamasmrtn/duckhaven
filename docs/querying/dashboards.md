@@ -85,6 +85,13 @@ Each widget comes back with its rows and with what a reader needs to trust them:
 
 The event stream itself is described in the [REST API reference](../reference/rest-api.md#running-a-dashboard).
 
+## Trying out a file before saving it
+
+A writer can run a dashboard file without saving it, as a
+[preview](../reference/rest-api.md#previewing-a-dashboard-file). A preview runs as the person who made it, exactly as
+a dashboard would, so it shows the numbers that person would see, not what its eventual viewers will. Only they can
+see it. They replace its file as they edit it, and it expires two hours after it was last changed or run.
+
 ## Showing an aggregate to people who may not read the rows
 
 Widgets always run as the viewer, so a dashboard cannot show people a total computed from rows they may not read. When

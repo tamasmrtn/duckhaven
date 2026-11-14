@@ -415,16 +415,19 @@ class _Runner:
 
     async def _submit(self, statement: _Statement) -> None:
         widgets = ",".join(statement.widgets)
+        tags = {
+            "dashboard": str(self.plan.dashboard["name"]),
+            "widget": widgets[:256],
+            "dashboard.run": str(self.plan.run_id),
+        }
+        if self.plan.dashboard.get("preview"):
+            tags["dashboard.preview"] = str(self.plan.dashboard["preview"])
         body = QueryCreate(
             id=statement.id,
             sql=statement.sql,
             parameters=statement.parameters or None,
             use_cache=self.plan.use_cache,
-            tags={
-                "dashboard": str(self.plan.dashboard["name"]),
-                "widget": widgets[:256],
-                "dashboard.run": str(self.plan.run_id),
-            },
+            tags=tags,
         )
         async with self.session() as db:
             workspace = await db.get(Workspace, self.plan.workspace_id)

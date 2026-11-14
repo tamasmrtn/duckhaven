@@ -13,22 +13,25 @@ name keeps working after a rename.
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+import uuid
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, status
 from fastapi.responses import JSONResponse, Response, StreamingResponse
-from sqlalchemy import func, or_, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.deps import _bearer, get_current_user, get_db, get_polaris_client, get_session_factory
 from api.models.catalog import Catalog
-from api.models.dashboard import Dashboard, DashboardRef, DashboardRevision
+from api.models.dashboard import Dashboard, DashboardPreview, DashboardRef, DashboardRevision
 from api.models.user import User
 from api.schemas.dashboard import (
     DashboardCreate,
     DashboardIn,
     DashboardOut,
+    DashboardPreviewOut,
+    DashboardPreviewRunIn,
     DashboardPublish,
     DashboardRevisionOut,
     DashboardRevisionSummary,
@@ -638,6 +641,26 @@ async def run_dashboard(
     row = await _dashboard(db, ctx, dashboard)
     data, text, is_draft = _shown(row, draft=body.draft)
     spec = _loaded(data, text).spec
+    about = {
+        "name": row.name,
+        "version": row.version,
+        "spec_hash": store.spec_hash(spec),
+        "draft": is_draft,
+        "preview": None,
+    }
+    return await _run(db, ctx, request, polaris, session_factory, spec, about, body)
+
+
+async def _run(
+    db: AsyncSession,
+    ctx: _Context,
+    request: Request,
+    polaris: PolarisClient,
+    session_factory: async_sessionmaker[AsyncSession],
+    spec: DashboardSpec,
+    about: dict,
+    body: DashboardPreviewRunIn,
+) -> StreamingResponse:
     try:
         plan = await run_service.plan(
             db,
@@ -645,12 +668,7 @@ async def run_dashboard(
             catalogs=ctx.catalogs,
             user=ctx.user,
             spec=spec,
-            dashboard={
-                "name": row.name,
-                "version": row.version,
-                "spec_hash": store.spec_hash(spec),
-                "draft": is_draft,
-            },
+            dashboard=about,
             today=today_in(ctx.workspace.timezone),
             values=body.params,
             widget_ids=body.widgets,
@@ -674,6 +692,149 @@ async def run_dashboard(
         media_type="text/event-stream",
         headers=_SSE_HEADERS,
     )
+
+
+# ── Previews ──────────────────────────────────────────────────────────────────
+
+#: How long a preview lasts after it was last changed or run.
+PREVIEW_TTL = timedelta(hours=2)
+
+_STREAM = {
+    200: {
+        "description": "The same server-sent event stream as running a dashboard.",
+        "content": {"text/event-stream": {"schema": {"type": "string"}}},
+    },
+}
+
+
+def _preview_out(row: DashboardPreview) -> DashboardPreviewOut:
+    loaded = _loaded(row.spec, row.source_text)
+    return DashboardPreviewOut(
+        id=row.id,
+        spec=store.stored(loaded.spec),
+        source_text=row.source_text,
+        spec_hash=row.spec_hash,
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+        expires_at=row.expires_at,
+        warnings=_diagnostics(loaded.warnings),
+    )
+
+
+def _hold(row: DashboardPreview, body: DashboardIn) -> None:
+    """Replace the preview's file with the one in ``body``, or refuse it with a 422."""
+    spec = _read(body).spec
+    now = datetime.now(UTC)
+    row.spec, row.source_text = store.stored(spec), body.source_text
+    row.spec_hash = store.spec_hash(spec)
+    row.updated_at, row.expires_at = now, now + PREVIEW_TTL
+
+
+async def _preview(db: AsyncSession, ctx: _Context, preview_id: uuid.UUID) -> DashboardPreview:
+    """The caller's own live preview. Anyone else's is a 404, as is one that expired."""
+    row = await db.scalar(
+        select(DashboardPreview).where(
+            DashboardPreview.id == preview_id,
+            DashboardPreview.workspace_id == ctx.workspace.id,
+            DashboardPreview.created_by == ctx.user.id,
+            DashboardPreview.expires_at > datetime.now(UTC),
+        )
+    )
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No preview {preview_id}. A preview expires two hours after it was last used.",
+        )
+    return row
+
+
+@router.post(
+    "/workspaces/{workspace}/dashboard-previews",
+    status_code=201,
+    response_model=DashboardPreviewOut,
+)
+async def create_dashboard_preview(
+    body: DashboardIn,
+    ctx: _Context = Depends(_context("writer")),
+    db: AsyncSession = Depends(get_db),
+) -> DashboardPreviewOut:
+    """Hold a dashboard file to try out, without saving it as a dashboard.
+
+    Only you can read or run a preview, and it runs as you. Replace its file
+    with `PUT` as you edit it. It expires two hours after it was last changed
+    or run. An invalid file is a 422 `invalid_dashboard`, as when saving one."""
+    row = DashboardPreview(workspace_id=ctx.workspace.id, created_by=ctx.user.id)
+    _hold(row, body)
+    row.created_at = row.updated_at
+    await db.execute(delete(DashboardPreview).where(DashboardPreview.expires_at <= row.updated_at))
+    db.add(row)
+    await db.commit()
+    await db.refresh(row)
+    return _preview_out(row)
+
+
+@router.get(
+    "/workspaces/{workspace}/dashboard-previews/{dashboard_preview_id}",
+    response_model=DashboardPreviewOut,
+)
+async def get_dashboard_preview(
+    dashboard_preview_id: uuid.UUID,
+    ctx: _Context = Depends(_context("writer")),
+    db: AsyncSession = Depends(get_db),
+) -> DashboardPreviewOut:
+    """Your preview and its file. `spec_hash` changes whenever the file does."""
+    return _preview_out(await _preview(db, ctx, dashboard_preview_id))
+
+
+@router.put(
+    "/workspaces/{workspace}/dashboard-previews/{dashboard_preview_id}",
+    response_model=DashboardPreviewOut,
+)
+async def replace_dashboard_preview(
+    dashboard_preview_id: uuid.UUID,
+    body: DashboardIn,
+    ctx: _Context = Depends(_context("writer")),
+    db: AsyncSession = Depends(get_db),
+) -> DashboardPreviewOut:
+    """Replace your preview's file. An invalid file is a 422 `invalid_dashboard`,
+    and the preview keeps the file it had."""
+    row = await _preview(db, ctx, dashboard_preview_id)
+    _hold(row, body)
+    await db.commit()
+    await db.refresh(row)
+    return _preview_out(row)
+
+
+@router.post(
+    "/workspaces/{workspace}/dashboard-previews/{dashboard_preview_id}/run",
+    response_class=StreamingResponse,
+    responses=_STREAM,
+)
+async def run_dashboard_preview(
+    dashboard_preview_id: uuid.UUID,
+    body: DashboardPreviewRunIn,
+    request: Request,
+    ctx: _Context = Depends(_context("writer")),
+    db: AsyncSession = Depends(get_db),
+    polaris: PolarisClient = Depends(get_polaris_client),
+    session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory),
+) -> StreamingResponse:
+    """Run your preview as you, and stream each widget's data as it arrives.
+
+    It runs as a dashboard does, with your grants, and its queries are recorded
+    in History under the file's name with the tag `dashboard.preview`. The
+    preview lasts another two hours."""
+    row = await _preview(db, ctx, dashboard_preview_id)
+    spec = _loaded(row.spec, row.source_text).spec
+    row.expires_at = datetime.now(UTC) + PREVIEW_TTL
+    about = {
+        "name": spec.name,
+        "version": None,
+        "spec_hash": row.spec_hash,
+        "draft": False,
+        "preview": str(row.id),
+    }
+    return await _run(db, ctx, request, polaris, session_factory, spec, about, body)
 
 
 # ── Validation ────────────────────────────────────────────────────────────────

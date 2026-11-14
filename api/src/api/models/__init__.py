@@ -13,7 +13,13 @@ from api.models.catalog_migration import (
     CatalogMigrationEvent,
     CatalogMigrationTable,
 )
-from api.models.dashboard import Dashboard, DashboardAlias, DashboardRef, DashboardRevision
+from api.models.dashboard import (
+    Dashboard,
+    DashboardAlias,
+    DashboardPreview,
+    DashboardRef,
+    DashboardRevision,
+)
 from api.models.lineage import LineageColumnEdge, LineageEdge
 from api.models.maintenance import (
     MaintenancePolicy,
@@ -54,6 +60,7 @@ __all__ = [
     "Credential",
     "Dashboard",
     "DashboardAlias",
+    "DashboardPreview",
     "DashboardRef",
     "DashboardRevision",
     "LineageColumnEdge",

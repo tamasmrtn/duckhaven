@@ -43,7 +43,7 @@ dependencies = [
     "docker>=7.1",
     "fastavro>=1.9",
     "prometheus-client>=0.20",
-    "croniter>=3.0",
+    "croniter>=7.0.0",
     "sqlglot>=25",
     # Semantic definitions are authored and imported as YAML — that is the format
     # every comparable platform uses and the one people will hand-write. Present

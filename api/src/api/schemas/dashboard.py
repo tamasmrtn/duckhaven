@@ -1,10 +1,11 @@
 import uuid
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from api.services.dashboards.loader import MAX_BYTES
+from api.services.dashboards.spec import MAX_WIDGETS
 
 
 class DashboardIn(BaseModel):
@@ -38,6 +39,28 @@ class DashboardUpdate(DashboardIn):
 class DashboardPublish(BaseModel):
     base_version: int = Field(ge=1, description="The `version` of the draft being published.")
     message: str | None = Field(default=None, max_length=500, description="What changed.")
+
+
+class DashboardRunIn(BaseModel):
+    """One view of a dashboard: the parameter values to run it with."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    params: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "Values by parameter name; one left out takes its default. A `time_range` "
+            "takes a preset name such as `last_30_days` or a window; a `dimension` takes "
+            "one value, or null for every value."
+        ),
+    )
+    draft: bool = Field(default=False, description="Run the draft. Needs the writer role.")
+    widgets: list[str] | None = Field(
+        default=None,
+        max_length=MAX_WIDGETS,
+        description="Run only these widgets, by id; every data widget when left out.",
+    )
+    use_cache: bool = Field(default=True, description="Answer from the result cache when it can.")
 
 
 class DiagnosticOut(BaseModel):

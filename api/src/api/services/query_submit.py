@@ -69,15 +69,22 @@ async def submit_query(
     *,
     origin: Origin = None,
     client: tuple[str | None, str | None] = (None, None),
+    dispatch: bool = True,
 ) -> Query:
     """Submit ``body`` as ``user``, who the caller has checked is a member of ``workspace``.
 
     Returns the query as it stands: answered from the cache, dispatched, or parked
     for compute. Refusals raise the same ``HTTPException`` the REST API answers
     with. ``client`` is the ``(name, version)`` of the client that sent it, and
-    ``body.tags`` are stamped on the run. Commits."""
+    ``body.tags`` are stamped on the run. Commits.
+
+    With ``dispatch=False`` a run bound for a connected agent is left ``queued``
+    with its ``agent_id`` set, and the caller sends it, so that several runs can
+    go to that agent together (``query.dispatch_batch``). The grant and dispatch
+    checks then happen there, and recording a refusal is the caller's. A cache
+    hit and a run parked for compute are unaffected."""
     try:
-        query = await _submit(db, workspace, body, user, polaris, origin)
+        query = await _submit(db, workspace, body, user, polaris, origin, dispatch)
         # Stamped once here rather than on each way a run can start.
         query.client_name, query.client_version = client
         query.tags = body.tags
@@ -95,6 +102,7 @@ async def _submit(
     user: User,
     polaris: PolarisClient,
     origin: Origin,
+    dispatch: bool,
 ) -> Query:
     await query_service.refuse_taken_query_id(db, body.id)
     # Values for placeholders become literals here, before any check reads the SQL:
@@ -171,6 +179,7 @@ async def _submit(
                 agent=decision.agent,
                 allow_scale_out=allow_scale_out,
                 origin=origin,
+                dispatch=dispatch,
             )
         else:
             agent = decision.agent
@@ -244,6 +253,11 @@ async def _submit(
     cache.stamp(query)
     db.add(query)
     await db.flush()
+    if not dispatch:
+        # Kept for the caller's send, as a parked run keeps them.
+        query.timeout_s = body.timeout_s
+        query.active_catalog, query.active_schema = body.catalog, body.schema_name
+        return query
     try:
         await query_service.dispatch_query(
             db,
@@ -542,6 +556,7 @@ async def _create_elastic_query(
     agent: Agent | None,
     origin: Origin,
     allow_scale_out: bool = True,
+    dispatch: bool = True,
 ) -> Query:
     """Run against the elastic pool: dispatch now if a compatible agent is up,
     otherwise park the run ``queued`` and provision one (bound on registration).
@@ -577,6 +592,8 @@ async def _create_elastic_query(
     db.add(query)
     await db.flush()
 
+    if agent is not None and not dispatch:
+        return query
     if agent is not None:
         try:
             await query_service.dispatch_query(

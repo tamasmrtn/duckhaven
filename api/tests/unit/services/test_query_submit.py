@@ -132,3 +132,42 @@ async def test_a_refused_dashboard_run_is_recorded_under_its_own_origin(
     assert refused.value.status_code == 503
     failed = await db_session.get(Query, uuid.UUID(refused.value.detail["query_id"]))
     assert (failed.status, failed.origin) == ("failed", "dashboard")
+
+
+async def test_a_run_left_undispatched_waits_for_the_caller_to_send_it(
+    db_session, fake_polaris, workspace, user, connected
+):
+    """For a caller that sends several runs to one agent together."""
+    from api.services import query as query_service
+
+    agent, ws = connected
+    before = _submitted()
+    body = QueryCreate(sql="SELECT 1", agent_id=agent.id, timeout_s=30)
+
+    query = await query_submit.submit_query(
+        db_session, workspace, body, user, fake_polaris, origin="dashboard", dispatch=False
+    )
+
+    assert (query.status, query.agent_id, query.timeout_s) == ("queued", agent.id, 30)
+    assert ws.sent == []
+    # Counted when it is sent, not before.
+    assert _submitted() == before
+    assert await query_service.dispatch_batch(db_session, [query]) == [None]
+    assert [f["payload"]["query_id"] for f in ws.sent] == [str(query.id)]
+    assert _submitted() == before + 1
+
+
+async def test_a_run_with_no_compute_parks_whether_or_not_the_caller_sends_it(
+    db_session, fake_polaris, workspace, user, elastic_enabled
+):
+    query = await query_submit.submit_query(
+        db_session,
+        workspace,
+        QueryCreate(sql="SELECT 1"),
+        user,
+        fake_polaris,
+        origin="dashboard",
+        dispatch=False,
+    )
+
+    assert (query.status, query.agent_id) == ("queued", None)

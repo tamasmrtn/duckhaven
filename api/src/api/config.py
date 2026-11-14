@@ -322,6 +322,14 @@ class Settings(BaseSettings):
     result_cache_assumed_timezone: str = "UTC"
     result_cache_sweep_interval_s: float = 300.0
 
+    # ── Dashboards ────────────────────────────────────────────────────────────
+    # How many of one dashboard view's queries run at once on an agent: batches
+    # where the agent takes them (each runs its queries one after another on one
+    # connection), single queries where it does not.
+    dashboard_max_inflight: int = 4
+    # The most queries in one batch. The agent protocol carries at most 20.
+    dashboard_batch_max_queries: int = 20
+
     # ── Elastic compute (scale-to-zero agents) ────────────────────────────────
     # OFF by default: an operator enables it to let the control plane provision
     # agents on demand and terminate them when idle. The reaper is a leader-elected

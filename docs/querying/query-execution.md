@@ -193,8 +193,7 @@ Cancelling a read skips it if it has not started and interrupts it if it has. A 
 leaves the connection unusable, so the reads after it fail with `batch_aborted`. A batch holds one person's reads
 only. An agent that does not support batches gets the reads one at a time.
 
-!!! note "Nothing sends batches yet"
-    They are in place for dashboards.
+A [dashboard](dashboards.md) view sends its reads as batches.
 
 Measured on one agent, 16 reads from first submitted to last finished:
 

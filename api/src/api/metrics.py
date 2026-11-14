@@ -276,6 +276,22 @@ RESULT_CACHE_BYTES = Gauge(
     "Result bytes held by the result cache, by where they are stored (inline/agent).",
     ["replica_id", "storage"],
 )
+DASHBOARD_RUNS = Counter(
+    "duckhaven_dashboard_runs",
+    "Dashboard views run, by outcome (done/cancelled/failed).",
+    ["replica_id", "outcome"],
+)
+DASHBOARD_RUN_SECONDS = Histogram(
+    "duckhaven_dashboard_run_seconds",
+    "Time from a dashboard view's request to its last widget.",
+    ["replica_id"],
+    buckets=(0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120),
+)
+DASHBOARD_WIDGETS = Counter(
+    "duckhaven_dashboard_widgets",
+    "Dashboard widgets answered, by state (ok/empty/error/no_access) and cache outcome.",
+    ["replica_id", "state", "cache"],
+)
 
 
 # ── Inline instrumentation helpers (called from the query service) ────────────
@@ -372,6 +388,15 @@ def record_result_cache_eviction(reason: str, count: int = 1) -> None:
 
 def set_result_cache_bytes(storage: str, value: int) -> None:
     RESULT_CACHE_BYTES.labels(settings.replica_id, storage).set(value)
+
+
+def record_dashboard_run(outcome: str, seconds: float) -> None:
+    DASHBOARD_RUNS.labels(settings.replica_id, outcome).inc()
+    DASHBOARD_RUN_SECONDS.labels(settings.replica_id).observe(seconds)
+
+
+def record_dashboard_widget(state: str, cache: str | None) -> None:
+    DASHBOARD_WIDGETS.labels(settings.replica_id, state, cache or "none").inc()
 
 
 def record_sql_statement(status: str) -> None:

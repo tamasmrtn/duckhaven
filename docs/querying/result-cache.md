@@ -118,7 +118,8 @@ until a later statement reports it again, rather than being looked up in the con
 
 - **Small results** — up to `RESULT_CACHE_INLINE_MAX_BYTES`, 1 MiB by default — are copied into the control plane's
   database. Serving one needs no agent at all: it works while the agent that ran it is down, and an
-  [elastic pool](../compute/elastic-compute.md) scaled to zero answers it without a cold start.
+  [elastic pool](../compute/elastic-compute.md) scaled to zero answers it without a cold start. A
+  [dashboard](dashboards.md) whose widgets are all answered this way opens without starting compute.
 - **Larger results** stay in the result file on the agent that ran the query, which keeps the file past its normal
   24-hour retention while the entry exists. If the agent is gone or the file was removed, the next lookup notices,
   drops the entry, and the query runs.
@@ -140,7 +141,7 @@ In the worksheet a hit carries a **Cached** badge linking to that run, and a **R
 profile is the source run's, marked as such — nothing ran for the hit itself. History shows the result cache in place
 of an agent. A hit is still recorded in [lineage](../metadata/lineage.md) and History, so who read what stays auditable.
 
-The cache's own [metrics](../operations/monitoring.md#metric-reference) count lookups, admissions and evictions. Hits
+The cache's own [metrics](../reference/metrics.md) count lookups, admissions and evictions. Hits
 are deliberately left out of `duckhaven_queries_total` and the query duration histogram, which describe work agents
 did.
 

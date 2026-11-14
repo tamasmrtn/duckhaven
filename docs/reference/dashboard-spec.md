@@ -9,8 +9,9 @@ metric from the [semantic layer](../metadata/semantic-layer.md) or runs its own 
 the file format, version 1.
 
 !!! note "What exists today"
-    The server validates, stores and publishes dashboard files through the [REST API](rest-api.md#dashboards), and
-    publishes the format's JSON Schema at `GET /api/dashboard-schema`. Dashboards do not run or show in the web app.
+    The server validates, stores, publishes and [runs](../querying/dashboards.md) dashboard files through the
+    [REST API](rest-api.md#dashboards), and publishes the format's JSON Schema at `GET /api/dashboard-schema`.
+    Dashboards do not show in the web app.
 
 ## An example
 
@@ -261,5 +262,6 @@ it.
 ## Related
 
 - [Semantic layer](../metadata/semantic-layer.md): the models, metrics and dimensions widgets read.
-- [REST API](rest-api.md#dashboards): storing, editing and publishing dashboards.
+- [Dashboards](../querying/dashboards.md): what happens when a dashboard is viewed.
+- [REST API](rest-api.md#dashboards): storing, editing, publishing and running dashboards.
 - [Errors](errors.md#dashboards): `invalid_dashboard`, `unsupported_spec_version` and the rest.

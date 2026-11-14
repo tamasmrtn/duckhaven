@@ -17,11 +17,11 @@ from datetime import UTC, datetime
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, status
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from sqlalchemy import func, or_, select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from api.deps import _bearer, get_current_user, get_db
+from api.deps import _bearer, get_current_user, get_db, get_polaris_client, get_session_factory
 from api.models.catalog import Catalog
 from api.models.dashboard import Dashboard, DashboardRef, DashboardRevision
 from api.models.user import User
@@ -32,6 +32,7 @@ from api.schemas.dashboard import (
     DashboardPublish,
     DashboardRevisionOut,
     DashboardRevisionSummary,
+    DashboardRunIn,
     DashboardSummary,
     DashboardUpdate,
     DashboardValidationOut,
@@ -40,6 +41,7 @@ from api.schemas.dashboard import (
 )
 from api.schemas.page import Page
 from api.services.dashboards import loader, store, validate
+from api.services.dashboards import run as run_service
 from api.services.dashboards.spec import (
     SPEC_VERSION,
     SUPPORTED_SPEC_VERSIONS,
@@ -47,6 +49,7 @@ from api.services.dashboards.spec import (
     json_schema,
 )
 from api.services.paging import paginate
+from api.services.polaris import PolarisClient
 from api.services.semantic.timespec import today_in
 from api.services.sql_sessions.client_info import parse_user_agent
 from api.services.workspace import (
@@ -591,6 +594,85 @@ async def get_dashboard_revision(
         **DashboardRevisionSummary.model_validate(rev).model_dump(),
         spec=store.stored(store.read(rev.spec)),
         source_text=rev.source_text,
+    )
+
+
+# ── Running ───────────────────────────────────────────────────────────────────
+
+_SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
+
+
+@router.post(
+    "/workspaces/{workspace}/dashboards/{dashboard}/run",
+    response_class=StreamingResponse,
+    responses={
+        200: {
+            "description": (
+                "A server-sent event stream: `start`, then one `widget` event per data "
+                "widget as it is answered, a `compute` event when compute has to start "
+                "first, and `done`. An `error` event ends a run that could not go on."
+            ),
+            "content": {"text/event-stream": {"schema": {"type": "string"}}},
+        },
+    },
+)
+async def run_dashboard(
+    dashboard: str,
+    body: DashboardRunIn,
+    request: Request,
+    ctx: _Context = Depends(_context("reader")),
+    db: AsyncSession = Depends(get_db),
+    polaris: PolarisClient = Depends(get_polaris_client),
+    session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory),
+) -> StreamingResponse:
+    """Run a dashboard as you, and stream each widget's data as it arrives.
+
+    Every widget's query runs with your grants, through the same checks and
+    result cache as a worksheet's run, so two people can see different numbers
+    on one dashboard. Widgets that ask the same question of one model share a
+    query; a result the cache holds is sent at once, without starting compute.
+    A parameter value that does not fit is a 422 `invalid_parameters`, and a
+    widget id the dashboard lacks a 422 `unknown_widget`. Closing the stream
+    cancels the queries still running."""
+    _assert_may_see_drafts(ctx, body.draft)
+    row = await _dashboard(db, ctx, dashboard)
+    data, text, is_draft = _shown(row, draft=body.draft)
+    spec = _loaded(data, text).spec
+    try:
+        plan = await run_service.plan(
+            db,
+            workspace=ctx.workspace,
+            catalogs=ctx.catalogs,
+            user=ctx.user,
+            spec=spec,
+            dashboard={
+                "name": row.name,
+                "version": row.version,
+                "spec_hash": store.spec_hash(spec),
+                "draft": is_draft,
+            },
+            today=today_in(ctx.workspace.timezone),
+            values=body.params,
+            widget_ids=body.widgets,
+            use_cache=body.use_cache,
+            client=parse_user_agent(request.headers.get("user-agent")),
+        )
+    except run_service.ParameterError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={"error": "invalid_parameters", "detail": str(exc), "parameter": exc.name},
+        ) from exc
+    except run_service.UnknownWidget as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={"error": "unknown_widget", "detail": str(exc)},
+        ) from exc
+    # The plan holds only plain values: the stream opens sessions of its own.
+    await db.commit()
+    return StreamingResponse(
+        run_service.stream(plan, session_factory, polaris),
+        media_type="text/event-stream",
+        headers=_SSE_HEADERS,
     )
 
 

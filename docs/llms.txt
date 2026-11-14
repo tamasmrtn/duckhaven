@@ -24,6 +24,7 @@
 - [Schedule queries](https://tamasmrtn.github.io/duckhaven/querying/schedule-queries/): Run a saved query automatically on a cron schedule, such as every night at 02:00, with every run recorded.
 - [Read query profiles](https://tamasmrtn.github.io/duckhaven/querying/query-profiles/): Open a query's profile to see where its time and memory went, and whether it was slow because it waited or because it worked.
 - [Result cache](https://tamasmrtn.github.io/duckhaven/querying/result-cache/): The result cache answers a repeated query from an earlier run's result when nothing it reads has changed, so it does not run again.
+- [Dashboards](https://tamasmrtn.github.io/duckhaven/querying/dashboards/): A dashboard is a page of widgets, each showing a number, a chart or a table, written as one dashboard file.
 - [SQL sessions](https://tamasmrtn.github.io/duckhaven/querying/sql-sessions/): A SQL session is a database connection that DuckHaven holds open on one agent, so a tool can run many statements that share state.
 - [Use Python data tools](https://tamasmrtn.github.io/duckhaven/querying/use-python-data-tools/): Query DuckHaven from Python and read results into pandas, Polars or a marimo notebook with duckhaven-sql-connector.
 - [Connect dbt](https://tamasmrtn.github.io/duckhaven/querying/connect-dbt/): Run a dbt project on DuckHaven with the dbt-duckhaven adapter, so models build in your catalogs on DuckHaven's agents.
@@ -106,6 +107,7 @@
 ## Reference
 
 - [Configuration](https://tamasmrtn.github.io/duckhaven/reference/configuration/): Every DuckHaven environment variable, with its default and what it changes.
+- [Metrics](https://tamasmrtn.github.io/duckhaven/reference/metrics/): Every Prometheus metric the API serves at GET /api/metrics.
 - [SQL support](https://tamasmrtn.github.io/duckhaven/reference/sql-support/): DuckHaven runs DuckDB SQL, checked against an allowlist before an agent runs it; statements such as ATTACH, INSTALL and SET are rejected.
 - [Dashboard files](https://tamasmrtn.github.io/duckhaven/reference/dashboard-spec/): A dashboard is one YAML file, <name>.dashboard.yml, that lists parameters and rows of widgets.
 - [Permissions](https://tamasmrtn.github.io/duckhaven/reference/permissions/): Every global permission, workspace role, data-grant tier and agent tier in DuckHaven, and what each one allows.

@@ -59,6 +59,11 @@ pages:
   section: Querying
   summary: The result cache answers a repeated query from an earlier run's result when nothing it
     reads has changed, so it does not run again.
+- path: querying/dashboards.md
+  title: Dashboards
+  section: Querying
+  summary: A dashboard is a page of widgets, each showing a number, a chart or a table, written as
+    one dashboard file.
 - path: querying/sql-sessions.md
   title: SQL sessions
   section: Querying
@@ -344,6 +349,10 @@ pages:
   title: Configuration
   section: Reference
   summary: Every DuckHaven environment variable, with its default and what it changes.
+- path: reference/metrics.md
+  title: Metrics
+  section: Reference
+  summary: Every Prometheus metric the API serves at GET /api/metrics.
 - path: reference/sql-support.md
   title: SQL support
   section: Reference

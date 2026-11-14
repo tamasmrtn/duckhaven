@@ -83,7 +83,7 @@ Each message has an entry in [Troubleshoot sign-in and access](../access/trouble
 |---|---|---|
 | `sql_not_allowed` | 422 | The statement type is not allowed, such as `ATTACH`, `INSTALL` or `SET`, or the statement reads a file by a filesystem path. See [SQL support](sql-support.md). |
 | `statement_not_allowed` | 422 | The same check in a [SQL session](../querying/sql-sessions.md), which allows a few more statements. |
-| `invalid_parameters` | 422 | The [query parameters](sql-support.md#query-parameters) do not fit the placeholders. |
+| `invalid_parameters` | 422 | The [query parameters](sql-support.md#query-parameters) do not fit the placeholders, or a [dashboard run](rest-api.md#running-a-dashboard)'s value does not fit its parameter; `details.parameter` names it. |
 | `query_id_conflict` | 409 | `A query with id ⟨id⟩ already exists.` The `id` you chose names an earlier run. Ids are unique across the server, and every attempt the server records spends its id, including one it answered with an error such as a 503, so retry an error with a new UUID. After a submit whose answer was lost, a 409 means that submit was recorded: if it was yours, read it with `GET /api/queries/{query_id}`. |
 | `agent_required` | 422 | `agent_id is required`: no agent is connected, elastic compute is off, and the workspace has no default compute. Start an agent, name one, or set a default compute. |
 | `catalog_read_only` | 409 | A [storage migration](../data/migrate-catalog-storage.md) is running, so writes are refused. Reads still work. |
@@ -139,6 +139,7 @@ Each message has an entry in [Troubleshoot sign-in and access](../access/trouble
 | `dashboard_name_taken` | 409 | Another dashboard in the workspace has that name. Choose another `name` in the file. |
 | `managed_dashboard` | 409 | The dashboard is managed in git. Change its file there and apply it again. |
 | `dashboard_unpublished` | 409 | The dashboard was never published, so its draft is all there is. Delete the dashboard instead of discarding the draft. |
+| `unknown_widget` | 422 | A [dashboard run](rest-api.md#running-a-dashboard) named a widget the dashboard has no data widget for. |
 
 ## Administration
 

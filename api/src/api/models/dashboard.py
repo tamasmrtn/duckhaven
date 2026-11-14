@@ -194,3 +194,35 @@ class DashboardAlias(Base):
         Index("uq_dashboard_aliases_ws_lower_name", "workspace_id", func.lower(name), unique=True),
         Index("ix_dashboard_aliases_dashboard", "dashboard_id"),
     )
+
+
+class DashboardPreview(Base):
+    """A dashboard file one writer is trying out, before it is saved anywhere.
+
+    An editor or ``dh dashboard preview`` replaces the file as it changes, and
+    the page showing the preview runs it as that writer. Only its creator can
+    read or run it. It expires two hours after it last changed.
+    """
+
+    __tablename__ = "dashboard_previews"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    workspace_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False
+    )
+    created_by: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    spec: Mapped[dict] = mapped_column(_Json, nullable=False)
+    #: The YAML it was sent as; null when it was sent as JSON.
+    source_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    spec_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (Index("ix_dashboard_previews_expires_at", "expires_at"),)

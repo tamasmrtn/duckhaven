@@ -46,7 +46,9 @@ export function KpiWidget({ event }: { event: RunWidget }) {
       {compare && (
         <p
           className={cn(
-            "flex items-center gap-1 text-xs font-medium",
+            // Positioned, so the screen-reader words stay inside the card
+            // rather than stretching the page past a scrolled container.
+            "relative flex items-center gap-1 text-xs font-medium",
             TONE[tone],
           )}
           data-testid="kpi-delta"

@@ -16,6 +16,8 @@ import { SetupPage } from "@/features/auth/SetupPage";
 import { WelcomePage } from "@/features/auth/WelcomePage";
 import { WorksheetPage } from "@/features/worksheet/WorksheetPage";
 import { CatalogPage } from "@/features/catalog/CatalogPage";
+import { DashboardsPage } from "@/features/dashboards/DashboardsPage";
+import { DashboardPage } from "@/features/dashboards/DashboardPage";
 import { SavedQueriesPage } from "@/features/saved-queries/SavedQueriesPage";
 import { SchedulesPage } from "@/features/schedules/SchedulesPage";
 import { SessionsPage } from "@/features/sessions/SessionsPage";
@@ -127,6 +129,18 @@ const worksheetsRoute = createRoute({
   validateSearch: (search: Record<string, unknown>): { tab?: string } => ({
     tab: typeof search.tab === "string" ? search.tab : undefined,
   }),
+});
+
+const dashboardsRoute = createRoute({
+  getParentRoute: () => wsRoute,
+  path: "/dashboards",
+  component: DashboardsPage,
+});
+
+const dashboardRoute = createRoute({
+  getParentRoute: () => wsRoute,
+  path: "/dashboards/$dashboard",
+  component: DashboardPage,
 });
 
 const catalogRoute = createRoute({
@@ -301,6 +315,8 @@ export const routeTree = rootRoute.addChildren([
   welcomeRoute,
   wsRoute.addChildren([
     worksheetsRoute,
+    dashboardsRoute,
+    dashboardRoute,
     catalogRoute,
     catalogDetailRoute,
     schemaDetailRoute,

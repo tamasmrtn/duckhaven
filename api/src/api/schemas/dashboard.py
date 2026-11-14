@@ -60,6 +60,13 @@ class DashboardPreviewRunIn(BaseModel):
         description="Run only these widgets, by id; every data widget when left out.",
     )
     use_cache: bool = Field(default=True, description="Answer from the result cache when it can.")
+    compare: Literal["previous_period", "previous_year"] | None = Field(
+        default=None,
+        description=(
+            "The comparison every `kpi` widget with a time window makes, in place of "
+            "the one its file sets. Other widgets are unchanged."
+        ),
+    )
 
 
 class DashboardRunIn(DashboardPreviewRunIn):

@@ -437,6 +437,32 @@ async def test_a_kpi_compares_with_the_previous_period(as_owner, ws, agent):
     assert events[-1]["statements"] == 2
 
 
+async def test_a_view_can_ask_a_kpi_for_a_comparison_its_file_lacks(as_owner, ws, agent):
+    await _publish(
+        as_owner,
+        ws,
+        spec(
+            _kpi("revenue"),
+            parameters={"period": {"type": "time_range", "default": "last_30_days"}},
+        ),
+    )
+
+    plain = _widgets(await _view(as_owner, ws))["revenue"]
+    compared = _widgets(await _view(as_owner, ws, {"compare": "previous_period"}))["revenue"]
+
+    assert "compare" not in plain
+    assert float(compared["compare"]["previous"]) == 40.0
+    assert compared["compare"]["window_text"].startswith("Previous period: ")
+
+
+async def test_a_comparison_the_run_does_not_know_is_refused(as_owner, ws, agent):
+    await _publish(as_owner, ws, spec(_kpi("revenue")))
+    resp = await as_owner.post(
+        f"/workspaces/{ws}/dashboards/sales-overview/run", json={"compare": "last_week"}
+    )
+    assert resp.status_code == 422
+
+
 async def test_a_parameter_filters_each_widget_and_says_where_it_did_not(as_owner, ws, agent):
     await _publish(as_owner, ws, spec())
 

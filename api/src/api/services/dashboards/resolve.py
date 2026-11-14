@@ -40,6 +40,7 @@ from api.services.dashboards.spec import (
     DashboardTimeRange,
     DataWidget,
     DimensionParameter,
+    KpiWidget,
     TableWidget,
     TextWidget,
     TimeRangeParameter,
@@ -132,8 +133,12 @@ def resolve(
     *,
     today: date,
     reachable: Reachable,
+    compare: str | None = None,
 ) -> Resolved:
-    """Resolve every data widget of ``spec`` for one view."""
+    """Resolve every data widget of ``spec`` for one view.
+
+    ``compare``, when set, is the comparison every number (kpi) widget makes in
+    place of the one its file sets."""
     unknown = sorted(set(values) - set(spec.parameters))
     if unknown:
         raise ParameterError(
@@ -150,7 +155,7 @@ def resolve(
         if isinstance(widget, TextWidget):
             continue
         if widget.query is not None:
-            resolved = _query_widget(spec, widget, parameters, today, reachable)
+            resolved = _query_widget(spec, widget, parameters, today, reachable, compare)
         else:
             resolved = _sql_widget(spec, widget, parameters)
         widgets[widget.id] = resolved
@@ -216,8 +221,10 @@ def _query_widget(
     parameters: dict[str, ResolvedParameter],
     today: date,
     reachable: Reachable,
+    compare_to: str | None = None,
 ) -> ResolvedWidget:
     query = widget.query
+    kind = compare_to if compare_to is not None and isinstance(widget, KpiWidget) else query.compare
     applied: list[str] = []
     skipped: list[Skipped] = []
 
@@ -253,17 +260,13 @@ def _query_widget(
 
     compare: Window | None = None
     error: str | None = None
-    if query.compare is not None and window_in is not None:
+    if kind is not None and window_in is not None:
         try:
-            start, end = compare_window(_time_range(window_in), query.compare, today=today)
+            start, end = compare_window(_time_range(window_in), kind, today=today)
         except SemanticError as exc:
             error = str(exc)
         else:
-            label = (
-                "Previous period"
-                if query.compare == "previous_period"
-                else "Same dates a year earlier"
-            )
+            label = "Previous period" if kind == "previous_period" else "Same dates a year earlier"
             compare = Window(start=start, end=end, label=label)
 
     order_by = tuple(OrderTerm(field=o.field, descending=o.descending) for o in query.order_by)
@@ -283,7 +286,7 @@ def _query_widget(
         filters=tuple(filters),
         order_by=order_by,
         limit=limit,
-        compare=query.compare if compare is not None else None,
+        compare=kind if compare is not None else None,
     )
     return ResolvedWidget(
         id=widget.id,

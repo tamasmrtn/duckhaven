@@ -9,8 +9,9 @@ A dashboard is a page of widgets, each showing a number, a chart or a table, wri
 each widget reads, where the queries run, and what the [result cache](result-cache.md) saves.
 
 !!! note "What exists today"
-    Dashboards are stored, published and run through the [REST API](../reference/rest-api.md#dashboards). A view is
-    one request that streams each widget's data as it arrives. The web app does not show dashboards.
+    Dashboards are stored and published through the [REST API](../reference/rest-api.md#dashboards). The web app lists
+    them under **Dashboards** and shows each one, but cannot edit them. A view is one request that streams each
+    widget's data as it arrives, so each widget fills in as its answer comes back.
 
 ## Every widget runs as the viewer
 

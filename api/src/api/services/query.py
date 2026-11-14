@@ -63,6 +63,10 @@ from duckhaven_shared.telemetry import inject_trace_context
 logger = logging.getLogger(__name__)
 _tracer = trace.get_tracer("duckhaven.api")
 
+#: Runs someone is waiting on: their own (a null origin) and a dashboard's widgets.
+#: These are the ones the interactive query metrics count.
+INTERACTIVE_ORIGINS = frozenset({None, "dashboard"})
+
 
 class Completion(asyncio.Event):
     """Set when a statement reaches a terminal state here. ``row`` is the terminal
@@ -272,7 +276,7 @@ async def dispatch_query(
     await record_activity(db, query.agent_id)
     # Status stays "queued" until the agent admits the query and emits
     # QUERY_PROGRESS; the agent may hold it in its admission queue first.
-    if query.origin is None:
+    if query.origin in INTERACTIVE_ORIGINS:
         record_query_submitted()
     await db.commit()
 
@@ -356,7 +360,7 @@ async def handle_agent_frame(
         # This frame set running_at only if it was the first, so this is the
         # queued -> running transition: record how long an interactive query
         # waited in the agent's admission queue before it started executing.
-        if row is not None and row.origin is None and _utc(row.running_at) == now:
+        if row is not None and row.origin in INTERACTIVE_ORIGINS and _utc(row.running_at) == now:
             record_query_queue_wait((now - _utc(row.started_at)).total_seconds())
         return
     if frame.type == FrameType.QUERY_DONE:
@@ -433,7 +437,7 @@ async def handle_agent_frame(
             else None,
         )
         query = await db.get(Query, query_id)
-        if query is not None and query.origin is None:
+        if query is not None and query.origin in INTERACTIVE_ORIGINS:
             record_query_completion(
                 status_val,
                 frame.payload.get("duration_ms"),
@@ -580,7 +584,7 @@ async def cancel_query(db: AsyncSession, query: Query) -> None:
         )
         # Best-effort: routes to the owning replica, or no-ops if disconnected.
         await send_to_agent(db, query.agent_id, frame.model_dump_json())
-    if query.origin is None:
+    if query.origin in INTERACTIVE_ORIGINS:
         record_query_completion("cancelled", None, None)
 
 

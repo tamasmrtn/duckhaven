@@ -602,8 +602,9 @@ async def bind_queued_work(db: AsyncSession, agent: Agent) -> int:
         db,
         Query.agent_id.is_(None),
         # `describe`: a column lookup that started compute parks the same way
-        # (query.run_internal_query).
-        Query.origin.in_(("elastic", "describe")),
+        # (query.run_internal_query). `dashboard`: a widget's pool run, which keeps
+        # its own origin.
+        Query.origin.in_(("elastic", "dashboard", "describe")),
         Query.status == "queued",
         # A run parked on a named agent (the workspace default) is that agent's alone,
         # whichever pool agent happens to register first.

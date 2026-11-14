@@ -408,15 +408,15 @@ async def test_the_result_cache_keys_on_the_chosen_schema(
     authed_client: AsyncClient, workspace, connected_agent, monkeypatch
 ):
     """The same SQL in two schemas reads two tables, so it must not share a result."""
-    from api.routers import queries as queries_router
+    from api.services.result_cache import service as result_cache
 
     seen = []
 
     async def lookup(db, **kwargs):
         seen.append(kwargs["context"].current_schema)
-        return queries_router.result_cache.Lookup(status=queries_router.result_cache.BYPASS)
+        return result_cache.Lookup(status=result_cache.BYPASS)
 
-    monkeypatch.setattr(queries_router.result_cache, "lookup", lookup)
+    monkeypatch.setattr(result_cache, "lookup", lookup)
     agent, _ = connected_agent
     for extra in ({"schema": "marts"}, {}):
         await authed_client.post(
@@ -589,6 +589,37 @@ async def test_list_workspace_queries_filters_by_origin_and_session(
     assert [r["sql"] for r in rows] == ["SELECT 'mine'"]
     # History needs the id on the wire to link a statement to its session.
     assert rows[0]["session_id"] == str(session.id)
+
+
+async def test_history_lists_dashboard_runs_under_their_own_origin(
+    authed_client: AsyncClient, workspace: Workspace, agent: Agent, db_session
+):
+    """A widget's run is someone's run, so History shows it, but not as `interactive`."""
+    from datetime import UTC, datetime
+
+    from api.models.query import Query
+
+    now = datetime.now(UTC)
+    for sql, origin in (("SELECT 'mine'", None), ("SELECT 'widget'", "dashboard")):
+        db_session.add(
+            Query(
+                workspace_id=workspace.id,
+                agent_id=agent.id,
+                sql=sql,
+                status="done",
+                origin=origin,
+                started_at=now,
+            )
+        )
+    await db_session.commit()
+    base = f"/workspaces/{workspace.slug}/queries"
+
+    everything = (await authed_client.get(base)).json()["items"]
+    assert sorted(r["sql"] for r in everything) == ["SELECT 'mine'", "SELECT 'widget'"]
+    widgets = (await authed_client.get(base, params={"origin": "dashboard"})).json()["items"]
+    assert [(r["sql"], r["origin"]) for r in widgets] == [("SELECT 'widget'", "dashboard")]
+    mine = (await authed_client.get(base, params={"origin": "interactive"})).json()["items"]
+    assert [r["sql"] for r in mine] == ["SELECT 'mine'"]
 
 
 async def test_list_workspace_queries_non_member_forbidden(
@@ -3042,10 +3073,10 @@ async def test_a_run_can_be_cancelled_by_its_chosen_id_while_its_submit_waits(
 async def test_a_cache_hit_keeps_the_chosen_id(
     authed_client, workspace, connected_agent, monkeypatch
 ):
-    from api.routers import queries as queries_router
+    from api.services import query_submit
     from api.services.result_cache import service as result_cache
 
-    async def hit(db, workspace, catalogs, body, agent, polaris):
+    async def hit(db, workspace, catalogs, body, agent, polaris, **kwargs):
         return result_cache.Lookup(status=result_cache.HIT)
 
     async def serve(db, cache, query, **kwargs):
@@ -3054,7 +3085,7 @@ async def test_a_cache_hit_keeps_the_chosen_id(
         await db.commit()
         return query
 
-    monkeypatch.setattr(queries_router, "_cache_lookup", hit)
+    monkeypatch.setattr(query_submit, "_cache_lookup", hit)
     monkeypatch.setattr(result_cache, "serve_hit", serve)
     agent, mock_ws = connected_agent
     chosen = str(uuid.uuid4())

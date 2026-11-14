@@ -200,9 +200,10 @@ async def _fail_stranded_queued(db: AsyncSession, now: datetime) -> int:
                     # `scheduled` too: a schedule whose elastic agent was terminated
                     # restarts it and parks the run the same way, so it is stranded
                     # by all the same causes. Only parked runs match -- a dispatched
-                    # scheduled run carries its agent_id.
+                    # scheduled run carries its agent_id. `dashboard`: a widget's
+                    # pool run, parked like an `elastic` one.
                     sa.or_(
-                        Query.origin.in_(("elastic", "scheduled", "describe")),
+                        Query.origin.in_(("elastic", "dashboard", "scheduled", "describe")),
                         # An interactive run submitted against a terminated agent
                         # parks the same way but keeps `origin` null, because that
                         # is how it was actually submitted.

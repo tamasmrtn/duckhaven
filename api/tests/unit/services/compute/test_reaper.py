@@ -324,6 +324,38 @@ async def test_stranded_queued_pool_run_is_failed(session_factory, elastic_on, m
         assert (await db.get(Query, fresh_id)).status == "queued"
 
 
+async def test_a_stranded_dashboard_run_is_failed(session_factory, elastic_on, monkeypatch):
+    """A dashboard widget parked on a pool is stranded by the same causes as a pool run."""
+    from datetime import UTC, datetime, timedelta
+
+    from api.config import settings
+    from api.models.query import Query
+    from api.models.workspace import Workspace
+
+    monkeypatch.setattr(settings, "elastic_provisioning_deadline_s", 300.0)
+
+    async with session_factory() as db:
+        ws = Workspace(slug="stranded-dash", name="Stranded")
+        db.add(ws)
+        await db.flush()
+        run = Query(
+            workspace_id=ws.id,
+            sql="SELECT 1",
+            status="queued",
+            origin="dashboard",
+            started_at=datetime.now(tz=UTC) - timedelta(seconds=3600),
+        )
+        db.add(run)
+        await db.commit()
+        run_id = run.id
+
+    result = await reaper.run_cycle(session_factory)
+    assert result["stranded_queries_failed"] == 1
+
+    async with session_factory() as db:
+        assert (await db.get(Query, run_id)).status == "failed"
+
+
 async def test_reconciles_a_provider_no_longer_configured(
     session_factory, elastic_on, null_backend, monkeypatch
 ):

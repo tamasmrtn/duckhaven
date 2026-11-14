@@ -674,6 +674,7 @@ async def _run(
             widget_ids=body.widgets,
             use_cache=body.use_cache,
             client=parse_user_agent(request.headers.get("user-agent")),
+            compare=body.compare,
         )
     except run_service.ParameterError as exc:
         raise HTTPException(

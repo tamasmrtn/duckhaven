@@ -321,6 +321,7 @@ supplied here or via the provider's own standard environment variable (`ANTHROPI
 | `ASSISTANT_API_KEY` | — | Explicit API key for the model. Optional: hosted providers fall back to their standard env var; keyless endpoints need nothing. **Rotate like any secret.** |
 | `ASSISTANT_PAT_TTL_S` | `3600` | Lifetime (seconds) of the short-lived PAT minted for each turn's loopback calls. Must exceed the longest plausible turn (bounded by `ASSISTANT_REQUEST_LIMIT` × per-query timeout), since one token is reused for the whole turn. |
 | `ASSISTANT_MAX_CONCURRENCY` | `4` | Max concurrent assistant runs per API process, bounding how much the shared event loop can be occupied by model turns. |
+| `ASSISTANT_MAX_CONCURRENCY_PER_USER` | `2` | Max assistant turns one person can have running at once, per API process. A further turn is refused with a message to wait, so one person's open tabs cannot take every run `ASSISTANT_MAX_CONCURRENCY` allows. |
 | `ASSISTANT_REQUEST_LIMIT` | `20` | Hard cap on model requests per turn — stops a tool-loop from running queries and burning tokens indefinitely. |
 | `ASSISTANT_MAX_OUTPUT_TOKENS` | `4096` | Cap on model output tokens per turn — a coarse cost guard. |
 | `ASSISTANT_HISTORY_TURN_CAP` | `40` | Only the most recent N turns are replayed to the model, bounding per-turn cost and context growth. |

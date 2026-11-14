@@ -52,8 +52,14 @@ export async function* streamMessage(
       body: JSON.stringify({
         prompt,
         catalog: opts?.catalog ?? null,
-        editor_sql: opts?.editorSql ?? null,
-        selection_sql: opts?.selectionSql ?? null,
+        page_context:
+          opts?.editorSql != null || opts?.selectionSql != null
+            ? {
+                page: "worksheet",
+                sql: opts.editorSql ?? null,
+                selection: opts.selectionSql ?? null,
+              }
+            : null,
       }),
       signal: opts?.signal,
     },

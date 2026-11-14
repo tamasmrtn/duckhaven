@@ -119,6 +119,34 @@ def test_a_kpi_comparison_resolves_its_earlier_window():
     assert widget.query.compare == "previous_year"
 
 
+def test_a_view_can_ask_every_kpi_for_another_comparison():
+    bars = {
+        "id": "b",
+        "type": "bar",
+        "title": "B",
+        "query": {
+            "model": "orders",
+            "metrics": ["revenue"],
+            "dimensions": ["country"],
+            "time_range": "$period",
+        },
+    }
+    dashboard = spec(kpi("a", time_range="$period", compare="previous_year"), kpi("n"), bars)
+    resolved = resolve(
+        dashboard,
+        {"period": "month_to_date"},
+        today=TODAY,
+        reachable=everything,
+        compare="previous_period",
+    )
+    widget = resolved.widgets["a"]
+    assert widget.compare.text == "Previous period: 1 – 13 Oct 2026"
+    assert widget.query.compare == "previous_period"
+    # A kpi without a window has nothing to compare; a bar never compares.
+    assert resolved.widgets["n"].compare is None
+    assert resolved.widgets["b"].compare is None and resolved.widgets["b"].query.compare is None
+
+
 def test_a_comparison_that_cannot_be_made_fails_that_widget_only():
     dashboard = spec(kpi("a", time_range="$period", compare="previous_year"), kpi("b"))
     resolved = run(dashboard, {"period": {"kind": "trailing", "grain": "month", "n": 24}})

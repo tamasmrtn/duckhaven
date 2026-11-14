@@ -6,6 +6,7 @@ import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
+from api.schemas.assistant import DashboardContext, WorksheetContext
 from api.services.assistant.gateway import Gateway
 
 
@@ -47,12 +48,9 @@ class AssistantDeps:
     # The service account this turn acts as — stamped on the conversation for
     # audit attribution.
     service_account_id: uuid.UUID
-    # The SQL currently in the user's worksheet editor, sent with the turn so the
-    # assistant can read and propose edits to it. None when no editor is open.
-    editor_sql: str | None = None
-    # The user's current text selection in the worksheet editor, if non-empty. When
-    # set, a proposed edit should be scoped to just this fragment.
-    selection_sql: str | None = None
+    # The page the person sent the turn from: a worksheet with its SQL and
+    # selection, or a dashboard with its parameter values. None from anywhere else.
+    page: WorksheetContext | DashboardContext | None = None
     # A rendered list of this workspace's published semantic models, resolved once
     # per turn. None or empty means the workspace has curated nothing, in which
     # case the instructions omit the semantic section entirely and the assistant
@@ -82,3 +80,19 @@ class AssistantDeps:
     # Tool-call audit records for this run, keyed by the SDK tool_call_id. Populated
     # by the governance hooks; drained by the runner and persisted after the turn.
     records: dict[str, ToolCallRecord] = field(default_factory=dict)
+    # The dashboard preview this turn's widget previews reuse, once it has one.
+    preview_id: str | None = None
+    # Charts drawn this turn, keyed by tool_call_id, for the runner to stream.
+    charts: dict[str, dict] = field(default_factory=dict)
+
+    @property
+    def editor_sql(self) -> str | None:
+        return self.page.sql if isinstance(self.page, WorksheetContext) else None
+
+    @property
+    def selection_sql(self) -> str | None:
+        return self.page.selection if isinstance(self.page, WorksheetContext) else None
+
+    @property
+    def dashboard(self) -> DashboardContext | None:
+        return self.page if isinstance(self.page, DashboardContext) else None

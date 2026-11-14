@@ -20,6 +20,7 @@ from api.config import settings
 from api.models.assistant import AssistantConversation, AssistantMessage, AssistantToolCall
 from api.models.user import User
 from api.models.workspace import WorkspaceMember
+from api.schemas.assistant import DashboardContext, WorksheetContext
 from api.services.assistant import runner
 from api.services.assistant.agent import get_agent
 from api.services.assistant.gateway import Gateway, GatewayError
@@ -510,7 +511,9 @@ async def test_propose_sql_edit_with_selection_is_scoped(client, db_session, fac
                 prompt="change this to id = 2",
                 catalog=None,
                 user_id=conv.user_id,
-                selection_sql="id = 1",
+                page_context=WorksheetContext(
+                    page="worksheet", sql="SELECT * FROM t WHERE id = 1", selection="id = 1"
+                ),
             )
         ]
     frames = parse_sse(chunks)
@@ -553,3 +556,132 @@ def test_safe_error_message_whitelists_known_types():
     assert _safe_error_message(ValueError("secret internal db url")) == (
         "The assistant hit an internal error."
     )
+
+
+async def _frames(factory, ws, conv, prompt, page_context=None) -> list[dict]:
+    chunks = [
+        chunk
+        async for chunk in stream_turn(
+            factory,
+            conversation_id=conv.id,
+            workspace_id=ws.id,
+            workspace_slug=ws.slug,
+            prompt=prompt,
+            catalog=None,
+            user_id=conv.user_id,
+            page_context=page_context,
+        )
+    ]
+    return parse_sse(chunks)
+
+
+async def test_a_person_with_their_share_of_turns_running_is_asked_to_wait(
+    client, db_session, factory, monkeypatch
+):
+    ws, _catalog, conv = await _seed(db_session, sa_role="reader")
+    monkeypatch.setattr(settings, "assistant_max_concurrency_per_user", 2)
+    monkeypatch.setitem(runner._user_turns, conv.user_id, 2)
+
+    with get_agent().override(model=scripted_model([text_step("never reached")])):
+        frames = await _frames(factory, ws, conv, "hi")
+
+    assert frames == [
+        {
+            "type": "error",
+            "message": "You already have 2 turns running with the assistant. "
+            "Wait for one to finish, or stop it, and ask again.",
+        }
+    ]
+    async with factory() as db:
+        assert (await db.execute(select(AssistantMessage))).scalars().all() == []
+
+
+async def test_a_finished_turn_gives_its_slot_back(client, db_session, factory, monkeypatch):
+    ws, _catalog, conv = await _seed(db_session, sa_role="reader")
+    monkeypatch.setattr(settings, "assistant_max_concurrency_per_user", 1)
+    for _ in range(2):
+        with get_agent().override(model=scripted_model([text_step("Hello.")])):
+            frames = await _frames(factory, ws, conv, "hi")
+        assert frames[-1]["type"] == "done"
+    assert conv.user_id not in runner._user_turns
+
+
+async def test_a_chart_reaches_the_chat_as_its_own_frame(client, db_session, factory, monkeypatch):
+    ws, _catalog, conv = await _seed(db_session, sa_role="reader")
+    rows = [{"month": "2026-09-01", "revenue": 4}, {"month": "2026-10-01", "revenue": 6}]
+
+    async def own_result(self, query_id, *, limit):
+        return {
+            "query_id": query_id,
+            "sql": "SELECT month, revenue FROM t",
+            "row_count": 2,
+            "columns": ["month", "revenue"],
+            "column_schema": None,
+            "rows": rows,
+            "total": 2,
+        }
+
+    monkeypatch.setattr(Gateway, "own_result", own_result)
+    widget = {
+        "id": "trend",
+        "type": "line",
+        "title": "Revenue",
+        "columns": {"x": "month", "y": ["revenue"]},
+    }
+    responses = [
+        tool_step("show_chart", {"query_id": "q-7", "widget": widget}),
+        text_step("Here it is."),
+    ]
+    with get_agent().override(model=scripted_model(responses)):
+        frames = await _frames(factory, ws, conv, "chart revenue by month")
+
+    charts = [f for f in frames if f["type"] == "chart"]
+    assert len(charts) == 1
+    chart = charts[0]
+    assert chart["tool_call_id"]
+    assert chart["widget"]["sql"] == "SELECT month, revenue FROM t"
+    assert chart["event"]["rows"]["data"] == [["2026-09-01", 4], ["2026-10-01", 6]]
+    assert len(chart["result_hash"]) == 64
+    # The chart comes before the words about it.
+    assert frames.index(chart) < next(i for i, f in enumerate(frames) if f["type"] == "token")
+
+
+async def test_numbers_no_tool_returned_are_flagged_on_done(client, db_session, factory):
+    ws, _catalog, conv = await _seed(db_session, sa_role="reader")
+    responses = [
+        tool_step("list_catalogs", {}),
+        text_step("Revenue rose 37% to 12,345."),
+    ]
+    with get_agent().override(model=scripted_model(responses)):
+        frames = await _frames(factory, ws, conv, "how is revenue?")
+    assert frames[-1]["type"] == "done"
+    assert frames[-1]["unsupported_numbers"] == ["37%", "12,345"]
+
+    with get_agent().override(model=scripted_model([text_step("Nothing to report.")])):
+        frames = await _frames(factory, ws, conv, "and now?")
+    assert "unsupported_numbers" not in frames[-1]
+
+
+async def test_a_number_on_the_page_is_grounded(client, db_session, factory):
+    ws, _catalog, conv = await _seed(db_session, sa_role="reader")
+    page = DashboardContext(page="dashboard", name="sales", params={"store": 4417})
+    with get_agent().override(model=scripted_model([text_step("Store 4417 it is.")])):
+        frames = await _frames(factory, ws, conv, "which store?", page)
+    assert "unsupported_numbers" not in frames[-1]
+
+
+async def test_the_dashboard_on_screen_reaches_the_model(client, db_session, factory):
+    ws, _catalog, conv = await _seed(db_session, sa_role="reader")
+    captured: list[str] = []
+    page = DashboardContext(
+        page="dashboard",
+        name="sales-overview",
+        version=3,
+        params={"country": "NL"},
+        widget="revenue",
+    )
+    with get_agent().override(model=_instruction_capturing_model(captured)):
+        await _frames(factory, ws, conv, "why did this drop?", page)
+    assert "dashboard 'sales-overview' (version 3)" in captured[0]
+    assert '{"country": "NL"}' in captured[0]
+    assert "the widget 'revenue'" in captured[0]

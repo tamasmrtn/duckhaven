@@ -663,6 +663,8 @@ Every field is optional:
 - `widgets` runs only these widgets, by id.
 - `draft: true` runs the draft, and needs `writer`.
 - `use_cache: false` runs every query even when the [result cache](../querying/result-cache.md) holds its answer.
+- `compare` is `previous_period` or `previous_year`. Every `kpi` widget with a `query` and a time window then makes
+  that comparison, in place of the one its file sets. Other widgets are unchanged.
 
 A request that cannot run is refused before the stream starts: **422** `invalid_parameters` for a value that does not
 fit its parameter or a parameter the dashboard lacks, with its name under `details.parameter`, and **422**

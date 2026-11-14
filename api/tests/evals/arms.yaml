@@ -36,6 +36,12 @@ everything:
     elastic_enabled: true
     default_compute: {name: analytics, elastic: true}
     can_write: true
+    page:
+      page: dashboard
+      name: sales-overview
+      version: 3
+      params: {period: last_90_days, country: NL}
+      widget: revenue
 
 # "Is the cheaper model good enough here?" — run it against with-docs. Names a
 # model that has actually been exercised against this harness; an arm pointing

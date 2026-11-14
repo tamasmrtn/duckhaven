@@ -537,6 +537,9 @@ class Settings(BaseSettings):
     # Max concurrent assistant runs per API process, capping how much the shared
     # event loop can be occupied by (potentially slow) LLM turns.
     assistant_max_concurrency: int = 4
+    # Of those, how many one person may have running at once, so one person's tabs
+    # cannot take every slot. Also per API process.
+    assistant_max_concurrency_per_user: int = 2
     # Hard cap on model requests within a single turn — stops a model stuck in a
     # tool loop from running queries and burning tokens indefinitely while holding
     # a concurrency slot. Enforced via Pydantic AI UsageLimits.

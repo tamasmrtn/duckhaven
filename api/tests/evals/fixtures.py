@@ -18,14 +18,17 @@ of answering, which the judge then scored.
 
 from __future__ import annotations
 
-from datetime import date
+import json
+from datetime import date, timedelta
+from decimal import Decimal
 
 import duckdb
 
 from api.services.assistant.gateway import GatewayError
+from api.services.dashboards.spec import TIME_PRESETS, json_schema
 from api.services.query import _json_value
 from api.services.semantic.errors import SemanticError
-from api.services.semantic.timespec import TimeRange, resolve
+from api.services.semantic.timespec import TimeRange, compare_window, resolve
 from api.services.sql_guard import SQLNotAllowed, assert_allowed
 
 # `kind` mirrors /workspaces/{ws}/catalogs; the DuckLake prompt block relies on it.
@@ -191,6 +194,125 @@ _DIMENSION_SQL = {"region": "o.region", "country": "c.country"}
 _FILTER_OPS = {"eq": "=", "ne": "<>", "gt": ">", "gte": ">=", "lt": "<", "lte": "<="}
 
 
+# The workspace's one dashboard. Its widgets read the seeded tables through the
+# metric SQL above, so a number run_widget reads agrees with the same question
+# asked through query_metric or run_sql.
+DASHBOARD = {
+    "name": "sales-overview",
+    "title": "Sales overview",
+    "description": "Revenue for the sales team, overall and by region.",
+    "labels": ["sales"],
+    "status": "published",
+    "has_draft": False,
+    "managed": False,
+    "updated_at": "2026-11-02T09:00:00Z",
+    "version": 3,
+    "draft": False,
+    "refs": [
+        {"kind": "metric", "model": "sales", "name": "revenue"},
+        {"kind": "dimension", "model": "sales", "name": "region"},
+    ],
+    "warnings": [],
+    "spec": {
+        "version": 1,
+        "name": "sales-overview",
+        "title": "Sales overview",
+        "parameters": {
+            "period": {"type": "time_range", "label": "Period", "default": "last_month"},
+            "region": {
+                "type": "dimension",
+                "label": "Region",
+                "model": "sales",
+                "dimension": "region",
+            },
+        },
+        "rows": [
+            {
+                "widgets": [
+                    {
+                        "id": "revenue",
+                        "type": "kpi",
+                        "title": "Revenue",
+                        "width": 4,
+                        "query": {
+                            "model": "sales",
+                            "metrics": ["revenue"],
+                            "time_range": "$period",
+                            "compare": "previous_period",
+                        },
+                    },
+                    {
+                        "id": "revenue_by_region",
+                        "type": "bar",
+                        "title": "Revenue by region",
+                        "width": 8,
+                        "query": {
+                            "model": "sales",
+                            "metrics": ["revenue"],
+                            "dimensions": ["region"],
+                            "time_range": "$period",
+                        },
+                    },
+                ]
+            },
+            {
+                "widgets": [
+                    {
+                        "id": "about",
+                        "type": "text",
+                        "markdown": "Net booked revenue, excluding internal test orders.",
+                    }
+                ]
+            },
+        ],
+    },
+}
+_DATA_WIDGETS = ("revenue", "revenue_by_region")
+_REVENUE_COLUMN = {
+    "name": "revenue",
+    "type": "DECIMAL(38,4)",
+    "role": "measure",
+    "label": "Revenue",
+    "format": "currency",
+    "currency": "EUR",
+}
+_DEFINITIONS = [
+    {
+        "kind": "metric",
+        "model": "sales",
+        "name": "revenue",
+        "expression": "SUM(total_amount) FILTER (WHERE status <> 'test')",
+        "caveat": "Excludes internal test orders.",
+    }
+]
+
+
+def _window(value: object) -> TimeRange:
+    if isinstance(value, str):
+        if value not in TIME_PRESETS:
+            raise GatewayError(
+                f"Not allowed: {value!r} is not a window; use one of {', '.join(TIME_PRESETS)}."
+            )
+        preset = TIME_PRESETS[value]
+        return TimeRange(kind=preset.kind, grain=preset.grain, n=preset.n)
+    if isinstance(value, dict):
+        window = dict(value)
+        for key in ("start", "end"):
+            if window.get(key):
+                window[key] = date.fromisoformat(window[key])
+        return TimeRange(**window)
+    raise GatewayError(f"Not allowed: {value!r} is not a window.")
+
+
+def _scope(start: date, end: date, label: str) -> dict:
+    last = end - timedelta(days=1)
+    return {
+        "start": start.isoformat(),
+        "end": end.isoformat(),
+        "text": f"{label}: {start.day} {start:%b %Y} – {last.day} {last:%b %Y}",
+    }
+
+
 def _workspace_db() -> duckdb.DuckDBPyConnection:
     """The seeded tables, locked down before any statement of the assistant's runs.
 
@@ -287,10 +409,18 @@ class EvalGateway:
         # Returning nothing on the second look told the assistant its own query
         # had failed, which is a different question from the one being scored.
         self._results: dict[str, tuple[list[str], list, list[tuple]]] = {}
+        self._sql: dict[str, str] = {}
         self._con: duckdb.DuckDBPyConnection | None = None
 
     def _record(self, name: str) -> None:
         self.calls.append(name)
+
+    @property
+    def row_cap(self) -> int:
+        return self._row_cap
+
+    def cap_rows(self, rows: list) -> tuple[list, bool]:
+        return rows, False
 
     def _db(self) -> duckdb.DuckDBPyConnection:
         # Seeded on first use: most cases never run SQL.
@@ -395,6 +525,7 @@ class EvalGateway:
             [d[1] for d in description],
             records,
         )
+        self._sql[query_id] = sql
         return {"status": "done", **self._page(query_id, offset=0, limit=self._row_cap)}
 
     async def get_query_result(self, query_id: str, *, cursor, limit) -> dict:
@@ -500,6 +631,202 @@ class EvalGateway:
 
     async def semantic_conflicts(self, sql: str) -> list[dict]:
         return []
+
+    # ── Dashboards ────────────────────────────────────────────────────────────
+    async def list_dashboards(self, *, query: str | None = None, uses: str | None = None) -> dict:
+        self._record("list_dashboards")
+        summary = {key: DASHBOARD[key] for key in _SUMMARY_KEYS}
+        text = f"{DASHBOARD['name']} {DASHBOARD['title']}".lower()
+        found = (not query or query.lower() in text) and (
+            not uses or uses in ("sales", "sales.revenue", "sales.region")
+        )
+        return {"dashboards": [summary] if found else [], "more": False}
+
+    async def get_dashboard(self, name: str, *, draft: bool = False) -> dict:
+        self._record("get_dashboard")
+        self._dashboard(name)
+        return json.loads(json.dumps(DASHBOARD))
+
+    async def dashboard_schema(self) -> dict:
+        self._record("dashboard_schema")
+        return json_schema()
+
+    async def run_dashboard(
+        self,
+        name: str,
+        *,
+        params: dict | None,
+        widgets: list[str] | None,
+        draft: bool,
+        compare: str | None,
+        timeout_s: float,
+    ) -> list[dict]:
+        """The run events the server would stream, worked out from the seeded tables."""
+        self._record("run_dashboard")
+        self._dashboard(name)
+        values = dict(params or {})
+        unknown = sorted(set(values) - {"period", "region"})
+        if unknown:
+            raise GatewayError(f"Not allowed: the dashboard has no parameter {unknown[0]!r}.")
+        missing = [w for w in widgets or () if w not in _DATA_WIDGETS]
+        if missing:
+            raise GatewayError(f"Not allowed: {missing[0]!r} is not a data widget.")
+        period = values.get("period", "last_month")
+        region = values.get("region")
+        window = _window(period)
+        today = date.today()
+        try:
+            start, end = resolve(window, today=today)
+        except SemanticError as exc:
+            raise GatewayError(f"Not allowed: {exc}") from exc
+        shown = _scope(start, end, period if isinstance(period, str) else "Window")
+        events: list[dict] = [
+            {
+                "type": "start",
+                "dashboard": {"name": name, "version": DASHBOARD["version"], "draft": draft},
+                "today": today.isoformat(),
+                "timezone": "UTC",
+                "parameters": [
+                    {"name": "period", "value": period, "window": shown},
+                    {"name": "region", "value": region, "window": None},
+                ],
+            }
+        ]
+        for widget in widgets or _DATA_WIDGETS:
+            if widget == "revenue":
+                events.append(self._kpi(start, end, shown, window, region, compare, today))
+            else:
+                events.append(self._by_region(start, end, shown))
+        events.append({"type": "done"})
+        return events
+
+    def _dashboard(self, name: str) -> None:
+        if name != DASHBOARD["name"]:
+            raise GatewayError(f"Not found: no dashboard {name!r}.")
+
+    def _revenue(self, start: date, end: date, region: str | None) -> Decimal:
+        where = f"o.order_date >= DATE '{start}' AND o.order_date < DATE '{end}'"
+        if region is not None:
+            where += " AND o.region = '" + str(region).replace("'", "''") + "'"
+        sql = f"SELECT {_METRIC_SQL} FROM warehouse.analytics.orders o WHERE {where}"
+        (total,) = self._db().execute(sql).fetchone()
+        return total or Decimal(0)
+
+    def _kpi(self, start, end, shown, window, region, compare, today) -> dict:
+        kind = compare or "previous_period"
+        before_start, before_end = compare_window(window, kind, today=today)
+        label = "Previous period" if kind == "previous_period" else "Same dates a year earlier"
+        current = self._revenue(start, end, region)
+        previous = self._revenue(before_start, before_end, region)
+        delta = current - previous
+        return {
+            "type": "widget",
+            "id": "revenue",
+            "state": "ok",
+            "scope": {
+                "window": shown,
+                "compare_window": _scope(before_start, before_end, label),
+                "applied": ["period"] + (["region"] if region is not None else []),
+                "skipped": [],
+            },
+            "rows": {
+                "columns": [_REVENUE_COLUMN],
+                "data": [[str(current)]],
+                "truncated": False,
+                "query_id": "dq-revenue",
+            },
+            "chart": {"type": "kpi", "y": [{"field": "revenue", "format": "currency"}]},
+            "compare": {
+                "current": str(current),
+                "previous": str(previous),
+                "delta": str(delta),
+                "delta_pct": float(delta / previous) if previous else None,
+                "good": delta > 0 if delta else None,
+                "window_text": _scope(before_start, before_end, label)["text"],
+            },
+            "definitions": _DEFINITIONS,
+            "cache": "miss",
+            "warnings": ["Revenue: Excludes internal test orders."],
+        }
+
+    def _by_region(self, start, end, shown) -> dict:
+        sql = (
+            f"SELECT o.region AS region, {_METRIC_SQL} AS revenue "
+            "FROM warehouse.analytics.orders o "
+            f"WHERE o.order_date >= DATE '{start}' AND o.order_date < DATE '{end}' "
+            "GROUP BY 1 ORDER BY 2 DESC"
+        )
+        rows = self._db().execute(sql).fetchall()
+        return {
+            "type": "widget",
+            "id": "revenue_by_region",
+            "state": "ok",
+            "scope": {
+                "window": shown,
+                "compare_window": None,
+                "applied": ["period"],
+                "skipped": [{"parameter": "region", "reason": "own_dimension"}],
+            },
+            "rows": {
+                "columns": [
+                    {"name": "region", "type": "VARCHAR", "role": "dimension"},
+                    _REVENUE_COLUMN,
+                ],
+                "data": [[r, str(v)] for r, v in rows],
+                "truncated": False,
+                "query_id": "dq-revenue-by-region",
+            },
+            "chart": {
+                "type": "bar",
+                "x": {"field": "region", "kind": "category"},
+                "y": [{"field": "revenue", "format": "currency"}],
+            },
+            "definitions": _DEFINITIONS,
+            "cache": "miss",
+            "warnings": [],
+        }
+
+    async def hold_preview(self, spec: dict, *, preview_id: str | None) -> str:
+        self._record("hold_preview")
+        if not self._can_write:
+            # As the server answers a reader: previews are for writers.
+            raise GatewayError(
+                "Access denied: trying out a dashboard needs the writer role.", kind="denied"
+            )
+        raise GatewayError("Service unavailable: the eval workspace holds no previews.")
+
+    async def run_preview(self, preview_id: str, *, params: dict | None, timeout_s: float) -> list:
+        self._record("run_preview")
+        raise GatewayError("Service unavailable: the eval workspace holds no previews.")
+
+    async def own_result(self, query_id: str, *, limit: int) -> dict:
+        self._record("own_result")
+        if query_id not in self._results:
+            raise GatewayError(
+                "I can only draw results of queries I ran in this conversation.", kind="denied"
+            )
+        page = self._page(query_id, offset=0, limit=limit)
+        return {
+            "query_id": query_id,
+            "sql": self._sql[query_id],
+            "row_count": page["total"],
+            "columns": page["columns"],
+            "column_schema": None,
+            "rows": page["rows"],
+            "total": page["total"],
+        }
+
+
+_SUMMARY_KEYS = (
+    "name",
+    "title",
+    "description",
+    "labels",
+    "status",
+    "has_draft",
+    "managed",
+    "updated_at",
+)
 
 
 def _metric(model: str, name: str, description: str) -> dict:

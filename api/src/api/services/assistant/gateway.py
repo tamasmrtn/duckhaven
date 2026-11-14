@@ -31,6 +31,18 @@ _TERMINAL = {"done", "failed", "cancelled"}
 _POLL_INTERVAL_S = 0.25
 # A query that sat queued at least this long gets its wait reported to the model.
 _WAITED_NOTE_AFTER_S = 10.0
+# Dashboards listed per call: enough to choose from, never a whole large workspace.
+_DASHBOARD_LIST_LIMIT = 50
+_DASHBOARD_SUMMARY_KEYS = (
+    "name",
+    "title",
+    "description",
+    "labels",
+    "status",
+    "has_draft",
+    "managed",
+    "updated_at",
+)
 
 
 def _aggregated_columns(sql: str) -> dict[tuple[str | None, str, str], set[str]]:
@@ -226,6 +238,15 @@ class Gateway:
             if queue_wait_s is not None
             else (settings.compute_queue_wait_s if settings.elastic_compute_enabled else 0.0)
         )
+
+    @property
+    def row_cap(self) -> int:
+        """The most rows of a result handed to the model."""
+        return self._row_cap
+
+    def cap_rows(self, rows: list) -> tuple[list, bool]:
+        """Rows cut to the byte cap, and whether any were cut."""
+        return self._cap_bytes(rows)
 
     async def _get(self, path: str, **kwargs) -> httpx.Response:
         resp = await self._client.get(path, **kwargs)
@@ -565,6 +586,160 @@ class Gateway:
         except Exception:  # noqa: BLE001 — advisory only; never fail a good answer
             return []
 
+    # ── Dashboards ────────────────────────────────────────────────────────────
+    async def list_dashboards(self, *, query: str | None = None, uses: str | None = None) -> dict:
+        """The dashboards this principal may see, by name: readers see published ones."""
+        params: dict[str, object] = {"limit": _DASHBOARD_LIST_LIMIT}
+        if query:
+            params["q"] = query
+        if uses:
+            params["uses"] = uses
+        body = (await self._get(f"/workspaces/{self._ws}/dashboards", params=params)).json()
+        return {
+            "dashboards": [
+                {key: d.get(key) for key in _DASHBOARD_SUMMARY_KEYS} for d in body.get("items", [])
+            ],
+            "more": bool(body.get("has_more")),
+        }
+
+    async def get_dashboard(self, name: str, *, draft: bool = False) -> dict:
+        """One dashboard's file, what it reads, and where it stands."""
+        params = {"draft": "true"} if draft else None
+        body = (await self._get(f"/workspaces/{self._ws}/dashboards/{name}", params=params)).json()
+        out = {key: body.get(key) for key in _DASHBOARD_SUMMARY_KEYS}
+        out.update(
+            version=body.get("version"),
+            draft=body.get("draft"),
+            spec=body.get("spec"),
+            refs=body.get("refs", []),
+            warnings=[w.get("message") for w in body.get("warnings", [])],
+        )
+        return self._cap_spec(out)
+
+    def _cap_spec(self, payload: dict) -> dict:
+        """Shorten the longest SQL and Markdown in a file until it fits the byte cap.
+
+        The layout and every widget's id, type and title survive; only the text a
+        model can read again with ``run_widget`` is cut, and the payload says so.
+        """
+        widgets = [
+            w for row in (payload.get("spec") or {}).get("rows", []) for w in row.get("widgets", [])
+        ]
+        for keep in (2000, 500, 100):
+            if len(json.dumps(payload, default=str)) <= self._byte_cap:
+                return payload
+            for widget in widgets:
+                for key in ("sql", "markdown"):
+                    text = widget.get(key)
+                    if isinstance(text, str) and len(text) > keep:
+                        widget[key] = text[:keep] + "…"
+            payload["truncated"] = "Long SQL and Markdown in this file are cut short."
+        return payload
+
+    async def dashboard_schema(self) -> dict:
+        """The JSON Schema of a dashboard file."""
+        return (await self._get("/dashboard-schema", params={"version": 1})).json()
+
+    async def run_dashboard(
+        self,
+        name: str,
+        *,
+        params: dict | None,
+        widgets: list[str] | None,
+        draft: bool,
+        compare: str | None,
+        timeout_s: float,
+    ) -> list[dict]:
+        """Run a stored dashboard, or some of its widgets, and return its events."""
+        body: dict[str, object] = {"params": params or {}, "widgets": widgets, "draft": draft}
+        if compare:
+            body["compare"] = compare
+        return await self._events(
+            f"/workspaces/{self._ws}/dashboards/{name}/run", body, timeout_s=timeout_s
+        )
+
+    async def hold_preview(self, spec: dict, *, preview_id: str | None) -> str:
+        """Hold ``spec`` in a dashboard preview, reusing ``preview_id`` while it lasts."""
+        if preview_id is not None:
+            resp = await self._client.put(
+                f"/workspaces/{self._ws}/dashboard-previews/{preview_id}", json={"spec": spec}
+            )
+            if resp.status_code != 404:
+                self._raise_for(resp)
+                return preview_id
+        resp = await self._client.post(
+            f"/workspaces/{self._ws}/dashboard-previews", json={"spec": spec}
+        )
+        self._raise_for(resp)
+        return resp.json()["id"]
+
+    async def run_preview(
+        self, preview_id: str, *, params: dict | None, timeout_s: float
+    ) -> list[dict]:
+        """Run a preview held by :meth:`hold_preview` and return its events."""
+        return await self._events(
+            f"/workspaces/{self._ws}/dashboard-previews/{preview_id}/run",
+            {"params": params or {}},
+            timeout_s=timeout_s,
+        )
+
+    async def _events(self, path: str, body: dict, *, timeout_s: float) -> list[dict]:
+        """POST a run and read its server-sent events to the end.
+
+        An ``error`` event ends the run, so it is raised. Running out of time
+        closes the stream, which cancels the run's queries still going.
+        """
+        events: list[dict] = []
+        try:
+            async with asyncio.timeout(timeout_s + self._queue_wait_s):
+                async with self._client.stream("POST", path, json=body) as resp:
+                    if resp.status_code >= 400:
+                        await resp.aread()
+                        self._raise_for(resp)
+                    async for line in resp.aiter_lines():
+                        if line.startswith("data:"):
+                            events.append(json.loads(line[5:]))
+        except TimeoutError:
+            raise GatewayError(f"The dashboard did not finish within {timeout_s:.0f}s.") from None
+        for event in events:
+            if event.get("type") == "error":
+                raise GatewayError(event.get("message") or "The dashboard run failed.")
+        return events
+
+    @staticmethod
+    def _raise_for(resp: httpx.Response) -> None:
+        try:
+            resp.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            raise _translate(exc) from exc
+
+    async def own_result(self, query_id: str, *, limit: int) -> dict:
+        """A query this conversation ran, with up to ``limit`` of its rows.
+
+        For drawing, not for reading: the rows are not cut to the byte cap. Refused
+        for a query run by anyone else, as paging one is.
+        """
+        record = (await self._get(f"/queries/{query_id}")).json()
+        if (
+            str(record.get("user_id")) != self._service_account_id
+            or record.get("on_behalf_of_id") != self._on_behalf_of_id
+        ):
+            raise GatewayError(
+                "I can only draw results of queries I ran in this conversation.", kind="denied"
+            )
+        if record.get("status") != "done":
+            raise GatewayError(f"That query is {record.get('status')}, so it has no rows to draw.")
+        page = (await self._get(f"/queries/{query_id}/rows", params={"limit": limit})).json()
+        return {
+            "query_id": query_id,
+            "sql": record["sql"],
+            "row_count": record.get("row_count"),
+            "columns": page.get("columns", []),
+            "column_schema": page.get("column_schema"),
+            "rows": page.get("rows", []),
+            "total": page.get("total", 0),
+        }
+
     # ── SQL execution ─────────────────────────────────────────────────────────
     async def run_sql(
         self,
@@ -704,7 +879,7 @@ class Gateway:
             page["column_types"] = {c["name"]: c["type"] for c in data["column_schema"]}
         return page
 
-    def _cap_bytes(self, rows: list[dict]) -> tuple[list[dict], bool]:
+    def _cap_bytes(self, rows: list) -> tuple[list, bool]:
         """Trim rows so the JSON-serialized sample stays under the byte cap."""
         kept: list[dict] = []
         size = 0

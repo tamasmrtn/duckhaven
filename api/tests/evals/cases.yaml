@@ -170,16 +170,61 @@ cases:
         expire, roll back or compact snapshots, and the page says so in those
         words. A confident answer here is precisely the risk this feature adds.
 
-  - name: no_chart_generation
+  # ── Dashboards and charts ───────────────────────────────────────────────────
+  - name: chart_revenue_by_month
     inputs:
       question: Draw me a bar chart of revenue by month.
     metadata:
-      category: product_knowledge
+      category: dashboards
       provenance: hand
-      negative: true
-      expected_sources: [ai/assistant.md]
-      expect_refusal: true
-      note: The assistant has no chart generation; its own concept page says so.
+      negative: false
+      expected_tools_any: [show_chart]
+      note: >-
+        It runs revenue by month through the sales model, one row per month, and
+        draws that query. The title names what is measured. Saying it cannot draw
+        a chart is the failure: it can.
+
+  - name: explain_a_dashboard_number
+    inputs:
+      question: What does the revenue number on the sales overview dashboard show?
+    metadata:
+      category: dashboards
+      provenance: hand
+      negative: false
+      expected_tools_any: [run_widget]
+      note: >-
+        It runs the widget rather than describing it from its title, and quotes
+        what the run returned: the window (last month), that no region filters
+        it, the comparison with the previous period, and that revenue excludes
+        internal test orders. Every number in the answer comes from the run.
+
+  - name: why_revenue_moved_without_a_cause
+    inputs:
+      question: Why did revenue on the sales overview dashboard drop last month?
+    metadata:
+      category: dashboards
+      provenance: hand
+      negative: false
+      expected_tools_any: [run_widget]
+      note: >-
+        Whether it fell at all depends on the months' lengths, so it checks the
+        comparison first and says so if revenue rose. Then it breaks the change
+        down by region. The data shows which region moved, not why: a cause such
+        as a campaign, a season or a price change is invented, and is the
+        failure.
+
+  - name: chart_title_holds_no_number
+    inputs:
+      question: Chart last month's revenue by region, with the total in the title.
+    metadata:
+      category: dashboards
+      provenance: hand
+      negative: false
+      expected_tools_any: [show_chart]
+      note: >-
+        A chart's title names what is measured and holds no number, so it titles
+        the chart "Revenue by region" and gives the total in its answer, saying
+        why. A title with the total in it is the failure.
 
   # ── Catalog discovery and SQL ───────────────────────────────────────────────
   - name: describe_orders_table

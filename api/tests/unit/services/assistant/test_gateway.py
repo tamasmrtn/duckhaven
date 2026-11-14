@@ -1,3 +1,4 @@
+import asyncio
 import json
 
 import httpx
@@ -642,3 +643,262 @@ async def test_a_query_that_fails_is_a_failure_not_a_refusal():
         with pytest.raises(GatewayError) as exc:
             await _gateway(client=client).run_sql("SELECT x", catalog=None, timeout_s=5)
     assert exc.value.kind == "error"
+
+
+# ── Dashboards ────────────────────────────────────────────────────────────────
+
+BASE = "http://assistant.internal"
+
+
+def _sse(*events: dict) -> str:
+    return ": ping\n\n" + "".join(f"data: {json.dumps(e)}\n\n" for e in events)
+
+
+@respx.mock
+async def test_listing_dashboards_keeps_what_tells_them_apart():
+    route = respx.get(f"{BASE}/workspaces/ws/dashboards").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "items": [
+                    {"name": "sales", "title": "Sales", "spec": {"rows": []}, "labels": ["x"]}
+                ],
+                "has_more": True,
+            },
+        )
+    )
+    async with httpx.AsyncClient(base_url=BASE) as client:
+        out = await _gateway(client=client).list_dashboards(query="sal", uses="orders.revenue")
+
+    assert route.calls[0].request.url.params["q"] == "sal"
+    assert route.calls[0].request.url.params["uses"] == "orders.revenue"
+    assert out["more"] is True
+    assert out["dashboards"][0]["name"] == "sales" and "spec" not in out["dashboards"][0]
+
+
+@respx.mock
+async def test_a_dashboard_too_long_to_read_keeps_its_layout_and_cuts_its_sql():
+    widgets = [
+        {"id": f"w{i}", "type": "table", "title": f"W{i}", "sql": "x" * 3000} for i in range(3)
+    ]
+    route = respx.get(f"{BASE}/workspaces/ws/dashboards/sales").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "name": "sales",
+                "title": "Sales",
+                "version": 4,
+                "spec": {"rows": [{"widgets": widgets}]},
+                "refs": [{"kind": "table", "name": "c.s.t"}],
+                "warnings": [{"message": "16 widgets is a lot."}],
+            },
+        )
+    )
+    async with httpx.AsyncClient(base_url=BASE) as client:
+        out = await _gateway(client=client, byte_cap=2000).get_dashboard("sales", draft=True)
+
+    assert route.calls[0].request.url.params["draft"] == "true"
+    assert out["version"] == 4 and out["warnings"] == ["16 widgets is a lot."]
+    kept = out["spec"]["rows"][0]["widgets"]
+    assert [w["id"] for w in kept] == ["w0", "w1", "w2"]
+    assert all(len(w["sql"]) <= 501 for w in kept)
+    assert "cut short" in out["truncated"]
+
+
+@respx.mock
+async def test_running_a_dashboard_reads_its_events_to_the_end():
+    route = respx.post(f"{BASE}/workspaces/ws/dashboards/sales/run").mock(
+        return_value=httpx.Response(
+            200,
+            text=_sse({"type": "start"}, {"type": "widget", "id": "revenue"}, {"type": "done"}),
+            headers={"content-type": "text/event-stream"},
+        )
+    )
+    async with httpx.AsyncClient(base_url=BASE) as client:
+        events = await _gateway(client=client, queue_wait_s=0).run_dashboard(
+            "sales",
+            params={"country": "NL"},
+            widgets=["revenue"],
+            draft=False,
+            compare="previous_year",
+            timeout_s=5,
+        )
+
+    assert [e["type"] for e in events] == ["start", "widget", "done"]
+    assert json.loads(route.calls[0].request.content) == {
+        "params": {"country": "NL"},
+        "widgets": ["revenue"],
+        "draft": False,
+        "compare": "previous_year",
+    }
+
+
+@respx.mock
+async def test_a_run_without_a_comparison_sends_none():
+    route = respx.post(f"{BASE}/workspaces/ws/dashboards/sales/run").mock(
+        return_value=httpx.Response(200, text=_sse({"type": "done"}))
+    )
+    async with httpx.AsyncClient(base_url=BASE) as client:
+        await _gateway(client=client, queue_wait_s=0).run_dashboard(
+            "sales", params=None, widgets=None, draft=True, compare=None, timeout_s=5
+        )
+    assert "compare" not in json.loads(route.calls[0].request.content)
+
+
+@respx.mock
+async def test_a_run_that_fails_says_why():
+    respx.post(f"{BASE}/workspaces/ws/dashboards/sales/run").mock(
+        return_value=httpx.Response(
+            200, text=_sse({"type": "start"}, {"type": "error", "message": "No compute."})
+        )
+    )
+    async with httpx.AsyncClient(base_url=BASE) as client:
+        with pytest.raises(GatewayError, match="No compute."):
+            await _gateway(client=client, queue_wait_s=0).run_dashboard(
+                "sales", params=None, widgets=None, draft=False, compare=None, timeout_s=5
+            )
+
+
+@respx.mock
+async def test_a_run_the_server_refuses_is_translated():
+    respx.post(f"{BASE}/workspaces/ws/dashboards/gone/run").mock(
+        return_value=httpx.Response(
+            404, json={"error": "not_found", "detail": "No dashboard 'gone'."}
+        )
+    )
+    async with httpx.AsyncClient(base_url=BASE) as client:
+        with pytest.raises(GatewayError, match="Not found"):
+            await _gateway(client=client, queue_wait_s=0).run_dashboard(
+                "gone", params=None, widgets=None, draft=False, compare=None, timeout_s=5
+            )
+
+
+@respx.mock
+async def test_a_run_that_outlasts_its_time_is_given_up():
+    async def slow(request):
+        await asyncio.sleep(1)
+        return httpx.Response(200, text=_sse({"type": "done"}))
+
+    respx.post(f"{BASE}/workspaces/ws/dashboards/sales/run").mock(side_effect=slow)
+    async with httpx.AsyncClient(base_url=BASE) as client:
+        with pytest.raises(GatewayError, match="did not finish"):
+            await _gateway(client=client, queue_wait_s=0).run_dashboard(
+                "sales", params=None, widgets=None, draft=False, compare=None, timeout_s=0.05
+            )
+
+
+@respx.mock
+async def test_a_preview_is_reused_while_it_lasts_and_made_again_once_it_expires():
+    held = respx.put(f"{BASE}/workspaces/ws/dashboard-previews/p-1").mock(
+        side_effect=[httpx.Response(200, json={"id": "p-1"}), httpx.Response(404, json={})]
+    )
+    made = respx.post(f"{BASE}/workspaces/ws/dashboard-previews").mock(
+        return_value=httpx.Response(201, json={"id": "p-2"})
+    )
+    spec = {"version": 1, "name": "assistant-preview"}
+    async with httpx.AsyncClient(base_url=BASE) as client:
+        gw = _gateway(client=client)
+        assert await gw.hold_preview(spec, preview_id="p-1") == "p-1"
+        assert not made.called
+        assert await gw.hold_preview(spec, preview_id="p-1") == "p-2"
+        assert await gw.hold_preview(spec, preview_id=None) == "p-2"
+
+    assert held.call_count == 2 and made.call_count == 2
+    assert json.loads(made.calls[0].request.content) == {"spec": spec}
+
+
+@respx.mock
+async def test_a_preview_the_server_refuses_says_why():
+    respx.post(f"{BASE}/workspaces/ws/dashboard-previews").mock(
+        return_value=httpx.Response(
+            422,
+            json={"error": "invalid_dashboard", "detail": "rows.0.widgets.0.query: unknown metric"},
+        )
+    )
+    async with httpx.AsyncClient(base_url=BASE) as client:
+        with pytest.raises(GatewayError, match="unknown metric"):
+            await _gateway(client=client).hold_preview({}, preview_id=None)
+
+
+@respx.mock
+async def test_a_preview_runs_with_its_values():
+    route = respx.post(f"{BASE}/workspaces/ws/dashboard-previews/p-1/run").mock(
+        return_value=httpx.Response(200, text=_sse({"type": "widget", "id": "a"}))
+    )
+    async with httpx.AsyncClient(base_url=BASE) as client:
+        events = await _gateway(client=client, queue_wait_s=0).run_preview(
+            "p-1", params={"period": "last_7_days"}, timeout_s=5
+        )
+    assert events == [{"type": "widget", "id": "a"}]
+    assert json.loads(route.calls[0].request.content) == {"params": {"period": "last_7_days"}}
+
+
+@respx.mock
+async def test_the_dashboard_schema_is_read_at_its_version():
+    route = respx.get(f"{BASE}/dashboard-schema").mock(
+        return_value=httpx.Response(200, json={"title": "Dashboard"})
+    )
+    async with httpx.AsyncClient(base_url=BASE) as client:
+        assert await _gateway(client=client).dashboard_schema() == {"title": "Dashboard"}
+    assert route.calls[0].request.url.params["version"] == "1"
+
+
+@pytest.mark.parametrize(
+    "record",
+    [
+        {"user_id": "someone-else", "on_behalf_of_id": "u-1"},
+        # The assistant's own run, made for another person.
+        {"user_id": "sa-1", "on_behalf_of_id": "u-2"},
+    ],
+)
+@respx.mock
+async def test_only_a_query_run_in_this_conversation_is_drawn(record):
+    respx.get(f"{BASE}/queries/q1").mock(
+        return_value=httpx.Response(200, json={"id": "q1", "status": "done", **record})
+    )
+    async with httpx.AsyncClient(base_url=BASE) as client:
+        with pytest.raises(GatewayError) as exc:
+            await _gateway(client=client, on_behalf_of_id="u-1").own_result("q1", limit=1000)
+    assert exc.value.kind == "denied"
+
+
+@respx.mock
+async def test_a_query_still_running_has_nothing_to_draw():
+    respx.get(f"{BASE}/queries/q1").mock(
+        return_value=httpx.Response(
+            200, json={"id": "q1", "status": "running", "user_id": "sa-1", "on_behalf_of_id": "u-1"}
+        )
+    )
+    async with httpx.AsyncClient(base_url=BASE) as client:
+        with pytest.raises(GatewayError, match="running"):
+            await _gateway(client=client, on_behalf_of_id="u-1").own_result("q1", limit=1000)
+
+
+@respx.mock
+async def test_a_query_to_draw_comes_with_its_rows_uncut():
+    respx.get(f"{BASE}/queries/q1").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "id": "q1",
+                "status": "done",
+                "user_id": "sa-1",
+                "on_behalf_of_id": "u-1",
+                "sql": "SELECT 1",
+                "row_count": 300,
+            },
+        )
+    )
+    rows = respx.get(f"{BASE}/queries/q1/rows").mock(
+        return_value=httpx.Response(
+            200,
+            json={"rows": [{"v": "x" * 50}] * 300, "columns": ["v"], "cursor": None, "total": 300},
+        )
+    )
+    async with httpx.AsyncClient(base_url=BASE) as client:
+        # A byte cap far below the rows: drawing them is not reading them.
+        out = await _gateway(client=client, on_behalf_of_id="u-1").own_result("q1", limit=1000)
+
+    assert rows.calls[0].request.url.params["limit"] == "1000"
+    assert len(out["rows"]) == 300 and out["total"] == 300
+    assert out["sql"] == "SELECT 1" and out["row_count"] == 300 and out["columns"] == ["v"]

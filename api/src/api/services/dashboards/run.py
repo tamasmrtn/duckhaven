@@ -166,6 +166,7 @@ async def plan(
     widget_ids: list[str] | None = None,
     use_cache: bool = True,
     client: tuple[str | None, str | None] = (None, None),
+    compare: str | None = None,
 ) -> Plan:
     """Everything a view of ``spec`` will run, as ``user``. Nothing is run yet.
 
@@ -186,7 +187,7 @@ async def plan(
         except SemanticError:
             return []
 
-    resolved = resolve(spec, values, today=today, reachable=reachable)
+    resolved = resolve(spec, values, today=today, reachable=reachable, compare=compare)
     widgets = [_Widget(widget=w, resolved=resolved.widgets[w.id]) for w in data]
     for w in widgets:
         _compile(w, models, unpublished, today)
@@ -663,19 +664,10 @@ def _widget_event(w: _Widget, run: Plan) -> dict:
 
     current = w.current
     page = current.page
-    columns = _columns(w, page)
+    columns, data, chart, left_out = drawn(w.widget, w.chart, page)
     names = [c["name"] for c in columns]
-    chart = w.chart.model_copy(deep=True)
     warnings = list(w.compiled.warnings) if w.compiled else []
-    data = [[row.get(name) for name in names] for row in page.rows]
-    if chart.series is not None:
-        chart.series.keys, dropped = _series(chart, names, data)
-        chart.colors = _colors(chart.series.field, chart.series.keys)
-        if dropped:
-            warnings.append(
-                f"Showing the {MAX_SERIES} largest of {MAX_SERIES + dropped} series; "
-                "the table view has them all."
-            )
+    warnings.extend(left_out)
     event.update(
         rows={
             "columns": columns,
@@ -698,12 +690,34 @@ def _widget_event(w: _Widget, run: Plan) -> dict:
     return event
 
 
-def _columns(w: _Widget, page: RowsPageOut) -> list[dict]:
+def drawn(
+    widget: DataWidget, chart: ChartSpec, page: RowsPageOut
+) -> tuple[list[dict], list[list], ChartSpec, list[str]]:
+    """A widget's columns, rows and chart as a view sends them, and what was left out.
+
+    The chart comes back as a copy holding the series drawn and their colours."""
+    columns = _columns(widget, chart, page)
+    names = [c["name"] for c in columns]
+    chart = chart.model_copy(deep=True)
+    data = [[row.get(name) for name in names] for row in page.rows]
+    left_out: list[str] = []
+    if chart.series is not None:
+        chart.series.keys, dropped = _series(chart, names, data)
+        chart.colors = _colors(chart.series.field, chart.series.keys)
+        if dropped:
+            left_out.append(
+                f"Showing the {MAX_SERIES} largest of {MAX_SERIES + dropped} series; "
+                "the table view has them all."
+            )
+    return columns, data, chart, left_out
+
+
+def _columns(widget: DataWidget, chart: ChartSpec, page: RowsPageOut) -> list[dict]:
     """The result columns the widget reads, with what each is for and its format."""
     types = {c.name: c.type for c in page.column_schema or []}
-    measures = {m.field: m for m in w.chart.y}
+    measures = {m.field: m for m in chart.y}
     roles: dict[str, str] = {}
-    query = w.widget.query
+    query = widget.query
     if query is not None:
         if query.grain:
             roles[query.grain] = "time"
@@ -714,11 +728,11 @@ def _columns(w: _Widget, page: RowsPageOut) -> list[dict]:
         names = [c for c in page.columns if c in roles]
     else:
         names = list(page.columns)
-        if w.chart.x is not None:
-            roles[w.chart.x.field] = "time" if w.chart.x.kind == "time" else "dimension"
-        if w.chart.series is not None:
-            roles[w.chart.series.field] = "dimension"
-        for measure in w.chart.y:
+        if chart.x is not None:
+            roles[chart.x.field] = "time" if chart.x.kind == "time" else "dimension"
+        if chart.series is not None:
+            roles[chart.series.field] = "dimension"
+        for measure in chart.y:
             roles[measure.field] = "measure"
     out = []
     for name in names:

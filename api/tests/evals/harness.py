@@ -23,18 +23,22 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from pydantic import TypeAdapter
 from pydantic_ai import Agent, DeferredToolRequests
 from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.messages import ToolCallPart, ToolReturnPart
 from pydantic_ai.usage import UsageLimits
 
 from api.config import settings
+from api.schemas.assistant import PageContext
 from api.services.assistant.agent import _build_model
 from api.services.assistant.deps import AssistantDeps, DefaultCompute
 from api.services.assistant.prompts import build_instructions
 from api.services.assistant.tools import build_toolset
 
 ARMS_PATH = Path(__file__).with_name("arms.yaml")
+# An arm's `page:` as the request would carry it.
+_PAGE = TypeAdapter(PageContext)
 
 
 @dataclass(frozen=True)
@@ -148,6 +152,7 @@ def deps_for(arm: ArmConfig, *, gateway: Any = None, docs_search: Any = None) ->
         docs_enabled=arm.docs_enabled,
         default_compute=_default_compute(arm.workspace.get("default_compute")),
         docs_search=docs_search,
+        page=_PAGE.validate_python(page) if (page := arm.workspace.get("page")) else None,
     )
 
 

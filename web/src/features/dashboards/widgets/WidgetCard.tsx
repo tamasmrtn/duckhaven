@@ -3,6 +3,7 @@ import { AlertTriangle, Inbox, Info, Lock } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/utils";
 import type { RunWidget, WidgetSpec } from "@/types/dashboard";
+import { crossFilterParameter } from "../crossFilter";
 import type { WidgetSlot } from "../useDashboardRun";
 import { ChartWidget } from "./ChartWidget";
 import { KpiWidget } from "./KpiWidget";
@@ -36,10 +37,12 @@ function Answer({
   spec,
   event,
   asTable,
+  context,
 }: {
   spec: WidgetSpec;
   event: RunWidget;
   asTable: boolean;
+  context: WidgetContext;
 }) {
   switch (event.state) {
     case "no_access":
@@ -67,7 +70,25 @@ function Answer({
     !asTable &&
     (event.chart?.type === "line" || event.chart?.type === "bar")
   ) {
-    return <ChartWidget event={event} label={spec.title ?? spec.id} />;
+    const { select, parameters } = context;
+    const parameter = select
+      ? crossFilterParameter(spec, event.chart, parameters)
+      : null;
+    return (
+      <ChartWidget
+        event={event}
+        label={spec.title ?? spec.id}
+        selection={
+          parameter && select
+            ? {
+                label: parameters[parameter].label,
+                value: parameters[parameter].value,
+                onSelect: (value) => select(parameter, value),
+              }
+            : undefined
+        }
+      />
+    );
   }
   return (
     <TableWidget
@@ -128,7 +149,14 @@ export function WidgetCard({
       </Message>
     );
   } else {
-    body = <Answer spec={spec} event={slot.event} asTable={asTable} />;
+    body = (
+      <Answer
+        spec={spec}
+        event={slot.event}
+        asTable={asTable}
+        context={context}
+      />
+    );
   }
 
   return (

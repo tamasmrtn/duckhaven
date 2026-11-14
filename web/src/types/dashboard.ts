@@ -42,6 +42,8 @@ export interface WidgetSpec {
   width?: number | null;
   /** A text widget's content. */
   markdown?: string;
+  /** A metric widget's query, as far as the page reads it. */
+  query?: { model: string; dimensions?: string[] } | null;
 }
 
 export interface RowSpec {

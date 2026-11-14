@@ -22,7 +22,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { useOpenInWorksheet } from "@/features/worksheet/openInWorksheet";
-import type { RunWidget, WidgetSpec } from "@/types/dashboard";
+import type { Cell, RunWidget, WidgetSpec } from "@/types/dashboard";
 import { toCsv } from "../chartData";
 import { SKIP_REASONS } from "../params";
 
@@ -30,11 +30,25 @@ import { SKIP_REASONS } from "../params";
 export interface WidgetContext {
   ws: string;
   dashboard: string;
-  /** Each parameter's label, kind and value in this run, by name. */
+  /**
+   * Each parameter's label, kind and value in this run, by name, and what a
+   * dimension parameter filters on.
+   */
   parameters: Record<
     string,
-    { label: string; type: "time_range" | "dimension"; value: unknown }
+    {
+      label: string;
+      type: "time_range" | "dimension";
+      value: unknown;
+      model?: string;
+      dimension?: string;
+    }
   >;
+  /**
+   * Sets a dimension parameter from a click on a bar, or clears it with null.
+   * Absent where a click filters nothing.
+   */
+  select?: (parameter: string, value: Cell) => void;
 }
 
 /**

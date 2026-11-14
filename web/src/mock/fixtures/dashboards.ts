@@ -117,9 +117,24 @@ const SALES_FILE: DashboardFile = {
   rows: [
     {
       widgets: [
-        { id: "revenue", type: "kpi", title: "Revenue" },
-        { id: "orders", type: "kpi", title: "Orders" },
-        { id: "refund_rate", type: "kpi", title: "Refund rate" },
+        {
+          id: "revenue",
+          type: "kpi",
+          title: "Revenue",
+          query: { model: "sales" },
+        },
+        {
+          id: "orders",
+          type: "kpi",
+          title: "Orders",
+          query: { model: "sales" },
+        },
+        {
+          id: "refund_rate",
+          type: "kpi",
+          title: "Refund rate",
+          query: { model: "sales" },
+        },
       ],
     },
     {
@@ -129,12 +144,14 @@ const SALES_FILE: DashboardFile = {
           type: "line",
           title: "Revenue by month",
           width: 8,
+          query: { model: "sales", dimensions: ["channel"] },
         },
         {
           id: "by_country",
           type: "bar",
           title: "Revenue by country",
           width: 4,
+          query: { model: "sales", dimensions: ["country"] },
         },
       ],
     },

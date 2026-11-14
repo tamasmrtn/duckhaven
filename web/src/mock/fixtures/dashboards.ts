@@ -2,6 +2,8 @@ import type {
   ChartSpec,
   Dashboard,
   DashboardFile,
+  DashboardPreview,
+  DashboardRevision,
   RunColumn,
   RunWidget,
   WidgetScope,
@@ -498,6 +500,114 @@ export const RUNS: Record<string, { widgets: RunWidget[]; cold?: string[] }> = {
   "churn-review": { widgets: CHURN_RUN },
 };
 
+/** A draft saved over a published dashboard: its file, as it was sent. */
+export interface MockDraft {
+  spec: DashboardFile;
+  source_text: string | null;
+}
+
+function initialDrafts(): Record<string, MockDraft> {
+  return {
+    "sales-overview": {
+      spec: {
+        ...SALES_FILE,
+        description: "Revenue and orders across the shop, by country.",
+      },
+      source_text: null,
+    },
+  };
+}
+
+function revision(
+  file: DashboardFile,
+  number: number,
+  message: string | null,
+  published_at: string,
+): DashboardRevision {
+  return {
+    number,
+    spec_hash: `hash-${file.name}-${number}`,
+    message,
+    published_by: "u-1",
+    published_at,
+    spec: file,
+    source_text: null,
+  };
+}
+
+function initialRevisions(): Record<string, DashboardRevision[]> {
+  return {
+    "sales-overview": [
+      revision(SALES_FILE, 2, "Add the country filter", "2026-11-12T16:20:00Z"),
+      revision(
+        {
+          ...SALES_FILE,
+          parameters: { period: SALES_FILE.parameters!.period },
+        },
+        1,
+        null,
+        "2026-10-01T09:00:00Z",
+      ),
+    ],
+    "finance-weekly": [
+      revision(FINANCE_FILE, 1, "Applied from git", "2026-11-12T16:20:00Z"),
+    ],
+  };
+}
+
+/** Unpublished drafts of published dashboards, by name. */
+export let DRAFTS: Record<string, MockDraft> = initialDrafts();
+
+/** Each dashboard's publishes, newest first, by name. */
+export let REVISIONS: Record<string, DashboardRevision[]> = initialRevisions();
+
+/** Previews held for the editor, by id. */
+export let PREVIEWS: Record<string, DashboardPreview> = {};
+
+/** The JSON Schema the editor completes from: the file's shape, trimmed. */
+export const DASHBOARD_SCHEMA = {
+  $schema: "https://json-schema.org/draft/2020-12/schema",
+  title: "DuckHaven dashboard",
+  type: "object",
+  additionalProperties: false,
+  required: ["version", "name", "title", "rows"],
+  properties: {
+    version: { const: 1, description: "The file format version." },
+    name: { type: "string", pattern: "^[a-z][a-z0-9_-]*$", maxLength: 64 },
+    title: { type: "string", minLength: 1, maxLength: 120 },
+    description: { type: "string", maxLength: 500 },
+    labels: { type: "array", items: { type: "string" }, maxItems: 20 },
+    parameters: { type: "object" },
+    rows: {
+      type: "array",
+      minItems: 1,
+      items: {
+        type: "object",
+        required: ["widgets"],
+        properties: {
+          widgets: {
+            type: "array",
+            minItems: 1,
+            items: {
+              type: "object",
+              required: ["id", "type"],
+              properties: {
+                id: { type: "string" },
+                type: { enum: ["kpi", "line", "bar", "table", "text"] },
+                title: { type: "string" },
+                width: { type: "integer", minimum: 1, maximum: 12 },
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+};
+
 export function resetDashboards(): void {
   DASHBOARDS = initial();
+  DRAFTS = initialDrafts();
+  REVISIONS = initialRevisions();
+  PREVIEWS = {};
 }

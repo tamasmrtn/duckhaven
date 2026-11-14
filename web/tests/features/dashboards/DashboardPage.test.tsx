@@ -107,6 +107,29 @@ describe("DashboardPage", () => {
     expect(screen.queryByText(/Compute is starting/)).not.toBeInTheDocument();
   });
 
+  it("offers to edit a dashboard made in the app, and not one managed in git", async () => {
+    renderWithProviders({ initialRoute: `${ROUTE}/sales-overview` });
+
+    expect(await screen.findByRole("link", { name: "Edit" })).toHaveAttribute(
+      "href",
+      `${ROUTE}/sales-overview/edit`,
+    );
+    // An owner hears about the draft waiting to be published.
+    expect(
+      await screen.findByText(/Unpublished changes wait in a draft/),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("link", { name: "Review and publish them" }),
+    ).toHaveAttribute("href", `${ROUTE}/sales-overview/edit`);
+  });
+
+  it("offers no editing of a dashboard managed in git", async () => {
+    renderWithProviders({ initialRoute: `${ROUTE}/finance-weekly` });
+
+    await screen.findByText(/Managed in git/);
+    expect(screen.queryByRole("link", { name: "Edit" })).not.toBeInTheDocument();
+  });
+
   it("marks a dashboard nobody has published as a draft", async () => {
     renderWithProviders({ initialRoute: `${ROUTE}/churn-review` });
 

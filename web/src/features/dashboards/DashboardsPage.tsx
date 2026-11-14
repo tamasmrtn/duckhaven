@@ -1,5 +1,7 @@
+import { useState } from "react";
 import { Link, useNavigate, useParams } from "@tanstack/react-router";
-import { LayoutDashboard } from "lucide-react";
+import { LayoutDashboard, Plus } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { PageHeader } from "@/components/ui/page-header";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -14,6 +16,7 @@ import {
 import { useDashboards } from "@/queries/dashboards";
 import { relativeTime } from "@/utils/relativeTime";
 import { DashboardBadges } from "./DashboardBadges";
+import { NewDashboardDialog } from "./NewDashboardDialog";
 
 /**
  * The workspace's dashboards. Readers see the published ones; writers also see
@@ -23,13 +26,26 @@ export function DashboardsPage() {
   const { ws } = useParams({ from: "/$ws/dashboards" });
   const navigate = useNavigate();
   const { data: dashboards, isLoading } = useDashboards(ws);
+  const [creating, setCreating] = useState(false);
 
   return (
     <div className="flex h-full flex-col">
       <PageHeader
         title="Dashboards"
         description="Numbers, charts and tables from this workspace's data. Each one runs as you, with your access."
+        actions={
+          <Button
+            variant="outline"
+            size="sm"
+            className="h-7 gap-1.5 text-xs"
+            onClick={() => setCreating(true)}
+          >
+            <Plus className="size-3.5" aria-hidden />
+            New dashboard
+          </Button>
+        }
       />
+      <NewDashboardDialog ws={ws} open={creating} onOpenChange={setCreating} />
       <div className="min-h-0 flex-1 overflow-auto">
         {isLoading ? (
           <div className="space-y-2 p-6">
@@ -40,7 +56,7 @@ export function DashboardsPage() {
           <EmptyState
             icon={LayoutDashboard}
             title="No dashboards"
-            description="A dashboard is a file of widgets, stored and published through the REST API."
+            description="A dashboard is a file of widgets. Start one with New dashboard, or create one through the REST API."
           />
         ) : (
           <Table

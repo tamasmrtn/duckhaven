@@ -66,6 +66,10 @@ class SessionState:
     # How long the last statement spent waiting for budget before it could run,
     # surfaced in its profile as `admission_wait_ms`. Reset per statement.
     admission_wait_ms: float = 0.0
+    # A connection the agent holds for its own work (a batch of reads) rather than
+    # one the control plane opened. It ends when that work does, so the lease sweep
+    # leaves it alone.
+    internal: bool = False
 
     @property
     def memory_bytes(self) -> int:
@@ -259,7 +263,7 @@ async def sweep_expired(admission: Admission, idle_s: float, max_life_s: float) 
     now = time.monotonic()
     reaped: list[str] = []
     for state in list(_sessions.values()):
-        if state.lock.locked():
+        if state.internal or state.lock.locked():
             continue
         idle_expired = idle_s > 0 and now - state.last_active_at > idle_s
         life_expired = max_life_s > 0 and now - state.opened_at > max_life_s

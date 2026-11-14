@@ -58,6 +58,15 @@ class FrameType(StrEnum):
     # the control plane dispatched that way.
     CATALOG_REQUEST = "catalog_request"
     CATALOG_RESPONSE = "catalog_response"
+    # A batch of reads for one connection (control plane -> agent):
+    # `{batch_id, active_catalog, catalogs, workspace_catalogs, preload, timeout_s,
+    # queries: [{query_id, sql, timeout_s?}]}`, where `catalogs` is what any of the
+    # queries names. The agent takes one admission reservation, opens and attaches
+    # once, and runs the queries in order. Each reports its own QUERY_PROGRESS and
+    # QUERY_DONE, and CANCEL_QUERY cancels one query: skipped if it has not started,
+    # interrupted if it is running. Only sent to agents advertising the
+    # "batch_dispatch" protocol feature.
+    DISPATCH_BATCH = "dispatch_batch"
 
 
 class Frame(BaseModel):

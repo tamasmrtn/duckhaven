@@ -1,6 +1,6 @@
 import asyncio
-from collections.abc import Iterable
-from concurrent.futures import ThreadPoolExecutor
+from collections.abc import Callable, Iterable
+from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -42,6 +42,11 @@ class StatementAbandoned(TimeoutError):
 # would have exhausted query execution before `_estimate_pool` split it off.
 _execution_pool: ThreadPoolExecutor | None = None
 
+# How long a cancelled statement's worker gets to stop once interrupted. DuckDB
+# stops within milliseconds while executing; a worker still planning ignores the
+# interrupt (see `StatementAbandoned`) and is given up on after this.
+_UNWIND_GRACE_S = 5.0
+
 
 def _execution_pool_get() -> ThreadPoolExecutor:
     global _execution_pool
@@ -50,6 +55,27 @@ def _execution_pool_get() -> ThreadPoolExecutor:
             max_workers=max(2, effective_cores()), thread_name_prefix="dh-exec"
         )
     return _execution_pool
+
+
+async def _until_stopped(worker: Future, interrupt: Callable[[], None]) -> bool:
+    """Interrupt until ``worker`` returns; False if it has not within the grace.
+
+    Repeated, because an interrupt reaches only the statement running at that
+    moment: one sent while the worker is still setting the connection up is lost,
+    and the statement then runs to its timeout.
+    """
+    loop = asyncio.get_running_loop()
+    waiter = asyncio.wrap_future(worker)
+    deadline = loop.time() + _UNWIND_GRACE_S
+    while True:
+        interrupt()
+        stopped, _ = await asyncio.wait({waiter}, timeout=0.05)
+        if stopped:
+            if not waiter.cancelled():
+                waiter.exception()  # retrieved: the cancel is the outcome
+            return True
+        if loop.time() >= deadline:
+            return False
 
 
 async def run_query(
@@ -192,6 +218,8 @@ async def run_statement(
         conn.interrupt()
 
     handle = loop.call_later(timeout_s, _interrupt)
+    # Kept, rather than only awaited, so a cancel can wait for the thread itself.
+    worker = _execution_pool_get().submit(_run)
     try:
         with _tracer.start_as_current_span(
             "duckdb.execute_statement",
@@ -201,15 +229,18 @@ async def run_statement(
             },
         ):
             try:
-                return await asyncio.wait_for(
-                    loop.run_in_executor(_execution_pool_get(), _run), timeout_s
-                )
+                return await asyncio.wait_for(asyncio.wrap_future(worker), timeout_s)
             except TimeoutError as exc:
                 raise StatementAbandoned("statement exceeded timeout") from exc
     except duckdb.InterruptException as exc:
         raise TimeoutError("statement exceeded timeout") from exc
     except asyncio.CancelledError:
-        _interrupt()
+        # The caller may use the connection again as soon as this returns: a
+        # session's next statement, or the next query of a batch. One run while
+        # the interrupted statement is still unwinding fails ("closed pending
+        # query result"), so wait for the worker to stop.
+        if not await _until_stopped(worker, _interrupt):
+            raise StatementAbandoned("statement did not stop when cancelled") from None
         raise
     finally:
         handle.cancel()

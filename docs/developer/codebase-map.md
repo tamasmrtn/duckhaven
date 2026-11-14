@@ -91,7 +91,7 @@ surface:
 
 | Service | What it does | Interacts with |
 |---|---|---|
-| `services/query.py` | Dispatches a query to an agent over the registry socket; handles `query_progress`/`query_done` frames coming back; fetches the result Parquet from the agent and decodes it to JSON rows (`decode_parquet_page`); also drives the synchronous table-sample preview and persists agent-reported table stats. **The heart of the system.** | `agent_registry`, the `Query`/`TableMetadata` models |
+| `services/query.py` | Dispatches a query to an agent over the registry socket, or one person's reads as one batch (`dispatch_batch`, falling back to one at a time); handles `query_progress`/`query_done` frames coming back; fetches the result Parquet from the agent and decodes it to JSON rows (`decode_parquet_page`); also drives the synchronous table-sample preview and persists agent-reported table stats. **The heart of the system.** | `agent_registry`, the `Query`/`TableMetadata` models |
 | `services/query_submit.py` | Submits a one-shot run: refuses a taken id, checks the SQL, answers from the result cache, then dispatches to an agent or parks the run for compute. `origin` is null for a person's own run and `dashboard` for a widget's; dashboard runs count as interactive. | `routers/queries.py` |
 | `services/agent_registry.py` | In-memory `ConnectionManager` (`registry`) mapping `agent_id → live WebSocket`. The only place that knows which agents are connected *right now*. | `routers/agents_ws.py`, `services/query.py` |
 | `services/polaris.py` | Async client for Polaris: catalogs (management API) + namespaces/tables (Iceberg REST), with OAuth2 client-credentials auth. Speaks REST directly via `httpx`. | Polaris container |
@@ -116,14 +116,16 @@ tasks (`src/agent/main.py` gathers them):
 
 1. **Control channel** (`control/channel.py`) — opens the outbound WebSocket,
    authenticates, advertises `AgentCapabilities`, then loops handling frames
-   (`dispatch_query`, `cancel_query`, `heartbeat`, `set_concurrency`, and the
-   SQL-session frames `open_session`/`exec_statement`/`close_session`). Reconnects
+   (`dispatch_query`, `dispatch_batch`, `cancel_query`, `heartbeat`, `set_concurrency`,
+   and the SQL-session frames `open_session`/`exec_statement`/`close_session`). Reconnects
    with backoff if the socket drops. On each heartbeat it re-advertises
    capabilities; each `metrics_sample` also carries the live running/queued query
    counts, active concurrency profile, and held-session count. Held SQL-session
    connections live in `control/session.py` (a `session_id → DuckDBPyConnection`
    registry, cleared on every reconnect), each holding an admission slot for its
-   lifetime; a statement runs on its held connection via `run_statement_sync`.
+   lifetime; a statement runs on its held connection via `run_statement_sync`. A
+   batch of reads registers its connection there too, as an internal session, and
+   runs its queries one after another through the same path (`_run_on_state`).
 2. **Result server** (`results/server.py`) — an HTTP server bound to
    `RESULTS_HTTP_HOST` (`0.0.0.0` in compose) that advertises its port to the
    control plane, serving `results/{query_id}.parquet` with **HTTP `Range`**

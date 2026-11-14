@@ -1,5 +1,10 @@
-import type { CSSProperties } from "react";
-import { Link, useParams } from "@tanstack/react-router";
+import { useEffect, useMemo, type CSSProperties } from "react";
+import {
+  Link,
+  useNavigate,
+  useParams,
+  useSearch,
+} from "@tanstack/react-router";
 import {
   AlertTriangle,
   GitBranch,
@@ -17,13 +22,22 @@ import { useDashboard } from "@/queries/dashboards";
 import type { Dashboard, RowSpec } from "@/types/dashboard";
 import { plural } from "@/utils";
 import { DashboardBadges } from "./DashboardBadges";
+import { DashboardFilters } from "./DashboardFilters";
 import { rowLayout } from "./layout";
+import { runParams, type DashboardSearch } from "./params";
 import { useDashboardRun, type RunView } from "./useDashboardRun";
+import type { WidgetContext } from "./widgets/WidgetChrome";
 import { WidgetCard } from "./widgets/WidgetCard";
 
-const NO_PARAMS = {};
-
-function Row({ row, run }: { row: RowSpec; run: RunView }) {
+function Row({
+  row,
+  run,
+  context,
+}: {
+  row: RowSpec;
+  run: RunView;
+  context: WidgetContext;
+}) {
   const { widths, rest } = rowLayout(row.widgets);
   return (
     // Side by side from md up, each widget taking its share of 12 columns;
@@ -35,7 +49,11 @@ function Row({ row, run }: { row: RowSpec; run: RunView }) {
           className="min-w-0 md:[flex:var(--share)_1_0%]"
           style={{ "--share": widths[i] } as CSSProperties}
         >
-          <WidgetCard spec={spec} slot={run.widgets[spec.id]} />
+          <WidgetCard
+            spec={spec}
+            slot={run.widgets[spec.id]}
+            context={context}
+          />
         </div>
       ))}
       {rest > 0 && (
@@ -126,8 +144,42 @@ function Banners({ dashboard, run }: { dashboard: Dashboard; run: RunView }) {
 }
 
 function Loaded({ ws, dashboard }: { ws: string; dashboard: Dashboard }) {
-  const run = useDashboardRun(ws, dashboard.name, NO_PARAMS);
+  const search = useSearch({ from: "/$ws/dashboards/$dashboard" });
+  const navigate = useNavigate();
+  const request = useMemo(() => ({ params: runParams(search) }), [search]);
+  const run = useDashboardRun(ws, dashboard.name, request);
   const spec = dashboard.spec;
+  const context = useMemo<WidgetContext>(() => {
+    const values = new Map(
+      (run.start?.parameters ?? []).map((p) => [p.name, p.value]),
+    );
+    return {
+      ws,
+      dashboard: dashboard.name,
+      parameters: Object.fromEntries(
+        Object.entries(spec.parameters ?? {}).map(([name, p]) => [
+          name,
+          { label: p.label ?? name, type: p.type, value: values.get(name) },
+        ]),
+      ),
+    };
+  }, [ws, dashboard.name, spec.parameters, run.start]);
+
+  // A copied link to one widget lands on it.
+  useEffect(() => {
+    const id = window.location.hash.slice(1);
+    if (id.startsWith("widget-")) document.getElementById(id)?.scrollIntoView();
+  }, []);
+
+  function setSearch(next: DashboardSearch) {
+    void navigate({
+      to: "/$ws/dashboards/$dashboard",
+      params: { ws, dashboard: dashboard.name },
+      search: next,
+      replace: true,
+    });
+  }
+
   return (
     <div className="flex h-full flex-col">
       <PageHeader
@@ -150,11 +202,17 @@ function Loaded({ ws, dashboard }: { ws: string; dashboard: Dashboard }) {
           </div>
         }
       />
+      <DashboardFilters
+        ws={ws}
+        parameters={spec.parameters ?? {}}
+        search={search}
+        onChange={setSearch}
+      />
       <div className="min-h-0 flex-1 overflow-auto">
         <div className="flex flex-col gap-4 p-4 md:p-6">
           <Banners dashboard={dashboard} run={run} />
           {spec.rows.map((row, i) => (
-            <Row key={i} row={row} run={run} />
+            <Row key={i} row={row} run={run} context={context} />
           ))}
         </div>
       </div>

@@ -71,8 +71,11 @@ export function ChartFrame({
  */
 export function Legend({
   items,
+  mark = "square",
 }: {
   items: { label: string; color: string; value?: string }[];
+  // The key mirrors the mark: a square for bars and areas, a stroke for lines.
+  mark?: "square" | "line";
 }) {
   return (
     <ul className="flex flex-wrap items-center gap-x-3 gap-y-1">
@@ -80,7 +83,11 @@ export function Legend({
         <li key={item.label} className="flex items-center gap-1.5">
           <span
             aria-hidden
-            className="size-2 shrink-0 rounded-[2px]"
+            className={
+              mark === "line"
+                ? "h-0.5 w-3 shrink-0 rounded-full"
+                : "size-2 shrink-0 rounded-[2px]"
+            }
             style={{ backgroundColor: item.color }}
           />
           {/* Text stays in ink tokens — a light series hue is illegible as text. */}

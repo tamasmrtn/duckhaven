@@ -86,6 +86,18 @@ Each widget comes back with its rows and with what a reader needs to trust them:
 
 The event stream itself is described in the [REST API reference](../reference/rest-api.md#running-a-dashboard).
 
+## Filtering a dashboard in the app
+
+A dashboard's parameters appear as filters in a row above its widgets. A time window is picked from a list such as
+"Last 30 days" or "Month to date", and a dimension parameter's value from the values its semantic model lists, or typed
+when it lists none. Every choice is kept in the page's address as `?p.<parameter>=<value>`, such as
+`?p.period=last_7_days&p.channel=Web`, so a filtered view can be bookmarked or shared. Whoever opens the link sees the
+numbers their own access allows.
+
+Each widget's menu shows its rows as a table, shows the SQL it ran or opens it in a worksheet, and downloads its rows
+as CSV. **Copy link** copies a link that opens the dashboard at that widget. The info button beside the menu shows how
+the widget's metrics are defined.
+
 ## Trying out a file before saving it
 
 A writer can run a dashboard file without saving it, as a

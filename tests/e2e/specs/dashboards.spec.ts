@@ -1,7 +1,8 @@
 /**
  * A dashboard stored through the REST API, then viewed in the app: it opens
  * from the list, each widget's query runs as the viewer, and the answers
- * stream into the page without tripping the Content-Security-Policy.
+ * stream into the page, charts included, without tripping the
+ * Content-Security-Policy.
  */
 import { expect, test } from "../fixtures/test";
 import { BASE_URL, DEFAULT_CATALOG, WS_SLUG } from "../helpers";
@@ -48,6 +49,13 @@ test("a published dashboard opens from the list and shows its widgets' data", as
               title: "Rows",
               sql: `SELECT id, amount FROM ${table} ORDER BY id`,
             },
+            {
+              id: "by_id",
+              type: "bar",
+              title: "Amount by id",
+              sql: `SELECT CAST(id AS VARCHAR) AS id, amount FROM ${table} ORDER BY id`,
+              columns: { x: "id", y: ["amount"] },
+            },
             { id: "note", type: "text", markdown: "Made by the **e2e** suite." },
           ],
         },
@@ -72,6 +80,13 @@ test("a published dashboard opens from the list and shows its widgets' data", as
     await expect(rows.getByText("5 rows")).toBeVisible();
     await expect(page.getByText("Made by the")).toBeVisible();
     await expect(page.getByText(/answered in/)).toBeVisible();
+
+    // A chart is a picture with a text alternative, and its rows a menu away.
+    const bars = page.getByRole("region", { name: "Amount by id" });
+    await expect(bars.getByRole("img", { name: /A bar chart of amount by id/ })).toBeVisible();
+    await bars.getByRole("button", { name: "Actions for Amount by id" }).click();
+    await page.getByRole("menuitem", { name: "View as table" }).click();
+    await expect(bars.getByText("5 rows")).toBeVisible();
     expect(violations).toEqual([]);
   } finally {
     await page.request.delete(`/api/workspaces/${WS_SLUG}/dashboards/${name}`);

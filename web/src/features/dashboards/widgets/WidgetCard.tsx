@@ -1,12 +1,19 @@
-import type { ReactNode } from "react";
-import { AlertTriangle, Inbox, Lock } from "lucide-react";
+import { useState, type ReactNode } from "react";
+import { AlertTriangle, Inbox, Info, Lock } from "lucide-react";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/utils";
 import type { RunWidget, WidgetSpec } from "@/types/dashboard";
 import type { WidgetSlot } from "../useDashboardRun";
+import { ChartWidget } from "./ChartWidget";
 import { KpiWidget } from "./KpiWidget";
 import { TableWidget } from "./TableWidget";
 import { TextWidget } from "./TextWidget";
+import {
+  Definitions,
+  ScopeLine,
+  WidgetMenu,
+  type WidgetContext,
+} from "./WidgetChrome";
 
 function Message({
   icon: Icon,
@@ -25,7 +32,15 @@ function Message({
   );
 }
 
-function Answer({ spec, event }: { spec: WidgetSpec; event: RunWidget }) {
+function Answer({
+  spec,
+  event,
+  asTable,
+}: {
+  spec: WidgetSpec;
+  event: RunWidget;
+  asTable: boolean;
+}) {
   switch (event.state) {
     case "no_access":
       return (
@@ -48,8 +63,12 @@ function Answer({ spec, event }: { spec: WidgetSpec; event: RunWidget }) {
       );
   }
   if (spec.type === "kpi") return <KpiWidget event={event} />;
-  // Charts draw from the same rows; until they do, every other widget shows
-  // its rows as a table.
+  if (
+    !asTable &&
+    (event.chart?.type === "line" || event.chart?.type === "bar")
+  ) {
+    return <ChartWidget event={event} label={spec.title ?? spec.id} />;
+  }
   return (
     <TableWidget
       columns={event.rows!.columns}
@@ -85,13 +104,18 @@ function Loading({ type }: { type: WidgetSpec["type"] }) {
 export function WidgetCard({
   spec,
   slot,
+  context,
 }: {
   spec: WidgetSpec;
   /** Undefined for a text widget, which runs nothing. */
   slot?: WidgetSlot;
+  context: WidgetContext;
 }) {
+  const [asTable, setAsTable] = useState(false);
   const heading = `widget-${spec.id}-title`;
   const stale = !!slot?.pending && !!slot.event;
+  const event = slot?.event ?? undefined;
+  const title = spec.title ?? spec.id;
   let body: ReactNode;
   if (spec.type === "text") {
     body = <TextWidget markdown={spec.markdown ?? ""} />;
@@ -104,7 +128,7 @@ export function WidgetCard({
       </Message>
     );
   } else {
-    body = <Answer spec={spec} event={slot.event} />;
+    body = <Answer spec={spec} event={slot.event} asTable={asTable} />;
   }
 
   return (
@@ -116,9 +140,9 @@ export function WidgetCard({
       data-state={slot?.event?.state ?? (slot?.pending ? "loading" : undefined)}
       className="flex h-full min-w-0 flex-col gap-2 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-4 py-3"
     >
-      {(spec.title || stale) && (
+      {(spec.title || spec.type !== "text") && (
         <header className="flex items-start justify-between gap-2">
-          <div className="min-w-0">
+          <div className="min-w-0 space-y-0.5">
             {spec.title && (
               <h2
                 id={heading}
@@ -130,15 +154,39 @@ export function WidgetCard({
             {spec.description && (
               <p className="text-2xs text-text-tertiary">{spec.description}</p>
             )}
+            {event && <ScopeLine spec={spec} event={event} context={context} />}
           </div>
-          {stale && (
-            <span className="shrink-0 text-2xs text-text-tertiary">
-              Updating…
-            </span>
+          {spec.type !== "text" && (
+            <div className="-mr-1.5 -mt-0.5 flex shrink-0 items-center">
+              {stale && (
+                <span className="mr-1 text-2xs text-text-tertiary">
+                  Updating…
+                </span>
+              )}
+              {event && (
+                <Definitions title={title} event={event} ws={context.ws} />
+              )}
+              <WidgetMenu
+                spec={spec}
+                event={event}
+                context={context}
+                asTable={asTable}
+                onToggleTable={() => setAsTable((v) => !v)}
+              />
+            </div>
           )}
         </header>
       )}
       <div className={cn("min-h-0 flex-1", stale && "opacity-60")}>{body}</div>
+      {event?.warnings?.map((warning) => (
+        <p
+          key={warning}
+          className="flex items-start gap-1 text-2xs text-text-tertiary"
+        >
+          <Info className="mt-px size-3 shrink-0" aria-hidden />
+          {warning}
+        </p>
+      ))}
     </section>
   );
 }

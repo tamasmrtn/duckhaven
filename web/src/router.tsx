@@ -18,6 +18,10 @@ import { WorksheetPage } from "@/features/worksheet/WorksheetPage";
 import { CatalogPage } from "@/features/catalog/CatalogPage";
 import { DashboardsPage } from "@/features/dashboards/DashboardsPage";
 import { DashboardPage } from "@/features/dashboards/DashboardPage";
+import {
+  parseDashboardSearch,
+  type DashboardSearch,
+} from "@/features/dashboards/params";
 import { SavedQueriesPage } from "@/features/saved-queries/SavedQueriesPage";
 import { SchedulesPage } from "@/features/schedules/SchedulesPage";
 import { SessionsPage } from "@/features/sessions/SessionsPage";
@@ -141,6 +145,10 @@ const dashboardRoute = createRoute({
   getParentRoute: () => wsRoute,
   path: "/dashboards/$dashboard",
   component: DashboardPage,
+  // The dashboard's parameters, `?p.period=last_7_days`, so a filtered view
+  // can be bookmarked and shared.
+  validateSearch: (search: Record<string, unknown>): DashboardSearch =>
+    parseDashboardSearch(search),
 });
 
 const catalogRoute = createRoute({

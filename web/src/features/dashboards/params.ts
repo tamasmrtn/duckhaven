@@ -1,20 +1,34 @@
 import type { SkipReason } from "@/types/dashboard";
 
 /**
- * A dashboard's parameters as the URL holds them, `?p.period=last_7_days`, so
- * a filtered view can be bookmarked and shared. A value of null asks for no
- * filter where the file sets a default.
+ * A dashboard's view as the URL holds it, so it can be bookmarked and shared:
+ * each parameter as `?p.period=last_7_days`, where a value of null asks for no
+ * filter where the file sets a default, and present mode as `?present=true`
+ * with its refresh interval in minutes as `?refresh=15`.
  */
 export type DashboardSearch = Record<string, string | number | boolean | null>;
 
 const PREFIX = "p.";
 
-/** The `p.*` entries of a URL's search; anything else is dropped. */
+/** How often present mode can refresh, in minutes. */
+export const REFRESH_MINUTES = [5, 15, 30, 60];
+
+/** The view's entries of a URL's search; anything else is dropped. */
 export function parseDashboardSearch(
   search: Record<string, unknown>,
 ): DashboardSearch {
   const out: DashboardSearch = {};
   for (const [key, value] of Object.entries(search)) {
+    if (key === "present") {
+      if (value === true) out.present = true;
+      continue;
+    }
+    if (key === "refresh") {
+      if (typeof value === "number" && REFRESH_MINUTES.includes(value)) {
+        out.refresh = value;
+      }
+      continue;
+    }
     if (!key.startsWith(PREFIX) || key.length === PREFIX.length) continue;
     if (
       value === null ||
@@ -31,15 +45,41 @@ export function parseDashboardSearch(
 /** The URL's parameters as a run request's `params`. */
 export function runParams(search: DashboardSearch): Record<string, unknown> {
   return Object.fromEntries(
-    Object.entries(search).map(([key, value]) => [
-      key.slice(PREFIX.length),
-      value,
-    ]),
+    Object.entries(search)
+      .filter(([key]) => key.startsWith(PREFIX))
+      .map(([key, value]) => [key.slice(PREFIX.length), value]),
   );
 }
 
 export function searchKey(name: string): string {
   return `${PREFIX}${name}`;
+}
+
+/** Whether the URL sets any parameter. */
+export function hasParameters(search: DashboardSearch): boolean {
+  return Object.keys(search).some((key) => key.startsWith(PREFIX));
+}
+
+/**
+ * The search with one parameter set, or taken out of the URL when `value` is
+ * undefined, so the file's default applies.
+ */
+export function withParameter(
+  search: DashboardSearch,
+  name: string,
+  value: string | number | boolean | null | undefined,
+): DashboardSearch {
+  const next = { ...search };
+  if (value === undefined) delete next[searchKey(name)];
+  else next[searchKey(name)] = value;
+  return next;
+}
+
+/** The search without its parameters; present mode and its refresh stay. */
+export function withoutParameters(search: DashboardSearch): DashboardSearch {
+  return Object.fromEntries(
+    Object.entries(search).filter(([key]) => !key.startsWith(PREFIX)),
+  );
 }
 
 /** The time windows a time_range parameter offers, in the order they are listed. */

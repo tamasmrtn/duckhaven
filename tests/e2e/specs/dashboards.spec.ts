@@ -94,3 +94,103 @@ test("a published dashboard opens from the list and shows its widgets' data", as
     await worksheetPage.run(`DROP TABLE ${table}`);
   }
 });
+
+test("a click on a bar filters the other widgets, and a second click restores them", async ({
+  page,
+  worksheetPage,
+}) => {
+  const stamp = Date.now();
+  const table = `dash_xf_${stamp}`;
+  const model = `xf_${stamp}`;
+  const name = `xf-${stamp}`;
+  const api = `/api/workspaces/${WS_SLUG}`;
+  const ok = async (resp: Promise<{ status(): number; text(): Promise<string> }>) => {
+    const r = await resp;
+    expect(r.status(), await r.text()).toBeLessThan(300);
+  };
+
+  await worksheetPage.goto();
+  await worksheetPage.run(
+    `CREATE TABLE ${DEFAULT_CATALOG}.analytics.${table} AS SELECT i AS id, i * 10 AS amount, ` +
+      `CASE WHEN i % 2 = 0 THEN 'even' ELSE 'odd' END AS parity FROM range(1, 6) r(i)`,
+  );
+  try {
+    // A model over the table: the bars break down by parity, the KPI sums amount.
+    const base = `${api}/semantic/models/${model}`;
+    await ok(page.request.post(`${api}/semantic/models`, { data: { slug: model, name: "XF" } }));
+    await ok(
+      page.request.post(`${base}/datasets`, {
+        data: {
+          name: "rows",
+          catalog: DEFAULT_CATALOG,
+          schema_name: "analytics",
+          table_name: table,
+          primary_key: ["id"],
+        },
+      }),
+    );
+    await ok(page.request.post(`${base}/dimensions`, { data: { name: "parity", dataset: "rows" } }));
+    await ok(
+      page.request.post(`${base}/metrics`, {
+        data: { name: "amount", dataset: "rows", agg: "sum", expr: "amount" },
+      }),
+    );
+    await ok(page.request.post(`${base}/publish`));
+    await ok(page.request.patch(`${base}/metrics/amount`, { data: { status: "published" } }));
+
+    const spec = {
+      version: 1,
+      name,
+      title: `XF dashboard ${stamp}`,
+      parameters: { parity: { type: "dimension", model, dimension: "parity" } },
+      rows: [
+        {
+          widgets: [
+            {
+              id: "total",
+              type: "kpi",
+              title: "Total amount",
+              query: { model, metrics: ["amount"] },
+            },
+            {
+              id: "by_parity",
+              type: "bar",
+              title: "Amount by parity",
+              query: { model, metrics: ["amount"], dimensions: ["parity"] },
+            },
+          ],
+        },
+      ],
+    };
+    const created = await page.request.post(`${api}/dashboards`, { data: { spec } });
+    expect(created.status(), await created.text()).toBe(201);
+    await ok(
+      page.request.post(`${api}/dashboards/${name}/publish`, {
+        data: { base_version: (await created.json()).version },
+      }),
+    );
+
+    await page.goto(`${BASE_URL}/${WS_SLUG}/dashboards/${name}`);
+    const total = page.getByRole("region", { name: "Total amount" }).getByTestId("kpi-value");
+    await expect(total).toHaveText("150", { timeout: 60_000 });
+
+    // Bars rank largest first: odd (1 + 3 + 5) then even (2 + 4).
+    const bars = page.getByRole("region", { name: "Amount by parity" });
+    const even = bars.locator(".recharts-bar-rectangle").nth(1);
+    await even.click();
+    await expect(page).toHaveURL(/p\.parity=even/);
+    await expect(total).toHaveText("60", { timeout: 60_000 });
+    // The chart keeps both bars and says which is chosen.
+    await expect(bars.getByRole("img", { name: /even is selected/ })).toBeVisible();
+    await expect(bars.locator(".recharts-bar-rectangle")).toHaveCount(2);
+
+    await even.click();
+    await expect(page).not.toHaveURL(/p\.parity/);
+    await expect(total).toHaveText("150", { timeout: 60_000 });
+  } finally {
+    await page.request.delete(`${api}/dashboards/${name}`);
+    await page.request.delete(`${api}/semantic/models/${model}`);
+    await worksheetPage.goto();
+    await worksheetPage.run(`DROP TABLE ${DEFAULT_CATALOG}.analytics.${table}`);
+  }
+});

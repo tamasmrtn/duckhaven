@@ -6,10 +6,12 @@ import {
   LabelList,
   Line,
   LineChart,
+  Rectangle,
   ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
+  type BarShapeProps,
 } from "recharts";
 import { resolve, SERIES } from "@/components/charts/chartColors";
 import {
@@ -20,14 +22,26 @@ import {
   Y_AXIS_PROPS,
 } from "@/components/charts/ChartFrame";
 import { useIsDark } from "@/hooks/useIsDark";
-import type { ChartSpec, RunWidget } from "@/types/dashboard";
+import type { Cell, ChartSpec, RunWidget } from "@/types/dashboard";
 import {
   chartData,
   formatPeriod,
   type ChartSeries,
   type Datum,
 } from "../chartData";
+import { categoryValues } from "../crossFilter";
 import { formatValue, type ValueFormat } from "../format";
+
+/** The dimension parameter a click on a bar sets, and its value in this run. */
+export interface ChartSelection {
+  label: string;
+  value: unknown;
+  /** Sets the parameter, or clears it with null. */
+  onSelect: (value: Cell) => void;
+}
+
+/** How strongly the bars that are not chosen still show. */
+const UNCHOSEN_OPACITY = 0.35;
 
 /** Bars with this many or fewer carry their value at the tip. */
 const LABELLED_BARS = 12;
@@ -56,11 +70,14 @@ function ChartTooltip({
   series,
   colors,
   title,
+  hint,
 }: {
   datum: Datum | undefined;
   series: ChartSeries[];
   colors: string[];
   title: string;
+  /** What a click on this point does. */
+  hint?: string;
 }) {
   if (!datum) return null;
   return (
@@ -87,11 +104,16 @@ function ChartTooltip({
           </li>
         ))}
       </ul>
+      {hint && <p className="mt-1.5 text-2xs text-text-tertiary">{hint}</p>}
     </div>
   );
 }
 
-function describe(chart: ChartSpec, series: ChartSeries[]): string {
+function describe(
+  chart: ChartSpec,
+  series: ChartSeries[],
+  chosen: string | null,
+): string {
   const measures = [...new Set(chart.y.map((m) => m.label))].join(" and ");
   const by =
     chart.x?.kind === "time" && chart.x.grain
@@ -101,7 +123,8 @@ function describe(chart: ChartSpec, series: ChartSeries[]): string {
     chart.series && series.length > 1
       ? `, one ${chart.type === "line" ? "line" : "bar"} per ${chart.series.field}: ${series.map((s) => s.label).join(", ")}`
       : "";
-  return `A ${chart.type} chart of ${measures} by ${by}${split}.`;
+  const marked = chosen === null ? "" : ` ${chosen} is selected.`;
+  return `A ${chart.type} chart of ${measures} by ${by}${split}.${marked}`;
 }
 
 /**
@@ -111,13 +134,19 @@ function describe(chart: ChartSpec, series: ChartSeries[]): string {
  *
  * The chart is a picture with a text alternative. Every value it shows is
  * also in the widget's table view, so nothing depends on hovering.
+ *
+ * With a `selection`, a click on a bar filters the rest of the dashboard by
+ * that bar's category, and a click on the chosen bar clears the filter. The
+ * filter bar sets the same parameter, for anyone not using a pointer.
  */
 export function ChartWidget({
   event,
   label,
+  selection,
 }: {
   event: RunWidget;
   label: string;
+  selection?: ChartSelection;
 }) {
   const dark = useIsDark();
   const chart = event.chart!;
@@ -126,6 +155,23 @@ export function ChartWidget({
     () => chartData(chart, rows.columns, rows.data),
     [chart, rows],
   );
+  const cells = useMemo(
+    () => categoryValues(chart, rows.columns, rows.data),
+    [chart, rows],
+  );
+  const chosen =
+    selection && selection.value != null ? String(selection.value) : null;
+  const pick = (d: Datum | undefined) => {
+    // A row without a category names nothing a filter could hold.
+    if (!selection || !d || d.x === "") return;
+    selection.onSelect(d.x === chosen ? null : (cells.get(d.x) ?? d.x));
+  };
+  const hint = (d: Datum | undefined) =>
+    !selection || !d || d.x === ""
+      ? undefined
+      : d.x === chosen
+        ? `Click to stop filtering by ${selection.label}`
+        : `Click to filter by ${selection.label}`;
   const colors = series.map((s) =>
     resolve(SERIES[s.slot % SERIES.length], dark),
   );
@@ -172,6 +218,7 @@ export function ChartWidget({
             series={series}
             colors={colors}
             title={xLabel(String((payload?.[0]?.payload as Datum)?.x ?? ""))}
+            hint={hint(payload?.[0]?.payload as Datum | undefined)}
           />
         ) : null
       }
@@ -325,13 +372,41 @@ export function ChartWidget({
               stroke={chart.stack ? "var(--bg-surface)" : undefined}
               strokeWidth={chart.stack ? 2 : 0}
               isAnimationActive={false}
+              {...(selection
+                ? {
+                    // The whole band answers a click, not only the thin bar.
+                    background: { fill: "transparent" },
+                    className: "cursor-pointer",
+                    onClick: (_: unknown, index: number) => pick(data[index]),
+                  }
+                : {})}
+              // The chosen bar keeps its colour; the others recede.
+              shape={
+                chosen === null
+                  ? undefined
+                  : (props: BarShapeProps) => (
+                      <Rectangle
+                        {...props}
+                        fillOpacity={
+                          (props.payload as Datum).x === chosen
+                            ? 1
+                            : UNCHOSEN_OPACITY
+                        }
+                      />
+                    )
+              }
             >
               {labelled && (
                 <LabelList
                   dataKey={s.key}
                   position={horizontal ? "right" : "top"}
                   formatter={(v) => tick(v)}
-                  style={{ fontSize: 11, fill: "var(--text-secondary)" }}
+                  // A click on the value lands on the bar's band beneath it.
+                  style={{
+                    fontSize: 11,
+                    fill: "var(--text-secondary)",
+                    pointerEvents: "none",
+                  }}
                 />
               )}
             </Bar>
@@ -349,7 +424,7 @@ export function ChartWidget({
       <div
         className="h-56 [&_*:focus:not(:focus-visible)]:outline-none"
         role="img"
-        aria-label={`${label}. ${describe(chart, series)}`}
+        aria-label={`${label}. ${describe(chart, series, chosen)}`}
         data-testid="widget-chart"
       >
         <ResponsiveContainer width="100%" height="100%">

@@ -98,6 +98,25 @@ Each widget's menu shows its rows as a table, shows the SQL it ran or opens it i
 as CSV. **Copy link** copies a link that opens the dashboard at that widget. The info button beside the menu shows how
 the widget's metrics are defined.
 
+### Filtering by clicking a bar
+
+A bar chart drawn by a dimension that a parameter filters on can set that parameter. Click the **Germany** bar and
+every other widget narrows to Germany, as if it had been picked in the filter row. Click it again to clear the filter.
+The bar chart itself keeps every bar and marks the chosen one, because a widget is never filtered by the dimension it
+breaks down by. This works for metric widgets whose model and dimension match the parameter's; the filter row sets the
+same value from the keyboard. Going back to an earlier filter is answered from the [result cache](result-cache.md)
+while the data has not changed.
+
+### Presenting a dashboard
+
+**Present** shows the dashboard alone, over the whole screen, for a wall display or a meeting. Its address carries
+`?present=true`, so a display can open straight into it, and **Exit**, Escape or the browser's back button leaves it.
+
+Present mode can refresh the dashboard every 5, 15 or 30 minutes, or every hour, kept in the address as `?refresh=15`.
+A refresh is a new view: widgets whose tables have not changed are answered from the cache without starting compute,
+and the rest run. A dashboard over data that changes more often than compute's idle timeout keeps compute running for
+as long as it refreshes. A browser tab that is hidden skips its refreshes.
+
 ## Trying out a file before saving it
 
 A writer can run a dashboard file without saving it, as a

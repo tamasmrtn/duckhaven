@@ -1,4 +1,5 @@
-import { useEffect, useMemo, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, type CSSProperties } from "react";
+import * as DialogPrimitive from "@radix-ui/react-dialog";
 import {
   Link,
   useNavigate,
@@ -10,7 +11,9 @@ import {
   GitBranch,
   LayoutDashboard,
   Loader2,
+  Presentation,
   RefreshCw,
+  X,
 } from "lucide-react";
 import { ApiError } from "@/api/client";
 import { Banner } from "@/components/ui/banner";
@@ -19,12 +22,18 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { PageHeader } from "@/components/ui/page-header";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useDashboard } from "@/queries/dashboards";
-import type { Dashboard, RowSpec } from "@/types/dashboard";
+import type { Cell, Dashboard, RowSpec } from "@/types/dashboard";
 import { plural } from "@/utils";
 import { DashboardBadges } from "./DashboardBadges";
 import { DashboardFilters } from "./DashboardFilters";
 import { rowLayout } from "./layout";
-import { runParams, type DashboardSearch } from "./params";
+import { runParams, withParameter, type DashboardSearch } from "./params";
+import {
+  enterFullscreen,
+  exitFullscreen,
+  RefreshEvery,
+  useAutoRefresh,
+} from "./present";
 import { useDashboardRun, type RunView } from "./useDashboardRun";
 import type { WidgetContext } from "./widgets/WidgetChrome";
 import { WidgetCard } from "./widgets/WidgetCard";
@@ -146,9 +155,41 @@ function Banners({ dashboard, run }: { dashboard: Dashboard; run: RunView }) {
 function Loaded({ ws, dashboard }: { ws: string; dashboard: Dashboard }) {
   const search = useSearch({ from: "/$ws/dashboards/$dashboard" });
   const navigate = useNavigate();
+  // Present mode is not part of the request, so entering it runs nothing.
   const request = useMemo(() => ({ params: runParams(search) }), [search]);
   const run = useDashboardRun(ws, dashboard.name, request);
   const spec = dashboard.spec;
+  const present = search.present === true;
+  const minutes =
+    typeof search.refresh === "number" ? search.refresh : undefined;
+  useAutoRefresh(present ? minutes : undefined, run.refresh);
+
+  const setSearch = useCallback(
+    (next: DashboardSearch, replace = true) => {
+      void navigate({
+        to: "/$ws/dashboards/$dashboard",
+        params: { ws, dashboard: dashboard.name },
+        search: next,
+        replace,
+      });
+    },
+    [navigate, ws, dashboard.name],
+  );
+
+  // A click on a bar sets its parameter. Choosing what the file sets leaves
+  // the URL, as the filter bar does.
+  const select = useCallback(
+    (name: string, value: Cell) => {
+      const param = spec.parameters?.[name];
+      const fallback =
+        param?.type === "dimension" ? (param.default ?? null) : null;
+      setSearch(
+        withParameter(search, name, value === fallback ? undefined : value),
+      );
+    },
+    [spec.parameters, search, setSearch],
+  );
+
   const context = useMemo<WidgetContext>(() => {
     const values = new Map(
       (run.start?.parameters ?? []).map((p) => [p.name, p.value]),
@@ -159,11 +200,19 @@ function Loaded({ ws, dashboard }: { ws: string; dashboard: Dashboard }) {
       parameters: Object.fromEntries(
         Object.entries(spec.parameters ?? {}).map(([name, p]) => [
           name,
-          { label: p.label ?? name, type: p.type, value: values.get(name) },
+          {
+            label: p.label ?? name,
+            type: p.type,
+            value: values.get(name),
+            ...(p.type === "dimension"
+              ? { model: p.model, dimension: p.dimension }
+              : {}),
+          },
         ]),
       ),
+      select,
     };
-  }, [ws, dashboard.name, spec.parameters, run.start]);
+  }, [ws, dashboard.name, spec.parameters, run.start, select]);
 
   // A copied link to one widget lands on it.
   useEffect(() => {
@@ -171,16 +220,32 @@ function Loaded({ ws, dashboard }: { ws: string; dashboard: Dashboard }) {
     if (id.startsWith("widget-")) document.getElementById(id)?.scrollIntoView();
   }, []);
 
-  function setSearch(next: DashboardSearch) {
-    void navigate({
-      to: "/$ws/dashboards/$dashboard",
-      params: { ws, dashboard: dashboard.name },
-      search: next,
-      replace: true,
-    });
+  // Leaving present mode, by its button, Escape or Back, leaves full screen.
+  useEffect(() => {
+    if (!present) exitFullscreen();
+  }, [present]);
+
+  function enterPresent() {
+    enterFullscreen();
+    // Pushed, so Back leaves present mode.
+    setSearch({ ...search, present: true }, false);
   }
 
-  return (
+  function leavePresent() {
+    const next = { ...search };
+    delete next.present;
+    delete next.refresh;
+    setSearch(next);
+  }
+
+  function setRefresh(minutes: number | undefined) {
+    const next = { ...search };
+    if (minutes) next.refresh = minutes;
+    else delete next.refresh;
+    setSearch(next);
+  }
+
+  const page = (
     <div className="flex h-full flex-col">
       <PageHeader
         title={spec.title}
@@ -189,6 +254,9 @@ function Loaded({ ws, dashboard }: { ws: string; dashboard: Dashboard }) {
         actions={
           <div className="flex items-center gap-3 text-2xs text-text-tertiary">
             <RunStatus run={run} />
+            {present && (
+              <RefreshEvery minutes={minutes} onChange={setRefresh} />
+            )}
             <Button
               variant="outline"
               size="sm"
@@ -199,6 +267,28 @@ function Loaded({ ws, dashboard }: { ws: string; dashboard: Dashboard }) {
               <RefreshCw className="size-3.5" aria-hidden />
               Refresh
             </Button>
+            {present ? (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 gap-1.5 text-xs"
+                onClick={leavePresent}
+                aria-label="Exit present mode"
+              >
+                <X className="size-3.5" aria-hidden />
+                Exit
+              </Button>
+            ) : (
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 gap-1.5 text-xs"
+                onClick={enterPresent}
+              >
+                <Presentation className="size-3.5" aria-hidden />
+                Present
+              </Button>
+            )}
           </div>
         }
       />
@@ -217,6 +307,30 @@ function Loaded({ ws, dashboard }: { ws: string; dashboard: Dashboard }) {
         </div>
       </div>
     </div>
+  );
+
+  if (!present) return page;
+  // Present mode: the dashboard alone, over the whole window. A modal keeps
+  // focus inside and Escape leaves it.
+  return (
+    <DialogPrimitive.Root
+      open
+      onOpenChange={(open) => {
+        if (!open) leavePresent();
+      }}
+    >
+      <DialogPrimitive.Portal>
+        <DialogPrimitive.Content
+          className="fixed inset-0 z-40 bg-[var(--bg-canvas)] focus:outline-none"
+          aria-describedby={undefined}
+        >
+          <DialogPrimitive.Title className="sr-only">
+            {spec.title}, presented
+          </DialogPrimitive.Title>
+          {page}
+        </DialogPrimitive.Content>
+      </DialogPrimitive.Portal>
+    </DialogPrimitive.Root>
   );
 }
 

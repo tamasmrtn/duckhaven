@@ -25,6 +25,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { cn } from "@/utils";
 import type { DocSource } from "@/types/assistant";
 import { useAssistant } from "./AssistantContext";
+import { ChatChartCard } from "./ChatChart";
 import { ConversationList } from "./ConversationList";
 import { Markdown } from "./Markdown";
 import { ThinkingStatus } from "./ThinkingStatus";
@@ -167,6 +168,7 @@ export function AssistantPanel({ ws }: { ws: string }) {
     detail?.transcript.length,
     chat.pendingUserMessage,
     chat.streamingText,
+    chat.streamingItems.length,
     chat.liveTools.length,
   ]);
   useEffect(() => {
@@ -349,15 +351,21 @@ export function AssistantPanel({ ws }: { ws: string }) {
                   }
                 />
               )}
-            {detail?.transcript.map((item, i) => (
-              <Bubble
-                key={i}
-                role={item.role}
-                text={item.text}
-                sql={item.sql}
-                sources={item.sources}
-              />
-            ))}
+            {detail?.transcript.map((item, i) =>
+              item.role === "chart" ? (
+                item.chart && (
+                  <ChatChartCard key={i} ws={ws} chart={item.chart} />
+                )
+              ) : (
+                <Bubble
+                  key={i}
+                  role={item.role}
+                  text={item.text}
+                  sql={item.sql}
+                  sources={item.sources}
+                />
+              ),
+            )}
             {chat.pendingUserMessage && (
               <Bubble role="user" text={chat.pendingUserMessage} />
             )}
@@ -391,13 +399,24 @@ export function AssistantPanel({ ws }: { ws: string }) {
                 </Button>
               </div>
             )}
-            {chat.streamingMessages.some((text) => text !== "") && (
+            {chat.streamingItems.some(
+              (item) => item.kind === "chart" || item.text !== "",
+            ) && (
               <>
-                {chat.streamingMessages
-                  .filter((text) => text !== "")
-                  .map((text, i) => (
-                    <Bubble key={i} role="assistant" text={text} streaming />
-                  ))}
+                {chat.streamingItems.map((item, i) =>
+                  item.kind === "chart" ? (
+                    <ChatChartCard key={i} ws={ws} chart={item.chart} />
+                  ) : (
+                    item.text !== "" && (
+                      <Bubble
+                        key={i}
+                        role="assistant"
+                        text={item.text}
+                        streaming
+                      />
+                    )
+                  ),
+                )}
                 {/* Throttled so screen readers get periodic updates, not one per token. */}
                 <div aria-live="polite" className="sr-only">
                   {throttledStreamingText}
@@ -438,8 +457,8 @@ export function AssistantPanel({ ws }: { ws: string }) {
               chat.canRegenerate &&
               detail &&
               detail.transcript.length > 0 &&
-              detail.transcript[detail.transcript.length - 1].role ===
-                "assistant" && (
+              detail.transcript[detail.transcript.length - 1].role !==
+                "user" && (
                 <Button
                   size="sm"
                   variant="ghost"

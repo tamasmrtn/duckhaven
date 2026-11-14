@@ -1,4 +1,12 @@
-import { isMap, isSeq, parseDocument, type Document, type YAMLSeq } from "yaml";
+import {
+  isMap,
+  isScalar,
+  isSeq,
+  parseDocument,
+  YAMLMap,
+  YAMLSeq,
+  type Document,
+} from "yaml";
 import { GRID_COLUMNS } from "../layout";
 
 // Changes the preview's controls make to the file. Each works on the YAML
@@ -93,4 +101,62 @@ export function fits(
     0,
   );
   return others + width <= GRID_COLUMNS;
+}
+
+/** Every widget id the file uses. */
+function widgetIds(doc: Document): Set<string> {
+  const ids = new Set<string>();
+  for (const row of rowsOf(doc)?.items ?? []) {
+    const widgets = isMap(row) ? row.get("widgets", true) : null;
+    if (!isSeq(widgets)) continue;
+    for (const w of widgets.items) {
+      const id = isMap(w) ? w.get("id") : null;
+      if (typeof id === "string") ids.add(id);
+    }
+  }
+  return ids;
+}
+
+/**
+ * Add a widget in a row of its own at the end of the file. It keeps its id
+ * unless a widget in the file has it already, when it takes the next number:
+ * `trend` becomes `trend_2`. Fields without a value are left out, and SQL on
+ * several lines is written as a block. Returns the new file and the widget's
+ * id, or null when the file does not parse or is not a dashboard's map.
+ */
+export function addRow(
+  text: string,
+  widget: { id: string },
+): { text: string; id: string } | null {
+  const doc = read(text);
+  if (!doc || !isMap(doc.contents)) return null;
+  let rows = rowsOf(doc);
+  // Rows that are something other than a list are left for the author.
+  if (!rows && doc.get("rows") != null) return null;
+  if (!rows) {
+    rows = new YAMLSeq();
+    doc.set("rows", rows);
+  }
+  rows.flow = false;
+  const taken = widgetIds(doc);
+  let id = widget.id;
+  for (let n = 2; taken.has(id); n++) id = `${widget.id}_${n}`;
+  const fields = Object.fromEntries(
+    Object.entries({ ...widget, id }).filter(([, v]) => v != null),
+  );
+  const node = doc.createNode(fields) as YAMLMap;
+  const sql = node.get("sql", true);
+  if (
+    isScalar(sql) &&
+    typeof sql.value === "string" &&
+    sql.value.includes("\n")
+  ) {
+    sql.type = "BLOCK_LITERAL";
+  }
+  const widgets = new YAMLSeq();
+  widgets.add(node);
+  const row = new YAMLMap();
+  row.set("widgets", widgets);
+  rows.add(row);
+  return { text: write(doc), id };
 }

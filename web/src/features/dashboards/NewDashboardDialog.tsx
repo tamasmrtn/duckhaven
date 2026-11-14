@@ -14,6 +14,8 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import type { ChatChartWidget } from "@/types/assistant";
+import { addRow } from "./editor/yamlEdits";
 
 /** A dashboard's name: lower case, starting with a letter, as the server reads it. */
 const NAME = /^[a-z][a-z0-9_-]*$/;
@@ -29,13 +31,25 @@ export function nameFrom(title: string): string {
   return (/^[a-z]/.test(name) || !name ? name : `d-${name}`).slice(0, 64);
 }
 
-/** A first file for a new dashboard: one text widget, ready to replace. */
-export function starterFile(name: string, title: string): string {
-  return [
+/**
+ * A first file for a new dashboard: one text widget, ready to replace, or the
+ * widget given, such as a chart from the assistant.
+ */
+export function starterFile(
+  name: string,
+  title: string,
+  widget?: ChatChartWidget,
+): string {
+  const head = [
     "version: 1",
     `name: ${name}`,
     // A JSON string is a double-quoted YAML string, so any title reads back.
     `title: ${JSON.stringify(title)}`,
+  ];
+  const withWidget = widget && addRow(head.join("\n") + "\n", widget);
+  if (withWidget) return withWidget.text;
+  return [
+    ...head,
     "rows:",
     "  - widgets:",
     "      - id: about",
@@ -46,19 +60,24 @@ export function starterFile(name: string, title: string): string {
   ].join("\n");
 }
 
-/** Start a dashboard as a draft, and open it in the editor. */
+/**
+ * Start a dashboard as a draft, and open it in the editor. With `widget` it
+ * starts with that widget, and takes its title until another is typed.
+ */
 export function NewDashboardDialog({
   ws,
   open,
   onOpenChange,
+  widget,
 }: {
   ws: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  widget?: ChatChartWidget;
 }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const [title, setTitle] = useState("");
+  const [title, setTitle] = useState(widget?.title ?? "");
   // Follows the title until someone types a name of their own.
   const [typed, setTyped] = useState<string | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
@@ -72,7 +91,7 @@ export function NewDashboardDialog({
     try {
       const created = await dashboardsApi.create(
         ws,
-        starterFile(name, title.trim()),
+        starterFile(name, title.trim(), widget),
       );
       void queryClient.invalidateQueries({
         queryKey: ["workspace", ws, "dashboards"],
@@ -99,8 +118,9 @@ export function NewDashboardDialog({
         <DialogHeader>
           <DialogTitle>New dashboard</DialogTitle>
           <DialogDescription>
-            It starts as a draft only writers can see, with one text widget, and
-            opens in the editor.
+            It starts as a draft only writers can see, with{" "}
+            {widget ? "this chart" : "one text widget"}, and opens in the
+            editor.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3 py-2">

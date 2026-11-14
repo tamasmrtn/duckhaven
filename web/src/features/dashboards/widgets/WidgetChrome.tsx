@@ -51,6 +51,8 @@ export interface WidgetContext {
   select?: (parameter: string, value: Cell) => void;
   /** Asks the assistant about a widget. Absent where there is no assistant to ask. */
   ask?: (widget: string, title: string) => void;
+  /** Off for a chart in the chat, which has no page of its own to link to. */
+  linkable?: boolean;
 }
 
 /**
@@ -256,7 +258,9 @@ export function WidgetMenu({
               Download CSV
             </DropdownMenuItem>
           )}
-          <DropdownMenuItem onSelect={copyLink}>Copy link</DropdownMenuItem>
+          {context.linkable !== false && (
+            <DropdownMenuItem onSelect={copyLink}>Copy link</DropdownMenuItem>
+          )}
           {context.ask && (
             <DropdownMenuItem onSelect={() => context.ask?.(spec.id, title)}>
               Ask about this widget
@@ -270,7 +274,9 @@ export function WidgetMenu({
             <DialogHeader>
               <DialogTitle>SQL for {title}</DialogTitle>
               <DialogDescription>
-                The query this widget ran, as you, for this view.
+                {context.linkable === false
+                  ? "The query the assistant ran for this chart."
+                  : "The query this widget ran, as you, for this view."}
               </DialogDescription>
             </DialogHeader>
             <pre className="max-h-96 overflow-auto rounded-md border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-3 font-mono text-xs">

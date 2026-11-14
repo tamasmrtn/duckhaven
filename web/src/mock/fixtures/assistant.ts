@@ -1,8 +1,26 @@
 import type {
   AssistantToolCall,
+  ChatChart,
   Conversation,
   TranscriptItem,
 } from "@/types/assistant";
+import { SALES_RUN } from "./dashboards";
+
+const BY_COUNTRY = SALES_RUN.find((w) => w.id === "by_country")!;
+
+/** A bar chart the assistant draws from a query it ran: revenue by country. */
+export const CHAT_CHART: ChatChart = {
+  type: "chart",
+  tool_call_id: "call-chart",
+  widget: {
+    id: "by_country",
+    type: "bar",
+    title: "Revenue by country",
+    sql: "SELECT country, SUM(total_amount) AS revenue\nFROM warehouse.analytics.orders\nGROUP BY 1\nORDER BY 2 DESC",
+  },
+  event: { ...BY_COUNTRY, rows: { ...BY_COUNTRY.rows!, query_id: "q-chart" } },
+  result_hash: "hash-by-country",
+};
 
 export interface MockConversation extends Conversation {
   transcript: TranscriptItem[];

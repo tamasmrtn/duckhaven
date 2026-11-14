@@ -12,6 +12,7 @@ import {
 } from "@tests/utils";
 import { toast } from "sonner";
 import { DASHBOARDS, DRAFTS } from "@/mock/fixtures/dashboards";
+import { CHAT_CHART } from "@/mock/fixtures/assistant";
 
 vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
 
@@ -390,6 +391,51 @@ describe("DashboardEditorPage", SLOW, () => {
     await waitFor(() =>
       expect(router.state.location.pathname).toBe(`${ROUTE}/sales-overview`),
     );
+  });
+
+  it("adds a chart handed to the file it has open, keeping what was typed", async () => {
+    const { router } = renderWithProviders({
+      initialRoute: `${ROUTE}/sales-overview/edit`,
+    });
+    await screen.findByRole("textbox", { name: "Dashboard file" });
+    type(`${value()}# unsaved\n`);
+
+    await router.navigate({
+      to: "/$ws/dashboards/$dashboard/edit",
+      params: { ws: "acme-analytics", dashboard: "sales-overview" },
+      state: { addWidget: { key: "k1", widget: CHAT_CHART.widget } },
+    });
+
+    await waitFor(() => expect(value()).toContain("id: by_country_2"));
+    expect(value()).toContain("# unsaved");
+    // Staying in this editor keeps the changes, so it asks nothing.
+    expect(
+      screen.queryByRole("dialog", { name: "Leave without saving?" }),
+    ).not.toBeInTheDocument();
+    // Once only: the history entry no longer carries it.
+    await waitFor(() =>
+      expect(router.state.location.state.addWidget).toBeUndefined(),
+    );
+    expect(value().match(/id: by_country_/g)).toHaveLength(1);
+  });
+
+  it("adds no chart to a dashboard managed in git, and says why", async () => {
+    const { router } = renderWithProviders({
+      initialRoute: `${ROUTE}/finance-weekly/edit`,
+    });
+    await screen.findByRole("textbox", { name: "Dashboard file" });
+    const before = value();
+
+    await router.navigate({
+      to: "/$ws/dashboards/$dashboard/edit",
+      params: { ws: "acme-analytics", dashboard: "finance-weekly" },
+      state: { addWidget: { key: "k2", widget: CHAT_CHART.widget } },
+    });
+
+    expect(
+      await screen.findByText(/changes only through its file in git/),
+    ).toBeVisible();
+    expect(value()).toBe(before);
   });
 
   it("follows a dashboard nobody published to its new name", async () => {

@@ -33,6 +33,9 @@ the assistant can see and do with the same grants they already use for people.
 - **Run SQL** — write and execute a query, then reason over a capped sample of the results. The full result set is
   available to you in the UI, exactly as if you had run the query yourself. Decimals and large integers reach it as
   exact values with each column's type, so it quotes them as they are rather than as rounded approximations.
+- **Read dashboards** — find a [dashboard](../querying/dashboards.md), read its file, and run its widgets as you to
+  explain a number on it, saying which window and filters that number covers. See
+  [Dashboards and charts](#dashboards-and-charts).
 - **Propose editor edits** — on the worksheet, write or change the SQL in your editor as a highlighted, accept-or-reject
   suggestion (it never edits or runs on its own). If your worksheet has a non-empty text selection when you ask, the
   proposed edit is scoped to just that selection instead of rewriting the whole worksheet.
@@ -43,7 +46,9 @@ the assistant can see and do with the same grants they already use for people.
 - **Ask when unsure** — if a request is missing something it needs to answer correctly (the grain, a time window,
   which table), it asks a short clarifying question rather than guessing.
 
-It runs one turn at a time in a conversation, and each conversation is private to the person who started it.
+It runs one turn at a time in a conversation, and each conversation is private to the person who started it. Each
+person can have two turns running at once across their conversations; a third is refused with a message to wait (see
+`ASSISTANT_MAX_CONCURRENCY_PER_USER` in [Configuration](../reference/configuration.md#ai-assistant)).
 
 To use an AI agent you already have — Claude Code, Claude Desktop, Cursor — against the same data instead, see the
 [MCP server](mcp-server.md). It inherits the governance described below, but acts as the caller's own identity rather
@@ -63,7 +68,7 @@ than as a shared service account.
   stopped, but never adds an agent to the elastic pool.
 - It cannot use a draft or broken semantic definition. Only *published* models reach it, and a definition whose column
   is gone is withheld: the assistant says a metric is defined but broken rather than substituting its own calculation.
-- It cannot draw a chart or any other visualisation; it gives the numbers, which you can chart in a worksheet.
+- It cannot change a dashboard. It reads dashboards and tries out widgets, but saves, publishes and deletes nothing.
 - It cannot show an image. An image in an answer appears as its description in brackets, such as `[image: chart]`,
   and is never loaded, so text the model reads in a table or a tool result cannot make your browser send data to
   another site.
@@ -238,6 +243,29 @@ the correct date column come from what the organization agreed rather than from 
 Free SQL is still available and still right for anything the semantic models do not cover. It is not blocked when a
 metric exists, but bypassing one is [flagged and recorded](../metadata/semantic-layer.md#how-the-assistant-uses-it), so
 how often the agreed definitions get worked around is a number you can look at rather than a hope.
+
+## Dashboards and charts
+
+The assistant reads [dashboards](../querying/dashboards.md) as you. It runs a widget with your access, so the number it
+explains is the one you see, and quotes the window, the filters applied and skipped, and how each metric is defined.
+Asked why a number moved, it compares a KPI with an earlier period and breaks the change down by a dimension. It says
+where a change came from, such as which country fell, but not what caused it.
+
+A turn's `page_context` names the page it came from: a worksheet's SQL and selection, or a dashboard's name, version,
+parameter values and chosen widget. A dashboard context carries no file and no numbers, so a page cannot hand the
+assistant figures to repeat, and a turn from a dashboard runs no write.
+
+It can try out up to eight widgets it writes, without saving them, with advice on what reads badly, such as a number
+in a title or more than 12 bars. This uses [dashboard previews](../reference/rest-api.md#previewing-a-dashboard-file),
+so both you and its service account need `writer`.
+
+It draws a chart from a query it ran in the conversation, as a dashboard widget: a line, a bar, a KPI or a table. The
+rows come from the query's stored result, never from the model, and a result over 1,000 rows, or 50 bars, is refused
+rather than cut. The turn's stream carries the chart as a `chart` frame.
+
+After each answer, numbers that no tool returned and you did not write are listed as `unsupported_numbers` in the turn's
+`done` frame, allowing for rounding, percentages and K, M or B. The answer is never edited: a listed number may be
+right, and the list says which figures to check.
 
 ## Related
 

@@ -134,3 +134,4 @@ refreshed, and a grant change is a visible decision rather than a property of a 
 - [REST API](../reference/rest-api.md#dashboards): storing, publishing and running dashboards.
 - [Result cache](result-cache.md): when a repeated query is answered without running.
 - [Query execution](query-execution.md#batches-of-reads): how an agent runs a batch.
+- [AI data assistant](../ai/assistant.md#dashboards-and-charts): asking about a number on a dashboard.

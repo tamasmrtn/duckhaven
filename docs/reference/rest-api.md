@@ -602,6 +602,7 @@ file and keeps the old one as a revision.
 | `GET …/dashboards/{dashboard}/source` | The file as YAML. `?draft=true` for the draft |
 | `GET …/dashboards/{dashboard}/revisions` | Every publish, newest first, as a page |
 | `GET …/dashboards/{dashboard}/revisions/{revision}` | One revision and its file, numbered from 1 |
+| `POST …/dashboards/{dashboard}/run` | [Run it](#running-a-dashboard) as you, streaming each widget's data. `writer` for the draft |
 | `POST …/dashboard-validations` | Check a file the way publishing does, and store nothing. `writer` |
 
 `…` stands for `/api/workspaces/{workspace}`.
@@ -639,6 +640,71 @@ The old name keeps working in every path until another dashboard takes it.
 
 A dashboard managed in git (`managed: true`) is changed only by applying its file. Every write here answers **409**
 `managed_dashboard`.
+
+### Running a dashboard
+
+`POST …/dashboards/{dashboard}/run` runs every data widget as you and answers with a stream of
+[server-sent events](https://html.spec.whatwg.org/multipage/server-sent-events.html), one JSON object per `data:` line.
+[Dashboards](../querying/dashboards.md) explains whose data each widget reads and where its queries run.
+
+```json
+{"params": {"period": "last_90_days", "country": "NL"}, "widgets": ["revenue"], "draft": false, "use_cache": true}
+```
+
+Every field is optional:
+
+- `params` holds values by parameter name. A parameter left out takes its default. A `time_range` parameter takes a
+  preset such as `last_30_days` or a window such as `{"kind": "trailing", "grain": "month", "n": 6}`. A `dimension`
+  parameter takes one value, or `null` for every value.
+- `widgets` runs only these widgets, by id.
+- `draft: true` runs the draft, and needs `writer`.
+- `use_cache: false` runs every query even when the [result cache](../querying/result-cache.md) holds its answer.
+
+A request that cannot run is refused before the stream starts: **422** `invalid_parameters` for a value that does not
+fit its parameter or a parameter the dashboard lacks, with its name under `details.parameter`, and **422**
+`unknown_widget` for an id in `widgets` that is not a data widget.
+
+The events, in order:
+
+| `type` | When | Holds |
+|---|---|---|
+| `start` | First | `run_id`; `dashboard` with its `name`, `version`, `spec_hash` and `draft`; `today` and `timezone`; each parameter's `value` and resolved `window`; the `widgets` that will be answered |
+| `compute` | When some queries wait for compute to start | `state` (`starting`) and the `widgets` waiting |
+| `widget` | Once per data widget, as soon as it is answered | See below |
+| `done` | Last | `elapsed_ms`, a count of widgets by state, the number of `statements` run, `cache_hits`, and `batch` with `used` and the number of `batches` |
+| `error` | Instead of `done`, when the run could not go on | `message` |
+
+A line that is only `: ping` arrives every 15 seconds while nothing else does, so proxies keep the stream open.
+
+A `widget` event has the widget's `id` and `state`: `ok`, `empty`, `error` or `no_access`. An `error` or `no_access`
+widget has an `error` message and no rows; a `no_access` one names nothing it would have read. Every widget has a
+`scope`: its `window` and `compare_window`, each with `start`, `end` (the first day not included) and `text`, the
+parameters it `applied`, and the ones `skipped`, each with a `reason`:
+
+| `reason` | The parameter did not filter it because |
+|---|---|
+| `ignored` | The widget lists it under `ignore` |
+| `own_dimension` | The widget plots that dimension itself |
+| `other_model` | The widget reads another model |
+| `unreachable` | A metric of the widget cannot be sliced by that dimension |
+| `not_bound` | An SQL widget's `params` does not bind it |
+
+An answered widget also has:
+
+- `rows`: its `columns`, each with a `name`, a `type`, a `role` (`time`, `dimension` or `measure`) and, for a
+  measure, its `label`, `format`, `unit` and `currency`; `data`, one array per row in column order; `truncated`, `true`
+  when the query returned more rows than the widget reads; and the `query_id` that answered it, in History.
+- `chart`: what to draw. `type`, the `x` axis, the `y` measures, the `series` field with the `keys` to draw, `colors`
+  mapping each key to a colour slot from 0 to 7, `stack`, `orientation` and `limits`.
+- `compare`, for a `kpi` with `compare`: `current`, `previous`, `delta`, `delta_pct`, `good` (`true`, `false`, or
+  `null` when the metric's polarity is neutral or nothing changed) and `window_text`.
+- `cache` (`hit`, `miss`, `bypass` or `ineligible`), the `sql` that ran, `warnings`, `timing` with `elapsed_ms`
+  since the request and the query's `query_ms`, and for a metric widget its `definitions`.
+
+Values of `DECIMAL` and 64-bit or wider integer columns arrive as strings, as [query results](#result-values) do,
+so `delta` is a string when its values are.
+
+Closing the stream cancels the view's queries still waiting or running.
 
 ## Lineage
 

@@ -173,6 +173,7 @@ nav:
           - Schedule queries: querying/schedule-queries.md
           - Read query profiles: querying/query-profiles.md
           - Result cache: querying/result-cache.md
+          - Dashboards: querying/dashboards.md
           - SQL sessions: querying/sql-sessions.md
           - Use Python data tools: querying/use-python-data-tools.md
           - Connect dbt: querying/connect-dbt.md
@@ -242,6 +243,7 @@ nav:
       - Release notes: release-notes/index.md
   - Reference:
       - Configuration: reference/configuration.md
+      - Metrics: reference/metrics.md
       - SQL support: reference/sql-support.md
       - Dashboard files: reference/dashboard-spec.md
       - Permissions: reference/permissions.md

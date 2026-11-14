@@ -1,7 +1,8 @@
 """DISPATCH_BATCH across the real API and agent, and the time it saves.
 
-Nothing submits a batch over HTTP yet (dashboards will), so the test plays a
-second API replica: it runs ``dispatch_batch`` in this process against the shared
+A dashboard view sends batches over HTTP (``test_dashboard_run.py``). To time a
+batch against the same reads sent one by one, this test plays a second API
+replica: it runs ``dispatch_batch`` in this process against the shared
 database, and the frame reaches the agent through the live API's ``/internal``
 relay, as it would from any replica that does not hold the agent's socket. The
 agent's progress and results come back through the live API as for any run.

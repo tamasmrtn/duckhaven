@@ -9,9 +9,12 @@ import uuid
 
 import duckdb
 import pytest
+import pytest_asyncio
 from conftest import seed_workspace
-from sqlalchemy import inspect, select
+from sqlalchemy import event, inspect, select
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+from api.db.base import Base
 from api.models.agent import Agent
 from api.models.query import Query
 from api.models.table_metadata import TableMetadata
@@ -1045,6 +1048,106 @@ async def test_dispatch_records_the_probes_it_sends(db_session):
 
     await db_session.refresh(query)
     assert query.probe == {**_probe("stats", catalog), **_probe("health", catalog)}
+
+
+# ── an agent can answer before dispatch returns ──────────────────────────────
+
+
+@pytest_asyncio.fixture
+async def own_connections(tmp_path):
+    """Sessions on connections of their own, each seeing only what another has
+    committed, as on Postgres. The in-memory database shares one connection."""
+    engine = create_async_engine(
+        f"sqlite+aiosqlite:///{tmp_path / 'dispatch.db'}", connect_args={"timeout": 30}
+    )
+
+    @event.listens_for(engine.sync_engine, "connect")
+    def _wal(connection, _record):
+        connection.execute("PRAGMA journal_mode=WAL")
+
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    yield async_sessionmaker(engine, expire_on_commit=False)
+    await engine.dispose()
+
+
+class _AnsweringAgent:
+    """An agent that finishes each query before its send returns, as one with a
+    warm connection can, reporting from a session of its own."""
+
+    def __init__(self, sessions, agent_id: uuid.UUID) -> None:
+        self.sessions, self.agent_id = sessions, agent_id
+
+    async def send_text(self, payload: str) -> None:
+        frame = Frame.model_validate_json(payload)
+        for sent in frame.payload.get("queries") or [frame.payload]:
+            done = Frame(
+                type=FrameType.QUERY_DONE,
+                payload={"query_id": sent["query_id"], "status": "done", "row_count": 1},
+            )
+            async with self.sessions() as db:
+                await query_service.handle_agent_frame(db, done, agent_id=self.agent_id)
+
+
+async def _dispatchable(db) -> tuple[Query, Agent]:
+    ws, _ = await _make_workspace(db)
+    agent = Agent(
+        name="warm",
+        status="healthy",
+        capabilities={
+            "duckdb_version": "1.5.5",
+            "extensions": ["httpfs", "iceberg"],
+            "protocol_features": ["batch_dispatch"],
+        },
+    )
+    db.add(agent)
+    await db.commit()
+    query = Query(workspace_id=ws.id, agent_id=agent.id, sql="SELECT 1")
+    db.add(query)
+    await db.flush()
+    return query, agent
+
+
+@pytest.mark.parametrize("batched", [False, True])
+async def test_an_answer_that_comes_before_dispatch_returns_is_applied(own_connections, batched):
+    async with own_connections() as db:
+        query, agent = await _dispatchable(db)
+        registry.register(agent.id, _AnsweringAgent(own_connections, agent.id))  # type: ignore[arg-type]
+        try:
+            if batched:
+                assert await query_service.dispatch_batch(db, [query]) == [None]
+            else:
+                await query_service.dispatch_query(db, query)
+        finally:
+            registry.unregister(agent.id)
+
+    async with own_connections() as db:
+        row = await db.get(Query, query.id)
+    assert (row.status, row.row_count) == ("done", 1)
+
+
+async def test_a_frame_that_was_never_sent_leaves_its_run_failed(own_connections, monkeypatch):
+    """The row is committed before the send, so a caller that lets its session
+    roll back after a failed send must not leave a run queued for good."""
+
+    async def unreachable(db, agent_id, payload):
+        return False
+
+    monkeypatch.setattr(query_service, "send_to_agent", unreachable)
+    async with own_connections() as db:
+        query, agent = await _dispatchable(db)
+        registry.register(agent.id, _Socket())  # type: ignore[arg-type]
+        try:
+            with pytest.raises(query_service.AgentUnavailable):
+                await query_service.dispatch_query(db, query)
+        finally:
+            registry.unregister(agent.id)
+        await db.rollback()
+
+    async with own_connections() as db:
+        row = await db.get(Query, query.id)
+    assert (row.status, row.error) == ("failed", "Agent not connected")
+    assert row.finished_at is not None
 
 
 def _stats_done(query, catalog_slug: str) -> Frame:

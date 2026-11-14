@@ -185,6 +185,9 @@ async def dispatch_query(
     if maintain_for is not None:
         payload["maintain_for"] = maintain_for
 
+    # Committed before the frame goes: an agent can answer before the send
+    # returns, and its QUERY_DONE applies only to a row it can read.
+    await db.commit()
     # Producer span for the WebSocket hop; its context rides in the frame so
     # the agent's consumer span joins this trace.
     with _tracer.start_as_current_span(
@@ -206,6 +209,11 @@ async def dispatch_query(
         if not await send_to_agent(db, query.agent_id, frame.model_dump_json()):
             # The socket vanished between the presence check and the send, or its
             # owning replica is unreachable. Fail fast so the caller surfaces it.
+            # The row is committed and no answer will come, so it is failed here:
+            # a caller that rolls back would otherwise leave it queued for good.
+            query.status, query.error = "failed", "Agent not connected"
+            query.finished_at = datetime.now(tz=UTC)
+            await db.commit()
             raise AgentUnavailable("Agent not connected")
     await _dispatched(db, query.agent_id, [query])
 
@@ -440,6 +448,8 @@ async def _send_batch(
         ],
     }
     payload.update(await _catalog_fields(first, attach, active_schema))
+    # Committed before the frame goes, as dispatch_query commits.
+    await db.commit()
     with _tracer.start_as_current_span(
         "dispatch_batch",
         kind=trace.SpanKind.PRODUCER,

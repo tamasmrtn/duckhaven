@@ -2,11 +2,23 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { http } from "msw";
 import userEvent from "@testing-library/user-event";
 import { server } from "@tests/mock/server";
-import { renderWithProviders, screen, waitFor, within } from "@tests/utils";
+import {
+  configure,
+  renderWithProviders,
+  screen,
+  waitFor,
+  within,
+} from "@tests/utils";
 import type { DashboardRunRequest } from "@/types/dashboard";
 
 const ROUTE = "/acme-analytics/dashboards/sales-overview";
 const RUN_URL = "/api/workspaces/:ws/dashboards/:name/run";
+
+// These tests render the whole app and wait for a run to stream in. The first
+// render in the file, charts included, takes about 0.7s on a fast machine and
+// over 1s under coverage, past find*'s default 1000ms window. Same headroom as
+// CatalogPage.test.tsx.
+configure({ asyncUtilTimeout: 3000 });
 
 /** Records each run's request, then lets the mock answer it. */
 function recordRuns(): DashboardRunRequest[] {

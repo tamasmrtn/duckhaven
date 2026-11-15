@@ -179,6 +179,10 @@ file from where it is edited. The page runs the file as you and follows it: a co
 file is replaced, it shows the new file and runs it again. Nothing on the page edits the file. When the preview
 expires, the page keeps showing the file as it last was, and says so.
 
+`dh dashboard preview FILE` is such a tool. It holds the file as a preview, prints the address of its page, and sends
+the file again each time you save it. `dh dashboard test FILE` runs a file once, as a preview, and reports each widget;
+see [Manage dashboards in git](manage-dashboards-in-git.md#check-a-file-as-you-write-it).
+
 ## Showing an aggregate to people who may not read the rows
 
 Widgets always run as the viewer, so a dashboard cannot show people a total computed from rows they may not read. When
@@ -202,6 +206,9 @@ removes one a published dashboard reads, such as deleting a metric, deprecating 
 dimension, is refused, and the refusal names the dashboards. Change them first, or make the change with
 `allow_breaking=true`. See
 [Changes that break a dashboard](../metadata/semantic-layer.md#changes-that-break-a-dashboard).
+`dh dashboard impact orders.revenue` lists the dashboards that read a model, metric or dimension, and
+`dh dashboard exposures` writes the published ones into a dbt project's lineage, as
+[exposures](../metadata/import-dbt-lineage.md#show-the-dashboards-in-dbts-lineage).
 
 ## Limits
 

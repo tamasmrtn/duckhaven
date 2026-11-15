@@ -62,7 +62,8 @@ A workspace's time zone decides what **today** is for the semantic layer's relat
 [time windows](../metadata/semantic-layer.md#why-every-metric-names-a-time-column), so month to date on the 1st means
 this month wherever the server runs. It is UTC until an owner sets an IANA name, such as `Europe/London`, with
 `timezone` on `PATCH /api/workspaces/{workspace}`; **Settings** has no control for it. A name that is not in the IANA
-database, such as `+01:00` or `europe/london`, is refused with a 422.
+database, such as `+01:00` or `europe/london`, is refused with a 422. The [assistant](../ai/assistant.md) is told
+today's date in this time zone too, for the relative windows it writes in SQL.
 
 The time zone moves only the dates a window resolves to. Schedules still run on cron expressions in UTC, and
 timestamps in results are unchanged. For a `TIMESTAMPTZ` time dimension, a window's edges are midnight in the agent's

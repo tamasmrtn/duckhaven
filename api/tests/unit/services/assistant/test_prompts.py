@@ -9,6 +9,7 @@ notice them growing.
 """
 
 import uuid
+from datetime import date
 from types import SimpleNamespace
 
 from api.schemas.assistant import DashboardContext, WorksheetContext
@@ -29,6 +30,7 @@ from api.services.assistant.prompts import (
     SEMANTIC_PROMPT,
     STORAGE_PROMPT,
     SYSTEM_PROMPT,
+    TODAY_PROMPT,
     build_instructions,
     format_summary,
 )
@@ -346,6 +348,16 @@ def test_every_workspace_is_told_the_ducklake_functions_are_refused():
             assert "Lakehouse health page" in instructions
 
 
+def test_the_date_is_given_in_the_workspace_time_zone():
+    """Without it, "last quarter" in SQL was read off the newest rows."""
+    instructions = build_instructions(ctx(today=date(2026, 11, 15), timezone="Europe/Amsterdam"))
+
+    assert "Today is Sunday 2026-11-15 in the workspace's time zone, Europe/Amsterdam." in (
+        " ".join(instructions.split())
+    )
+    assert "Today is" not in build_instructions(ctx())
+
+
 def test_the_conditional_blocks_stay_small():
     assert len(SEMANTIC_PROMPT) <= 1_800
     # The longest compute variant a workspace can get: a named elastic default, with the
@@ -355,6 +367,11 @@ def test_the_conditional_blocks_stay_small():
     # DuckLake's differences from the Iceberg shape PRODUCT_PROMPT describes.
     # Conditional, so an Iceberg-only deployment keeps its prompt size.
     assert len(DUCKLAKE_PROMPT) <= 1_000
+    # The longest weekday and the longest IANA zone name.
+    longest = TODAY_PROMPT.format(
+        weekday="Wednesday", date="2026-11-18", timezone="America/Argentina/ComodRivadavia"
+    )
+    assert len(longest) <= 300
     page = build_instructions(ctx(page=WORST_CASE_PAGE))
     assert len(page) - len(build_instructions(ctx())) <= 1_600
 
@@ -386,6 +403,8 @@ def test_the_assembled_instructions_are_within_budget():
             elastic_enabled=True,
             default_compute=DefaultCompute("analytics", True),
             page=WORST_CASE_PAGE,
+            today=date(2026, 11, 18),
+            timezone="America/Argentina/ComodRivadavia",
         )
     )
 
@@ -395,8 +414,9 @@ def test_the_assembled_instructions_are_within_budget():
     # Dashboard files reference one more.
     # Raised from 16,400 for the base block's dashboards guidance and the largest
     # page block a dashboard request can describe (~1,500), and from 18,300 for
-    # the base block's guidance on proposing dashboard changes.
-    assert len(everything) <= 18_600
+    # the base block's guidance on proposing dashboard changes, and from 18,600
+    # for the date block and the ducklake_*() refusal moving into the base block.
+    assert len(everything) <= 18_800
 
 
 def test_a_dashboard_page_names_where_the_user_is_and_what_they_chose():

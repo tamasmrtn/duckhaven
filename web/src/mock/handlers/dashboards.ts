@@ -489,6 +489,12 @@ export const dashboardHandlers = [
     return HttpResponse.json(preview, { status: 201 });
   }),
 
+  http.get("/api/workspaces/:ws/dashboard-previews/:id", ({ params }) => {
+    const preview = PREVIEWS[params.id as string];
+    if (!preview) return httpError(404, `No preview ${String(params.id)}.`);
+    return HttpResponse.json(preview);
+  }),
+
   http.put(
     "/api/workspaces/:ws/dashboard-previews/:id",
     async ({ params, request }) => {

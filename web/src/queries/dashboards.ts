@@ -35,6 +35,24 @@ export function useDashboardRevisions(
   });
 }
 
+/** How often a preview's page checks whether its file changed. */
+export const PREVIEW_FOLLOW_MS = 2000;
+
+/**
+ * A preview, read again every couple of seconds so its page follows the file
+ * as `dh dashboard preview` sends each save. It stops once the preview is gone.
+ */
+export function useDashboardPreview(ws: string, id: string) {
+  return useQuery({
+    queryKey: ["workspace", ws, "dashboard-preview", id],
+    queryFn: () => dashboardsApi.getPreview(ws, id),
+    enabled: !!ws && !!id,
+    retry: false,
+    refetchInterval: (query) =>
+      query.state.status === "error" ? false : PREVIEW_FOLLOW_MS,
+  });
+}
+
 /** The JSON Schema of a dashboard file. It changes only with the server. */
 export function useDashboardSchema() {
   return useQuery({

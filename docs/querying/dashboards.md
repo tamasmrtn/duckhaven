@@ -174,6 +174,11 @@ person who made it, exactly as a dashboard would, so it shows the numbers that p
 viewers will. Only they can see it. They replace its file as they edit it, and it expires two hours after it was last
 changed or run. An AI agent connected over [MCP](../ai/mcp-server.md#dashboards) can preview a file the same way.
 
+The web app shows a preview on a page of its own, at `/{workspace}/dashboard-previews/{id}`, for a tool that sends the
+file from where it is edited. The page runs the file as you and follows it: a couple of seconds after the preview's
+file is replaced, it shows the new file and runs it again. Nothing on the page edits the file. When the preview
+expires, the page keeps showing the file as it last was, and says so.
+
 ## Showing an aggregate to people who may not read the rows
 
 Widgets always run as the viewer, so a dashboard cannot show people a total computed from rows they may not read. When

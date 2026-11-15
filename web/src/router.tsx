@@ -162,6 +162,17 @@ const dashboardEditorRoute = createRoute({
   ),
 });
 
+const dashboardPreviewRoute = createRoute({
+  getParentRoute: () => wsRoute,
+  path: "/dashboard-previews/$preview",
+  // A file `dh dashboard preview` holds, followed as it is saved. Its own
+  // chunk, with the editor's preview it shows.
+  component: lazyRouteComponent(
+    () => import("@/features/dashboards/editor/DashboardPreviewPage"),
+    "DashboardPreviewPage",
+  ),
+});
+
 const catalogRoute = createRoute({
   getParentRoute: () => wsRoute,
   path: "/catalog",
@@ -337,6 +348,7 @@ export const routeTree = rootRoute.addChildren([
     dashboardsRoute,
     dashboardRoute,
     dashboardEditorRoute,
+    dashboardPreviewRoute,
     catalogRoute,
     catalogDetailRoute,
     schemaDetailRoute,

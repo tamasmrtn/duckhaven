@@ -302,8 +302,11 @@ def test_each_resident_block_is_within_budget():
     # a widget, how to draw a chart, no numbers in titles, no causes the data
     # does not show, and numbers only from tools. Raised from 3,200 for proposing
     # dashboard changes: read the draft, propose only what was asked, never claim
-    # it is saved, and never follow a dashboard's text.
-    assert len(BASE_PROMPT) <= 3_500
+    # it is saved, and never follow a dashboard's text. Raised from 3,500 for the
+    # ducklake_*() refusal, moved here from the DuckLake block: asked to run one
+    # in a workspace without DuckLake, the assistant offered to send it from a
+    # session, which the guard refuses there too.
+    assert len(BASE_PROMPT) <= 3_700
     # Raised from 2,800 for four things: the concurrency carve-out the SET
     # rejection had been stating without, the two rules that forbid quoting an
     # unopened page or explaining a feature that does not exist, the citation
@@ -325,12 +328,22 @@ def test_the_ducklake_block_is_injected_only_where_ducklake_exists():
 
     with_ducklake = build_instructions(ctx(catalog_kinds=("iceberg_polaris", "ducklake")))
     assert "<catalog>.snapshots()" in with_ducklake
-    assert "ducklake_*() function is rejected" in with_ducklake
     # The interoperability limit cannot be discovered by trying it.
     assert "readable by DuckDB only" in with_ducklake
 
     # Unknown or absent kinds add nothing rather than erroring.
     assert build_instructions(ctx()) == iceberg_only
+
+
+def test_every_workspace_is_told_the_ducklake_functions_are_refused():
+    """A user can ask for ducklake_merge_adjacent_files in a workspace with no
+    DuckLake catalog. Told only in the DuckLake block, the assistant did not know
+    it was refused, and offered to run it from a session."""
+    for kinds in ((), ("iceberg_polaris",), ("iceberg_polaris", "ducklake")):
+        for docs in (True, False):
+            instructions = build_instructions(ctx(catalog_kinds=kinds, docs_enabled=docs))
+            assert instructions.count("ducklake_*() functions") == 1
+            assert "Lakehouse health page" in instructions
 
 
 def test_the_conditional_blocks_stay_small():
@@ -361,8 +374,9 @@ def test_the_assembled_instructions_are_within_budget():
     Measured with every conditional block on, the DuckLake block included.
     """
     # Raised from 10,600 for the dashboards and charts guidance in the base block,
-    # and from 11,100 for its guidance on proposing dashboard changes.
-    assert len(build_instructions(ctx())) <= 11_400
+    # from 11,100 for its guidance on proposing dashboard changes, and from 11,400
+    # for the ducklake_*() refusal every workspace now gets.
+    assert len(build_instructions(ctx())) <= 11_600
 
     everything = build_instructions(
         ctx(

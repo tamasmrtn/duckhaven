@@ -600,6 +600,8 @@ file and keeps the old one as a revision.
 | `DELETE …/dashboards/{dashboard}/draft` | Discard the draft (**204**). `writer` |
 | `POST …/dashboards/{dashboard}/publish` | Publish the draft, with `base_version` and an optional `message`. `owner` |
 | `GET …/dashboards/{dashboard}/source` | The file as YAML. `?draft=true` for the draft |
+| `PUT …/dashboards/{dashboard}/source` | [Apply a file from git](#applying-a-file-from-git), creating the dashboard if need be (**201**). `writer`; `owner` to publish or adopt |
+| `DELETE …/dashboards/{dashboard}/source` | Detach it from git, so it is edited in DuckHaven again (**204**). `owner` |
 | `GET …/dashboards/{dashboard}/revisions` | Every publish, newest first, as a page |
 | `GET …/dashboards/{dashboard}/revisions/{revision}` | One revision and its file, numbered from 1 |
 | `POST …/dashboards/{dashboard}/run` | [Run it](#running-a-dashboard) as you, streaming each widget's data. `writer` for the draft |
@@ -642,8 +644,65 @@ A file's `name` is the dashboard's name, unique in the workspace. Saving a new `
 published at once, and a published one when it is next published. A taken name is **409** `dashboard_name_taken`.
 The old name keeps working in every path until another dashboard takes it.
 
-A dashboard managed in git (`managed: true`) is changed only by applying its file. Every write here answers **409**
-`managed_dashboard`.
+A dashboard managed in git (`managed: true`) is changed only by [applying its file](#applying-a-file-from-git). Every
+other write answers **409** `managed_dashboard`.
+
+### Applying a file from git
+
+`PUT …/dashboards/{dashboard}/source` takes the dashboard file as the request body, byte for byte as it is in git, and
+keeps it that way, comments included. It creates the dashboard, or replaces its file, and the dashboard is then managed
+in git. [Manage dashboards in git](../querying/manage-dashboards-in-git.md) sets this up in CI.
+
+```bash
+curl -X PUT -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/yaml" \
+  --data-binary @sales-overview.dashboard.yml \
+  "$DUCKHAVEN_URL/api/workspaces/analytics/dashboards/sales-overview/source?publish=true&source_id=acme/bi"
+```
+
+Every query parameter is optional:
+
+| Parameter | What it does |
+|---|---|
+| `publish` | Publish the file, after the checks a [publish](#dashboards) makes. Without it the file becomes the draft, and readers keep the published file. Needs `owner`, except on a dry run |
+| `dry_run` | Make every check the apply makes, and answer the same way, without changing anything |
+| `source_id` | Where the file lives, such as `acme/bi` for a repository. Kept when left out |
+| `source_ref` | The commit the file comes from, such as `$GITHUB_SHA` |
+| `expected_hash` | The `spec_hash` the dashboard's newest file must have: the draft, or the published file when there is no draft. A dry run's `current_hash` is that hash |
+| `force` | Apply even when `expected_hash` or `source_id` does not match |
+| `adopt` | Manage a dashboard made in DuckHaven from this file. Needs `owner`, except on a dry run |
+
+The answer says what the apply did, or would do on a dry run:
+
+- `action` is `create`, `update` or `unchanged`. A file the same as the dashboard's, byte for byte, changes nothing,
+  not even `source_ref`.
+- `changes` lists what changes, each a `path` and a `change` (`added`, `removed` or `changed`). A path is a top-level
+  key such as `title`, `parameters.<name>`, `widgets.<id>`, `layout` when widgets move within or between rows, or
+  `source_text` when only the YAML's text changes, such as a comment. With `publish` it compares with the published
+  file, which readers see; otherwise with the newest file.
+- `name` is the dashboard's name once applied, and `renamed_from` its old name when this apply renames it.
+- `published` and `adopted` say whether the apply publishes the file, and whether it took over a dashboard made in
+  DuckHaven.
+- `current_hash` is the newest file's `spec_hash` before the apply, and `spec_hash` the applied file's.
+- `warnings` are the file's warnings, and `dashboard` the dashboard once applied: null on a dry run.
+
+The path names the dashboard. One that does not exist is created under the file's `name`, which must match it, with
+**201**. A file with a new `name` renames the dashboard when it is published, as a draft saved in DuckHaven does, and
+the old name keeps working.
+
+The apply is refused, and nothing changes, when:
+
+- the file is not valid, or with `publish`, cannot be published: **422** `invalid_dashboard`, with every problem and
+  its line under `details.diagnostics`
+- a dashboard of that name was made in DuckHaven and `adopt` is not set: **409** `dashboard_name_taken`
+- the newest file's hash is not `expected_hash`, or the dashboard is applied from another `source_id`, and `force`
+  is not set: **409** `source_changed`, with the hash under `details.current_hash`
+
+A dashboard managed in git also has `source_id`, `source_ref`, and `source_hash`, the sha256 of the file's bytes as
+`sha256sum` prints it. Compare that with the file in git to check the server has the file you expect.
+
+`DELETE …/dashboards/{dashboard}/source` detaches the dashboard from git. It keeps its files, draft and revisions, and
+forgets `source_id`, `source_ref` and `source_hash`, so writers can edit its draft in DuckHaven again. A dashboard not
+managed in git is left as it is.
 
 ### Running a dashboard
 

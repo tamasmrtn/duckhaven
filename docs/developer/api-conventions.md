@@ -63,6 +63,22 @@ instead: checking a dashboard file without storing it is
 `POST /workspaces/{workspace}/dashboard-validations`, not `POST .../dashboards/validate`,
 which a dashboard called `validate` would shadow.
 
+### A resource's file: `/source`
+
+A resource people keep as a file in git has that file as the sub-resource `/source`. `GET`
+reads it, `PUT` applies a file from git, and `DELETE` detaches the resource from git.
+Dashboards are the one such resource: `/workspaces/{workspace}/dashboards/{dashboard}/source`.
+
+Two things differ from the rest of the API, on purpose:
+
+- **`PUT` takes the file itself as the body**, whatever its content type, and keeps its
+  bytes. A JSON wrapper would re-encode it, losing its comments and the lines a diagnostic
+  points at. The semantic import route reads its body raw for the same reason.
+- **`PUT` answers with what the apply changed, not the file.** It creates the resource when
+  the path names none (`201`), and `dry_run=true` makes the same checks and changes nothing,
+  so CI can show a plan before it applies. `DELETE` removes the link to git, not the
+  resource or its file.
+
 ## Identifiers
 
 **The rule:** a path parameter is named for the **singular of the collection segment

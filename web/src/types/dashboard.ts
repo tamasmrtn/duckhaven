@@ -99,6 +99,8 @@ export interface Dashboard extends DashboardSummary {
   spec_version: number;
   source_ref: string | null;
   client: string | null;
+  /** The name of the person who made the last change. */
+  updated_by_name: string | null;
   created_by: string | null;
   published_by: string | null;
   refs: DashboardRef[];

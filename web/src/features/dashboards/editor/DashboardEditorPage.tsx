@@ -31,6 +31,7 @@ import { useDashboard, useDashboardSchema } from "@/queries/dashboards";
 import type { Dashboard, Diagnostic } from "@/types/dashboard";
 import { relativeTime } from "@/utils/relativeTime";
 import { DashboardBadges } from "../DashboardBadges";
+import { McpDraftBanner } from "../McpDraftBanner";
 import { useIsOwner } from "../useIsOwner";
 import {
   ConflictDialog,
@@ -394,6 +395,7 @@ function Editing({ ws, initial }: { ws: string; initial: Dashboard }) {
             </span>
           </Banner>
         )}
+        <McpDraftBanner dashboard={dashboard} />
         {managed ? (
           <Banner>
             <GitBranch className="size-3.5 shrink-0" aria-hidden />

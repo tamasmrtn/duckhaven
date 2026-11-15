@@ -174,6 +174,8 @@ async def test_a_proposal_made_before_an_edit_is_stale_and_overwrites_nothing(as
     assert resp.status_code == 409, resp.text
     assert resp.json()["error"] == "proposal_stale"
     assert resp.json()["details"]["current"]["version"] == edited.json()["version"]
+    named = edited.json()["updated_by_name"]
+    assert named and resp.json()["details"]["current"]["updated_by_name"] == named
     draft = (await as_owner.get(f"/workspaces/{ws}/dashboards/{NAME}?draft=true")).json()
     assert draft["spec_hash"] == edited.json()["spec_hash"]
 

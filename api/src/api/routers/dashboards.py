@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Literal
@@ -23,10 +24,12 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from api.config import settings
 from api.deps import _bearer, get_current_user, get_db, get_polaris_client, get_session_factory
 from api.models.catalog import Catalog
 from api.models.dashboard import (
     Dashboard,
+    DashboardDraftSave,
     DashboardPreview,
     DashboardProposal,
     DashboardRef,
@@ -233,16 +236,120 @@ def _out(row: Dashboard, *, draft: bool = False) -> DashboardOut:
     )
 
 
-def _stamp(row: Dashboard, user: User, request: Request) -> None:
-    """Record who made a change, and how it arrived: the web app, the CLI or the API."""
+async def _named(db: AsyncSession, out: DashboardOut) -> DashboardOut:
+    """``out`` with the name of the person who made the last change, as saved queries have."""
+    if out.updated_by is not None:
+        out.updated_by_name = await db.scalar(select(User.name).where(User.id == out.updated_by))
+    return out
+
+
+#: The User-Agent name of DuckHaven's own MCP server, which calls this API for an agent.
+MCP_SERVER = "duckhaven-mcp"
+#: The header in which the MCP server names the agent's client, such as
+#: ``claude-code/2.1.0``. Its own User-Agent names the MCP server.
+MCP_CLIENT_HEADER = "x-duckhaven-mcp-client"
+
+
+def _provenance(request: Request) -> tuple[str, str | None]:
+    """How a change arrived, and the client that sent it as ``name/version``."""
     name, version = parse_user_agent(request.headers.get("user-agent"))
     client = f"{name}/{version}" if name and version else name
     if _bearer(request.headers.get("authorization")) is None:
-        via = "ui"  # a session cookie: the web app
-    else:
-        via = "cli" if name == "duckhaven-cli" else "rest"
+        return "ui", client  # a session cookie: the web app
+    if name == "duckhaven-cli":
+        return "cli", client
+    if name == MCP_SERVER:
+        return "mcp", request.headers.get(MCP_CLIENT_HEADER) or client
+    return "rest", client
+
+
+def _stamp(row: Dashboard, user: User, request: Request) -> None:
+    """Record who made a change, and how it arrived: the web app, the CLI, MCP or the API."""
+    via, client = _provenance(request)
     row.updated_by, row.updated_via, row.client = user.id, via, client[:255] if client else None
     row.updated_at = datetime.now(UTC)
+
+
+#: The window the hourly limit on drafts saved over MCP counts saves in.
+DRAFT_SAVES_WINDOW = timedelta(hours=1)
+
+
+def _quota_exceeded(quota: str, limit: int, message: str) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+        detail={"error": "draft_quota_exceeded", "detail": message, "quota": quota, "limit": limit},
+    )
+
+
+async def _assert_draft_quota(db: AsyncSession, ctx: _Context, row: Dashboard | None) -> None:
+    """Refuse a draft saved over MCP past the person's limits in the workspace.
+
+    ``row`` is the dashboard being saved, or None for a new one. A dashboard
+    whose draft this person last saved over MCP is counted already, so saving
+    it again takes only an hourly save."""
+    now = datetime.now(UTC)
+    mine = (
+        DashboardDraftSave.workspace_id == ctx.workspace.id,
+        DashboardDraftSave.user_id == ctx.user.id,
+        DashboardDraftSave.saved_at > now - DRAFT_SAVES_WINDOW,
+    )
+    saves, oldest = (
+        await db.execute(select(func.count(), func.min(DashboardDraftSave.saved_at)).where(*mine))
+    ).one()
+    per_hour = settings.mcp_dashboard_draft_saves_per_hour
+    if saves >= per_hour:
+        if oldest.tzinfo is None:  # SQLite hands back naive UTC
+            oldest = oldest.replace(tzinfo=UTC)
+        wait = (oldest + DRAFT_SAVES_WINDOW - now).total_seconds()
+        minutes = max(1, math.ceil(wait / 60))
+        raise _quota_exceeded(
+            "saves_per_hour",
+            per_hour,
+            f"You saved {saves} dashboard drafts over MCP in the last hour, the most allowed. "
+            f"Try again in {minutes} minutes, or save it in DuckHaven.",
+        )
+    counted = (
+        row is not None
+        and row.has_draft
+        and row.updated_via == "mcp"
+        and row.updated_by == ctx.user.id
+    )
+    if counted:
+        return
+    drafts = await db.scalar(
+        select(func.count())
+        .select_from(Dashboard)
+        .where(
+            Dashboard.workspace_id == ctx.workspace.id,
+            Dashboard.updated_by == ctx.user.id,
+            Dashboard.updated_via == "mcp",
+            Dashboard.draft_spec.is_not(None),
+        )
+    )
+    limit = settings.mcp_dashboard_drafts_per_user
+    if drafts >= limit:
+        raise _quota_exceeded(
+            "drafts",
+            limit,
+            f"You have drafts of {drafts} dashboards saved over MCP in this workspace, the "
+            "most allowed. Publish or discard some of them first.",
+        )
+
+
+async def _record_draft_save(db: AsyncSession, ctx: _Context, row: Dashboard) -> None:
+    """Count a draft saved over MCP, and forget this person's saves older than the window."""
+    now = datetime.now(UTC)
+    await db.execute(
+        delete(DashboardDraftSave).where(
+            DashboardDraftSave.user_id == ctx.user.id,
+            DashboardDraftSave.saved_at <= now - DRAFT_SAVES_WINDOW,
+        )
+    )
+    db.add(
+        DashboardDraftSave(
+            workspace_id=ctx.workspace.id, user_id=ctx.user.id, dashboard_id=row.id, saved_at=now
+        )
+    )
 
 
 async def _follow(db: AsyncSession, row: Dashboard, spec: DashboardSpec) -> None:
@@ -364,8 +471,12 @@ async def create_dashboard(
 
     An invalid file is a 422 `invalid_dashboard` listing every problem under
     `details.diagnostics`. Problems only the workspace can find, such as a
-    metric that does not exist, do not stop a draft; publishing checks them."""
+    metric that does not exist, do not stop a draft; publishing checks them.
+    Over MCP, a 429 `draft_quota_exceeded` past the limits on drafts."""
     spec = _read(body).spec
+    over_mcp = _provenance(request)[0] == "mcp"
+    if over_mcp:
+        await _assert_draft_quota(db, ctx, None)
     row = Dashboard(
         workspace_id=ctx.workspace.id,
         status="draft",
@@ -380,9 +491,11 @@ async def create_dashboard(
     db.add(row)
     await db.flush()
     await store.set_refs(db, row, "draft", spec)
+    if over_mcp:
+        await _record_draft_save(db, ctx, row)
     await db.commit()
     await db.refresh(row)
-    return _out(row, draft=True)
+    return await _named(db, _out(row, draft=True))
 
 
 @router.get("/workspaces/{workspace}/dashboards/{dashboard}", response_model=DashboardOut)
@@ -397,7 +510,7 @@ async def get_dashboard(
     A dashboard never published shows its draft. `refs` lists what the file
     reads, and `managed` says whether it is managed in git."""
     _assert_may_see_drafts(ctx, draft)
-    return _out(await _dashboard(db, ctx, dashboard), draft=draft)
+    return await _named(db, _out(await _dashboard(db, ctx, dashboard), draft=draft))
 
 
 @router.patch("/workspaces/{workspace}/dashboards/{dashboard}", response_model=DashboardOut)
@@ -414,15 +527,20 @@ async def update_dashboard(
     changed since, the answer is 409 `dashboard_conflict` with the current draft
     under `details.current`. A new `name` in the file renames the dashboard when
     it is published, or at once if it never was, and the old name keeps
-    working."""
+    working. Over MCP, a 429 `draft_quota_exceeded` past the limits on drafts."""
     row = await _dashboard(db, ctx, dashboard)
     store.assert_writable(row)
     _assert_base(row, body.base_version)
     spec = _read(body).spec
+    over_mcp = _provenance(request)[0] == "mcp"
+    if over_mcp:
+        await _assert_draft_quota(db, ctx, row)
     await _save_draft(db, row, spec, body.source_text, ctx.user, request)
+    if over_mcp:
+        await _record_draft_save(db, ctx, row)
     await db.commit()
     await db.refresh(row)
-    return _out(row, draft=True)
+    return await _named(db, _out(row, draft=True))
 
 
 @router.delete("/workspaces/{workspace}/dashboards/{dashboard}", status_code=204)
@@ -489,7 +607,7 @@ async def publish_dashboard(
     store.assert_writable(row)
     _assert_base(row, body.base_version)
     if row.draft_spec is None:
-        return _out(row)
+        return await _named(db, _out(row))
     loaded = _loaded(row.draft_spec, row.draft_source_text)
     await _assert_publishable(db, ctx, loaded)
     row.version += 1
@@ -497,7 +615,7 @@ async def publish_dashboard(
     await _publish(db, ctx, row, loaded.spec, row.draft_source_text, body.message)
     await db.commit()
     await db.refresh(row)
-    return _out(row)
+    return await _named(db, _out(row))
 
 
 async def _assert_publishable(db: AsyncSession, ctx: _Context, loaded: loader.Loaded) -> None:
@@ -746,7 +864,7 @@ async def apply_dashboard_source(
     if dry_run:
         return DashboardApplyOut(**plan, dashboard=None)
     if action == "unchanged":
-        return DashboardApplyOut(**plan, dashboard=_out(row, draft=not publish))
+        return DashboardApplyOut(**plan, dashboard=await _named(db, _out(row, draft=not publish)))
 
     if row is None:
         row = Dashboard(
@@ -772,7 +890,7 @@ async def apply_dashboard_source(
         await store.set_refs(db, row, "draft", spec)
     await db.commit()
     await db.refresh(row)
-    return DashboardApplyOut(**plan, dashboard=_out(row, draft=not publish))
+    return DashboardApplyOut(**plan, dashboard=await _named(db, _out(row, draft=not publish)))
 
 
 @router.delete("/workspaces/{workspace}/dashboards/{dashboard}/source", status_code=204)
@@ -1308,7 +1426,7 @@ async def accept_dashboard_proposal(
     proposal.status, proposal.decided_at = "accepted", datetime.now(UTC)
     await db.commit()
     await db.refresh(row)
-    return _out(row, draft=True)
+    return await _named(db, _out(row, draft=True))
 
 
 @router.delete(

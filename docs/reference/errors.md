@@ -146,6 +146,7 @@ Each message has an entry in [Troubleshoot sign-in and access](../access/trouble
 | `proposal_decided` | 409 | The dashboard proposal was accepted or discarded already. |
 | `proposal_expired` | 410 | The dashboard proposal expired a day after it was made. Ask for the change again. |
 | `proposal_stale` | 409 | The dashboard changed after the proposal was made, so accepting it would undo that change. `details.current` has the current draft. Ask for the change again. |
+| `draft_quota_exceeded` | 429 | A dashboard draft saved over [MCP](../ai/mcp-server.md#who-saved-a-draft-and-the-limits) is past a limit. `details.quota` is `drafts` when you have drafts of too many dashboards (publish or discard some), or `saves_per_hour` when you saved too many in the last hour (the message says when to try again). `details.limit` is the limit. |
 
 ## Administration
 

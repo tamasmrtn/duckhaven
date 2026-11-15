@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 
+from api.config import settings
 from api.services.assistant import charts
 from api.services.dashboards.spec import json_schema
 
@@ -179,6 +180,13 @@ def schema() -> str:
 def build_dashboard(workspace: str, topic: str, audience: str | None = None) -> str:
     """Build a dashboard about a topic: find the metrics, write the file, check it and try it."""
     who = f" for {audience}" if audience else ""
+    last = (
+        "Save it as a draft with `save_dashboard_draft`, and give me its name with one line\n"
+        "   per widget on what it shows. Do not publish it: I will review the draft."
+        if settings.mcp_allow_dashboard_drafts
+        else "Give me the file, with one line per widget on what it shows. Nothing is saved: I\n"
+        "   will create it in DuckHaven."
+    )
     return f"""\
 Build a DuckHaven dashboard about {topic}{who}, in the workspace `{workspace}`.
 
@@ -191,8 +199,7 @@ Build a DuckHaven dashboard about {topic}{who}, in the workspace `{workspace}`.
 5. Check it with `validate_dashboard` and fix every error.
 6. Try it with `preview_dashboard` and fix what the lint says. Check that each widget's rows
    answer what its title says.
-7. Give me the file, with one line per widget on what it shows. Nothing is saved: I will
-   create it in DuckHaven.
+7. {last}
 """
 
 

@@ -51,6 +51,7 @@ import {
   useAutoRefresh,
 } from "./present";
 import { useDashboardRun, type RunView } from "./useDashboardRun";
+import { McpDraftBanner } from "./McpDraftBanner";
 import { useIsOwner } from "./useIsOwner";
 import type { WidgetContext } from "./widgets/WidgetChrome";
 import { WidgetCard } from "./widgets/WidgetCard";
@@ -266,6 +267,7 @@ function Banners({
           </span>
         </Banner>
       )}
+      {(dashboard.draft || isOwner) && <McpDraftBanner dashboard={dashboard} />}
       <RunBanners run={run} />
     </>
   );

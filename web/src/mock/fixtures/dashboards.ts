@@ -465,6 +465,7 @@ function dashboard(
     spec_version: 1,
     source_ref: null,
     client: null,
+    updated_by_name: "Marton",
     created_by: "u-1",
     published_by: "u-1",
     refs: [],

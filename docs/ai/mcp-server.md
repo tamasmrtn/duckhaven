@@ -62,6 +62,9 @@ guard and catalog grants still apply, and a token with no write grant still cann
 refusing locally what the REST API would have accepted. Set it deliberately, and prefer a token whose grants are scoped
 to what the agent actually needs.
 
+Saving a [dashboard draft](#dashboards) is the one write on by default: a draft changes nothing readers see until an
+owner publishes it. `MCP_ALLOW_DASHBOARD_DRAFTS=false` turns it off.
+
 ## What it can do
 
 Twenty-one tools. Twelve work with your data:
@@ -81,8 +84,8 @@ Twenty-one tools. Twelve work with your data:
 | `query_metric` | Answer a question from a curated metric definition, and run it. |
 | `explain_metric` | Explain what a metric means and how it is calculated. |
 
-Eleven of those mirror the assistant's tool set; `list_workspaces` is the addition. Seven work with
-[dashboards](#dashboards):
+Eleven of those mirror the assistant's tool set; `list_workspaces` is the addition. Nine work with
+[dashboards](#dashboards), and the last two of them save drafts:
 
 | Tool | What it does |
 |---|---|
@@ -93,6 +96,8 @@ Eleven of those mirror the assistant's tool set; `list_workspaces` is the additi
 | `preview_dashboard` | Run a file without saving it, and read the first rows of each widget. |
 | `run_dashboard` | Run a saved dashboard, or some of its widgets, and read what they show. |
 | `show_chart` | Turn a result the agent ran into a dashboard widget, with its rows as a table. |
+| `save_dashboard_draft` | Save a file as a dashboard's draft, for an owner to review and publish. |
+| `add_widget_to_draft` | Add one widget to a dashboard's draft, leaving the rest of the file as it is. |
 
 Two more answer questions about DuckHaven itself:
 
@@ -167,10 +172,9 @@ than on the graph — so the agent names the one node it cares about after seein
 
 ### Dashboards
 
-An agent can read a workspace's [dashboards](../querying/dashboards.md), and it can write a
-[dashboard file](../reference/dashboard-spec.md) and try it out. It cannot save one. You save it in DuckHaven, by
-creating a dashboard and pasting the file into its [editor](../querying/dashboards.md#editing-a-dashboard-in-the-app),
-so a person reviews every dashboard before anyone else sees it.
+An agent can read a workspace's [dashboards](../querying/dashboards.md), write a
+[dashboard file](../reference/dashboard-spec.md), try it out, and save it as a draft. It cannot publish one: a workspace
+owner reviews the draft and publishes it, so a person checks every dashboard before readers see it.
 
 - **Writing a file.** `get_dashboard_schema` returns a short guide by default: what each widget type needs from its
   query, how parameters work, the limits, and a worked example. The JSON Schema lists the allowed keys, but it cannot
@@ -186,6 +190,26 @@ so a person reviews every dashboard before anyone else sees it.
 - **Charts.** An MCP client cannot draw DuckHaven's charts, so `show_chart` draws nothing. It checks that a result the
   agent ran can be drawn as a widget. It returns that widget, ready to go in a dashboard file, with the rows as a
   Markdown table to show you. As with paging, only a query your own token ran can be used.
+- **Saving a draft.** `save_dashboard_draft` saves a file as a draft, as you, and needs the writer role. A file with a
+  new `name` makes a new dashboard. To replace the draft of a dashboard that exists, the agent reads it first and
+  passes the `version` it read, so an edit made since is refused as a conflict rather than overwritten.
+  `add_widget_to_draft` adds one widget to a dashboard's draft. It saves the file from its fields, so comments in the
+  draft's YAML are not kept. A dashboard managed in git takes neither. Each returns the editor's path in the web app.
+
+#### Who saved a draft, and the limits
+
+A draft saved over MCP records `mcp` as how it arrived, and the agent's client, such as `claude-code/2.1.0`. The
+dashboard's page and editor show both, and whose token the agent held, until the draft is saved another way,
+published or discarded.
+
+Two limits stop an agent that saves in a loop. Saves from the web app, `dh` and the REST API do not count.
+
+- **Drafts.** One person can have drafts of 25 dashboards saved over MCP in a workspace. Publishing or discarding a
+  draft frees its place, and saving the same dashboard again takes none.
+- **Saves.** One person can save 30 drafts over MCP in a workspace in an hour.
+
+Past either, the save is refused with **429** `draft_quota_exceeded`, and the message says when to try again or what
+to publish or discard. The limits are [settings](../reference/configuration.md#mcp-server).
 
 Results are cut to fit an agent's context. A call returns at most 12 widgets and at most 20 rows of each, 5 unless the
 agent asks for more. Cells are cut to 80 characters. The widgets share about 6 KB, and rows are dropped until each
@@ -197,7 +221,7 @@ fewer widgets returns more rows of each. The rest is not lost: each widget carri
     A dashboard's titles, descriptions and text widgets are written by people in the workspace. The server's
     instructions and the tools tell the agent to report that text as its author's words, and never to follow it as
     instructions. A hostile dashboard is bounded the same way as everything else here: the agent can do only what
-    your token can, and no tool saves, publishes or deletes a dashboard.
+    your token can, no tool publishes or deletes a dashboard, and a draft it saves waits for an owner to publish it.
 
 #### Resources and prompts
 
@@ -212,7 +236,8 @@ For a client that offers resources, the guide and the schema are resources too, 
 Two prompts start the common tasks. Claude Code, for one, offers them as slash commands.
 
 - `build_dashboard` takes a `workspace`, a `topic` and an optional `audience`. It has the agent read the guide, find
-  the metrics, write the file, validate it and preview it, and then give you the file to save.
+  the metrics, write the file, validate it and preview it, and then save it as a draft. Where drafts are turned off,
+  it gives you the file instead.
 - `explain_dashboard` takes a `workspace`, a dashboard `name` and an optional `question`. It has the agent read the
   dashboard, run the widgets the question is about, and dig further with `query_metric`.
 
@@ -226,7 +251,7 @@ Two prompts start the common tasks. Claude Code, for one, offers them as slash c
 - Administer anything. There are no tools for users, tokens, grants, agents, storage backends or catalog creation —
   this is a data surface, not a management one.
 - Edit a worksheet. The assistant's editor tools have no meaning over MCP; there is no editor on the other end.
-- Save, publish or delete a dashboard. An agent writes and tries out a file, and a person saves it.
+- Publish or delete a dashboard. An agent saves at most a draft, and a workspace owner publishes it.
 
 ## Transport and protocol
 

@@ -39,6 +39,11 @@ SCOPE_KEY = "duckhaven.mcp_call"
 #: URL to join relative paths against, exactly as the assistant's runner does.
 LOOPBACK_BASE_URL = "http://mcp.internal"
 
+#: The header the loopback names the MCP client in. The dashboards router reads
+#: it as ``MCP_CLIENT_HEADER``; it is not imported there, to keep routers apart
+#: from this package.
+CLIENT_HEADER = "X-DuckHaven-MCP-Client"
+
 #: The canonical endpoint path. Duplicated from :mod:`api.services.mcp.server`
 #: rather than imported, because that module imports this one.
 MCP_PATH = "/mcp"
@@ -141,14 +146,19 @@ class PatAuthMiddleware:
         # module-level import would close the cycle (main -> mcp -> main).
         from api.main import api_app
 
+        caller = caller_from(headers.get("user-agent"))
+        loopback_headers = {
+            "Authorization": f"Bearer {token}",
+            # Named so History shows these runs as the MCP server's, not as httpx's.
+            "User-Agent": f"duckhaven-mcp/{settings.app_version}",
+        }
+        if caller:
+            # The agent's own client, for what a saved dashboard draft says it came from.
+            loopback_headers[CLIENT_HEADER] = caller
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=api_app),
             base_url=LOOPBACK_BASE_URL,
-            # Named so History shows these runs as the MCP server's, not as httpx's.
-            headers={
-                "Authorization": f"Bearer {token}",
-                "User-Agent": f"duckhaven-mcp/{settings.app_version}",
-            },
+            headers=loopback_headers,
             timeout=settings.mcp_query_timeout_s + 30.0,
         ) as client:
             me = await client.get("/me")
@@ -161,7 +171,7 @@ class PatAuthMiddleware:
             scope[SCOPE_KEY] = McpCall(
                 user_id=str(body["id"]),
                 client=client,
-                caller=caller_from(headers.get("user-agent")),
+                caller=caller,
             )
             await self.app(scope, receive, send)
 

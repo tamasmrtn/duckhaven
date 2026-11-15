@@ -1032,3 +1032,59 @@ async def test_a_query_to_draw_comes_with_its_rows_uncut():
     assert rows.calls[0].request.url.params["limit"] == "1000"
     assert len(out["rows"]) == 300 and out["total"] == 300
     assert out["sql"] == "SELECT 1" and out["row_count"] == 300 and out["columns"] == ["v"]
+
+
+@respx.mock
+async def test_a_draft_is_read_uncut_or_is_none_when_there_is_no_dashboard():
+    route = respx.get(f"{BASE}/workspaces/ws/dashboards/sales").mock(
+        return_value=httpx.Response(200, json={"name": "sales", "version": 3})
+    )
+    respx.get(f"{BASE}/workspaces/ws/dashboards/gone").mock(
+        return_value=httpx.Response(404, json={"error": "not_found", "detail": "gone"})
+    )
+    async with httpx.AsyncClient(base_url=BASE) as client:
+        gateway = _gateway(client=client)
+        assert await gateway.dashboard_draft("sales") == {"name": "sales", "version": 3}
+        assert await gateway.dashboard_draft("gone") is None
+    assert route.calls[0].request.url.params["draft"] == "true"
+
+
+@respx.mock
+async def test_a_draft_is_created_or_saved_over_the_version_it_was_read_at():
+    created = respx.post(f"{BASE}/workspaces/ws/dashboards").mock(
+        return_value=httpx.Response(201, json={"name": "new"})
+    )
+    saved = respx.patch(f"{BASE}/workspaces/ws/dashboards/sales").mock(
+        return_value=httpx.Response(200, json={"name": "sales"})
+    )
+    async with httpx.AsyncClient(base_url=BASE) as client:
+        gateway = _gateway(client=client)
+        await gateway.save_dashboard_draft("version: 1\n")
+        await gateway.save_dashboard_draft({"version": 1}, name="sales", base_version=3)
+    assert json.loads(created.calls[0].request.content) == {"source_text": "version: 1\n"}
+    assert json.loads(saved.calls[0].request.content) == {"spec": {"version": 1}, "base_version": 3}
+
+
+@respx.mock
+async def test_a_refused_draft_says_nothing_was_saved_and_why():
+    respx.post(f"{BASE}/workspaces/ws/dashboards").mock(
+        return_value=httpx.Response(
+            422,
+            json={
+                "error": "invalid_dashboard",
+                "message": "The dashboard file has 1 problem.",
+                "details": {"diagnostics": [{"path": "rows[0]", "message": "Too wide."}]},
+            },
+        )
+    )
+    async with httpx.AsyncClient(base_url=BASE) as client:
+        with pytest.raises(GatewayError) as caught:
+            await _gateway(client=client).save_dashboard_draft({})
+    assert str(caught.value) == "Nothing was saved: the file has problems:\n- rows[0]: Too wide."
+
+
+def test_translate_429_is_a_limit_with_its_reason():
+    err = _translate(
+        _status_error(429, {"error": "draft_quota_exceeded", "detail": "Try again in 12 minutes."})
+    )
+    assert str(err) == "Limit reached: Try again in 12 minutes."

@@ -175,6 +175,16 @@ Proposing needs `writer` for both you and the assistant's service account.
 The titles and text on a dashboard are written by anyone who can edit it. The assistant is told never to follow
 instructions in them, and a change it proposes is saved only when you accept it.
 
+### Drafts an agent saves over MCP
+
+An agent connected through the [MCP server](../ai/mcp-server.md#dashboards), such as Claude Code, can save a dashboard
+file as a draft, as the person whose token it holds. It cannot publish one. The draft waits for a workspace owner to
+review and publish it, as any draft does, and readers go on seeing the published version.
+
+The dashboard's page and its editor say that an agent saved the draft over MCP, which client it used, and as whom. The
+note goes once anyone saves the draft another way, or it is published or discarded. The number of drafts one person
+saves over MCP [is limited](../ai/mcp-server.md#who-saved-a-draft-and-the-limits).
+
 ### Drafts and publishing
 
 - **Save draft**, or Ctrl+S (⌘S on a Mac), saves the file as a draft. Readers go on seeing the published version, and

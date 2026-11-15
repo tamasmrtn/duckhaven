@@ -24,9 +24,9 @@ class RecordingGateway:
         self.calls: list[tuple[str, tuple, dict]] = []
         self.overrides = overrides
 
-    def _answer(self, name: str, *args, **kwargs):
-        self.calls.append((name, args, kwargs))
-        outcome = self.overrides.get(name, [])
+    def _answer(self, method: str, /, *args, **kwargs):
+        self.calls.append((method, args, kwargs))
+        outcome = self.overrides.get(method, [])
         if isinstance(outcome, Exception):
             raise outcome
         return outcome
@@ -672,3 +672,151 @@ async def test_the_dashboard_resource_reads_the_file_as_the_caller(gateways):
     gateways.overrides["dashboard_source"] = GatewayError("Not found (or not accessible): x")
     with pytest.raises(ResourceError, match="Not found"):
         await tools.read_dashboard_file(ctx(), "sales", "x")
+
+
+# --- dashboard drafts ---------------------------------------------------------
+
+
+def _board(name: str = "sales", version: int = 4, status: str = "draft") -> dict:
+    """A dashboard as the API returns it with ``?draft=true``."""
+    import yaml
+
+    return {
+        "name": name,
+        "title": "Sales",
+        "version": version,
+        "status": status,
+        "spec": yaml.safe_load(FILE),
+    }
+
+
+async def test_a_draft_of_a_new_dashboard_is_created(gateways):
+    gateways.overrides["dashboard_draft"] = None
+    gateways.overrides["save_dashboard_draft"] = _board(version=1)
+
+    out = await tools.save_dashboard_draft(ctx(), "acme", FILE)
+
+    assert gateways[0].workspace == "acme"
+    assert gateways[0].calls == [
+        ("dashboard_draft", ("sales",), {}),
+        ("save_dashboard_draft", (FILE,), {"name": None, "base_version": None}),
+    ]
+    assert out["saved"] is True and out["published"] is False
+    assert (out["dashboard"], out["version"]) == ("sales", 1)
+    assert out["path"] == "/acme/dashboards/sales/edit"
+    assert "an owner of the workspace reviews the draft and publishes it" in out["note"]
+
+
+async def test_a_draft_does_not_replace_one_it_has_not_read(gateways):
+    gateways.overrides["dashboard_draft"] = _board()
+
+    with pytest.raises(ToolError) as exc:
+        await tools.save_dashboard_draft(ctx(), "acme", FILE)
+
+    assert "exists, at version 4" in str(exc.value)
+    assert "get_dashboard(draft=true)" in str(exc.value)
+    assert [c[0] for c in gateways[0].calls] == ["dashboard_draft"]
+
+
+async def test_a_draft_replaces_the_version_it_was_read_at(gateways):
+    gateways.overrides["dashboard_draft"] = _board(name="sales-v2", status="published")
+    gateways.overrides["save_dashboard_draft"] = _board(name="sales-v2", version=5)
+
+    out = await tools.save_dashboard_draft(ctx(), "acme", FILE, base_version=4)
+
+    # The live name, should the file use one the dashboard had before.
+    assert gateways[0].calls[1] == (
+        "save_dashboard_draft",
+        (FILE,),
+        {"name": "sales-v2", "base_version": 4},
+    )
+    assert out["version"] == 5
+
+
+async def test_an_invalid_draft_is_refused_before_anything_is_sent(gateways):
+    broken = FILE.replace("title: Sales\n", "title: Sales\nwidht: 4\n")
+
+    with pytest.raises(ToolError) as exc:
+        await tools.save_dashboard_draft(ctx(), "acme", broken)
+
+    assert str(exc.value).startswith("Nothing was saved: the file has 1 problem.")
+    assert gateways == []
+
+
+@pytest.mark.parametrize(
+    ("call", "refusal"),
+    [
+        ("save_dashboard_draft", "Limit reached: Try again in 12 minutes."),
+        ("save_dashboard_draft", "Conflict: The dashboard changed since version 4."),
+        ("dashboard_draft", "Access denied: writer role required"),
+    ],
+)
+async def test_a_draft_the_server_refuses_says_why(gateways, call, refusal):
+    gateways.overrides["dashboard_draft"] = _board()
+    gateways.overrides[call] = GatewayError(refusal)
+
+    with pytest.raises(ToolError, match=refusal):
+        await tools.save_dashboard_draft(ctx(), "acme", FILE, base_version=4)
+
+
+async def test_drafts_are_refused_once_an_operator_turns_them_off(gateways, monkeypatch):
+    monkeypatch.setattr(settings, "mcp_allow_dashboard_drafts", False)
+
+    for call in (
+        tools.save_dashboard_draft(ctx(), "acme", FILE),
+        tools.add_widget_to_draft(ctx(), "acme", "sales", _kpi("orders")),
+    ):
+        with pytest.raises(ToolError, match="MCP_ALLOW_DASHBOARD_DRAFTS"):
+            await call
+    assert gateways == []
+
+
+async def test_a_widget_is_added_to_the_draft_it_was_read_from(gateways):
+    gateways.overrides["dashboard_draft"] = _board(version=4)
+    gateways.overrides["save_dashboard_draft"] = _board(version=5)
+
+    out = await tools.add_widget_to_draft(ctx(), "acme", "sales", _kpi("orders"), row=0)
+
+    name, (data,), kwargs = gateways[0].calls[1]
+    assert (name, kwargs) == ("save_dashboard_draft", {"name": "sales", "base_version": 4})
+    assert [w["id"] for w in data["rows"][0]["widgets"]] == ["revenue", "notes", "orders"]
+    assert out["version"] == 5
+
+
+async def test_a_widget_without_a_row_gets_one_of_its_own(gateways):
+    gateways.overrides["dashboard_draft"] = _board()
+    gateways.overrides["save_dashboard_draft"] = _board(version=5)
+
+    await tools.add_widget_to_draft(ctx(), "acme", "sales", _kpi("orders"))
+
+    data = gateways[0].calls[1][1][0]
+    assert [[w["id"] for w in r["widgets"]] for r in data["rows"]] == [
+        ["revenue", "notes"],
+        ["orders"],
+    ]
+
+
+@pytest.mark.parametrize(
+    ("widget", "row", "refusal"),
+    [
+        ("revenue", None, "The dashboard already has a widget 'revenue'."),
+        ("orders", 3, "There is no row 3; the dashboard has 1, from 0."),
+    ],
+)
+async def test_a_widget_that_does_not_fit_is_refused_with_the_reason(
+    gateways, widget, row, refusal
+):
+    gateways.overrides["dashboard_draft"] = _board()
+
+    with pytest.raises(ToolError) as exc:
+        await tools.add_widget_to_draft(ctx(), "acme", "sales", _kpi(widget), row=row)
+
+    assert str(exc.value) == refusal
+    assert [c[0] for c in gateways[0].calls] == ["dashboard_draft"]
+
+
+async def test_a_widget_for_a_dashboard_that_is_not_there_names_where_to_look(gateways):
+    gateways.overrides["dashboard_draft"] = None
+
+    with pytest.raises(ToolError, match="no dashboard 'nope'. Find one with list_dashboards"):
+        await tools.add_widget_to_draft(ctx(), "acme", "nope", _kpi("orders"))

@@ -46,7 +46,7 @@ from api.services.assistant.knowledge.loader import (
     read_page,
 )
 from api.services.assistant.knowledge.search import search_pages
-from api.services.dashboards import loader
+from api.services.dashboards import loader, proposals
 from api.services.dashboards.spec import json_schema
 from api.services.mcp import dashboards
 from api.services.mcp.auth import current_call
@@ -627,6 +627,116 @@ async def show_chart(ctx: Context, workspace: Workspace, query_id: str, widget: 
     }
 
 
+# ── Dashboard drafts ─────────────────────────────────────────────────────────
+
+
+def _assert_drafts_allowed() -> None:
+    """Refuse a draft save when the operator turned them off. Read on every call."""
+    if not settings.mcp_allow_dashboard_drafts:
+        raise ToolError(
+            "Saving dashboard drafts over MCP is turned off on this DuckHaven "
+            "(MCP_ALLOW_DASHBOARD_DRAFTS). Give the user the file to create in DuckHaven."
+        )
+
+
+def _saved(workspace: str, dashboard: dict) -> dict:
+    """What a saved draft says back: which dashboard, its version, and who publishes it."""
+    name = dashboard["name"]
+    return {
+        "saved": True,
+        "dashboard": name,
+        "title": dashboard["title"],
+        "version": dashboard["version"],
+        "published": dashboard["status"] == "published",
+        "path": f"/{workspace}/dashboards/{name}/edit",
+        "note": (
+            "Saved as a draft. Nothing is published: an owner of the workspace reviews "
+            "the draft and publishes it. Tell the user where it is, and that it waits "
+            "for them."
+        ),
+    }
+
+
+async def save_dashboard_draft(
+    ctx: Context, workspace: Workspace, file: DashboardFile, base_version: int | None = None
+) -> dict:
+    """Save a dashboard file as a draft, for a person to review and an owner to publish.
+
+    Nothing is published, and you cannot publish it. Check the file with
+    `validate_dashboard` and try it with `preview_dashboard` first. The file's
+    `name` says which dashboard: a new name makes a new dashboard. To replace
+    the draft of one that exists, read it with `get_dashboard(draft=true)` and
+    pass its `version` as `base_version`; if it changed since, the save is
+    refused rather than overwriting that change. To add one widget to someone
+    else's dashboard, use `add_widget_to_draft`. A dashboard managed in git
+    changes only through its file there. Saves are limited per hour and per
+    workspace; a refusal says when to try again. Needs the writer role.
+    """
+    _assert_drafts_allowed()
+    try:
+        loaded = loader.load(file) if isinstance(file, str) else loader.parse(file)
+    except loader.DashboardInvalid as exc:
+        raise ToolError(_problems(exc.diagnostics, outcome="Nothing was saved")) from exc
+    name = loaded.spec.name
+    gateway = _gateway(ctx, workspace)
+    try:
+        current = await gateway.dashboard_draft(name)
+        if current is not None and base_version is None:
+            raise ToolError(
+                f"A dashboard named {name!r} exists, at version {current['version']}. Read "
+                "its draft with get_dashboard(draft=true) and pass its version as "
+                "base_version to replace the draft, or give the file a new name to make "
+                "a new dashboard."
+            )
+        saved = await gateway.save_dashboard_draft(
+            file,
+            name=current["name"] if current is not None else None,
+            base_version=base_version,
+        )
+    except GatewayError as exc:
+        raise ToolError(str(exc)) from exc
+    return _saved(workspace, saved)
+
+
+async def add_widget_to_draft(
+    ctx: Context,
+    workspace: Workspace,
+    dashboard: str,
+    widget: dict,
+    row: Annotated[int | None, Field(ge=0)] = None,
+) -> dict:
+    """Add one widget to a dashboard's draft, leaving the rest of the file as it is.
+
+    The widget goes at the end of row `row`, counted from 0, or in a row of its
+    own at the end. Its `id` must be new on the dashboard. Nothing is published:
+    an owner reviews the draft and publishes it. The draft is saved from its
+    fields, so comments in its YAML are not kept. Try the widget with
+    `preview_dashboard` first. Saves are limited per hour and per workspace.
+    Needs the writer role.
+
+    Args:
+        dashboard: The dashboard's name, from `list_dashboards`.
+        widget: The widget, as the dashboard file writes one.
+    """
+    _assert_drafts_allowed()
+    gateway = _gateway(ctx, workspace)
+    try:
+        current = await gateway.dashboard_draft(dashboard)
+        if current is None:
+            raise ToolError(f"There is no dashboard {dashboard!r}. Find one with list_dashboards.")
+        try:
+            op = proposals.AddWidget(op="add_widget", widget=widget, row=row)
+            data = proposals.apply(current["spec"], [op])
+        except proposals.ProposalInvalid as exc:
+            raise ToolError(str(exc).removeprefix("Operation 1: ")) from exc
+        saved = await gateway.save_dashboard_draft(
+            data, name=current["name"], base_version=current["version"]
+        )
+    except GatewayError as exc:
+        raise ToolError(str(exc)) from exc
+    return _saved(workspace, saved)
+
+
 async def read_dashboard_file(ctx: Context, workspace: str, name: str) -> str:
     """A dashboard's file as YAML, as its resource serves it."""
     try:
@@ -643,7 +753,7 @@ def _diagnostic(item: dict) -> dict:
     return {key: value for key, value in item.items() if value is not None}
 
 
-def _problems(diagnostics: list[loader.Diagnostic]) -> str:
+def _problems(diagnostics: list[loader.Diagnostic], *, outcome: str = "Nothing ran") -> str:
     """A file's problems as one message, the first :data:`_MAX_ERRORS` of them."""
     lines = []
     for d in diagnostics[:_MAX_ERRORS]:
@@ -655,7 +765,7 @@ def _problems(diagnostics: list[loader.Diagnostic]) -> str:
     if more > 0:
         lines.append(f"- and {more} more.")
     count = len(diagnostics)
-    head = f"Nothing ran: the file has {count} problem{'s' if count > 1 else ''}."
+    head = f"{outcome}: the file has {count} problem{'s' if count > 1 else ''}."
     return "\n".join([head, *lines])
 
 
@@ -750,6 +860,10 @@ DASHBOARD_TOOLS = (
     run_dashboard,
     show_chart,
 )
+
+#: Saving dashboard drafts, for an owner to publish. Withheld from a deployment
+#: that turned them off, and refused on any call made after it does.
+DRAFT_TOOLS = (save_dashboard_draft, add_widget_to_draft)
 
 #: Withheld entirely when the corpus is not on disk or the operator has turned
 #: product knowledge off — a tool in the schema is a tool the agent will call.

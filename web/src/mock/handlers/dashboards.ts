@@ -131,7 +131,9 @@ function stamp(d: Dashboard) {
   d.version += 1;
   d.updated_at = new Date().toISOString();
   d.updated_by = "u-1";
+  d.updated_by_name = "Marton";
   d.updated_via = "ui";
+  d.client = null;
 }
 
 function noProposal(id: unknown) {
@@ -327,6 +329,7 @@ export const dashboardHandlers = [
       spec_version: 1,
       source_ref: null,
       client: null,
+      updated_by_name: "Marton",
       created_by: "u-1",
       published_by: null,
       refs: [],

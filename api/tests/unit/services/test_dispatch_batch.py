@@ -242,3 +242,28 @@ async def test_only_one_persons_reads_are_batched(db_session, workspace, user):
         await query_service.dispatch_batch(db_session, writes)
     assert sock.sent == []
     assert await query_service.dispatch_batch(db_session, []) == []
+
+
+async def test_each_run_records_when_it_was_sent_and_its_timeout(db_session, workspace, user):
+    """The presence sweeper reads both: when a run left, and how long it may take."""
+    agent, _ = await _agent(db_session)
+    queries = await _queries(db_session, workspace, user, agent, "SELECT 1", "SELECT 2")
+    queries[1].timeout_s = 30.0
+
+    await query_service.dispatch_batch(db_session, queries, timeout_s=60)
+
+    assert all(q.dispatched_at is not None for q in queries)
+    # The batch's timeout where the run had none, and its own where it had one.
+    assert [q.timeout_s for q in queries] == [60.0, 30.0]
+
+
+async def test_a_run_sent_alone_records_when_it_was_sent_and_its_timeout(
+    db_session, workspace, user
+):
+    agent, _ = await _agent(db_session, features=["on_demand_attach"])
+    [query] = await _queries(db_session, workspace, user, agent, "SELECT 1")
+
+    await query_service.dispatch_query(db_session, query, timeout_s=90)
+
+    assert query.dispatched_at is not None
+    assert query.timeout_s == 90.0

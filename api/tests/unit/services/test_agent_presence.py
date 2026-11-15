@@ -1,13 +1,22 @@
 """The presence sweeper closes lifecycle runs whose agent went away silently."""
 
+import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
 import sqlalchemy as sa
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from api.config import settings
 from api.models.agent import Agent, AgentLifecycleEvent, AgentMetricsMinute
-from api.services.agent_presence import close_unfinished_run, sweep_presence
+from api.models.query import Query
+from api.models.workspace import Workspace
+from api.services.agent_presence import (
+    close_unfinished_run,
+    fail_unanswerable_queries,
+    run_tick,
+    sweep_presence,
+)
 from api.services.agent_registry import registry
 from api.services.agent_telemetry import record_lifecycle_event
 
@@ -137,3 +146,156 @@ async def test_reconnect_closes_a_silent_run_just_after_it_opened(db_session):
     assert await close_unfinished_run(db_session, agent.id) is True
     await db_session.commit()
     assert [e for e, _, _ in await _events(db_session, agent.id)] == ["connected", "disconnected"]
+
+
+# ── Runs whose answer can no longer arrive ────────────────────────────────────
+
+
+async def _present(db, *events) -> Agent:
+    """An agent connected through some replica, with these lifecycle events."""
+    agent = await _agent(db, last_ping_at=NOW, events=events)
+    agent.owner_url = "http://replica-a"
+    await db.commit()
+    return agent
+
+
+async def _run(db, agent, *, sent_s_ago, status="queued", **values) -> Query:
+    workspace = Workspace(slug=f"ws-{uuid.uuid4().hex[:8]}", name="W")
+    db.add(workspace)
+    await db.flush()
+    sent = NOW - timedelta(seconds=sent_s_ago)
+    defaults = {"timeout_s": 600.0, "started_at": sent, "dispatched_at": sent}
+    query = Query(
+        workspace_id=workspace.id,
+        agent_id=agent.id,
+        sql="SELECT 1",
+        status=status,
+        **(defaults | values),
+    )
+    db.add(query)
+    await db.commit()
+    return query
+
+
+async def _status(db, query: Query) -> tuple[str, str | None]:
+    await db.refresh(query)
+    return query.status, query.error
+
+
+async def test_a_run_sent_before_its_agent_reconnected_is_failed(db_session):
+    """It went out on the connection that closed, and the agent answers on that one only."""
+    agent = await _present(
+        db_session,
+        ("connected", NOW - timedelta(hours=1)),
+        ("disconnected", NOW - timedelta(seconds=40)),
+        ("connected", NOW - timedelta(seconds=35)),
+    )
+    lost = await _run(db_session, agent, sent_s_ago=60, status="running", running_at=NOW)
+    after = await _run(db_session, agent, sent_s_ago=10)
+
+    assert await fail_unanswerable_queries(db_session, NOW) == 1
+
+    status, error = await _status(db_session, lost)
+    assert status == "failed"
+    assert error == "The agent's connection closed before it sent this run's result. Run it again."
+    assert lost.finished_at is not None
+    # Sent on the new connection, which is still up.
+    assert await _status(db_session, after) == ("queued", None)
+
+
+async def test_a_run_sent_just_before_a_reconnect_is_given_the_benefit_of_the_doubt(db_session):
+    """Within the margin the clocks cannot say which connection a run went out on."""
+    agent = await _present(db_session, ("connected", NOW - timedelta(seconds=30)))
+    run = await _run(db_session, agent, sent_s_ago=31)
+
+    assert await fail_unanswerable_queries(db_session, NOW) == 0
+    assert await _status(db_session, run) == ("queued", None)
+
+
+async def test_a_run_whose_agent_is_gone_is_failed(db_session):
+    """The sweeper dates a lost agent's disconnect at its last ping, which can be
+    before the run was sent, so a missing agent is enough on its own."""
+    agent = await _agent(
+        db_session,
+        last_ping_at=STALE,
+        events=[("connected", STALE - timedelta(hours=1)), ("disconnected", STALE)],
+    )
+    run = await _run(db_session, agent, sent_s_ago=5, status="running", running_at=NOW)
+
+    assert await fail_unanswerable_queries(db_session, NOW) == 1
+    assert (await _status(db_session, run))[0] == "failed"
+
+
+async def test_a_queued_run_on_a_connected_agent_waits_however_long(db_session):
+    """The agent's admission queue has no time limit: a busy agent is not a lost one."""
+    agent = await _present(db_session, ("connected", NOW - timedelta(hours=8)))
+    run = await _run(db_session, agent, sent_s_ago=6 * 3600)
+
+    assert await fail_unanswerable_queries(db_session, NOW) == 0
+    assert await _status(db_session, run) == ("queued", None)
+
+
+async def test_a_running_run_unanswered_past_its_timeout_is_failed(db_session):
+    """For an answer lost on a connection that stayed up: the agent stops a run at its
+    timeout and says so, so silence past it and a grace means the answer was lost."""
+    agent = await _present(db_session, ("connected", NOW - timedelta(hours=3)))
+    overdue = await _run(
+        db_session, agent, sent_s_ago=800, status="running", running_at=NOW - timedelta(seconds=700)
+    )
+    in_grace = await _run(
+        db_session, agent, sent_s_ago=700, status="running", running_at=NOW - timedelta(seconds=650)
+    )
+    export = await _run(
+        db_session,
+        agent,
+        sent_s_ago=7200,
+        status="running",
+        running_at=NOW - timedelta(seconds=7000),
+        timeout_s=12 * 3600.0,
+        origin="export",
+    )
+
+    assert await fail_unanswerable_queries(db_session, NOW) == 1
+
+    assert await _status(db_session, overdue) == (
+        "failed",
+        "The agent did not send this run's result within its timeout. Run it again.",
+    )
+    assert (await _status(db_session, in_grace))[0] == "running"
+    # A long export is judged by its own timeout.
+    assert (await _status(db_session, export))[0] == "running"
+
+
+@pytest.mark.parametrize(
+    "values",
+    [
+        {"origin": "session"},  # the SQL-session reaper's
+        {"dispatched_at": None},  # sent before dispatch times were kept
+    ],
+)
+async def test_runs_the_sweeper_does_not_judge_are_left_alone(db_session, values):
+    agent = await _agent(db_session, last_ping_at=STALE)
+    run = await _run(db_session, agent, sent_s_ago=3600, status="running", **values)
+
+    assert await fail_unanswerable_queries(db_session, NOW) == 0
+    assert (await _status(db_session, run))[0] == "running"
+
+
+async def test_a_finished_run_is_never_touched(db_session):
+    agent = await _agent(db_session, last_ping_at=STALE)
+    run = await _run(db_session, agent, sent_s_ago=3600, status="done")
+
+    assert await fail_unanswerable_queries(db_session, NOW) == 0
+    assert (await _status(db_session, run))[0] == "done"
+
+
+async def test_each_presence_tick_fails_lost_runs(db_engine):
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+    async with factory() as db:
+        agent = await _agent(db, last_ping_at=STALE)
+        run = await _run(db, agent, sent_s_ago=600, status="running", running_at=NOW)
+
+    await run_tick(factory)
+
+    async with factory() as db:
+        assert (await db.get(Query, run.id)).status == "failed"

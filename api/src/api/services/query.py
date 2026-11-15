@@ -185,6 +185,7 @@ async def dispatch_query(
     if maintain_for is not None:
         payload["maintain_for"] = maintain_for
 
+    _mark_sent([query], timeout_s)
     # Committed before the frame goes: an agent can answer before the send
     # returns, and its QUERY_DONE applies only to a row it can read.
     await db.commit()
@@ -216,6 +217,20 @@ async def dispatch_query(
             await db.commit()
             raise AgentUnavailable("Agent not connected")
     await _dispatched(db, query.agent_id, [query])
+
+
+def _mark_sent(queries: list[Query], timeout_s: float) -> None:
+    """Stamp when ``queries`` went to their agent, and the timeout they went with.
+
+    Called just before the commit that precedes the send, so the stamp trails the
+    frame by that commit alone. A run with no recorded timeout keeps the one it
+    was sent with: the presence sweeper needs it to tell a long run from a lost one.
+    """
+    now = datetime.now(tz=UTC)
+    for query in queries:
+        query.dispatched_at = now
+        if query.timeout_s is None:
+            query.timeout_s = timeout_s
 
 
 @dataclass(frozen=True)
@@ -448,6 +463,7 @@ async def _send_batch(
         ],
     }
     payload.update(await _catalog_fields(first, attach, active_schema))
+    _mark_sent([q for q, _ in part], timeout_s)
     # Committed before the frame goes, as dispatch_query commits.
     await db.commit()
     with _tracer.start_as_current_span(

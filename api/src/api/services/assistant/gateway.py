@@ -108,7 +108,7 @@ def _file(spec: dict | str) -> dict:
     return {"source_text": spec} if isinstance(spec, str) else {"spec": spec}
 
 
-def _refused_file(resp: httpx.Response) -> str:
+def _refused_file(resp: httpx.Response, heading: str = "The resulting file has problems:") -> str:
     """A 422 on a dashboard file, with each problem it lists on a line of its own."""
     _, detail = _error_parts(resp)
     try:
@@ -119,7 +119,7 @@ def _refused_file(resp: httpx.Response) -> str:
     if not diagnostics:
         return f"Not allowed: {detail}"
     lines = [f"- {d.get('path') or 'file'}: {d.get('message')}" for d in diagnostics]
-    return "The resulting file has problems:\n" + "\n".join(lines)
+    return heading + "\n" + "\n".join(lines)
 
 
 class GatewayError(Exception):
@@ -216,6 +216,8 @@ def _describe(exc: httpx.HTTPStatusError) -> GatewayError:
         return GatewayError(f"Not allowed: {detail}")
     if code == 409:
         return GatewayError(f"Conflict: {detail}")
+    if code == 429:
+        return GatewayError(f"Limit reached: {detail}")
     if code == 503:
         return GatewayError(f"Service unavailable: {detail}")
     return GatewayError(f"Request failed ({code}): {detail}")
@@ -703,6 +705,38 @@ class Gateway:
         )
         if resp.status_code == 422:
             raise GatewayError(_refused_file(resp))
+        self._raise_for(resp)
+        return resp.json()
+
+    async def dashboard_draft(self, name: str) -> dict | None:
+        """A dashboard as its draft reads, uncut, or None when there is no such dashboard.
+
+        For changing the file, where :meth:`get_dashboard` cuts long SQL to fit
+        a model's context."""
+        resp = await self._client.get(
+            f"/workspaces/{self._ws}/dashboards/{name}", params={"draft": "true"}
+        )
+        if resp.status_code == 404:
+            return None
+        self._raise_for(resp)
+        return resp.json()
+
+    async def save_dashboard_draft(
+        self, spec: dict | str, *, name: str | None = None, base_version: int | None = None
+    ) -> dict:
+        """Save ``spec`` as a new dashboard's draft, or as the draft of dashboard ``name``.
+
+        Saving over a dashboard takes the ``base_version`` it was read at, so a
+        newer edit is a conflict rather than overwritten."""
+        if name is None:
+            resp = await self._client.post(f"/workspaces/{self._ws}/dashboards", json=_file(spec))
+        else:
+            resp = await self._client.patch(
+                f"/workspaces/{self._ws}/dashboards/{name}",
+                json={**_file(spec), "base_version": base_version},
+            )
+        if resp.status_code == 422:
+            raise GatewayError(_refused_file(resp, "Nothing was saved: the file has problems:"))
         self._raise_for(resp)
         return resp.json()
 

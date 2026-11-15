@@ -3,6 +3,7 @@
 import json
 import re
 
+from api.config import settings
 from api.services.assistant.charts import chat_chart
 from api.services.dashboards import loader
 from api.services.mcp import dashboards
@@ -114,15 +115,24 @@ def test_the_resources_serve_the_guide_and_the_schema():
 # ── The prompts ───────────────────────────────────────────────────────────────
 
 
-def test_build_dashboard_walks_the_loop_and_saves_nothing():
+def test_build_dashboard_walks_the_loop_and_ends_with_a_draft():
     text = build_dashboard("sales", "weekly revenue", "the EMEA team")
     assert "weekly revenue for the EMEA team" in text
     assert "`sales`" in text
-    order = [text.index(tool) for tool in ("get_dashboard_schema", "search_semantic")]
-    order += [text.index(tool) for tool in ("validate_dashboard", "preview_dashboard")]
+    tools = ("get_dashboard_schema", "search_semantic", "validate_dashboard")
+    order = [text.index(tool) for tool in (*tools, "preview_dashboard", "save_dashboard_draft")]
     assert order == sorted(order)
-    assert "Nothing is saved" in text
+    assert "Do not publish it" in text
     assert " for " not in build_dashboard("sales", "churn").split("\n")[0]
+
+
+def test_build_dashboard_saves_nothing_where_drafts_are_off(monkeypatch):
+    monkeypatch.setattr(settings, "mcp_allow_dashboard_drafts", False)
+
+    text = build_dashboard("sales", "weekly revenue")
+
+    assert "Nothing is saved" in text
+    assert "save_dashboard_draft" not in text
 
 
 def test_explain_dashboard_treats_the_authors_words_as_data():

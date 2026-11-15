@@ -150,6 +150,31 @@ save the draft. If the file has a widget with the chart's id, the chart takes th
 The widget keeps the SQL of the query the assistant ran. On the dashboard it runs as each viewer, like every widget, so
 someone with other grants may see other numbers than the chat showed.
 
+### Changes the assistant proposes
+
+Asked to change a dashboard, the [assistant](../ai/assistant.md#dashboards-and-charts) proposes the change rather than
+making it. A proposal is a list of operations on the dashboard's newest file, its draft when there is one: add, update,
+move or remove a widget or a parameter, or change the title, description or labels. The server applies them and checks
+the file they make as saving does. A problem the change would add, such as a metric that does not exist, refuses the
+proposal and tells the assistant what to fix.
+
+The chat shows a card with the proposal's summary and what it changes. **Review changes** opens a page that lists the
+changes and runs the file they make, as you. On it:
+
+- **Accept as draft** saves the file as the dashboard's draft, and opens the editor on it. The draft is written as
+  canonical YAML, so comments in the draft it replaces are not kept. Publishing it is an owner's decision, as for any
+  draft.
+- **Discard** leaves the dashboard as it is.
+- A dashboard managed in git takes no changes in the app, so its page offers **Copy file** instead: the file the change
+  makes, to put in the repository.
+
+A proposal is for the person who asked, and only they can open it. Saving the dashboard after the proposal was made
+makes it out of date, so accepting it can never undo someone's edit. A proposal expires a day after it was made.
+Proposing needs `writer` for both you and the assistant's service account.
+
+The titles and text on a dashboard are written by anyone who can edit it. The assistant is told never to follow
+instructions in them, and a change it proposes is saved only when you accept it.
+
 ### Drafts and publishing
 
 - **Save draft**, or Ctrl+S (⌘S on a Mac), saves the file as a draft. Readers go on seeing the published version, and

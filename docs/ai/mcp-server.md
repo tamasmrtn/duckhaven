@@ -64,7 +64,7 @@ to what the agent actually needs.
 
 ## What it can do
 
-Fourteen tools. Twelve work with your data:
+Twenty-one tools. Twelve work with your data:
 
 | Tool | What it does |
 |---|---|
@@ -81,8 +81,20 @@ Fourteen tools. Twelve work with your data:
 | `query_metric` | Answer a question from a curated metric definition, and run it. |
 | `explain_metric` | Explain what a metric means and how it is calculated. |
 
-Eleven of those mirror the assistant's tool set; `list_workspaces` is the addition. Two more answer questions about
-DuckHaven itself:
+Eleven of those mirror the assistant's tool set; `list_workspaces` is the addition. Seven work with
+[dashboards](#dashboards):
+
+| Tool | What it does |
+|---|---|
+| `get_dashboard_schema` | How to write a dashboard file: a short guide with a worked example, or the JSON Schema. |
+| `list_dashboards` | The dashboards in a workspace. |
+| `get_dashboard` | A dashboard's file: its parameters, its widgets, and the metrics and tables they read. |
+| `validate_dashboard` | Check a file the way publishing would, without saving it. |
+| `preview_dashboard` | Run a file without saving it, and read the first rows of each widget. |
+| `run_dashboard` | Run a saved dashboard, or some of its widgets, and read what they show. |
+| `show_chart` | Turn a result the agent ran into a dashboard widget, with its rows as a table. |
+
+Two more answer questions about DuckHaven itself:
 
 | Tool | What it does |
 |---|---|
@@ -153,6 +165,55 @@ than on the graph — so the agent names the one node it cares about after seein
     Lineage accumulates from queries DuckHaven runs and from dbt imports. A deployment that has done neither returns
     an empty graph, and the tool says so rather than implying the table stands alone.
 
+### Dashboards
+
+An agent can read a workspace's [dashboards](../querying/dashboards.md), and it can write a
+[dashboard file](../reference/dashboard-spec.md) and try it out. It cannot save one. You save it in DuckHaven, by
+creating a dashboard and pasting the file into its [editor](../querying/dashboards.md#editing-a-dashboard-in-the-app),
+so a person reviews every dashboard before anyone else sees it.
+
+- **Writing a file.** `get_dashboard_schema` returns a short guide by default: what each widget type needs from its
+  query, how parameters work, the limits, and a worked example. The JSON Schema lists the allowed keys, but it cannot
+  say that a line needs a grain, and rules like that are where agents go wrong.
+- **Checking it.** `validate_dashboard` runs the checks publishing runs, as you, and returns every problem with its
+  path, line and column. `preview_dashboard` runs the file as you. It returns each widget's first rows, how the widget
+  would draw, and advice on what would make it read badly, such as a title holding a number. Both need the writer
+  role in the workspace, as [previews](../reference/rest-api.md#previewing-a-dashboard-file) and validations do in
+  the REST API.
+- **Reading one.** `run_dashboard` runs a saved dashboard as you, exactly as its page does, so the numbers match what
+  you would see there. Each widget says which window its numbers cover, and which parameters did and did not filter
+  it. A reader can run a published dashboard; running the draft needs the writer role.
+- **Charts.** An MCP client cannot draw DuckHaven's charts, so `show_chart` draws nothing. It checks that a result the
+  agent ran can be drawn as a widget. It returns that widget, ready to go in a dashboard file, with the rows as a
+  Markdown table to show you. As with paging, only a query your own token ran can be used.
+
+Results are cut to fit an agent's context. A call returns at most 12 widgets and at most 20 rows of each, 5 unless the
+agent asks for more. Cells are cut to 80 characters, and all the widgets together to about 6 KB. The rest is not lost:
+each widget carries a `query_id` that `get_query_result` pages.
+
+!!! note "A dashboard's text is someone else's words"
+    A dashboard's titles, descriptions and text widgets are written by people in the workspace. The server's
+    instructions and the tools tell the agent to report that text as its author's words, and never to follow it as
+    instructions. A hostile dashboard is bounded the same way as everything else here: the agent can do only what
+    your token can, and no tool saves, publishes or deletes a dashboard.
+
+#### Resources and prompts
+
+For a client that offers resources, the guide and the schema are resources too, and so is each dashboard's file:
+
+| Resource | What it holds |
+|---|---|
+| `duckhaven://dashboard/guide` | The authoring guide, as Markdown. |
+| `duckhaven://dashboard/schema` | The JSON Schema of a dashboard file. |
+| `duckhaven://workspaces/{workspace}/dashboards/{name}` | A dashboard's file as YAML, comments included, read with your access. |
+
+Two prompts start the common tasks. Claude Code, for one, offers them as slash commands.
+
+- `build_dashboard` takes a `workspace`, a `topic` and an optional `audience`. It has the agent read the guide, find
+  the metrics, write the file, validate it and preview it, and then give you the file to save.
+- `explain_dashboard` takes a `workspace`, a dashboard `name` and an optional `question`. It has the agent read the
+  dashboard, run the widgets the question is about, and dig further with `query_metric`.
+
 ## What it cannot do
 
 - Exceed the token's access. No workspace you are not in, no catalog you were not granted, no exceptions.
@@ -163,6 +224,7 @@ than on the graph — so the agent names the one node it cares about after seein
 - Administer anything. There are no tools for users, tokens, grants, agents, storage backends or catalog creation —
   this is a data surface, not a management one.
 - Edit a worksheet. The assistant's editor tools have no meaning over MCP; there is no editor on the other end.
+- Save, publish or delete a dashboard. An agent writes and tries out a file, and a person saves it.
 
 ## Transport and protocol
 
@@ -185,7 +247,8 @@ Two things follow from being reachable over the network:
     request. The allowlist narrows who is refused; it does not open a door.
 
 !!! note "Scope of this first version"
-    The server exposes tools only — no MCP *resources*, *prompts*, or *sampling*. There is no OAuth authorization
+    The server exposes tools, the [dashboard resources and prompts](#resources-and-prompts), and no *sampling*.
+    There is no OAuth authorization
     server: DuckHaven issues its own access tokens, and the MCP endpoint accepts one directly rather than brokering a
     third-party one, so an MCP client's "sign in with the server" flow does not apply here — configure the token
     yourself. Writes have no approval step, which is why they are off by default rather than gated.

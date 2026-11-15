@@ -172,7 +172,7 @@ A writer can run a dashboard file without saving it, as a
 [preview](../reference/rest-api.md#previewing-a-dashboard-file); the editor's preview is one. A preview runs as the
 person who made it, exactly as a dashboard would, so it shows the numbers that person would see, not what its eventual
 viewers will. Only they can see it. They replace its file as they edit it, and it expires two hours after it was last
-changed or run.
+changed or run. An AI agent connected over [MCP](../ai/mcp-server.md#dashboards) can preview a file the same way.
 
 ## Showing an aggregate to people who may not read the rows
 
@@ -204,3 +204,4 @@ refreshed, and a grant change is a visible decision rather than a property of a 
 - [Result cache](result-cache.md): when a repeated query is answered without running.
 - [Query execution](query-execution.md#batches-of-reads): how an agent runs a batch.
 - [AI data assistant](../ai/assistant.md#dashboards-and-charts): asking about a number on a dashboard.
+- [MCP server](../ai/mcp-server.md#dashboards): writing and checking a dashboard file from an AI agent.

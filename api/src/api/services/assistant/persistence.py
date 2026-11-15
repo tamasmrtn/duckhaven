@@ -76,11 +76,20 @@ def chart_of(part: ModelRequestPart) -> dict | None:
     return None
 
 
+def proposal_of(part: ModelRequestPart) -> dict | None:
+    """The proposal card a ``propose_dashboard_changes`` result carries, if it is one."""
+    if isinstance(part, ToolReturnPart) and isinstance(part.metadata, dict):
+        proposal = part.metadata.get("proposal")
+        return proposal if isinstance(proposal, dict) else None
+    return None
+
+
 def render_transcript(messages: list[ModelMessage]) -> list[dict]:
     """Flatten message history into displayable lines, in the order they happened.
 
     User prompts and assistant text are surfaced, and so is each chart the
-    assistant drew, as a ``chart`` line where its tool returned. System prompts
+    assistant drew, as a ``chart`` line where its tool returned, and each
+    dashboard change it proposed, as a ``proposal`` line. System prompts
     and other tool parts are omitted (tool activity is shown via the audit rows).
     An answer carries the numbers the turn's grounding check found no tool had
     returned.
@@ -93,6 +102,8 @@ def render_transcript(messages: list[ModelMessage]) -> list[dict]:
                     items.append({"role": "user", "text": part.content})
                 elif (chart := chart_of(part)) is not None:
                     items.append({"role": "chart", "text": "", "chart": chart})
+                elif (proposal := proposal_of(part)) is not None:
+                    items.append({"role": "proposal", "text": "", "proposal": proposal})
         elif isinstance(message, ModelResponse):
             text = "".join(part.content for part in message.parts if isinstance(part, TextPart))
             if text.strip():

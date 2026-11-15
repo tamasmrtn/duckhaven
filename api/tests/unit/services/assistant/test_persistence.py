@@ -345,6 +345,34 @@ def test_a_chart_is_a_line_of_its_own_where_its_tool_returned():
     assert items[2]["chart"] == chart
 
 
+def test_a_proposal_is_a_line_of_its_own_where_its_tool_returned():
+    card = {"type": "dashboard_proposal", "tool_call_id": "c1", "proposal": {"id": "p-1"}}
+    messages = [
+        ModelRequest(parts=[UserPromptPart(content="add orders")]),
+        ModelResponse(parts=[ToolCallPart("propose_dashboard_changes", {})]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    "propose_dashboard_changes",
+                    {"proposed": True},
+                    "c1",
+                    metadata={"proposal": card},
+                ),
+            ]
+        ),
+        ModelResponse(parts=[TextPart(content="I proposed it.")]),
+    ]
+
+    items = render_transcript(messages)
+
+    assert [(i["role"], i["text"]) for i in items] == [
+        ("user", "add orders"),
+        ("proposal", ""),
+        ("assistant", "I proposed it."),
+    ]
+    assert items[1]["proposal"] == card
+
+
 def test_an_answer_carries_the_numbers_flagged_on_it():
     messages = [
         ModelRequest(parts=[UserPromptPart(content="how much?")]),

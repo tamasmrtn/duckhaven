@@ -20,6 +20,7 @@ import duckdb
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.models.catalog import Catalog
+from api.models.semantic import NATIVE_PROVIDER
 from api.services import sql_guard
 from api.services.dashboards.loader import Diagnostic, Loaded
 from api.services.dashboards.resolve import resolve
@@ -47,18 +48,28 @@ async def problems(
     slugs |= {w.query.model for _, w in widgets if w.query is not None}
 
     models: dict[str, LoadedModel] = {}
-    missing: dict[str, str] = {}
+    # A message, and a hint where one helps, for each model a dashboard cannot read.
+    missing: dict[str, tuple[str, str | None]] = {}
     for slug in sorted(slugs):
         try:
             row = await semantic_store.get_model(
                 db, workspace_id=workspace_id, slug=slug, user_id=user_id, catalogs=catalogs
             )
         except semantic_store.SemanticNotFound:
-            missing[slug] = f"There is no semantic model {slug!r}."
+            missing[slug] = (f"There is no semantic model {slug!r}.", None)
+            continue
+        if row.status == "draft" and row.provider != NATIVE_PROVIDER:
+            missing[slug] = (
+                f"Semantic model {slug!r} was imported from {row.provider} and is still a "
+                "draft; dashboards read published models only.",
+                "An import arrives as a draft. A workspace owner publishes it under Semantic "
+                f"models, or with `dh semantic publish {slug}`.",
+            )
             continue
         if row.status != "published":
             missing[slug] = (
-                f"Semantic model {slug!r} is {row.status}; dashboards read published models only."
+                f"Semantic model {slug!r} is {row.status}; dashboards read published models only.",
+                None,
             )
             continue
         models[slug] = await load_model(db, row)
@@ -68,7 +79,7 @@ async def problems(
         if not isinstance(param, DimensionParameter):
             continue
         if param.model in missing:
-            found.append(loaded.at(f"parameters.{name}.model", missing[param.model]))
+            found.append(loaded.at(f"parameters.{name}.model", *missing[param.model]))
             continue
         model = models[param.model]
         if param.dimension not in model.dimensions:
@@ -98,7 +109,7 @@ async def problems(
             found.append(loaded.at(path, run.error))
         elif widget.query is not None:
             if widget.query.model in missing:
-                found.append(loaded.at(f"{path}.query.model", missing[widget.query.model]))
+                found.append(loaded.at(f"{path}.query.model", *missing[widget.query.model]))
                 continue
             try:
                 compile_metric_query(models[widget.query.model], run.query, today=today)

@@ -213,3 +213,17 @@ async def test_purging_a_provider_a_dashboard_reads_needs_allow_breaking(as_owne
     assert _breaks(refused) == {"shop-overview": ["shop"]}
     allowed = await as_owner.delete(url, params={"provider": "duckhaven", "allow_breaking": "true"})
     assert allowed.status_code == 204, allowed.text
+
+
+# ── Validation ────────────────────────────────────────────────────────────────
+
+
+async def test_a_dashboard_on_an_imported_draft_is_told_to_publish_it(as_owner, ws):
+    await _import(as_owner, ws, SHOP)
+
+    resp = await as_owner.post(f"/workspaces/{ws}/dashboard-validations", json={"spec": SHOP_BOARD})
+
+    errors = resp.json()["errors"]
+    assert errors[0]["path"] == "rows[0].widgets[0].query.model"
+    assert "imported from duckhaven and is still a draft" in errors[0]["message"]
+    assert "dh semantic publish shop" in errors[0]["hint"]

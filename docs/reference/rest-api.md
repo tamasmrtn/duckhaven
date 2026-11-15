@@ -806,6 +806,9 @@ Every request needs `writer`, and only the person who made a preview can read, r
 a **404**, as is a preview that does not exist. A preview expires two hours after it was last changed or run, and is
 then a **404** too.
 
+The web app shows a preview at `/{workspace}/dashboard-previews/{dashboard_preview_id}`, a page that reads the preview
+every two seconds and runs its file again whenever `spec_hash` changes. Reading a preview does not extend it.
+
 ## Lineage
 
 Read the [lineage](../metadata/lineage.md) graph around a table, and import lineage produced elsewhere.

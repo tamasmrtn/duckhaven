@@ -64,6 +64,10 @@ export const dashboardsApi = {
   /** The JSON Schema of a dashboard file. */
   schema: () => get<object>("/dashboard-schema?version=1"),
 
+  /** A preview, with its file as last sent. Only the person who made it reads it. */
+  getPreview: (ws: string, id: string) =>
+    get<DashboardPreview>(`${previews(ws)}/${encodeURIComponent(id)}`),
+
   createPreview: (ws: string, sourceText: string) =>
     post<DashboardPreview>(previews(ws), { source_text: sourceText }),
 

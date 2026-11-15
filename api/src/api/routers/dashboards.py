@@ -25,7 +25,13 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.deps import _bearer, get_current_user, get_db, get_polaris_client, get_session_factory
 from api.models.catalog import Catalog
-from api.models.dashboard import Dashboard, DashboardPreview, DashboardRef, DashboardRevision
+from api.models.dashboard import (
+    Dashboard,
+    DashboardPreview,
+    DashboardProposal,
+    DashboardRef,
+    DashboardRevision,
+)
 from api.models.user import User
 from api.schemas.dashboard import (
     DashboardApplyOut,
@@ -35,6 +41,8 @@ from api.schemas.dashboard import (
     DashboardOut,
     DashboardPreviewOut,
     DashboardPreviewRunIn,
+    DashboardProposalIn,
+    DashboardProposalOut,
     DashboardPublish,
     DashboardRevisionOut,
     DashboardRevisionSummary,
@@ -46,7 +54,7 @@ from api.schemas.dashboard import (
     RefOut,
 )
 from api.schemas.page import Page
-from api.services.dashboards import loader, store, validate
+from api.services.dashboards import loader, proposals, store, validate
 from api.services.dashboards import run as run_service
 from api.services.dashboards.spec import (
     SPEC_VERSION,
@@ -244,6 +252,29 @@ async def _follow(db: AsyncSession, row: Dashboard, spec: DashboardSpec) -> None
     row.spec_version = spec.version
 
 
+async def _save_draft(
+    db: AsyncSession,
+    row: Dashboard,
+    spec: DashboardSpec,
+    source_text: str | None,
+    user: User,
+    request: Request,
+) -> None:
+    """Make ``spec`` the dashboard's draft, as an edit or an accepted proposal does.
+
+    A new ``name`` renames a dashboard never published at once; a published one
+    is renamed when the draft is published."""
+    store.assert_writable(row)
+    if row.spec is None:
+        await _follow(db, row, spec)
+    elif spec.name != row.name:
+        await store.assert_name_free(db, row.workspace_id, spec.name, mine=row.id)
+    row.draft_spec, row.draft_source_text = store.stored(spec), source_text
+    row.version += 1
+    _stamp(row, user, request)
+    await store.set_refs(db, row, "draft", spec)
+
+
 def _assert_base(row: Dashboard, base_version: int) -> None:
     if base_version != row.version:
         raise HTTPException(
@@ -388,14 +419,7 @@ async def update_dashboard(
     store.assert_writable(row)
     _assert_base(row, body.base_version)
     spec = _read(body).spec
-    if row.spec is None:
-        await _follow(db, row, spec)
-    elif spec.name != row.name:
-        await store.assert_name_free(db, row.workspace_id, spec.name, mine=row.id)
-    row.draft_spec, row.draft_source_text = store.stored(spec), body.source_text
-    row.version += 1
-    _stamp(row, ctx.user, request)
-    await store.set_refs(db, row, "draft", spec)
+    await _save_draft(db, row, spec, body.source_text, ctx.user, request)
     await db.commit()
     await db.refresh(row)
     return _out(row, draft=True)
@@ -1070,6 +1094,241 @@ async def run_dashboard_preview(
         "preview": str(row.id),
     }
     return await _run(db, ctx, request, polaris, session_factory, spec, about, body)
+
+
+# ── Proposals ─────────────────────────────────────────────────────────────────
+
+#: How long a proposal waits for its person to decide.
+PROPOSAL_TTL = timedelta(days=1)
+
+
+def _proposal_status(proposal: DashboardProposal, row: Dashboard) -> str:
+    if proposal.status != "pending":
+        return proposal.status
+    expires = proposal.expires_at
+    if expires.tzinfo is None:  # SQLite hands back naive UTC
+        expires = expires.replace(tzinfo=UTC)
+    if expires <= datetime.now(UTC):
+        return "expired"
+    return "stale" if row.version != proposal.base_version else "pending"
+
+
+def _proposal_out(proposal: DashboardProposal, row: Dashboard) -> DashboardProposalOut:
+    loaded = loader.parse(proposal.result_spec)
+    return DashboardProposalOut(
+        id=proposal.id,
+        dashboard=row.name,
+        title=loaded.spec.title,
+        status=_proposal_status(proposal, row),
+        summary=proposal.summary,
+        operations=proposal.operations,
+        changes=[DashboardChangeOut(**c) for c in proposal.changes],
+        base_version=proposal.base_version,
+        base_hash=proposal.base_hash,
+        result_spec=proposal.result_spec,
+        result_source=store.export(loaded.spec),
+        result_hash=proposal.result_hash,
+        managed=row.managed,
+        warnings=_diagnostics(loaded.warnings),
+        created_at=proposal.created_at,
+        expires_at=proposal.expires_at,
+        decided_at=proposal.decided_at,
+    )
+
+
+def _proposal_refused(code: str, message: str, **extra) -> HTTPException:
+    status_code = status.HTTP_410_GONE if code == "proposal_expired" else status.HTTP_409_CONFLICT
+    return HTTPException(
+        status_code=status_code, detail={"error": code, "detail": message, **extra}
+    )
+
+
+async def _proposal(
+    db: AsyncSession, ctx: _Context, proposal_id: uuid.UUID
+) -> tuple[DashboardProposal, Dashboard]:
+    """The caller's own proposal and its dashboard. Anyone else's is a 404."""
+    found = (
+        await db.execute(
+            select(DashboardProposal, Dashboard)
+            .join(Dashboard, Dashboard.id == DashboardProposal.dashboard_id)
+            .where(
+                DashboardProposal.id == proposal_id,
+                DashboardProposal.workspace_id == ctx.workspace.id,
+                DashboardProposal.created_by == ctx.user.id,
+            )
+        )
+    ).one_or_none()
+    if found is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"No proposal {proposal_id}. A proposal expires a day after it was made.",
+        )
+    return found[0], found[1]
+
+
+async def _new_problems(
+    db: AsyncSession, ctx: _Context, base: loader.Loaded, result: loader.Loaded
+) -> list[loader.Diagnostic]:
+    """What the workspace finds wrong with ``result`` that it did not with ``base``."""
+    today = today_in(ctx.workspace.timezone)
+    found = []
+    for loaded in (base, result):
+        found.append(
+            await validate.problems(
+                db,
+                loaded,
+                workspace_id=ctx.workspace.id,
+                user_id=ctx.user.id,
+                catalogs=ctx.catalogs,
+                today=today,
+            )
+        )
+    known = {d.message for d in found[0]}
+    return [d for d in found[1] if d.message not in known]
+
+
+@router.post(
+    "/workspaces/{workspace}/dashboard-proposals",
+    status_code=201,
+    response_model=DashboardProposalOut,
+)
+async def create_dashboard_proposal(
+    body: DashboardProposalIn,
+    ctx: _Context = Depends(_context("writer")),
+    db: AsyncSession = Depends(get_db),
+) -> DashboardProposalOut:
+    """Propose changes to a dashboard, for you to accept as its draft or discard.
+
+    The operations apply in order to the dashboard's newest file, its draft when
+    it has one, and nothing changes until the proposal is accepted. An operation
+    that cannot apply, such as one naming a widget the dashboard does not have,
+    is a 422 `invalid_proposal`. The file they make is checked as publishing
+    checks one: a problem it adds, such as a metric that does not exist, is a
+    422 `invalid_dashboard` listing every problem. One the dashboard had already
+    does not stop a proposal. A dashboard managed in git takes proposals, but
+    they cannot be accepted here. Only you can read or decide a proposal, and it
+    expires after a day."""
+    row = await _dashboard(db, ctx, body.dashboard)
+    newest, newest_text, _ = _shown(row, draft=True)
+    base = _loaded(newest, newest_text)
+    try:
+        data = proposals.apply(store.stored(base.spec), body.operations)
+    except proposals.ProposalInvalid as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={"error": "invalid_proposal", "detail": str(exc), "operation": exc.index},
+        ) from exc
+    try:
+        result = loader.parse(data)
+    except loader.DashboardInvalid as exc:
+        raise _invalid(exc.code, exc.diagnostics) from exc
+    changes = store.changes(base.spec, result.spec)
+    if not changes:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={"error": "invalid_proposal", "detail": "The operations change nothing."},
+        )
+    if problems := await _new_problems(db, ctx, base, result):
+        raise _invalid("invalid_dashboard", problems)
+    now = datetime.now(UTC)
+    await db.execute(delete(DashboardProposal).where(DashboardProposal.expires_at <= now))
+    proposal = DashboardProposal(
+        workspace_id=ctx.workspace.id,
+        dashboard_id=row.id,
+        created_by=ctx.user.id,
+        summary=body.summary,
+        operations=[op.model_dump(mode="json", exclude_none=True) for op in body.operations],
+        base_version=row.version,
+        base_hash=store.spec_hash(base.spec),
+        result_spec=store.stored(result.spec),
+        result_hash=store.spec_hash(result.spec),
+        changes=[{"path": path, "change": change} for path, change in changes],
+        status="pending",
+        created_at=now,
+        expires_at=now + PROPOSAL_TTL,
+    )
+    db.add(proposal)
+    await db.commit()
+    await db.refresh(proposal)
+    return _proposal_out(proposal, row)
+
+
+@router.get(
+    "/workspaces/{workspace}/dashboard-proposals/{dashboard_proposal_id}",
+    response_model=DashboardProposalOut,
+)
+async def get_dashboard_proposal(
+    dashboard_proposal_id: uuid.UUID,
+    ctx: _Context = Depends(_context("writer")),
+    db: AsyncSession = Depends(get_db),
+) -> DashboardProposalOut:
+    """Your proposal: what it changes, the file it makes, and whether it can be accepted."""
+    proposal, row = await _proposal(db, ctx, dashboard_proposal_id)
+    return _proposal_out(proposal, row)
+
+
+@router.post(
+    "/workspaces/{workspace}/dashboard-proposals/{dashboard_proposal_id}/accept",
+    response_model=DashboardOut,
+)
+async def accept_dashboard_proposal(
+    dashboard_proposal_id: uuid.UUID,
+    request: Request,
+    ctx: _Context = Depends(_context("writer")),
+    db: AsyncSession = Depends(get_db),
+) -> DashboardOut:
+    """Save your proposal's file as the dashboard's draft. Readers keep the published file.
+
+    The draft is written as canonical YAML, so comments in the draft it
+    replaces are not kept. A proposal already accepted or discarded is a 409
+    `proposal_decided`, and one a day old a 410 `proposal_expired`. One made
+    before the dashboard last changed is a 409 `proposal_stale`, with the
+    current draft under `details.current`, so a newer edit is never
+    overwritten. A dashboard managed in git is a 409 `managed_dashboard`."""
+    proposal, row = await _proposal(db, ctx, dashboard_proposal_id)
+    state = _proposal_status(proposal, row)
+    if state in ("accepted", "discarded"):
+        raise _proposal_refused("proposal_decided", f"This proposal was {state}.")
+    if state == "expired":
+        raise _proposal_refused(
+            "proposal_expired", "This proposal expired a day after it was made."
+        )
+    store.assert_writable(row)
+    if state == "stale":
+        raise _proposal_refused(
+            "proposal_stale",
+            f"{row.name!r} changed after this proposal was made, at version "
+            f"{proposal.base_version}; it is at version {row.version}. Ask for the "
+            "change again.",
+            current=_out(row, draft=True).model_dump(mode="json"),
+        )
+    spec = store.read(proposal.result_spec)
+    await _save_draft(db, row, spec, store.export(spec), ctx.user, request)
+    row.updated_via = "assistant"
+    proposal.status, proposal.decided_at = "accepted", datetime.now(UTC)
+    await db.commit()
+    await db.refresh(row)
+    return _out(row, draft=True)
+
+
+@router.delete(
+    "/workspaces/{workspace}/dashboard-proposals/{dashboard_proposal_id}", status_code=204
+)
+async def discard_dashboard_proposal(
+    dashboard_proposal_id: uuid.UUID,
+    ctx: _Context = Depends(_context("writer")),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """Discard your proposal. The dashboard is left as it is.
+
+    A proposal already accepted is a 409 `proposal_decided`; discarding one
+    twice changes nothing."""
+    proposal, _ = await _proposal(db, ctx, dashboard_proposal_id)
+    if proposal.status == "accepted":
+        raise _proposal_refused("proposal_decided", "This proposal was accepted.")
+    if proposal.status == "pending":
+        proposal.status, proposal.decided_at = "discarded", datetime.now(UTC)
+        await db.commit()
 
 
 # ── Validation ────────────────────────────────────────────────────────────────

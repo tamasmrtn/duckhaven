@@ -226,3 +226,50 @@ class DashboardPreview(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     __table_args__ = (Index("ix_dashboard_previews_expires_at", "expires_at"),)
+
+
+PROPOSAL_STATUSES = ("pending", "accepted", "discarded")
+
+
+class DashboardProposal(Base):
+    """Changes the assistant proposes to a dashboard, waiting for its person to decide.
+
+    ``operations`` are what was proposed, against the dashboard's newest file at
+    ``base_version``, and ``result_spec`` the file they make. Accepting saves that
+    file as the draft. A proposal is stale once the dashboard changes, and
+    expires a day after it was made; both are worked out when it is read.
+    """
+
+    __tablename__ = "dashboard_proposals"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    workspace_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False
+    )
+    dashboard_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("dashboards.id", ondelete="CASCADE"), nullable=False
+    )
+    #: The person the proposal was made for, who alone can read or decide it.
+    created_by: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    summary: Mapped[str] = mapped_column(String(500), nullable=False)
+    operations: Mapped[list] = mapped_column(_Json, nullable=False)
+    base_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    base_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    result_spec: Mapped[dict] = mapped_column(_Json, nullable=False)
+    result_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    #: What accepting changes, as ``store.changes`` reports it: ``[{path, change}]``.
+    changes: Mapped[list] = mapped_column(_Json, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        Index("ix_dashboard_proposals_expires_at", "expires_at"),
+        Index("ix_dashboard_proposals_dashboard", "dashboard_id"),
+        CheckConstraint(_in("status", PROPOSAL_STATUSES), name="ck_dashboard_proposals_status"),
+    )

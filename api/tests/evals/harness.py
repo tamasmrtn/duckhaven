@@ -26,13 +26,14 @@ import yaml
 from pydantic import TypeAdapter
 from pydantic_ai import Agent, DeferredToolRequests
 from pydantic_ai.exceptions import UsageLimitExceeded
-from pydantic_ai.messages import ToolCallPart, ToolReturnPart
+from pydantic_ai.messages import RetryPromptPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.usage import UsageLimits
 
 from api.config import settings
 from api.schemas.assistant import PageContext
 from api.services.assistant.agent import _build_model
 from api.services.assistant.deps import AssistantDeps, DefaultCompute
+from api.services.assistant.grounding import unsupported_numbers
 from api.services.assistant.prompts import build_instructions
 from api.services.assistant.tools import build_toolset
 
@@ -98,6 +99,10 @@ class RunResult:
     # once. Answers differ between samples because the assistant's temperature
     # is not pinned, and pass^k is measured over exactly that variation.
     sample: int = 0
+    # Every propose_dashboard_changes call, whole rather than cut to fit the
+    # judge: {dashboard, operations, summary, accepted, changes,
+    # unsupported_numbers}. What a proposal would change is scored from these.
+    proposals: list[dict] = field(default_factory=list)
 
     @property
     def cited_paths(self) -> list[str]:
@@ -317,11 +322,20 @@ async def run_case_once(
     tool_results: list[tuple[str, str, str]] = []
     searched_paths: list[str] = []
     sent: dict[str, str] = {}
-    for message in result.all_messages():
+    messages = result.all_messages()
+    proposed: dict[str, dict] = {}
+    for message in messages:
         for part in getattr(message, "parts", []):
             if isinstance(part, ToolCallPart):
                 sent[part.tool_call_id] = _summarise_return(_tool_args(part))
+                if part.tool_name == _PROPOSE:
+                    proposed[part.tool_call_id] = _proposal(_tool_args(part), messages)
+            if isinstance(part, RetryPromptPart) and part.tool_call_id in proposed:
+                proposed[part.tool_call_id]["accepted"] = False
             if isinstance(part, ToolReturnPart):
+                if part.tool_call_id in proposed and isinstance(part.content, dict):
+                    proposed[part.tool_call_id]["accepted"] = True
+                    proposed[part.tool_call_id]["changes"] = part.content.get("changes") or []
                 # read_doc_page returns a whole page; the judge already gets page
                 # text from the case's own sources, so only the data tools add
                 # anything here.
@@ -348,7 +362,44 @@ async def run_case_once(
         tool_results=tool_results,
         searched_paths=searched_paths,
         sample=sample,
+        proposals=list(proposed.values()),
     )
+
+
+_PROPOSE = "propose_dashboard_changes"
+# Keys a proposal writes text under, where a number nothing returned would sit.
+_TEXT_KEYS = ("title", "description", "markdown", "label")
+
+
+def _proposal(args: dict, messages: list) -> dict:
+    """One proposal call as it was sent, with the numbers in its text no tool returned.
+
+    ``accepted`` stays False until its tool returns: a proposal the server
+    refused is still scored for what it tried.
+    """
+    operations = args.get("operations") if isinstance(args.get("operations"), list) else []
+    text = [str(args.get("summary") or "")] + list(_texts(operations))
+    return {
+        "dashboard": args.get("dashboard"),
+        "operations": operations,
+        "summary": args.get("summary"),
+        "accepted": False,
+        "changes": [],
+        "unsupported_numbers": unsupported_numbers("\n".join(text), messages),
+    }
+
+
+def _texts(value: object):
+    """Every string a proposal writes as a title, description, note or label."""
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if key in _TEXT_KEYS and isinstance(item, str):
+                yield item
+            else:
+                yield from _texts(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from _texts(item)
 
 
 # How many assistant runs may be in flight at once within one arm. Bounded

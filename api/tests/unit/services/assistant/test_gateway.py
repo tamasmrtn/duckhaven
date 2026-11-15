@@ -834,6 +834,70 @@ async def test_a_preview_runs_with_its_values():
 
 
 @respx.mock
+async def test_a_preview_holds_yaml_as_written_and_runs_only_the_widgets_named():
+    made = respx.post(f"{BASE}/workspaces/ws/dashboard-previews").mock(
+        return_value=httpx.Response(201, json={"id": "p-1"})
+    )
+    ran = respx.post(f"{BASE}/workspaces/ws/dashboard-previews/p-1/run").mock(
+        return_value=httpx.Response(200, text=_sse({"type": "done"}))
+    )
+    text = "version: 1  # as written\n"
+    async with httpx.AsyncClient(base_url=BASE) as client:
+        gw = _gateway(client=client, queue_wait_s=0)
+        assert await gw.hold_preview(text, preview_id=None) == "p-1"
+        await gw.run_preview("p-1", params=None, widgets=["a", "b"], timeout_s=5)
+
+    assert json.loads(made.calls[0].request.content) == {"source_text": text}
+    assert json.loads(ran.calls[0].request.content) == {"params": {}, "widgets": ["a", "b"]}
+
+
+@pytest.mark.parametrize(
+    ("file", "sent"),
+    [
+        ("version: 1\n", {"source_text": "version: 1\n"}),
+        ({"version": 1}, {"spec": {"version": 1}}),
+    ],
+)
+@respx.mock
+async def test_a_dashboard_file_is_validated_as_it_was_given(file, sent):
+    checked = {"valid": False, "errors": [{"path": "name"}], "warnings": [], "refs": []}
+    route = respx.post(f"{BASE}/workspaces/ws/dashboard-validations").mock(
+        return_value=httpx.Response(200, json=checked)
+    )
+    async with httpx.AsyncClient(base_url=BASE) as client:
+        assert await _gateway(client=client).validate_dashboard(file) == checked
+    assert json.loads(route.calls[0].request.content) == sent
+
+
+@respx.mock
+async def test_validating_without_the_writer_role_is_a_denial():
+    respx.post(f"{BASE}/workspaces/ws/dashboard-validations").mock(
+        return_value=httpx.Response(403, json={"detail": "Requires the writer role."})
+    )
+    async with httpx.AsyncClient(base_url=BASE) as client:
+        with pytest.raises(GatewayError, match="writer role") as exc:
+            await _gateway(client=client).validate_dashboard("version: 1\n")
+    assert exc.value.kind == "denied"
+
+
+@respx.mock
+async def test_a_dashboards_source_is_its_yaml():
+    respx.get(f"{BASE}/workspaces/ws/dashboards/sales/source").mock(
+        return_value=httpx.Response(
+            200, text="version: 1  # kept\n", headers={"content-type": "application/yaml"}
+        )
+    )
+    respx.get(f"{BASE}/workspaces/ws/dashboards/gone/source").mock(
+        return_value=httpx.Response(404, json={"detail": "No dashboard gone."})
+    )
+    async with httpx.AsyncClient(base_url=BASE) as client:
+        gw = _gateway(client=client)
+        assert await gw.dashboard_source("sales") == "version: 1  # kept\n"
+        with pytest.raises(GatewayError, match="No dashboard gone"):
+            await gw.dashboard_source("gone")
+
+
+@respx.mock
 async def test_the_dashboard_schema_is_read_at_its_version():
     route = respx.get(f"{BASE}/dashboard-schema").mock(
         return_value=httpx.Response(200, json={"title": "Dashboard"})

@@ -112,7 +112,7 @@ curl -sS -X POST https://duckhaven.example.com/mcp \
         "io.modelcontextprotocol/clientCapabilities":{}}}}'
 ```
 
-A healthy server answers with its tool definitions — fourteen, or twelve where the deployment has
+A healthy server answers with its tool definitions — twenty-one, or nineteen where the deployment has
 [documentation lookup](mcp-server.md#documentation-lookup) turned off.
 
 ## Getting more out of it

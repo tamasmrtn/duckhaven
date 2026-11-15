@@ -127,7 +127,26 @@ the judge changed, and nothing in the number tells you which.
 **The judge sees what the assistant saw.** Every page an arm opened reaches the judge whole, as `read_doc_page` returned
 it, together with the tool results and the instructions the assistant was given. Only the case's expected sources that
 no arm opened are trimmed to share a fixed budget. A judge that saw a cut copy of an opened page scored every claim past
-the cut as invented.
+the cut as invented. The same holds for the rest of the context:
+
+- **Tool descriptions.** The faithfulness judge gets the description of each tool the turn called, as the model
+  read it. Some product facts live only there: that an accepted proposal becomes a draft an owner publishes is in
+  `propose_dashboard_changes`' description, and a judge without it scored every answer saying so as unsupported.
+- **Tool results up to 12,000 characters each.** At 1,500 the cut hid the dashboard schema, most of a 100-row
+  `run_sql` sample and the search snippets the assistant read. Correct answers scored as invented, and a wrong account
+  of where a proposed widget went passed, because the judge could not see the operation that placed it.
+- **What the chat showed.** The relevancy judge is told about each chart the turn drew and each proposal card it
+  made, because they appear beside the answer's text. An answer saying "the chart above shows it" has answered, and a
+  judge given only the text scored it 3 for not drawing a chart.
+
+**A grade below the pass line is asked for twice more, and the median stands.** The judge is not deterministic at
+temperature 0: identical answers graded again have come back 3 and then 4. A single grade made a failure a coin flip on
+the line. Only grades below the line are repeated, because only those can fail a sample; a median rather than the best
+of three, so a judge that means a low grade still fails it. The report keeps every grade and both judges' reasons.
+
+**A case's rule that code can check is checked by code.** `no_number_in_chart_title` fails a sample whose chart title
+holds a number, whatever the judge says. The judge is asked whether an answer addresses the question, and a title
+holding the total the user asked for reads, to it, as doing exactly that.
 
 **SQL in the eval runs for real.** The fixture gateway executes the assistant's SQL in an in-memory DuckDB holding a
 small seeded copy of the fixture tables. `orders` has 125,000 rows covering the twelve whole months before the current

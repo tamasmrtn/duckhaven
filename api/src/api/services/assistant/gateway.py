@@ -103,6 +103,11 @@ def metric_tags(model: str, metrics: list[str]) -> dict[str, str]:
     return {"semantic.model": model[:256], "semantic.metrics": ",".join(metrics)[:256]}
 
 
+def _file(spec: dict | str) -> dict:
+    """A dashboard file as the API takes it: YAML text as written, or an object."""
+    return {"source_text": spec} if isinstance(spec, str) else {"spec": spec}
+
+
 class GatewayError(Exception):
     """A governed REST call failed. The message is safe to surface to the model.
 
@@ -658,28 +663,48 @@ class Gateway:
             f"/workspaces/{self._ws}/dashboards/{name}/run", body, timeout_s=timeout_s
         )
 
-    async def hold_preview(self, spec: dict, *, preview_id: str | None) -> str:
+    async def dashboard_source(self, name: str) -> str:
+        """A dashboard's file as YAML: as written, or as canonical YAML if it was sent as JSON."""
+        return (await self._get(f"/workspaces/{self._ws}/dashboards/{name}/source")).text
+
+    async def validate_dashboard(self, spec: dict | str) -> dict:
+        """Check a dashboard file the way publishing does, as this principal, storing nothing."""
+        resp = await self._client.post(
+            f"/workspaces/{self._ws}/dashboard-validations", json=_file(spec)
+        )
+        self._raise_for(resp)
+        return resp.json()
+
+    async def hold_preview(self, spec: dict | str, *, preview_id: str | None) -> str:
         """Hold ``spec`` in a dashboard preview, reusing ``preview_id`` while it lasts."""
         if preview_id is not None:
             resp = await self._client.put(
-                f"/workspaces/{self._ws}/dashboard-previews/{preview_id}", json={"spec": spec}
+                f"/workspaces/{self._ws}/dashboard-previews/{preview_id}", json=_file(spec)
             )
             if resp.status_code != 404:
                 self._raise_for(resp)
                 return preview_id
         resp = await self._client.post(
-            f"/workspaces/{self._ws}/dashboard-previews", json={"spec": spec}
+            f"/workspaces/{self._ws}/dashboard-previews", json=_file(spec)
         )
         self._raise_for(resp)
         return resp.json()["id"]
 
     async def run_preview(
-        self, preview_id: str, *, params: dict | None, timeout_s: float
+        self,
+        preview_id: str,
+        *,
+        params: dict | None,
+        timeout_s: float,
+        widgets: list[str] | None = None,
     ) -> list[dict]:
-        """Run a preview held by :meth:`hold_preview` and return its events."""
+        """Run a preview held by :meth:`hold_preview`, or some of its widgets; return its events."""
+        body: dict[str, object] = {"params": params or {}}
+        if widgets is not None:
+            body["widgets"] = widgets
         return await self._events(
             f"/workspaces/{self._ws}/dashboard-previews/{preview_id}/run",
-            {"params": params or {}},
+            body,
             timeout_s=timeout_s,
         )
 

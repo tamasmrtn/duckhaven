@@ -786,7 +786,7 @@ class EvalGateway:
             "warnings": [],
         }
 
-    async def hold_preview(self, spec: dict, *, preview_id: str | None) -> str:
+    async def hold_preview(self, spec: dict | str, *, preview_id: str | None) -> str:
         self._record("hold_preview")
         if not self._can_write:
             # As the server answers a reader: previews are for writers.
@@ -795,7 +795,14 @@ class EvalGateway:
             )
         raise GatewayError("Service unavailable: the eval workspace holds no previews.")
 
-    async def run_preview(self, preview_id: str, *, params: dict | None, timeout_s: float) -> list:
+    async def run_preview(
+        self,
+        preview_id: str,
+        *,
+        params: dict | None,
+        timeout_s: float,
+        widgets: list[str] | None = None,
+    ) -> list:
         self._record("run_preview")
         raise GatewayError("Service unavailable: the eval workspace holds no previews.")
 

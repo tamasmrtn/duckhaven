@@ -12,7 +12,7 @@ from mcp.server.mcpserver.exceptions import ToolError
 
 from api.config import settings
 from api.services.assistant.gateway import GatewayError
-from api.services.mcp import tools
+from api.services.mcp import dashboards, tools
 from api.services.mcp.auth import SCOPE_KEY, McpCall
 
 
@@ -374,3 +374,290 @@ async def test_query_metric_tags_its_query_with_the_model_and_metrics(gateways):
 
     (_, _, kwargs) = next(c for c in gateways[0].calls if c[0] == "run_sql")
     assert kwargs["tags"] == {"semantic.model": "sales", "semantic.metrics": "revenue,orders"}
+
+
+# --- dashboards ---------------------------------------------------------------
+
+FILE = """\
+version: 1
+name: sales
+title: Sales
+rows:
+  - widgets:
+      - id: revenue
+        type: kpi
+        title: Revenue
+        query: {model: orders, metrics: [revenue]}
+      - id: notes
+        type: text
+        markdown: Net of refunds.
+"""
+
+
+def _kpi(widget_id: str) -> dict:
+    return {
+        "id": widget_id,
+        "type": "kpi",
+        "title": "Revenue",
+        "query": {"model": "orders", "metrics": ["revenue"]},
+    }
+
+
+def _ran(*widget_ids: str) -> list[dict]:
+    """The events of a run of these widgets, each a one-number kpi."""
+    start = {"type": "start", "widgets": list(widget_ids), "parameters": []}
+    return [start] + [
+        {
+            "type": "widget",
+            "id": w,
+            "state": "ok",
+            "scope": {},
+            "rows": {
+                "columns": [{"name": "revenue"}],
+                "data": [["10"]],
+                "truncated": False,
+                "query_id": f"q-{w}",
+            },
+            "chart": {"type": "kpi", "y": [{"field": "revenue"}]},
+        }
+        for w in widget_ids
+    ]
+
+
+async def test_the_schema_tool_hands_out_the_guide_first(gateways):
+    assert await tools.get_dashboard_schema() == {"guide": dashboards.GUIDE}
+    schema = (await tools.get_dashboard_schema("schema"))["schema"]
+    assert schema["title"] == "DuckHaven dashboard"
+    # The file format is the same for everyone: there is nothing to govern.
+    assert gateways == []
+
+
+async def test_the_dashboard_tools_use_the_workspace_they_were_given(gateways):
+    gateways.overrides["validate_dashboard"] = {"valid": True, "errors": [], "warnings": []}
+    await tools.list_dashboards(ctx(), "sales", query="rev", uses="orders.revenue")
+    await tools.get_dashboard(ctx(), "sales", "overview", draft=True)
+    await tools.validate_dashboard(ctx(), "sales", FILE)
+    await tools.run_dashboard(
+        ctx(), "sales", "overview", widgets=["revenue"], params={"period": "last_7_days"}
+    )
+
+    assert [g.workspace for g in gateways] == ["sales"] * 4
+    assert [g.calls[0] for g in gateways] == [
+        ("list_dashboards", (), {"query": "rev", "uses": "orders.revenue"}),
+        ("get_dashboard", ("overview",), {"draft": True}),
+        ("validate_dashboard", (FILE,), {}),
+        (
+            "run_dashboard",
+            ("overview",),
+            {
+                "params": {"period": "last_7_days"},
+                "widgets": ["revenue"],
+                "draft": False,
+                "compare": None,
+                "timeout_s": settings.mcp_query_timeout_s,
+            },
+        ),
+    ]
+
+
+async def test_validation_returns_its_problems_up_to_a_cap(gateways):
+    problem = {"path": "rows[0]", "line": 5, "col": 3, "message": "Bad.", "hint": None}
+    gateways.overrides["validate_dashboard"] = {
+        "valid": False,
+        "errors": [problem] * 30,
+        "warnings": [{**problem, "message": "Unused."}],
+        "refs": [{"kind": "model", "model": "orders", "name": None}],
+    }
+
+    out = await tools.validate_dashboard(ctx(), "sales", FILE)
+
+    assert out["valid"] is False
+    assert out["errors"][0] == {"path": "rows[0]", "line": 5, "col": 3, "message": "Bad."}
+    assert len(out["errors"]) == 25 and out["more_errors"] == 5
+    assert out["warnings"] == [{"path": "rows[0]", "line": 5, "col": 3, "message": "Unused."}]
+    assert "refs" not in out
+
+
+async def test_a_dashboard_tool_refused_by_the_server_says_why(gateways):
+    gateways.overrides["validate_dashboard"] = GatewayError("Access denied: writer role required")
+    with pytest.raises(ToolError, match="writer role required"):
+        await tools.validate_dashboard(ctx(), "sales", FILE)
+
+
+async def test_a_preview_holds_the_file_as_written_and_runs_its_data_widgets(gateways):
+    gateways.overrides["hold_preview"] = "p-1"
+    gateways.overrides["run_preview"] = _ran("revenue")
+
+    out = await tools.preview_dashboard(ctx(), "sales", FILE, params={"period": "last_7_days"})
+
+    hold, run = gateways[0].calls
+    assert hold == ("hold_preview", (FILE,), {"preview_id": None})
+    assert run == (
+        "run_preview",
+        ("p-1",),
+        {
+            "params": {"period": "last_7_days"},
+            "widgets": ["revenue"],
+            "timeout_s": settings.mcp_query_timeout_s,
+        },
+    )
+    assert [w["widget"] for w in out["widgets"]] == ["revenue"]
+    assert out["widgets"][0]["encoding"] == "kpi: value=revenue"
+    assert out["widgets"][0]["lint"] == []
+
+
+async def test_a_preview_takes_the_file_as_an_object_too(gateways):
+    import yaml
+
+    gateways.overrides["hold_preview"] = "p-1"
+    gateways.overrides["run_preview"] = _ran("revenue")
+    spec = yaml.safe_load(FILE)
+
+    await tools.preview_dashboard(ctx(), "sales", spec)
+
+    assert gateways[0].calls[0] == ("hold_preview", (spec,), {"preview_id": None})
+
+
+async def test_a_preview_runs_the_first_twelve_widgets_unless_told_which(gateways):
+    gateways.overrides["hold_preview"] = "p-1"
+    ids = [f"k{i}" for i in range(13)]
+    spec = {
+        "version": 1,
+        "name": "many",
+        "title": "Many",
+        "rows": [
+            {"widgets": [_kpi(w) for w in ids[:8]]},
+            {"widgets": [_kpi(w) for w in ids[8:]]},
+        ],
+    }
+
+    await tools.preview_dashboard(ctx(), "sales", spec)
+    assert gateways[0].calls[1][2]["widgets"] == ids[:12]
+
+    await tools.preview_dashboard(ctx(), "sales", spec, widgets=["k12"])
+    assert gateways[1].calls[1][2]["widgets"] == ["k12"]
+
+    with pytest.raises(ToolError, match="between 1 and 12"):
+        await tools.preview_dashboard(ctx(), "sales", spec, widgets=ids)
+
+
+@pytest.mark.parametrize("widget", ["nope", "notes"])
+async def test_a_preview_of_a_widget_the_file_does_not_run_names_the_ones_it_does(gateways, widget):
+    with pytest.raises(ToolError, match="Its widgets are: revenue"):
+        await tools.preview_dashboard(ctx(), "sales", FILE, widgets=[widget])
+    assert gateways == []
+
+
+async def test_a_file_with_only_text_has_nothing_to_preview(gateways):
+    text_only = {
+        "version": 1,
+        "name": "notes",
+        "title": "Notes",
+        "rows": [{"widgets": [{"id": "notes", "type": "text", "markdown": "Hello."}]}],
+    }
+    with pytest.raises(ToolError, match="every widget in this file is a text widget"):
+        await tools.preview_dashboard(ctx(), "sales", text_only)
+
+
+async def test_an_invalid_file_is_refused_with_every_problem_before_anything_runs(gateways):
+    broken = FILE.replace("        title: Revenue\n", "        title: Revenue\n        widht: 4\n")
+
+    with pytest.raises(ToolError) as exc:
+        await tools.preview_dashboard(ctx(), "sales", broken)
+
+    message = str(exc.value)
+    assert message.startswith("Nothing ran: the file has 1 problem.")
+    assert "rows[0].widgets[0].widht (line 9, col 9)" in message
+    assert "Did you mean 'width'?" in message
+    assert gateways == []
+
+
+async def test_a_file_with_many_problems_lists_the_first_of_them(gateways):
+    spec = {
+        "version": 1,
+        "name": "many",
+        "title": "Many",
+        "rows": [{"widgets": [{**_kpi(f"k{r}{i}"), "x": 1} for i in range(8)]} for r in range(4)],
+    }
+    with pytest.raises(ToolError) as exc:
+        await tools.preview_dashboard(ctx(), "sales", spec)
+    message = str(exc.value)
+    assert message.startswith("Nothing ran: the file has 32 problems.")
+    assert message.count("\n- rows") == 25
+    assert message.endswith("- and 7 more.")
+
+
+async def test_a_preview_the_server_refuses_says_why(gateways):
+    gateways.overrides["hold_preview"] = GatewayError("Access denied: writer role required")
+    with pytest.raises(ToolError, match="writer role required"):
+        await tools.preview_dashboard(ctx(), "sales", FILE)
+
+
+async def test_a_run_of_too_many_widgets_is_refused_before_it_starts(gateways):
+    with pytest.raises(ToolError, match="between 1 and 12"):
+        await tools.run_dashboard(ctx(), "sales", "overview", widgets=[f"w{i}" for i in range(13)])
+    assert gateways == []
+
+
+async def test_a_run_of_every_widget_shows_twelve_and_names_the_rest(gateways):
+    ids = [f"w{i}" for i in range(14)]
+    gateways.overrides["run_dashboard"] = _ran(*ids)
+
+    out = await tools.run_dashboard(ctx(), "sales", "overview", rows=1)
+
+    assert gateways[0].calls[0][2]["widgets"] is None
+    assert len(out["widgets"]) == 12
+    assert out["not_shown"] == ["w12", "w13"]
+    assert "lint" not in out["widgets"][0]
+
+
+async def test_a_run_the_server_refuses_says_why(gateways):
+    gateways.overrides["run_dashboard"] = GatewayError("Not found (or not accessible): overview")
+    with pytest.raises(ToolError, match="Not found"):
+        await tools.run_dashboard(ctx(), "sales", "overview")
+
+
+TREND = {"id": "trend", "type": "line", "title": "Revenue", "columns": {"x": "m", "y": ["r"]}}
+
+
+def _own(rows: list[dict]) -> dict:
+    return {
+        "query_id": "q-7",
+        "sql": "SELECT m, r FROM t",
+        "row_count": len(rows),
+        "columns": ["m", "r"],
+        "column_schema": None,
+        "rows": rows,
+        "total": len(rows),
+    }
+
+
+async def test_show_chart_returns_the_widget_and_a_table_to_show(gateways):
+    gateways.overrides["own_result"] = _own(
+        [{"m": "2026-09-01", "r": 4}, {"m": "2026-10-01", "r": 6}]
+    )
+
+    out = await tools.show_chart(ctx(), "sales", "q-7", TREND)
+
+    assert gateways[0].calls[0] == ("own_result", ("q-7",), {"limit": 1000})
+    assert out["widget"] == {**TREND, "sql": "SELECT m, r FROM t"}
+    assert out["encoding"] == "line: x=m, y=r"
+    assert out["table"].splitlines() == [
+        "| m | r |",
+        "|---|---|",
+        "| 2026-09-01 | 4 |",
+        "| 2026-10-01 | 6 |",
+    ]
+    assert out["row_count"] == 2 and out["lint"] == []
+
+
+async def test_show_chart_refuses_a_widget_that_brings_its_own_query(gateways):
+    gateways.overrides["own_result"] = _own([{"m": "2026-09-01", "r": 4}])
+    with pytest.raises(ToolError, match="not a query or SQL"):
+        await tools.show_chart(ctx(), "sales", "q-7", {**TREND, "sql": "SELECT 1"})
+
+
+async def test_show_chart_refuses_a_query_someone_else_ran(gateways):
+    gateways.overrides["own_result"] = GatewayError("I can only draw results of queries I ran.")
+    with pytest.raises(ToolError, match="only draw results"):
+        await tools.show_chart(ctx(), "sales", "q-x", TREND)

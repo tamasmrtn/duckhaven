@@ -699,7 +699,8 @@ An answered widget also has:
 
 - `rows`: its `columns`, each with a `name`, a `type`, a `role` (`time`, `dimension` or `measure`) and, for a
   measure, its `label`, `format`, `unit` and `currency`; `data`, one array per row in column order; `truncated`, `true`
-  when the query returned more rows than the widget reads; and the `query_id` that answered it, in History.
+  when the query returned more rows than the widget reads; and the `query_id` that answered it, in History. A line's
+  rows come oldest first, with a missing time last. Other widgets' rows come in the order their query returned them.
 - `chart`: what to draw. `type`, the `x` axis, the `y` measures, the `series` field with the `keys` to draw, `colors`
   mapping each key to a colour slot from 0 to 7, `stack`, `orientation` and `limits`.
 - `compare`, for a `kpi` with `compare`: `current`, `previous`, `delta`, `delta_pct`, `good` (`true`, `false`, or

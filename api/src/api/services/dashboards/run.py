@@ -695,7 +695,10 @@ def drawn(
 ) -> tuple[list[dict], list[list], ChartSpec, list[str]]:
     """A widget's columns, rows and chart as a view sends them, and what was left out.
 
-    The chart comes back as a copy holding the series drawn and their colours."""
+    The chart comes back as a copy holding the series drawn and their colours. A
+    time axis's rows come oldest first: a metric query has no order of its own,
+    and whatever reads the rows, the table view or a model's first few, reads
+    them in time order. Other rows keep the query's order."""
     columns = _columns(widget, chart, page)
     names = [c["name"] for c in columns]
     chart = chart.model_copy(deep=True)
@@ -709,7 +712,22 @@ def drawn(
                 f"Showing the {MAX_SERIES} largest of {MAX_SERIES + dropped} series; "
                 "the table view has them all."
             )
+    if chart.x is not None and chart.x.kind == "time" and chart.x.field in names:
+        at = names.index(chart.x.field)
+        data.sort(key=lambda row: _in_time(row[at]))
     return columns, data, chart, left_out
+
+
+def _in_time(value: object) -> tuple:
+    """Where a time axis value falls, oldest first, with a missing one last.
+
+    Dates and timestamps arrive as ISO text, which sorts as time does; an SQL
+    widget's axis can also be a number, such as a year."""
+    if value is None:
+        return (2, 0, "")
+    if isinstance(value, int | float | Decimal) and not isinstance(value, bool):
+        return (0, value, "")
+    return (1, 0, str(value))
 
 
 def _columns(widget: DataWidget, chart: ChartSpec, page: RowsPageOut) -> list[dict]:

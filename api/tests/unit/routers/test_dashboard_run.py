@@ -918,6 +918,107 @@ def test_past_eight_series_the_largest_are_drawn():
     assert dropped == 2
 
 
+def _drawn(widget: dict, columns: list[str], rows: list[list]) -> list[list]:
+    """The rows a view sends for ``widget``, given a result in this order."""
+    from api.schemas.query import RowsPageOut
+    from api.services.dashboards.chart_spec import chart_spec
+    from api.services.dashboards.spec import DashboardSpec
+
+    spec = DashboardSpec.model_validate(
+        {"version": 1, "name": "d", "title": "D", "rows": [{"widgets": [widget]}]}
+    )
+    parsed = spec.rows[0].widgets[0]
+    page = RowsPageOut(
+        rows=[dict(zip(columns, row, strict=True)) for row in rows],
+        columns=columns,
+        cursor=None,
+        total=len(rows),
+        column_schema=None,
+    )
+    return run_service.drawn(parsed, chart_spec(parsed), page)[1]
+
+
+def test_a_lines_rows_come_oldest_first_whatever_order_the_query_returned():
+    """A metric query has no order of its own, and the table view, a CSV and a
+    model reading the first few rows all read them as they come."""
+    weekly = {
+        "id": "trend",
+        "type": "line",
+        "title": "Revenue by week",
+        "query": {"model": "shop", "metrics": ["revenue"], "grain": "week"},
+    }
+    rows = [
+        ["2026-10-26T00:00:00", "43178.48"],
+        [None, "1"],
+        ["2026-08-31T00:00:00", "40376.82"],
+        ["2026-09-21T00:00:00", "43098.11"],
+    ]
+
+    assert _drawn(weekly, ["week", "revenue"], rows) == [
+        ["2026-08-31T00:00:00", "40376.82"],
+        ["2026-09-21T00:00:00", "43098.11"],
+        ["2026-10-26T00:00:00", "43178.48"],
+        [None, "1"],
+    ]
+
+
+def test_a_line_split_by_a_dimension_keeps_each_periods_rows_together():
+    split = {
+        "id": "by_channel",
+        "type": "line",
+        "title": "Revenue by month, per channel",
+        "query": {
+            "model": "shop",
+            "metrics": ["revenue"],
+            "dimensions": ["channel"],
+            "grain": "month",
+        },
+    }
+    rows = [
+        ["Web", "2026-10-01", "5"],
+        ["Retail", "2026-09-01", "4"],
+        ["Web", "2026-09-01", "3"],
+        ["Retail", "2026-10-01", "6"],
+    ]
+
+    # Stable: within a month, the rows keep the query's order.
+    assert _drawn(split, ["channel", "month", "revenue"], rows) == [
+        ["Retail", "2026-09-01", "4"],
+        ["Web", "2026-09-01", "3"],
+        ["Web", "2026-10-01", "5"],
+        ["Retail", "2026-10-01", "6"],
+    ]
+
+
+def test_an_sql_lines_numeric_axis_sorts_as_numbers():
+    yearly = {
+        "id": "yearly",
+        "type": "line",
+        "title": "Orders by year",
+        "sql": "SELECT year, orders FROM t",
+        "columns": {"x": "year", "y": ["orders"]},
+    }
+
+    drawn = _drawn(yearly, ["year", "orders"], [[2025, 9], [998, 1], [2024, 7]])
+
+    assert [row[0] for row in drawn] == [998, 2024, 2025]
+
+
+def test_bars_and_tables_keep_the_querys_order():
+    """A bar's order is its ranking, and a table's is what its query asked for."""
+    bar = {
+        "id": "by_country",
+        "type": "bar",
+        "title": "Revenue by country",
+        "query": {"model": "shop", "metrics": ["revenue"], "dimensions": ["country"]},
+    }
+    rows = [["NL", "9"], ["BE", "7"], ["DE", "8"]]
+
+    assert _drawn(bar, ["country", "revenue"], rows) == rows
+    table = {**bar, "id": "rows", "type": "table"}
+    assert _drawn(table, ["country", "revenue"], rows) == rows
+
+
 @pytest.mark.parametrize(
     ("current", "previous", "polarity", "delta", "pct", "good"),
     [

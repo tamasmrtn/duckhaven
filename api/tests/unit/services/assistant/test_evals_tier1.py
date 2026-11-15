@@ -969,7 +969,7 @@ def test_a_tool_result_is_not_repeated_across_arms():
 def test_a_long_tool_result_is_truncated_with_its_size_named():
     from tests.evals.harness import _TOOL_RESULT_CHARS, _summarise_return
 
-    summarised = _summarise_return({"rows": [{"note": "x" * 4000}]})
+    summarised = _summarise_return({"rows": [{"note": "x" * (_TOOL_RESULT_CHARS * 2)}]})
 
     # Derived from the cap rather than a literal, so raising it stays a
     # deliberate one-line change instead of a test failure to be explained away.
@@ -1668,3 +1668,129 @@ async def test_a_refused_proposal_is_recorded_as_refused():
 
     (call,) = result.proposals
     assert call["accepted"] is False and call["changes"] == []
+
+
+# ── What the judge is shown beside the answer ─────────────────────────────────
+
+
+def _charting_model(title: str, answer: str) -> FunctionModel:
+    """Runs a grouped count, draws it, then answers."""
+
+    def function(messages, info) -> ModelResponse:
+        from pydantic_ai.messages import ToolReturnPart
+
+        returns = [part for m in messages for part in m.parts if isinstance(part, ToolReturnPart)]
+        if not returns:
+            sql = "SELECT region, count(*) AS orders FROM analytics.orders GROUP BY 1"
+            return ModelResponse(parts=[ToolCallPart("run_sql", {"sql": sql})])
+        if len(returns) == 1:
+            widget = {
+                "id": "orders",
+                "type": "bar",
+                "title": title,
+                "columns": {"x": "region", "y": ["orders"]},
+            }
+            query_id = returns[0].content["query_id"]
+            return ModelResponse(
+                parts=[ToolCallPart("show_chart", {"query_id": query_id, "widget": widget})]
+            )
+        return ModelResponse(parts=[TextPart(answer)])
+
+    return FunctionModel(function)
+
+
+async def test_a_run_records_the_charts_it_drew():
+    from tests.evals.fixtures import EvalGateway
+
+    result = await run_case(
+        ArmConfig.load("with-docs"),
+        "orders by region",
+        model=_charting_model("Orders by region", "The chart above shows it."),
+        gateway=EvalGateway(),
+    )
+
+    (chart,) = result.charts
+    assert chart["widget"]["title"] == "Orders by region"
+    assert chart["widget"]["type"] == "bar"
+    assert chart["rows"] == 4
+
+
+async def test_a_run_records_how_each_tool_it_called_was_described():
+    """A product fact can live only in a tool's description, which is what the
+    model reads before it calls the tool."""
+    from tests.evals.fixtures import EvalGateway
+
+    result = await run_case(
+        ArmConfig.load("with-docs"),
+        "orders by region",
+        model=_charting_model("Orders by region", "Done."),
+        gateway=EvalGateway(),
+    )
+
+    assert set(result.tool_descriptions) == {"run_sql", "show_chart"}
+    assert "holds no numbers" in " ".join(result.tool_descriptions["show_chart"].split())
+
+
+def test_the_judge_context_carries_the_descriptions_of_the_tools_called():
+    """On 2026-11-15 nearly every proposal lost a point for saying an owner
+    publishes the accepted draft, which propose_dashboard_changes' description
+    says and the judge could not see."""
+    from tests.evals.compare import _context
+
+    result = _run_result(
+        tool_descriptions={
+            "propose_dashboard_changes": "Accepting saves a draft an owner publishes."
+        }
+    )
+
+    context = _context(_case("c"), result)
+
+    assert "the tools the assistant called, as they were described to it" in context
+    assert "propose_dashboard_changes: Accepting saves a draft an owner publishes." in context
+
+
+def test_a_turn_that_called_no_tool_adds_no_descriptions():
+    from tests.evals.compare import _context
+
+    assert "as they were described to it" not in _context(_case("c"), _run_result())
+
+
+def test_the_harness_tells_the_assistant_the_date_its_fixtures_use():
+    """The fixtures date their rows from UTC's current date, so the date the
+    prompt gives is that one, and "last month" means the same month to both."""
+    from api.services.semantic.timespec import today_in
+
+    deps = deps_for(ArmConfig.load("with-docs"))
+
+    assert deps.today == today_in("UTC")
+    assert deps.timezone == "UTC"
+
+
+def test_a_case_can_forbid_a_number_in_a_chart_title():
+    case = next(c for c in metrics.load_cases() if c.name == "chart_title_holds_no_number")
+
+    assert case.no_number_in_chart_title is True
+    assert not any(c.no_number_in_chart_title for c in metrics.load_cases() if c.name != case.name)
+
+
+@pytest.mark.parametrize(
+    ("titles", "numbered"),
+    [
+        (["Revenue by region"], []),
+        (["Revenue by region: 2,603,612"], ["Revenue by region: 2,603,612"]),
+        ([], []),
+    ],
+)
+def test_numbered_titles_applies_the_rule_show_chart_lints(titles, numbered):
+    charts = [{"widget": {"title": title}, "rows": 1} for title in titles]
+
+    assert metrics.numbered_titles(charts) == numbered
+
+
+def test_chart_scores_name_every_case_that_titled_a_chart_with_a_number():
+    numbered = [{"widget": {"title": "Total 42"}, "rows": 1}]
+    clean = [{"widget": {"title": "Revenue"}, "rows": 1}]
+
+    scores = metrics.chart_scores([(_case("a"), numbered), (_case("b"), clean), (_case("a"), [])])
+
+    assert scores == {"chart_titles_with_numbers": ["a"]}

@@ -23,7 +23,7 @@ from pydantic_ai import Agent
 from pydantic_ai.settings import ModelSettings
 
 from tests.evals.harness import RunResult
-from tests.evals.metrics import Case
+from tests.evals.metrics import Case, numbered_titles
 
 # Pinned deliberately. Override only to compare judges, never casually: a
 # comparison against a run scored by a different judge is not a comparison.
@@ -71,7 +71,9 @@ Report the score as a number from 1 to 5."""
 RELEVANCY_RUBRIC = """\
 You are scoring one answer produced by a data-platform assistant.
 
-You will be given the user's QUESTION and the assistant's ANSWER.
+You will be given the user's QUESTION and the assistant's ANSWER. When the chat
+displayed anything beside the answer's text, it is listed as SHOWN WITH THE
+ANSWER.
 
 Score ANSWER RELEVANCY from 1 to 5 — whether the answer addresses what was
 actually asked. Ignore whether the claims are true; another scorer handles that.
@@ -88,6 +90,10 @@ Two rules that override the scale:
   retention policies. Do not penalise an answer for being negative.
 - A clarifying question is fully relevant when the question was genuinely
   ambiguous, and scores 2 when it was not — stalling is not relevance.
+- What is SHOWN WITH THE ANSWER is part of the answer: a chart the assistant
+  drew appears beside its text. An answer that points at that chart
+  has given the user what the chart holds; do not mark it down for not
+  repeating the chart in words.
 
 Report the score as a number from 1 to 5."""
 
@@ -132,6 +138,14 @@ MIN_SAMPLE_RELEVANCY = 4.0
 # costs 0.022, so 0.9 tolerates four unlucky cases and still names a run whose
 # answers are not reliably good.
 MIN_PASS_K = 0.9
+
+# Grades a sample below its pass line gets in all, the median of which stands.
+# The judge is not deterministic at temperature 0: on 2026-11-15 identical
+# answers, graded again, came back 3 and 4 in three cases of five, so a single
+# grade made a failure a coin flip on the line. Only grades below the line are
+# repeated, because only those can fail a case; a median, not the best of
+# three, so a judge that means it still fails it.
+GRADES_BELOW_THE_LINE = 3
 
 
 @lru_cache(maxsize=1)
@@ -203,15 +217,25 @@ class CaseScore:
     # Which repetition produced this score. The report keeps every sample, so a
     # case that failed one of two is checkable rather than a mystery.
     sample: int = 0
+    # The relevancy judge's reason. ``reason`` is faithfulness's; without this
+    # one a sample that failed on relevancy explained nothing.
+    relevancy_reason: str = ""
+    # Every grade each dimension got, when one below the line was repeated.
+    faithfulness_grades: tuple[float, ...] = ()
+    relevancy_grades: tuple[float, ...] = ()
+    # Rules of the case that a deterministic check found broken, such as a
+    # number in a chart's title where the case forbids one. Any fails the sample.
+    violations: tuple[str, ...] = ()
 
     def passes(self) -> bool:
         """Whether this one sample meets its own pass bar.
 
         Ungrounded cases are judged on relevancy alone: faithfulness is
         groundedness in retrieved context, and the harness already refuses to
-        let a case with no context be failed for having none.
+        let a case with no context be failed for having none. A broken rule of
+        the case fails it whatever the judge said.
         """
-        if self.relevancy < MIN_SAMPLE_RELEVANCY:
+        if self.violations or self.relevancy < MIN_SAMPLE_RELEVANCY:
             return False
         return self.faithfulness >= MIN_SAMPLE_FAITHFULNESS if self.grounded else True
 
@@ -223,20 +247,56 @@ def _context(case: Case, result: RunResult) -> str:
     return _pairwise_context(case, result)
 
 
+def _shown(result: RunResult) -> str:
+    """What the chat displayed beside the answer's text, one line each."""
+    lines = []
+    for chart in result.charts:
+        widget = chart.get("widget") or {}
+        columns = widget.get("columns") or {}
+        ys = columns.get("y") or []
+        drawn = f"{columns.get('x')} against {', '.join(map(str, ys))}" if columns else "drawn"
+        lines.append(
+            f"- a {widget.get('type', 'chart')} chart titled {widget.get('title')!r}: "
+            f"{drawn}, {chart.get('rows')} rows"
+        )
+    for proposal in result.proposals:
+        if proposal.get("accepted"):
+            changes = ", ".join(f"{c['path']} {c['change']}" for c in proposal.get("changes") or [])
+            lines.append(
+                f"- a card proposing changes to the dashboard {proposal.get('dashboard')!r}"
+                + (f": {changes}" if changes else "")
+            )
+    return "\n".join(lines)
+
+
+def violations(case: Case, result: RunResult) -> tuple[str, ...]:
+    """The case's own rules that the run broke, checked without a judge."""
+    broken = []
+    if case.no_number_in_chart_title:
+        # Every chart drawn, a redrawn one too: the chat shows each of them.
+        broken += [f"a chart's title holds a number: {t!r}" for t in numbered_titles(result.charts)]
+    return tuple(broken)
+
+
 async def score_absolute(case: Case, result: RunResult, *, sample: int = 0) -> CaseScore:
     """Faithfulness and answer relevancy, scored separately.
 
     Two calls rather than one: a combined prompt lets a judge average them, and
     an answer that is faithful but off-topic should score 5 and 2, not 3.5 twice.
     """
-    faithful = await _grade(
+    faithful, faithful_grades = await _steady_grade(
         FAITHFULNESS_RUBRIC,
         f"QUESTION: {case.question}\n\nCONTEXT:\n{_context(case, result)}\n\n"
         f"ANSWER:\n{result.answer}",
+        line=MIN_SAMPLE_FAITHFULNESS,
     )
-    relevant = await _grade(
+    shown = _shown(result)
+    relevant, relevant_grades = await _steady_grade(
         RELEVANCY_RUBRIC,
-        f"QUESTION: {case.question}\n\nANSWER:\n{result.answer}",
+        f"QUESTION: {case.question}\n\n"
+        + (f"SHOWN WITH THE ANSWER:\n{shown}\n\n" if shown else "")
+        + f"ANSWER:\n{result.answer}",
+        line=MIN_SAMPLE_RELEVANCY,
     )
     return CaseScore(
         case=case.name,
@@ -251,6 +311,10 @@ async def score_absolute(case: Case, result: RunResult, *, sample: int = 0) -> C
         tools_called=tuple(result.tools_called),
         doc_paths=tuple(result.doc_paths),
         sample=sample,
+        relevancy_reason=relevant.reason,
+        faithfulness_grades=faithful_grades,
+        relevancy_grades=relevant_grades,
+        violations=violations(case, result),
     )
 
 
@@ -272,6 +336,23 @@ def reset_judge() -> None:
 
 async def _grade(rubric: str, body: str) -> GradedVerdict:
     return (await _graded_agent().run(f"{rubric}\n\n{body}")).output
+
+
+async def _steady_grade(
+    rubric: str, body: str, *, line: float
+) -> tuple[GradedVerdict, tuple[float, ...]]:
+    """One grade, or the median of :data:`GRADES_BELOW_THE_LINE` when it is below ``line``.
+
+    Returns the verdict that stands and every grade given, in order.
+    """
+    first = await _grade(rubric, body)
+    if first.score >= line:
+        return first, (float(first.score),)
+    verdicts = [first]
+    for _ in range(GRADES_BELOW_THE_LINE - 1):
+        verdicts.append(await _grade(rubric, body))
+    median = sorted(verdicts, key=lambda v: v.score)[len(verdicts) // 2]
+    return median, tuple(float(v.score) for v in verdicts)
 
 
 async def judge_pair(question: str, context: str, first: str, second: str) -> PairwiseVerdict:
@@ -384,6 +465,10 @@ def summarise_scores(scores: list[CaseScore], *, k: int = SAMPLES_PER_CASE) -> d
                 "relevancy": s.relevancy,
                 "passed": s.passes(),
                 "reason": s.reason,
+                "relevancy_reason": s.relevancy_reason,
+                "faithfulness_grades": list(s.faithfulness_grades),
+                "relevancy_grades": list(s.relevancy_grades),
+                "violations": list(s.violations),
                 "tools_called": list(s.tools_called),
                 "doc_paths": list(s.doc_paths),
                 "answer": s.answer,

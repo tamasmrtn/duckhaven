@@ -101,6 +101,25 @@ def _instructions_given(results: tuple[RunResult, ...]) -> str | None:
     return text.strip() or None
 
 
+def _tools_described(results: tuple[RunResult, ...]) -> str | None:
+    """How each tool the answer used was described to the assistant.
+
+    The fourth thing an answer may rest on. A tool's description is instructions
+    too, and some product facts live only there: that an accepted proposal
+    becomes a draft an owner publishes is in propose_dashboard_changes'. On
+    2026-11-15 nearly every proposal lost a point of faithfulness for saying so.
+    Only the tools a turn called: the rest are evidence of nothing it said.
+    """
+    described: dict[str, str] = {}
+    for result in results:
+        for name, text in result.tool_descriptions.items():
+            if text and name not in described:
+                described[name] = text.strip()
+    if not described:
+        return None
+    return "\n\n".join(f"{name}: {text}" for name, text in described.items())
+
+
 def _context(case: Case, *results: RunResult) -> str:
     """The evidence an answer is entitled to rest on: pages *and* tool results.
 
@@ -164,6 +183,10 @@ def _context(case: Case, *results: RunResult) -> str:
 
     if instructions := _instructions_given(results):
         blocks.append(f"--- the assistant's standing instructions ---\n{instructions}")
+    if described := _tools_described(results):
+        blocks.append(
+            f"--- the tools the assistant called, as they were described to it ---\n{described}"
+        )
 
     # Chosen by whether there are *pages*, not by whether there is anything at
     # all. Tool results are evidence of what a query returned, never of what the

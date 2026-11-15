@@ -221,6 +221,7 @@ cases:
       provenance: hand
       negative: false
       expected_tools_any: [show_chart]
+      no_number_in_chart_title: true
       note: >-
         A chart's title names what is measured and holds no number, so it titles
         the chart "Revenue by region" and gives the total in its answer, saying

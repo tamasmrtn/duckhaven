@@ -24,7 +24,7 @@ from typing import Any
 
 import yaml
 from pydantic import TypeAdapter
-from pydantic_ai import Agent, DeferredToolRequests
+from pydantic_ai import Agent, DeferredToolRequests, Tool
 from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.messages import RetryPromptPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.usage import UsageLimits
@@ -36,6 +36,7 @@ from api.services.assistant.deps import AssistantDeps, DefaultCompute
 from api.services.assistant.grounding import unsupported_numbers
 from api.services.assistant.prompts import build_instructions
 from api.services.assistant.tools import build_toolset
+from api.services.semantic.timespec import today_in
 
 ARMS_PATH = Path(__file__).with_name("arms.yaml")
 # An arm's `page:` as the request would carry it.
@@ -103,6 +104,16 @@ class RunResult:
     # judge: {dashboard, operations, summary, accepted, changes,
     # unsupported_numbers}. What a proposal would change is scored from these.
     proposals: list[dict] = field(default_factory=list)
+    # The description of each tool the turn called, as the model was given it.
+    # It is part of what the assistant was told: "accepting saves it as the
+    # draft, which an owner publishes" is in propose_dashboard_changes' and
+    # nowhere else, and a judge without it scored every answer repeating it as
+    # unsupported.
+    tool_descriptions: dict[str, str] = field(default_factory=dict)
+    # Every chart show_chart drew: {"widget": the widget as drawn, "rows": n}.
+    # The chat shows it beside the answer, so an answer that says "the chart
+    # above" has answered, which the relevancy judge cannot know from the text.
+    charts: list[dict] = field(default_factory=list)
 
     @property
     def cited_paths(self) -> list[str]:
@@ -158,6 +169,9 @@ def deps_for(arm: ArmConfig, *, gateway: Any = None, docs_search: Any = None) ->
         default_compute=_default_compute(arm.workspace.get("default_compute")),
         docs_search=docs_search,
         page=_PAGE.validate_python(page) if (page := arm.workspace.get("page")) else None,
+        # UTC, because the fixtures date their rows from UTC's current date.
+        today=today_in("UTC"),
+        timezone="UTC",
     )
 
 
@@ -207,10 +221,17 @@ def _render_output(output: Any) -> str:
 # of faithfulness on 2026-09-10 for a claim that was in the tool result all
 # along, and the judge said so in its reason.
 #
+# 1500 still cut what answers rest on. On 2026-11-15 the cut hid the dashboard
+# schema (~15k), most of a 100-row `run_sql` sample, and the `search_docs`
+# snippet that listed dbt's materializations: correct answers scored as invented,
+# and an answer's wrong account of where a widget went passed, because the
+# judge could not see the operation that placed it. 12,000 holds each of those
+# whole; the largest judged context it produces measured about 55k characters.
+#
 # Raising it changes what the judge sees, so scores from before this date are
 # not strictly comparable with scores after it — the same caveat `judge.py`
 # makes about changing the judge itself.
-_TOOL_RESULT_CHARS = 1500
+_TOOL_RESULT_CHARS = 12_000
 
 
 def _summarise_return(content: object) -> str:
@@ -293,6 +314,7 @@ async def run_case_once(
     deps = deps_for(arm, gateway=gateway, docs_search=docs_search)
     agent = build_agent(arm, model=model)
     instructions = build_instructions(_FakeCtx(deps))
+    described = {tool.name: tool.description or "" for tool in map(Tool, build_toolset())}
     try:
         result = await agent.run(
             question,
@@ -324,6 +346,7 @@ async def run_case_once(
     sent: dict[str, str] = {}
     messages = result.all_messages()
     proposed: dict[str, dict] = {}
+    charts: list[dict] = []
     for message in messages:
         for part in getattr(message, "parts", []):
             if isinstance(part, ToolCallPart):
@@ -344,6 +367,13 @@ async def run_case_once(
                     tool_results.append((part.tool_name, args, _summarise_return(part.content)))
                 if part.tool_name == "search_docs":
                     searched_paths += _searched_paths(part.content)
+                if part.tool_name == "show_chart" and isinstance(part.content, dict):
+                    charts.append(
+                        {
+                            "widget": part.content.get("widget") or {},
+                            "rows": part.content.get("rows"),
+                        }
+                    )
                 continue
             if not isinstance(part, ToolCallPart):
                 continue
@@ -363,6 +393,8 @@ async def run_case_once(
         searched_paths=searched_paths,
         sample=sample,
         proposals=list(proposed.values()),
+        tool_descriptions={name: described.get(name, "") for name in dict.fromkeys(tools_called)},
+        charts=charts,
     )
 
 

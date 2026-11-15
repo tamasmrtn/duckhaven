@@ -374,7 +374,7 @@ Grafana dashboard, and [Distributed tracing](../operations/tracing.md) for the t
 |---|---|---|
 | `METRICS_ENABLED` | `true` | Expose `GET /api/metrics` in Prometheus text format. Unauthenticated like the health endpoints (keep it on the internal network); set `false` to remove the endpoint entirely. |
 | `AGENT_METRICS_RETENTION_HOURS` | `168` | How long the per-minute agent rollup and the agent lifecycle trail are kept, which is how far back the [per-agent monitoring page](../compute/agent-monitoring.md) can look (its longest preset is 7 days). Samples are rolled up to one row per agent per minute (~1.4k rows/agent/day), so a week costs roughly 10k rows per agent. Each agent's most recent earlier lifecycle event is always kept. |
-| `AGENT_PRESENCE_SWEEP_INTERVAL_S` | `30` | How often the presence sweeper closes the lifecycle trail of agents that went away without a clean disconnect (a crashed replica, a lost network), so the monitoring timeline stops showing them as up. It also runs the retention purge. |
+| `AGENT_PRESENCE_SWEEP_INTERVAL_S` | `30` | How often the presence sweeper closes the lifecycle trail of agents that went away without a clean disconnect (a crashed replica, a lost network), so the monitoring timeline stops showing them as up. It also fails queries their agent cannot answer, and runs the retention purge. |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | — | OTLP (http/protobuf) endpoint to export traces to; the compose files default it to the bundled collector, `http://otel-collector:4318`. Unset/empty disables tracing entirely. |
 | `OTEL_SERVICE_NAME` | `duckhaven-api` | Service name reported on spans. Replicas are distinguished by `REPLICA_ID` as `service.instance.id`. |
 

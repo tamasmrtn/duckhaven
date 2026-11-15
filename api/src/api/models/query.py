@@ -156,6 +156,11 @@ class Query(Base):
     # is the time it spent executing — the split the history table shows on hover.
     # Null for a run that never started, and for rows written before it was recorded.
     running_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # When the run was sent to its agent, stamped just before the send. An agent
+    # answers on the connection a run arrived on, so a run sent before that
+    # connection closed can never be answered; the presence sweeper fails it. Null
+    # for session statements, runs never sent, and rows written before it was kept.
+    dispatched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     workspace: Mapped[Workspace] = relationship(back_populates="queries")

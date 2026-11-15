@@ -56,6 +56,8 @@ database already at head). This is why you can leave
 **Draining.** On shutdown a replica marks itself not-ready (so the load balancer
 stops routing to it), closes its agent sockets so those agents reconnect to a
 live replica immediately, and lets in-flight requests finish before exiting.
+A query those agents were running or holding fails, because an agent answers a
+query only on the connection it arrived on. Run it again.
 
 ## Configure it
 

@@ -104,9 +104,11 @@ kept as an append-only trail.
 
 If an agent goes away without a clean disconnect — the API replica holding its connection crashed, or it lost its
 network — a presence sweeper notices its lapsed heartbeat and closes its trail at the last moment it was seen, so the
-timeline shows it as not running rather than up. The minute rollup and the lifecycle trail are retained for
-`AGENT_METRICS_RETENTION_HOURS` (default one week); the trail always keeps each agent's most recent earlier event, so
-an agent that has been connected for longer than that still has a timeline.
+timeline shows it as not running rather than up. The same sweep fails each query that its agent cannot answer: one sent
+before the agent's connection closed, or one still running without a result past its timeout and a minute's grace. A
+query waiting in a connected agent's queue is left to wait. The minute rollup and the lifecycle trail are retained for
+`AGENT_METRICS_RETENTION_HOURS` (default one week); the trail always keeps each agent's most recent earlier event, so an
+agent that has been connected for longer than that still has a timeline.
 
 This is deliberately DuckHaven's own storage rather than the
 [Prometheus](../operations/monitoring.md#prometheus-metrics) or [tracing](../operations/tracing.md) pipelines below.

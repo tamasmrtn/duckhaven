@@ -56,6 +56,8 @@ file, the page runs it again, as you. Nothing is saved to the dashboard, and onl
 dh dashboard preview dashboards/refunds.dashboard.yml --open
 ```
 
+`--open` opens the page in your browser. If the browser is signed out, the page opens after you sign in.
+
 `dh dashboard test dashboards/` runs every widget once, as you, and reports each one as `ok`, `empty`, `error` or
 `no_access`, with how long it took. It exits 6 when a widget fails or reads something you may not read.
 

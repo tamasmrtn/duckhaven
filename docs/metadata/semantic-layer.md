@@ -160,11 +160,14 @@ copies cannot disagree.
 [Dashboards](../querying/dashboards.md) read published models and published metrics only. Deleting or deprecating a
 model, deleting a metric or a dimension, or taking a metric back to draft breaks every published dashboard that reads
 it. So DuckHaven refuses such a change with `breaking_dashboards`, naming each dashboard and what it reads. Change the
-dashboards first, or make the change with `allow_breaking=true`; their widgets that read what went then show an error.
+dashboards first, or make the change with `allow_breaking=true` (`--allow-breaking` on `dh semantic import`, `purge`
+and `deprecate`); their widgets that read what went then show an error. `dh dashboard impact orders.revenue` lists the
+dashboards that read a model, metric or dimension before you change it.
 
 An import is checked the same way, as a whole: one that drops a metric a published dashboard reads is refused, and
-nothing in it is imported. With `dry_run=true` it lists what it would remove and the dashboards that would break, and
-changes nothing. A draft dashboard is not counted, because publishing it checks it again.
+nothing in it is imported. With `dry_run=true` (`dh semantic import --dry-run`) it lists what it would remove and the
+dashboards that would break, and changes nothing. A draft dashboard is not counted, because publishing it checks it
+again.
 
 ## When a definition stops being true
 

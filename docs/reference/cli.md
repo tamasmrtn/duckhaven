@@ -69,6 +69,8 @@ Provision an elastic agent. Accepted asynchronously; poll `admin agent get`.
 --cpu
 --memory-gb
 --idle-timeout-minutes
+--runtime
+--allow-beta
 ```
 
 #### `dh admin agent get`
@@ -89,10 +91,28 @@ Current load and capacity for every agent.
 
 #### `dh admin agent monitoring`
 
-One agent's monitoring detail.
+One agent's monitoring detail over a window or a custom range.
 
 ```text
 <agent_id>
+--window
+--start
+--end
+```
+
+#### `dh admin agent queries`
+
+The runs that were running or waiting on an agent during a range, with what they cost.
+
+```text
+<agent_id>
+--start
+--end
+--status
+--sort
+--dir
+--limit
+--all
 ```
 
 #### `dh admin agent restart`
@@ -119,13 +139,41 @@ Terminate an elastic agent.
 <agent_id>
 ```
 
+### `dh admin catalog`
+
+Catalog-wide operations.
+
+#### `dh admin catalog reconcile-roles`
+
+Create any DuckLake database role that does not exist yet.
+
 ### `dh admin maintenance`
 
-Deployment maintenance policy.
+Maintenance policy, scans and recommendations.
+
+#### `dh admin maintenance apply`
+
+Run the maintenance a recommendation asks for.
+
+```text
+<recommendation_id>
+--yes/-y
+```
 
 #### `dh admin maintenance policy`
 
 The deployment's maintenance policy.
+
+#### `dh admin maintenance recommendations`
+
+What the maintenance scan recommends, with the outcome of any apply.
+
+```text
+--status
+--severity
+--limit
+--all
+```
 
 #### `dh admin maintenance scan`
 
@@ -290,9 +338,11 @@ Compute agents you may run queries on.
 
 ### `dh agent list`
 
-The agents this caller may run queries on, with their capabilities. Distinct from `dh admin agent
-list`, which needs `agents:manage` and shows every agent in the deployment; this is the list an
-analyst can actually use, and where `--agent <name>` resolves a name from.
+The agents this caller may run queries on, with their capabilities.
+
+### `dh agent runtimes`
+
+The DuckDB runtimes agents can run, and which one is the default.
 
 ## `dh api`
 
@@ -361,6 +411,7 @@ Show which credential is in use and where each setting came from.
 Sign in and store a personal access token.
 
 ```text
+--host
 --name
 --email
 --token
@@ -402,6 +453,7 @@ Attach an existing catalog to the workspace.
 
 ```text
 <catalog>
+--default
 ```
 
 ### `dh catalog create`
@@ -410,6 +462,7 @@ Create a catalog and attach it to the workspace.
 
 ```text
 <name>
+--kind
 --storage-backend
 --access-mode
 ```
@@ -432,6 +485,42 @@ Drop a catalog outright, by id. Destructive.
 --yes/-y
 ```
 
+### `dh catalog export`
+
+Copy a DuckLake catalog out as Iceberg.
+
+#### `dh catalog export cancel`
+
+Stop an export that has not finished.
+
+```text
+<catalog_id>
+<export_id>
+```
+
+#### `dh catalog export create`
+
+Start exporting a DuckLake catalog to a new Iceberg catalog.
+
+```text
+<catalog_id>
+--target-name
+--storage-backend
+```
+
+#### `dh catalog export list`
+
+A catalog's exports, newest first.
+
+```text
+<catalog_id>
+--all
+```
+
+### `dh catalog kinds`
+
+The catalog kinds this deployment offers, and what each can do.
+
 ### `dh catalog list`
 
 Catalogs attached to the workspace.
@@ -444,6 +533,174 @@ Catalogs attached to the workspace.
 
 Recompute table statistics across the catalog.
 
+```text
+--catalog
+```
+
+### `dh catalog rotate-role`
+
+Rotate the database credential of a DuckLake catalog.
+
+```text
+<catalog_id>
+--yes/-y
+```
+
+## `dh dashboard`
+
+Dashboards as files: check, apply and export them.
+
+### `dh dashboard adopt`
+
+Take over a dashboard made in DuckHaven, to manage it in git from now on.
+
+```text
+<name>
+<directory>
+--source-id
+```
+
+### `dh dashboard apply`
+
+Apply dashboard files: create each dashboard, or replace its file.
+
+```text
+<paths>
+--publish
+--dry-run
+--source-id
+--source-ref
+--expected-hash
+--force
+--prune
+--yes/-y
+```
+
+### `dh dashboard delete`
+
+Delete a dashboard, its draft and its revisions. Needs owner.
+
+```text
+<name>
+--yes/-y
+```
+
+### `dh dashboard detach`
+
+Stop managing a dashboard in git, so it is edited in DuckHaven again. Needs owner.
+
+```text
+<name>
+```
+
+### `dh dashboard export`
+
+Print a dashboard's file as YAML, as written, comments included.
+
+```text
+<name>
+--draft
+```
+
+### `dh dashboard exposures`
+
+Print dbt exposures for the published dashboards that read a dbt project's tables.
+
+```text
+<manifest>
+--owner-name
+--owner-email
+```
+
+### `dh dashboard get`
+
+One dashboard, its file as JSON, and what it reads.
+
+```text
+<name>
+--draft
+```
+
+### `dh dashboard impact`
+
+The dashboards that read a model, metric or dimension: what changing it touches.
+
+```text
+<ref>
+```
+
+### `dh dashboard list`
+
+The workspace's dashboards, by name. Writers also see those never published.
+
+```text
+--status
+--source
+--source-id
+--uses
+--search/-q
+--limit
+--all
+```
+
+### `dh dashboard preview`
+
+Show a dashboard file in DuckHaven as you edit it, without saving it.
+
+```text
+<file>
+--once
+--open
+--no-cache
+```
+
+### `dh dashboard publish`
+
+Publish a dashboard's draft as it stands, so readers see it. Needs owner.
+
+```text
+<name>
+--message/-m
+```
+
+### `dh dashboard rename`
+
+Rename a dashboard managed in git, keeping its revisions and links.
+
+```text
+<old>
+<file>
+--source-id
+--source-ref
+--dry-run
+```
+
+### `dh dashboard schema`
+
+Print the JSON Schema of a dashboard file, for an editor's YAML language server.
+
+```text
+--spec-version
+```
+
+### `dh dashboard test`
+
+Run dashboard files as you, without saving them, and report every widget.
+
+```text
+<paths>
+--no-cache
+--slow
+```
+
+### `dh dashboard validate`
+
+Check dashboard files the way publishing does, without storing anything.
+
+```text
+<paths>
+```
+
 ## `dh grant`
 
 Catalog access control.
@@ -454,6 +711,7 @@ Switch the catalog between open and scoped access.
 
 ```text
 <mode>
+--catalog
 ```
 
 ### `dh grant list`
@@ -461,6 +719,7 @@ Switch the catalog between open and scoped access.
 Who has what on the catalog, and in which access mode.
 
 ```text
+--catalog
 --principals
 ```
 
@@ -470,6 +729,7 @@ Revoke one grant by its id, as shown by `dh grant list`.
 
 ```text
 <grant_id>
+--catalog
 ```
 
 ### `dh grant set`
@@ -481,6 +741,7 @@ Grant a principal access to the catalog, a schema, or one table.
 --tier
 --schema
 --table
+--catalog
 ```
 
 ## `dh health`
@@ -627,6 +888,7 @@ Run SQL and print the results. The noun-first spelling of `dh sql`.
 --limit
 --all
 --agent
+--no-cache
 ```
 
 ## `dh saved-query`
@@ -635,14 +897,14 @@ Named SQL saved in the workspace.
 
 ### `dh saved-query create`
 
-Save SQL under a name, replacing any query already using that name. Names match ignoring case, so `report` replaces
-`Report`. The web UI asks before replacing; the CLI keeps replacing, as it always has.
+Save SQL under a name, replacing any query already using that name.
 
 ```text
 <name>
 --query/-q
 --file/-f
 --agent
+--on-conflict
 ```
 
 ### `dh saved-query delete`
@@ -732,6 +994,7 @@ Create a schema.
 
 ```text
 <name>
+--catalog
 ```
 
 ### `dh schema drop`
@@ -740,12 +1003,17 @@ Drop a schema.
 
 ```text
 <name>
+--catalog
 --yes/-y
 ```
 
 ### `dh schema list`
 
 Schemas in the catalog.
+
+```text
+--catalog
+```
 
 ## `dh search`
 
@@ -754,6 +1022,7 @@ Find catalogs, schemas, tables and saved queries by name.
 ```text
 <query>
 --limit
+--type
 ```
 
 ## `dh semantic`
@@ -766,6 +1035,7 @@ Retire a published model without deleting it.
 
 ```text
 <model>
+--allow-breaking
 ```
 
 ### `dh semantic import`
@@ -776,6 +1046,8 @@ Publish semantic definitions from an external producer.
 <provider>
 <artifact>
 --reconcile
+--dry-run
+--allow-breaking
 ```
 
 ### `dh semantic model`
@@ -808,6 +1080,7 @@ Remove everything one provider published. Requires workspace owner.
 
 ```text
 --provider
+--allow-breaking
 --yes/-y
 ```
 
@@ -868,6 +1141,7 @@ Run one statement on an existing session's connection.
 --timeout
 --limit
 --all
+--no-cache
 ```
 
 ### `dh session get`
@@ -893,8 +1167,10 @@ Open a session and print its id.
 
 ```text
 --agent
+--catalog
 --wait
 --no-wait
+--no-cache
 ```
 
 ### `dh session statements`
@@ -919,6 +1195,7 @@ Run SQL and print the results.
 --limit
 --all
 --agent
+--no-cache
 ```
 
 ## `dh table`
@@ -932,6 +1209,7 @@ Create an Iceberg table.
 ```text
 <table>
 --column/-c
+--catalog
 ```
 
 ### `dh table drop`
@@ -940,6 +1218,7 @@ Drop a table.
 
 ```text
 <table>
+--catalog
 --yes/-y
 ```
 
@@ -949,6 +1228,7 @@ One table's columns, partitioning and statistics.
 
 ```text
 <table>
+--catalog
 ```
 
 ### `dh table health`
@@ -957,6 +1237,7 @@ Maintenance findings for this table.
 
 ```text
 <table>
+--catalog
 ```
 
 ### `dh table lineage`
@@ -965,6 +1246,7 @@ What this table was built from.
 
 ```text
 <table>
+--catalog
 ```
 
 ### `dh table list`
@@ -973,6 +1255,7 @@ Tables in a schema.
 
 ```text
 <schema>
+--catalog
 ```
 
 ### `dh table recount`
@@ -981,6 +1264,7 @@ Recount the table's rows and refresh its stats.
 
 ```text
 <table>
+--catalog
 ```
 
 ### `dh table sample`
@@ -989,6 +1273,7 @@ A page of rows, for previewing without SQL.
 
 ```text
 <table>
+--catalog
 ```
 
 ### `dh table snapshots`
@@ -997,11 +1282,79 @@ The table's Iceberg snapshots.
 
 ```text
 <table>
+--catalog
 ```
 
 ## `dh version`
 
 The CLI's version, and the server's when one is reachable.
+
+## `dh worksheet`
+
+Your private editor tabs, autosaved.
+
+### `dh worksheet create`
+
+Create a worksheet. Open ones are appended as the last editor tab.
+
+```text
+--title
+--query/-q
+--file/-f
+--agent
+--catalog
+--timeout
+--saved-query
+--closed
+```
+
+### `dh worksheet delete`
+
+Delete a worksheet. A saved query linked to it is left alone.
+
+```text
+<worksheet_id>
+--yes/-y
+```
+
+### `dh worksheet get`
+
+One worksheet, open or closed, with the `version` to save against.
+
+```text
+<worksheet_id>
+```
+
+### `dh worksheet list`
+
+Your worksheets in this workspace. Worksheets are private to their owner.
+
+```text
+--status
+--saved-query
+--title
+--sort
+--dir
+--limit
+--all
+```
+
+### `dh worksheet update`
+
+Change a worksheet.
+
+```text
+<worksheet_id>
+--title
+--query/-q
+--file/-f
+--base-version
+--agent
+--catalog
+--timeout
+--saved-query
+--open
+```
 
 ## `dh workspace`
 
@@ -1056,10 +1409,11 @@ Who belongs to the workspace, and in what role.
 
 ### `dh workspace update`
 
-Rename or re-describe a workspace.
+Rename or re-describe a workspace, or switch its result cache on or off.
 
 ```text
 <workspace>
 --name
 --description
+--result-cache
 ```

@@ -68,7 +68,7 @@ pages:
   title: Manage dashboards in git
   section: Querying
   summary: Keep each dashboard's file in a git repository, review changes in pull requests, and let
-    CI apply them to DuckHaven.
+    CI apply them to DuckHaven with dh.
 - path: querying/sql-sessions.md
   title: SQL sessions
   section: Querying

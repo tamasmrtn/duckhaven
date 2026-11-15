@@ -181,6 +181,26 @@ that reads one source. Open a model's table in the catalog explorer: on the **Li
 `dbt` among its producers. If the model has also run through DuckHaven, the same edge lists `execution` too, with
 column detail from the SQL.
 
+## Show the dashboards in dbt's lineage
+
+Lineage can also run the other way. `dh dashboard exposures`, in `dh` 0.5.0 or later, writes the workspace's published
+[dashboards](../querying/dashboards.md) as dbt [exposures](https://docs.getdbt.com/docs/build/exposures), so dbt's
+lineage shows which dashboards read a model before someone changes it:
+
+```bash
+dh --output models/duckhaven_exposures.yml dashboard exposures target/manifest.json
+```
+
+Each published dashboard that reads a model, seed, snapshot or source in the manifest becomes an exposure of type
+`dashboard`, with its title, description and link. A query widget reads the tables of its metrics and dimensions, and
+an SQL widget the tables in its SQL. A table matches a dbt resource by catalog, schema and table, as
+[the import maps one](#how-your-project-maps-onto-the-catalog). A dashboard that reads nothing in the manifest is
+left out, and `dh` names it.
+
+- dbt requires an owner for each exposure: `--owner-name`, `DuckHaven` by default, and `--owner-email`.
+- An exposure's name takes letters, digits and underscores, so `sales-overview` becomes `sales_overview`.
+- Write the file again when the dashboards change, rather than editing it.
+
 ## If it goes wrong
 
 ### Everything comes back 0, and no edges appear
@@ -212,3 +232,4 @@ The token's account is not a `writer` in the workspace, or lacks `writer` on a s
 - [Lineage](lineage.md) — how the graph works and what it means.
 - [SQL sessions](../querying/sql-sessions.md) — connecting dbt to DuckHaven.
 - [Service accounts](../access/service-accounts.md) — minting a token for automation.
+- [Manage dashboards in git](../querying/manage-dashboards-in-git.md) — applying dashboard files from CI.

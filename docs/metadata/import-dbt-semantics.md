@@ -150,27 +150,21 @@ a subset (`?reconcile=none` over HTTP).
 
 An import that drops a metric or dimension a published [dashboard](../querying/dashboards.md) reads, or retires a model
 one reads, is refused with **409** `breaking_dashboards` and imports nothing. To see what an import would remove and
-break first, send it with `?dry_run=true`:
+break first, make a dry run, which changes nothing:
 
 ```bash
-curl -X POST "$DH/api/workspaces/$WS/semantic/imports/dbt?dry_run=true" \
-  -H 'Content-Type: text/plain' \
-  --data-binary @target/manifest.json
+dh semantic import dbt target/manifest.json --dry-run
 ```
 
-```json
-{
-  "provider": "dbt",
-  "dry_run": true,
-  "updated": 1,
-  "removed_metrics": ["shop.gross_revenue"],
-  "affected_dashboards": [
-    {"name": "sales-overview", "title": "Sales overview", "reads": ["shop.gross_revenue"]}
-  ]
-}
+```text
+Dry run, nothing changed: it would create 0 models, update 1 and remove 0.
+It would remove shop.gross_revenue.
+  would break sales-overview (Sales overview): reads shop.gross_revenue
 ```
 
-(Some fields omitted.) Change those dashboards first, or import with `?allow_breaking=true` to break them on purpose.
+Change those dashboards first, or import with `--allow-breaking` to break them on purpose (`?dry_run=true` and
+`?allow_breaking=true` over HTTP). `dh dashboard impact shop.gross_revenue` lists every dashboard that reads a model,
+metric or dimension, including drafts for a writer.
 
 An imported model is **read-only in DuckHaven** — `PATCH` returns 409. A model has
 exactly one owner, which is what stops the two copies disagreeing: change it in
@@ -181,6 +175,8 @@ To remove everything dbt published:
 ```bash
 dh semantic purge --provider dbt
 ```
+
+A purge is refused in the same way while a published dashboard reads one of the models, unless `--allow-breaking`.
 
 ## If it goes wrong
 
@@ -199,8 +195,9 @@ Imported models are edited at their source, dbt. Change the dbt project and impo
 
 ### The import is refused with 409 `breaking_dashboards`
 
-The import removes a metric, dimension or model that a published dashboard reads. `details.affected_dashboards` names
-each dashboard and what it reads. Change those dashboards, then import again, or import with `?allow_breaking=true`.
+The import removes a metric, dimension or model that a published dashboard reads. `dh` lists each dashboard and what
+it reads, from the refusal's `details.affected_dashboards`. Change those dashboards, then import again, or import with
+`--allow-breaking`.
 
 ### A dashboard says the model is still a draft
 

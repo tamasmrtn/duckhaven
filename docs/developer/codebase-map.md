@@ -407,7 +407,9 @@ Notes that matter for changes:
   tables each file reads, for impact lookups; `dashboard_aliases` keeps old names
   after a rename. `dashboard_previews` holds files a writer is trying out before
   saving them, each visible to its creator only and gone two hours after it was
-  last used. See `services/dashboards/`.
+  last used. `dashboard_proposals` holds the changes the assistant proposes, each
+  for the person it proposed them to, until they accept or discard them or a day
+  passes. See `services/dashboards/`.
 - **`agents.capabilities`** is the last advertised `AgentCapabilities` JSON;
   `result_host`/`result_port` tell the API where to fetch the result Parquet.
 - **`queries` is also the audit log** — there is no separate audit table.

@@ -1,12 +1,28 @@
 import type {
   AssistantToolCall,
   ChatChart,
+  ChatProposal,
   Conversation,
   TranscriptItem,
 } from "@/types/assistant";
 import { SALES_RUN } from "./dashboards";
 
 const BY_COUNTRY = SALES_RUN.find((w) => w.id === "by_country")!;
+
+/** Changes the assistant proposes to the sales dashboard: the mock's proposal-1. */
+export const CHAT_PROPOSAL: ChatProposal = {
+  type: "dashboard_proposal",
+  tool_call_id: "call-propose",
+  proposal: {
+    id: "proposal-1",
+    dashboard: "sales-overview",
+    title: "Sales, weekly",
+    summary: "Retitle the dashboard for its weekly review.",
+    changes: [{ path: "title", change: "changed" }],
+    managed: false,
+    expires_at: "2026-11-16T09:00:00Z",
+  },
+};
 
 /** A bar chart the assistant draws from a query it ran: revenue by country. */
 export const CHAT_CHART: ChatChart = {

@@ -5,6 +5,7 @@ import {
   ASSISTANT_ENABLED,
   ASSISTANT_AVAILABILITY,
   CHAT_CHART,
+  CHAT_PROPOSAL,
   CONVERSATIONS,
   type MockConversation,
 } from "../fixtures/assistant";
@@ -191,6 +192,32 @@ export const assistantHandlers = [
             type: "done",
             message_id: nextId("msg"),
             usage: { input: 12, output: 9 },
+          },
+        ]);
+      }
+
+      // Simulate proposing a change to a dashboard, and the words after it.
+      if (/\bretitle\b/i.test(prompt)) {
+        const answer =
+          "I proposed a new title. Review it, then accept it as the draft or discard it.";
+        conv.transcript.push(
+          {
+            role: "proposal",
+            text: "",
+            sql: null,
+            sources: null,
+            proposal: CHAT_PROPOSAL,
+          },
+          { role: "assistant", text: answer, sql: null, sources: null },
+        );
+        return sse([
+          { type: "tool_call", tool: "propose_dashboard_changes" },
+          CHAT_PROPOSAL,
+          { type: "token", text: answer, start: true },
+          {
+            type: "done",
+            message_id: nextId("msg"),
+            usage: { input: 12, output: 14 },
           },
         ]);
       }

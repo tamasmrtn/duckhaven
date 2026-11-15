@@ -27,6 +27,7 @@ import { cn } from "@/utils";
 import type { DocSource } from "@/types/assistant";
 import { useAssistant } from "./AssistantContext";
 import { ChatChartCard } from "./ChatChart";
+import { ChatProposalCard } from "./ChatProposal";
 import { ConversationList } from "./ConversationList";
 import { Markdown } from "./Markdown";
 import { ThinkingStatus } from "./ThinkingStatus";
@@ -357,6 +358,10 @@ export function AssistantPanel({ ws }: { ws: string }) {
                 item.chart && (
                   <ChatChartCard key={i} ws={ws} chart={item.chart} />
                 )
+              ) : item.role === "proposal" ? (
+                item.proposal && (
+                  <ChatProposalCard key={i} ws={ws} card={item.proposal} />
+                )
               ) : (
                 <Bubble
                   key={i}
@@ -402,12 +407,14 @@ export function AssistantPanel({ ws }: { ws: string }) {
               </div>
             )}
             {chat.streamingItems.some(
-              (item) => item.kind === "chart" || item.text !== "",
+              (item) => item.kind !== "text" || item.text !== "",
             ) && (
               <>
                 {chat.streamingItems.map((item, i) =>
                   item.kind === "chart" ? (
                     <ChatChartCard key={i} ws={ws} chart={item.chart} />
+                  ) : item.kind === "proposal" ? (
+                    <ChatProposalCard key={i} ws={ws} card={item.proposal} />
                   ) : (
                     item.text !== "" && (
                       <Bubble

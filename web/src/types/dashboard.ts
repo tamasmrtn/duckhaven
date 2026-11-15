@@ -121,6 +121,45 @@ export interface DashboardRevision extends DashboardRevisionSummary {
   source_text: string | null;
 }
 
+/** One thing a change to a dashboard's file changes. */
+export interface DashboardChange {
+  /** A top-level key such as `title`, `parameters.<name>`, `widgets.<id>`, or `layout`. */
+  path: string;
+  change: "added" | "removed" | "changed";
+}
+
+/**
+ * Where a proposal stands. `stale` when the dashboard changed after it was
+ * made, `expired` a day after it was made; neither can be accepted.
+ */
+export type DashboardProposalStatus =
+  "pending" | "accepted" | "discarded" | "stale" | "expired";
+
+/** Changes the assistant proposed to a dashboard, for its person to accept or discard. */
+export interface DashboardProposal {
+  id: string;
+  /** The dashboard's name. */
+  dashboard: string;
+  /** The dashboard's title, as the proposal leaves it. */
+  title: string;
+  status: DashboardProposalStatus;
+  summary: string;
+  operations: Record<string, unknown>[];
+  changes: DashboardChange[];
+  base_version: number;
+  base_hash: string;
+  /** The file accepting it saves as the draft, and that file as canonical YAML. */
+  result_spec: DashboardFile;
+  result_source: string;
+  result_hash: string;
+  /** Managed in git: the file goes into the repository instead of being accepted here. */
+  managed: boolean;
+  warnings: Diagnostic[];
+  created_at: string;
+  expires_at: string;
+  decided_at: string | null;
+}
+
 /** A file held on the server to try out, without saving it as a dashboard. */
 export interface DashboardPreview {
   id: string;

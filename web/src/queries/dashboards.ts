@@ -53,6 +53,16 @@ export function useDashboardPreview(ws: string, id: string) {
   });
 }
 
+/** Changes the assistant proposed to a dashboard. A 404 means it is gone. */
+export function useDashboardProposal(ws: string, id: string) {
+  return useQuery({
+    queryKey: ["workspace", ws, "dashboard-proposal", id],
+    queryFn: () => dashboardsApi.getProposal(ws, id),
+    enabled: !!ws && !!id,
+    retry: false,
+  });
+}
+
 /** The JSON Schema of a dashboard file. It changes only with the server. */
 export function useDashboardSchema() {
   return useQuery({

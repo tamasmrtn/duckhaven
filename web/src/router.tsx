@@ -173,6 +173,17 @@ const dashboardPreviewRoute = createRoute({
   ),
 });
 
+const dashboardProposalRoute = createRoute({
+  getParentRoute: () => wsRoute,
+  path: "/dashboard-proposals/$proposal",
+  // Changes the assistant proposed, run before they are accepted. Its own
+  // chunk, with the editor's preview it shows.
+  component: lazyRouteComponent(
+    () => import("@/features/dashboards/editor/DashboardProposalPage"),
+    "DashboardProposalPage",
+  ),
+});
+
 const catalogRoute = createRoute({
   getParentRoute: () => wsRoute,
   path: "/catalog",
@@ -349,6 +360,7 @@ export const routeTree = rootRoute.addChildren([
     dashboardRoute,
     dashboardEditorRoute,
     dashboardPreviewRoute,
+    dashboardProposalRoute,
     catalogRoute,
     catalogDetailRoute,
     schemaDetailRoute,

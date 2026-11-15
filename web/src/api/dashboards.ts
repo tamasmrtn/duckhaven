@@ -3,6 +3,7 @@ import { postSSE } from "./sse";
 import type {
   Dashboard,
   DashboardPreview,
+  DashboardProposal,
   DashboardRevision,
   DashboardRevisionSummary,
   DashboardRunRequest,
@@ -15,6 +16,8 @@ const base = (ws: string) => `/workspaces/${ws}/dashboards`;
 const one = (ws: string, name: string) =>
   `${base(ws)}/${encodeURIComponent(name)}`;
 const previews = (ws: string) => `/workspaces/${ws}/dashboard-previews`;
+const proposal = (ws: string, id: string) =>
+  `/workspaces/${ws}/dashboard-proposals/${encodeURIComponent(id)}`;
 
 export const dashboardsApi = {
   list: (ws: string) => getAllPages<DashboardSummary>(base(ws)),
@@ -63,6 +66,20 @@ export const dashboardsApi = {
 
   /** The JSON Schema of a dashboard file. */
   schema: () => get<object>("/dashboard-schema?version=1"),
+
+  /** Changes the assistant proposed. Only the person it proposed them to reads them. */
+  getProposal: (ws: string, id: string) =>
+    get<DashboardProposal>(proposal(ws, id)),
+
+  /**
+   * Save the proposed file as the dashboard's draft. A dashboard changed since
+   * the proposal is a 409 `proposal_stale`; one managed in git, a 409
+   * `managed_dashboard`.
+   */
+  acceptProposal: (ws: string, id: string) =>
+    post<Dashboard>(`${proposal(ws, id)}/accept`),
+
+  discardProposal: (ws: string, id: string) => del(proposal(ws, id)),
 
   /** A preview, with its file as last sent. Only the person who made it reads it. */
   getPreview: (ws: string, id: string) =>

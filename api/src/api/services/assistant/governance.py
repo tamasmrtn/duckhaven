@@ -22,7 +22,7 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from pydantic_ai import ApprovalRequired
+from pydantic_ai import ApprovalRequired, ToolReturn
 from pydantic_ai.capabilities import Hooks
 from pydantic_ai.exceptions import ToolRetryError
 from pydantic_ai.messages import ToolCallPart
@@ -118,9 +118,11 @@ async def _audit(
         record.latency_ms = int((time.monotonic() - record.started) * 1000)
         raise
     record.status = "ok"
-    if isinstance(result, dict):
-        if result.get("query_id"):
-            record.query_id = str(result["query_id"])
+    # What the model reads, for a tool that also returns data for the chat.
+    returned = result.return_value if isinstance(result, ToolReturn) else result
+    if isinstance(returned, dict):
+        if returned.get("query_id"):
+            record.query_id = str(returned["query_id"])
         if call.tool_name == "run_sql" and isinstance(args, dict) and args.get("sql"):
             record.tables = _linked_tables(args["sql"], ctx.deps.catalog)
         # A successful call can still carry a finding worth keeping. The one that
@@ -129,7 +131,7 @@ async def _audit(
         # error — but "how often are the agreed definitions worked around?" is
         # only answerable later if the warning is on the row, not just in the
         # reply the model saw and then forgot.
-        warning = result.get("semantic_warning")
+        warning = returned.get("semantic_warning")
         if warning:
             record.detail = str(warning)
         # A documentation search that found nothing is not an error — the honest
@@ -140,7 +142,7 @@ async def _audit(
         # with an {"error": ...} dict, and reading that as an empty search would
         # brand every question in a broken deployment as one the docs cannot
         # answer — which is what the feedback miner turns into negative cases.
-        if call.tool_name == "search_docs" and "results" in result and not result["results"]:
+        if call.tool_name == "search_docs" and "results" in returned and not returned["results"]:
             record.detail = "no_results"
     record.latency_ms = int((time.monotonic() - record.started) * 1000)
     return result

@@ -4,6 +4,7 @@ import { page } from "../lib/page";
 import {
   ASSISTANT_ENABLED,
   ASSISTANT_AVAILABILITY,
+  CHAT_CHART,
   CONVERSATIONS,
   type MockConversation,
 } from "../fixtures/assistant";
@@ -165,6 +166,52 @@ export const assistantHandlers = [
             tool_call_id: "call-1",
             tool: "run_sql",
             sql: "DELETE FROM events",
+          },
+        ]);
+      }
+
+      // Simulate drawing a chart, and the words about it after it.
+      if (/\bchart\b/i.test(prompt)) {
+        const answer = "Revenue is highest in NL, at 18,420.00.";
+        conv.transcript.push(
+          {
+            role: "chart",
+            text: "",
+            sql: null,
+            sources: null,
+            chart: CHAT_CHART,
+          },
+          { role: "assistant", text: answer, sql: null, sources: null },
+        );
+        return sse([
+          { type: "tool_call", tool: "show_chart" },
+          CHAT_CHART,
+          { type: "token", text: answer, start: true },
+          {
+            type: "done",
+            message_id: nextId("msg"),
+            usage: { input: 12, output: 9 },
+          },
+        ]);
+      }
+
+      // Simulate an answer quoting a number no tool returned.
+      if (/\bguess\b/i.test(prompt)) {
+        const answer = "Revenue grew about 12% on last year.";
+        conv.transcript.push({
+          role: "assistant",
+          text: answer,
+          sql: null,
+          sources: null,
+          unsupported_numbers: ["12%"],
+        });
+        return sse([
+          { type: "token", text: answer },
+          {
+            type: "done",
+            message_id: nextId("msg"),
+            usage: { input: 6, output: 8 },
+            unsupported_numbers: ["12%"],
           },
         ]);
       }

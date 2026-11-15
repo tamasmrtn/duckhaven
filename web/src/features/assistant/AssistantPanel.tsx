@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import {
+  AlertTriangle,
   Sparkles,
   Plus,
   Send,
@@ -25,6 +26,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { cn } from "@/utils";
 import type { DocSource } from "@/types/assistant";
 import { useAssistant } from "./AssistantContext";
+import { ChatChartCard } from "./ChatChart";
 import { ConversationList } from "./ConversationList";
 import { Markdown } from "./Markdown";
 import { ThinkingStatus } from "./ThinkingStatus";
@@ -63,7 +65,7 @@ function starterPrompts(catalogSlugs: string[]): string[] {
 }
 
 export function AssistantPanel({ ws }: { ws: string }) {
-  const { closePanel, editorRef, seedPrompt } = useAssistant();
+  const { closePanel, editorRef, dashboardRef, seedPrompt } = useAssistant();
   const { data: status } = useAssistantStatus(ws);
   const enabled = status?.enabled === true;
   // Off means there is nothing to show at all. Unusable is different: the feature
@@ -117,11 +119,16 @@ export function AssistantPanel({ ws }: { ws: string }) {
       editorRef.current?.proposeEdit(sql, explanation, scoped),
     [editorRef],
   );
+  const getDashboard = useCallback(
+    () => dashboardRef.current?.() ?? null,
+    [dashboardRef],
+  );
   const chat = useAssistantChat(ws, effectiveId, {
     getEditorSql,
     getCatalog,
     captureSelection,
     onProposeEdit,
+    getDashboard,
   });
   const throttledStreamingText = useThrottledText(chat.streamingText, 750);
 
@@ -162,6 +169,7 @@ export function AssistantPanel({ ws }: { ws: string }) {
     detail?.transcript.length,
     chat.pendingUserMessage,
     chat.streamingText,
+    chat.streamingItems.length,
     chat.liveTools.length,
   ]);
   useEffect(() => {
@@ -172,6 +180,15 @@ export function AssistantPanel({ ws }: { ws: string }) {
     // looks at seedPrompt on this same initial render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  // A seed given while the panel is open, such as asking about a dashboard
+  // widget, fills the composer only when nothing is being written there.
+  const seenSeed = useRef(seedPrompt);
+  useEffect(() => {
+    if (!seedPrompt || seedPrompt === seenSeed.current) return;
+    seenSeed.current = seedPrompt;
+    setDraft((d) => (d.trim() ? d : seedPrompt));
+    composerRef.current?.focus();
+  }, [seedPrompt]);
 
   const submit = async (overrideText?: string) => {
     const prompt = (overrideText ?? draft).trim();
@@ -335,15 +352,22 @@ export function AssistantPanel({ ws }: { ws: string }) {
                   }
                 />
               )}
-            {detail?.transcript.map((item, i) => (
-              <Bubble
-                key={i}
-                role={item.role}
-                text={item.text}
-                sql={item.sql}
-                sources={item.sources}
-              />
-            ))}
+            {detail?.transcript.map((item, i) =>
+              item.role === "chart" ? (
+                item.chart && (
+                  <ChatChartCard key={i} ws={ws} chart={item.chart} />
+                )
+              ) : (
+                <Bubble
+                  key={i}
+                  role={item.role}
+                  text={item.text}
+                  sql={item.sql}
+                  sources={item.sources}
+                  unsupported={item.unsupported_numbers}
+                />
+              ),
+            )}
             {chat.pendingUserMessage && (
               <Bubble role="user" text={chat.pendingUserMessage} />
             )}
@@ -377,13 +401,24 @@ export function AssistantPanel({ ws }: { ws: string }) {
                 </Button>
               </div>
             )}
-            {chat.streamingMessages.some((text) => text !== "") && (
+            {chat.streamingItems.some(
+              (item) => item.kind === "chart" || item.text !== "",
+            ) && (
               <>
-                {chat.streamingMessages
-                  .filter((text) => text !== "")
-                  .map((text, i) => (
-                    <Bubble key={i} role="assistant" text={text} streaming />
-                  ))}
+                {chat.streamingItems.map((item, i) =>
+                  item.kind === "chart" ? (
+                    <ChatChartCard key={i} ws={ws} chart={item.chart} />
+                  ) : (
+                    item.text !== "" && (
+                      <Bubble
+                        key={i}
+                        role="assistant"
+                        text={item.text}
+                        streaming
+                      />
+                    )
+                  ),
+                )}
                 {/* Throttled so screen readers get periodic updates, not one per token. */}
                 <div aria-live="polite" className="sr-only">
                   {throttledStreamingText}
@@ -424,8 +459,8 @@ export function AssistantPanel({ ws }: { ws: string }) {
               chat.canRegenerate &&
               detail &&
               detail.transcript.length > 0 &&
-              detail.transcript[detail.transcript.length - 1].role ===
-                "assistant" && (
+              detail.transcript[detail.transcript.length - 1].role !==
+                "user" && (
                 <Button
                   size="sm"
                   variant="ghost"
@@ -550,12 +585,15 @@ function Bubble({
   text,
   sql,
   sources,
+  unsupported,
   streaming = false,
 }: {
   role: "user" | "assistant";
   text: string;
   sql?: string | null;
   sources?: DocSource[] | null;
+  // Numbers in the answer that no tool returned.
+  unsupported?: string[] | null;
   streaming?: boolean;
 }) {
   return (
@@ -604,6 +642,20 @@ function Bubble({
             ),
           )}
         </div>
+      )}
+      {unsupported && unsupported.length > 0 && (
+        // Flagged, not removed: the number may be fine (worked out from
+        // others, or quoted from the question), but nothing the assistant
+        // read holds it as written.
+        <p className="mt-2 flex items-start gap-1.5 border-t border-[var(--border-subtle)] pt-2 text-xs text-[var(--text-muted)]">
+          <AlertTriangle className="mt-0.5 size-3 shrink-0" aria-hidden />
+          <span>
+            Not in your question or any result the assistant read:{" "}
+            {unsupported.join(", ")}. Check{" "}
+            {unsupported.length === 1 ? "it" : "them"} before relying on{" "}
+            {unsupported.length === 1 ? "it" : "them"}.
+          </span>
+        </p>
       )}
     </div>
   );

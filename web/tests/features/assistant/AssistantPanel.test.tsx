@@ -404,6 +404,26 @@ describe("AssistantPanel", () => {
     ).toBeInTheDocument();
   });
 
+  it("marks numbers in an answer that nothing the assistant read holds", async () => {
+    const user = userEvent.setup();
+    renderWithProviders({ initialRoute: ROUTE });
+    await openPanel(user);
+    await screen.findByText("There are 42 events in the events table.");
+
+    await user.type(screen.getByLabelText("Message"), "guess the growth");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    // Flagged under the answer, which is left as written.
+    expect(
+      await screen.findByText(
+        /Not in your question or any result the assistant read: 12%\./,
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Revenue grew about 12% on last year."),
+    ).toBeInTheDocument();
+  });
+
   it("sends the worksheet's active catalog with every turn", async () => {
     let capturedBody: { catalog?: string | null } | null = null;
     server.use(

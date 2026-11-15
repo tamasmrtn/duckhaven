@@ -33,7 +33,8 @@ function Message({
   );
 }
 
-function Answer({
+/** A widget's answer: its chart, number or rows, or why there are none. */
+export function Answer({
   spec,
   event,
   asTable,

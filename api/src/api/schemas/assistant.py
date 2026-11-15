@@ -74,11 +74,30 @@ class DocSource(BaseModel):
     url: str | None = None
 
 
+class ChatChart(BaseModel):
+    """A chart the assistant drew in the chat, as its ``chart`` frame streamed it."""
+
+    type: Literal["chart"] = "chart"
+    # The show_chart call that drew it.
+    tool_call_id: str
+    # A complete dashboard widget, with the SQL of the query it draws.
+    widget: dict[str, Any]
+    # What a dashboard run sends for a widget: its rows, chart and warnings.
+    event: dict[str, Any]
+    # A digest of the rows drawn.
+    result_hash: str
+
+
 class TranscriptItem(BaseModel):
     """One rendered line of the conversation for display."""
 
-    role: str  # "user" | "assistant"
+    role: Literal["user", "assistant", "chart"]
     text: str
+    # A `chart` line's chart, drawn where its tool returned.
+    chart: ChatChart | None = None
+    # Numbers in an answer that no tool, prompt or page value held, as written.
+    # Flagged for the reader, never edited out. None when there are none.
+    unsupported_numbers: list[str] | None = None
     # The SQL this turn ran or proposed, if any — attributed by a same-transaction
     # timestamp window (see render_transcript_with_sql), shown inline by default.
     sql: str | None = None

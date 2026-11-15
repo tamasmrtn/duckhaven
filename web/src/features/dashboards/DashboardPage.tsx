@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useState,
   type CSSProperties,
   type ReactNode,
 } from "react";
@@ -28,7 +29,9 @@ import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { PageHeader } from "@/components/ui/page-header";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useAssistant } from "@/features/assistant/AssistantContext";
 import { useDashboard } from "@/queries/dashboards";
+import type { DashboardPageContext } from "@/types/assistant";
 import type {
   Cell,
   Dashboard,
@@ -129,6 +132,7 @@ export function useWidgetContext(
   parameters: Record<string, ParameterSpec> | undefined,
   run: RunView,
   select?: (parameter: string, value: Cell) => void,
+  ask?: (widget: string, title: string) => void,
 ): WidgetContext {
   return useMemo<WidgetContext>(() => {
     const values = new Map(
@@ -151,8 +155,36 @@ export function useWidgetContext(
         ]),
       ),
       select,
+      ask,
     };
-  }, [ws, dashboard, parameters, run.start, select]);
+  }, [ws, dashboard, parameters, run.start, select, ask]);
+}
+
+/**
+ * The dashboard as a turn of the assistant sends it: its name and version,
+ * the parameters the address sets and the widget asked about. Only the file's
+ * own parameters go, and only values short enough for the server to take.
+ */
+export function pageContext(
+  dashboard: Dashboard,
+  search: DashboardSearch,
+  widget: string | null,
+): DashboardPageContext {
+  const declared = Object.keys(dashboard.spec.parameters ?? {});
+  const params = Object.fromEntries(
+    Object.entries(runParams(search)).filter(
+      ([name, value]) =>
+        declared.includes(name) &&
+        (typeof value !== "string" || value.length <= 200),
+    ),
+  ) as DashboardPageContext["params"];
+  return {
+    page: "dashboard",
+    name: dashboard.name,
+    version: dashboard.version,
+    params,
+    widget,
+  };
 }
 
 /** Compute starting, and a run that could not go on. */
@@ -270,12 +302,37 @@ function Loaded({ ws, dashboard }: { ws: string; dashboard: Dashboard }) {
       setSearch(withSelection(search, spec.parameters, name, value)),
     [spec.parameters, search, setSearch],
   );
+  // The assistant reads which dashboard this is, with its filters, from the
+  // page as each turn starts; a widget asked about stays picked until the
+  // panel closes.
+  const { dashboardRef, openPanel, open: assistantOpen } = useAssistant();
+  const [asked, setAsked] = useState<string | null>(null);
+  if (asked && !assistantOpen) setAsked(null);
+  const assistantContext = useMemo(
+    () => pageContext(dashboard, search, asked),
+    [dashboard, search, asked],
+  );
+  useEffect(() => {
+    dashboardRef.current = () => assistantContext;
+    return () => {
+      dashboardRef.current = null;
+    };
+  }, [dashboardRef, assistantContext]);
+  const ask = useCallback(
+    (widget: string, title: string) => {
+      setAsked(widget);
+      openPanel(`About “${title}”: `);
+    },
+    [openPanel],
+  );
+
   const context = useWidgetContext(
     ws,
     dashboard.name,
     spec.parameters,
     run,
     select,
+    ask,
   );
 
   // A copied link to one widget lands on it.

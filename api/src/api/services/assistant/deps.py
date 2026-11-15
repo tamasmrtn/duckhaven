@@ -82,8 +82,6 @@ class AssistantDeps:
     records: dict[str, ToolCallRecord] = field(default_factory=dict)
     # The dashboard preview this turn's widget previews reuse, once it has one.
     preview_id: str | None = None
-    # Charts drawn this turn, keyed by tool_call_id, for the runner to stream.
-    charts: dict[str, dict] = field(default_factory=dict)
 
     @property
     def editor_sql(self) -> str | None:

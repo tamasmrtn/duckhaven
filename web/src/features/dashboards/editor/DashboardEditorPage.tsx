@@ -1,10 +1,11 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   Link,
   useBlocker,
   useNavigate,
   useParams,
+  useRouterState,
 } from "@tanstack/react-router";
 import {
   AlertCircle,
@@ -14,6 +15,7 @@ import {
   LayoutDashboard,
   Loader2,
   Save,
+  Sparkles,
   Undo2,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -38,8 +40,10 @@ import {
   savedWhen,
 } from "./dialogs";
 import { EditorPreview } from "./EditorPreview";
+import "./handoff";
 import { HistorySheet } from "./HistorySheet";
 import { useLiveFile } from "./useLiveFile";
+import { addRow } from "./yamlEdits";
 import { YamlEditor, type YamlEditorHandle } from "./YamlEditor";
 
 /** The file as YAML: as it was written, or written out from what was sent as JSON. */
@@ -133,10 +137,40 @@ function Editing({ ws, initial }: { ws: string; initial: Dashboard }) {
   const published = dashboard.status === "published";
 
   const blocker = useBlocker({
-    shouldBlockFn: () => dirty,
+    // Staying in this editor, as adding a chart to it from the assistant does,
+    // keeps the changes, so it asks nothing.
+    shouldBlockFn: ({ current, next }) =>
+      dirty && current.pathname !== next.pathname,
     enableBeforeUnload: () => dirty,
     withResolver: true,
   });
+
+  // A chart from the assistant goes at the end of the file, unsaved, so the
+  // preview shows it before anything is stored. It is added as the history
+  // entry that carries it arrives, and then taken out of the entry, so
+  // reloading or coming back adds nothing.
+  const handoff = useRouterState({
+    select: (s) => s.location.state.addWidget,
+  });
+  const [handedOff, setHandedOff] = useState<{
+    key: string;
+    added: boolean;
+  } | null>(null);
+  if (handoff && handoff.key !== handedOff?.key) {
+    const next = managed ? null : addRow(text, handoff.widget);
+    if (next) setText(next.text);
+    setHandedOff({ key: handoff.key, added: next !== null });
+  }
+  useEffect(() => {
+    if (!handoff) return;
+    void navigate({
+      to: "/$ws/dashboards/$dashboard/edit",
+      params: { ws, dashboard: dashboard.name },
+      state: (prev) => ({ ...prev, addWidget: undefined }),
+      replace: true,
+      ignoreBlocker: true,
+    });
+  }, [handoff, navigate, ws, dashboard.name]);
 
   /** Take what the server answered as the dashboard this editor works on. */
   function accept(next: Dashboard, file: string) {
@@ -348,6 +382,18 @@ function Editing({ ws, initial }: { ws: string; initial: Dashboard }) {
         }
       />
       <div className="space-y-2 px-4 pt-3 empty:hidden md:px-6">
+        {handedOff && (dirty || !handedOff.added) && (
+          <Banner>
+            <Sparkles className="size-3.5 shrink-0" aria-hidden />
+            <span role="status">
+              {handedOff.added
+                ? "The assistant's chart is at the end of the file, and not saved. Check it in the preview, then save the draft."
+                : managed
+                  ? "The assistant's chart was not added: this dashboard changes only through its file in git."
+                  : "The assistant's chart was not added: the file does not parse. Fix the problems under the editor, then add it again."}
+            </span>
+          </Banner>
+        )}
         {managed ? (
           <Banner>
             <GitBranch className="size-3.5 shrink-0" aria-hidden />

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
 import {
+  addRow,
   fits,
   moveRow,
   moveWidget,
@@ -62,6 +63,43 @@ describe("arranging a dashboard file", () => {
     expect(setWidth("title: a\ntitle: b\nrows: []\n", "x", 6)).toBeNull();
   });
 
+  it("adds a chart in a row of its own at the end, keeping the comments", () => {
+    const chart = {
+      id: "revenue",
+      type: "line" as const,
+      title: "Revenue by month",
+      width: null,
+      sql: "SELECT month, revenue\nFROM sales\nORDER BY month",
+    };
+    const added = addRow(FILE, chart)!;
+    // The id is taken, so the chart gets the next free one.
+    expect(added.id).toBe("revenue_2");
+    expect(ids(added.text)).toEqual([
+      ["revenue", "orders"],
+      ["notes"],
+      ["revenue_2"],
+    ]);
+    expect(added.text).toContain("# what the shop took");
+    // The rest of the file is as it was, and the empty width is left out.
+    expect(added.text.startsWith(FILE)).toBe(true);
+    expect(added.text.slice(FILE.length)).not.toContain("width");
+    // Several lines of SQL are written as a block, as a person would.
+    expect(added.text).toContain("sql: |-\n          SELECT month, revenue\n");
+    expect(addRow(added.text, chart)!.id).toBe("revenue_3");
+  });
+
+  it("adds the first row to a file that has none", () => {
+    const added = addRow("version: 1\nname: x\ntitle: X\n", {
+      id: "trend",
+      type: "bar",
+    })!;
+    expect(ids(added.text)).toEqual([["trend"]]);
+    expect(added.text).toContain("rows:\n  - widgets:\n      - id: trend");
+    expect(addRow("rows: [unclosed", { id: "trend" })).toBeNull();
+    expect(addRow("- a list\n", { id: "trend" })).toBeNull();
+    expect(addRow("rows: {}\n", { id: "trend" })).toBeNull();
+  });
+
   it("offers a width only when the rest of the row leaves room", () => {
     expect(fits([4, 4, null], 2, 4)).toBe(true);
     expect(fits([4, 4, null], 2, 6)).toBe(false);
@@ -88,5 +126,29 @@ describe("a new dashboard", () => {
     expect(file.name).toBe("plan");
     expect(file.title).toBe('Q1: "the plan" #1');
     expect(file.rows[0].widgets[0].type).toBe("text");
+  });
+
+  it("starts with a chart from the assistant in place of the text widget", () => {
+    const file = parse(
+      starterFile("plan", "Plan", {
+        id: "chart",
+        type: "bar",
+        title: "Orders by region",
+        sql: "SELECT region, orders FROM t",
+      }),
+    ) as { title: string; rows: { widgets: Record<string, unknown>[] }[] };
+    expect(file.title).toBe("Plan");
+    expect(file.rows).toEqual([
+      {
+        widgets: [
+          {
+            id: "chart",
+            type: "bar",
+            title: "Orders by region",
+            sql: "SELECT region, orders FROM t",
+          },
+        ],
+      },
+    ]);
   });
 });

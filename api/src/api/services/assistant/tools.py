@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import logging
 
-from pydantic_ai import ApprovalRequired, ModelRetry, RunContext
+from pydantic_ai import ApprovalRequired, ModelRetry, RunContext, ToolReturn
 
 from api.config import settings
 from api.services.assistant import charts
@@ -628,7 +628,7 @@ async def preview_widgets(
     return {"widgets": out}
 
 
-async def show_chart(ctx: RunContext[AssistantDeps], query_id: str, widget: dict) -> dict:
+async def show_chart(ctx: RunContext[AssistantDeps], query_id: str, widget: dict) -> ToolReturn:
     """Draw a chart in the chat from a query you ran in this conversation.
 
     Run the query first, with query_metric or run_sql, shaped for the chart: one
@@ -652,20 +652,27 @@ async def show_chart(ctx: RunContext[AssistantDeps], query_id: str, widget: dict
     except charts.ChartRefused as exc:
         raise ModelRetry(str(exc)) from exc
     digest = charts.result_hash(event)
-    ctx.deps.charts[ctx.tool_call_id] = {
-        "type": "chart",
-        "widget": drawn,
-        "event": event,
-        "result_hash": digest,
-    }
-    return {
-        "shown": True,
-        "query_id": query_id,
-        "widget": drawn,
-        "rows": len(event["rows"]["data"]),
-        "result_hash": digest,
-        "lint": charts.lint(drawn, event),
-    }
+    return ToolReturn(
+        return_value={
+            "shown": True,
+            "query_id": query_id,
+            "widget": drawn,
+            "rows": len(event["rows"]["data"]),
+            "result_hash": digest,
+            "lint": charts.lint(drawn, event),
+        },
+        # The chart itself, rows and all, is for the chat and never sent to the
+        # model. Kept with the turn, it is drawn again when the conversation is.
+        metadata={
+            "chart": {
+                "type": "chart",
+                "tool_call_id": ctx.tool_call_id,
+                "widget": drawn,
+                "event": event,
+                "result_hash": digest,
+            }
+        },
+    )
 
 
 DOCS_TOOLS = (read_doc_page, search_docs)

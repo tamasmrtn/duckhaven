@@ -5,6 +5,7 @@ import type {
   AssistantStatus,
   Conversation,
   ConversationDetail,
+  DashboardPageContext,
 } from "@/types/assistant";
 
 export const assistantApi = {
@@ -40,9 +41,12 @@ export async function* streamMessage(
     catalog?: string | null;
     editorSql?: string | null;
     selectionSql?: string | null;
+    // The dashboard on screen, where there is no worksheet.
+    dashboard?: DashboardPageContext | null;
     signal?: AbortSignal;
   },
 ): AsyncGenerator<AssistantFrame, void, unknown> {
+  const worksheet = opts?.editorSql != null || opts?.selectionSql != null;
   const res = await fetch(
     `/api/workspaces/${ws}/assistant/conversations/${conversationId}/messages`,
     {
@@ -52,14 +56,13 @@ export async function* streamMessage(
       body: JSON.stringify({
         prompt,
         catalog: opts?.catalog ?? null,
-        page_context:
-          opts?.editorSql != null || opts?.selectionSql != null
-            ? {
-                page: "worksheet",
-                sql: opts.editorSql ?? null,
-                selection: opts.selectionSql ?? null,
-              }
-            : null,
+        page_context: worksheet
+          ? {
+              page: "worksheet",
+              sql: opts?.editorSql ?? null,
+              selection: opts?.selectionSql ?? null,
+            }
+          : (opts?.dashboard ?? null),
       }),
       signal: opts?.signal,
     },

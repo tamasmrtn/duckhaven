@@ -8,6 +8,7 @@ from pydantic_ai.messages import (
     ModelResponse,
     TextPart,
     ToolCallPart,
+    ToolReturnPart,
     UserPromptPart,
 )
 from pydantic_ai.usage import RunUsage
@@ -315,6 +316,48 @@ async def test_render_transcript_with_sql_handles_a_turn_with_no_tool_calls(
     )
     items = await render_transcript_with_sql(db_session, conversation.id)
     assert [i["sql"] for i in items] == [None, None]
+
+
+def test_a_chart_is_a_line_of_its_own_where_its_tool_returned():
+    chart = {"type": "chart", "tool_call_id": "c1", "widget": {}, "event": {}, "result_hash": "h"}
+    messages = [
+        ModelRequest(parts=[UserPromptPart(content="chart it")]),
+        ModelResponse(parts=[TextPart(content="Drawing it."), ToolCallPart("show_chart", {})]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart("show_chart", {"shown": True}, "c1", metadata={"chart": chart}),
+                # Another tool's result, and one with metadata that is no chart.
+                ToolReturnPart("run_sql", {"rows": []}, "c2"),
+                ToolReturnPart("run_sql", {"rows": []}, "c3", metadata={"elapsed": 1}),
+            ]
+        ),
+        ModelResponse(parts=[TextPart(content="Revenue rose.")]),
+    ]
+
+    items = render_transcript(messages)
+
+    assert [(i["role"], i["text"]) for i in items] == [
+        ("user", "chart it"),
+        ("assistant", "Drawing it."),
+        ("chart", ""),
+        ("assistant", "Revenue rose."),
+    ]
+    assert items[2]["chart"] == chart
+
+
+def test_an_answer_carries_the_numbers_flagged_on_it():
+    messages = [
+        ModelRequest(parts=[UserPromptPart(content="how much?")]),
+        ModelResponse(
+            parts=[TextPart(content="About 4.2M.")],
+            metadata={"unsupported_numbers": ["4.2M"]},
+        ),
+    ]
+    # Through the stored JSON, as a conversation is read back.
+    stored = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(messages))
+    assert render_transcript(stored)[1]["unsupported_numbers"] == ["4.2M"]
+    plain = render_transcript(messages[:1] + [ModelResponse(parts=[TextPart("Hi")])])
+    assert "unsupported_numbers" not in plain[1]
 
 
 async def test_ordinals_increment_across_turns(db_session, conversation):

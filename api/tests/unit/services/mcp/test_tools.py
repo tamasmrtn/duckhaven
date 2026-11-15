@@ -8,7 +8,7 @@ arrives at the caller as something readable rather than "Error executing tool".
 from types import SimpleNamespace
 
 import pytest
-from mcp.server.mcpserver.exceptions import ToolError
+from mcp.server.mcpserver.exceptions import ResourceError, ToolError
 
 from api.config import settings
 from api.services.assistant.gateway import GatewayError
@@ -661,3 +661,14 @@ async def test_show_chart_refuses_a_query_someone_else_ran(gateways):
     gateways.overrides["own_result"] = GatewayError("I can only draw results of queries I ran.")
     with pytest.raises(ToolError, match="only draw results"):
         await tools.show_chart(ctx(), "sales", "q-x", TREND)
+
+
+async def test_the_dashboard_resource_reads_the_file_as_the_caller(gateways):
+    gateways.overrides["dashboard_source"] = FILE
+    assert await tools.read_dashboard_file(ctx(), "sales", "overview") == FILE
+    assert gateways[0].workspace == "sales"
+    assert gateways[0].calls == [("dashboard_source", ("overview",), {})]
+
+    gateways.overrides["dashboard_source"] = GatewayError("Not found (or not accessible): x")
+    with pytest.raises(ResourceError, match="Not found"):
+        await tools.read_dashboard_file(ctx(), "sales", "x")

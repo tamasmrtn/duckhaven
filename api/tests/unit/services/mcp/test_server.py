@@ -144,6 +144,31 @@ async def test_run_sql_advertises_the_deployments_write_policy(monkeypatch):
     assert writable["run_sql"].annotations.destructive_hint is True
 
 
+async def test_the_dashboard_guide_and_schema_are_resources_too():
+    """For a client that attaches resources rather than waiting for a tool call."""
+    server = build_server()
+    resources = {str(r.uri): r.mime_type for r in await server.list_resources()}
+    assert resources == {
+        "duckhaven://dashboard/guide": "text/markdown",
+        "duckhaven://dashboard/schema": "application/schema+json",
+    }
+    templates = {t.uri_template: t.mime_type for t in await server.list_resource_templates()}
+    assert templates == {"duckhaven://workspaces/{workspace}/dashboards/{name}": "application/yaml"}
+
+
+async def test_the_dashboard_prompts_ask_for_what_they_need():
+    prompts = {p.name: p for p in await build_server().list_prompts()}
+    assert set(prompts) == {"build_dashboard", "explain_dashboard"}
+    arguments = {
+        name: {a.name: a.required for a in prompt.arguments or []}
+        for name, prompt in prompts.items()
+    }
+    assert arguments == {
+        "build_dashboard": {"workspace": True, "topic": True, "audience": False},
+        "explain_dashboard": {"workspace": True, "name": True, "question": False},
+    }
+
+
 def test_the_instructions_say_dashboard_text_is_data():
     """A dashboard's words are another person's: an agent reports them and obeys none."""
     assert "get_dashboard_schema" in INSTRUCTIONS
@@ -302,6 +327,61 @@ async def test_a_dashboard_file_is_checked_as_the_caller_over_the_wire(
     assert out["valid"] is False
     assert out["errors"][0]["path"] == "widht"
     assert out["errors"][0]["line"] == 4
+
+
+async def test_a_dashboard_file_is_read_as_a_resource_with_the_callers_access(
+    client: AsyncClient, mcp_client: AsyncClient, db_session, member, auth
+):
+    await seed_workspace(db_session, user_id=member.id, slug="sales", name="Sales")
+    made = await client.post(
+        "/workspaces/sales/dashboards", headers=auth, json={"source_text": DASHBOARD}
+    )
+    assert made.status_code == 201, made.text
+
+    uri = "duckhaven://workspaces/sales/dashboards/notes"
+    resp = await mcp_client.post(
+        MCP_PATH,
+        headers={**rpc_headers("resources/read", uri), **auth},
+        json=rpc_body("resources/read", {"uri": uri}),
+    )
+
+    assert resp.status_code == 200, resp.text
+    (content,) = resp.json()["result"]["contents"]
+    assert content["mimeType"] == "application/yaml"
+    # As written, comment and all.
+    assert content["text"] == DASHBOARD
+
+    hidden = "duckhaven://workspaces/elsewhere/dashboards/notes"
+    resp = await mcp_client.post(
+        MCP_PATH,
+        headers={**rpc_headers("resources/read", hidden), **auth},
+        json=rpc_body("resources/read", {"uri": hidden}),
+    )
+    assert "Not found" in resp.json()["error"]["message"]
+
+
+async def test_the_guide_and_a_prompt_come_back_over_the_wire(mcp_client: AsyncClient, auth):
+    uri = "duckhaven://dashboard/guide"
+    resp = await mcp_client.post(
+        MCP_PATH,
+        headers={**rpc_headers("resources/read", uri), **auth},
+        json=rpc_body("resources/read", {"uri": uri}),
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["result"]["contents"][0]["text"].startswith(
+        "# Writing a DuckHaven dashboard"
+    )
+
+    arguments = {"workspace": "sales", "topic": "churn"}
+    resp = await mcp_client.post(
+        MCP_PATH,
+        headers={**rpc_headers("prompts/get", "build_dashboard"), **auth},
+        json=rpc_body("prompts/get", {"name": "build_dashboard", "arguments": arguments}),
+    )
+    assert resp.status_code == 200, resp.text
+    (message,) = resp.json()["result"]["messages"]
+    assert message["role"] == "user"
+    assert "a DuckHaven dashboard about churn" in message["content"]["text"]
 
 
 async def test_an_unknown_tool_is_reported_as_unknown(mcp_client: AsyncClient, auth):

@@ -32,7 +32,7 @@ from starlette.types import ASGIApp
 
 from api.config import settings
 from api.services.assistant.knowledge.loader import docs_available
-from api.services.mcp import tools
+from api.services.mcp import dashboards, tools
 from api.services.mcp.auth import MCP_PATH, PatAuthMiddleware
 
 #: Re-exported: ``MCP_PATH`` is the path the endpoint is served at on the outer
@@ -121,6 +121,31 @@ def build_server() -> MCPServer:
             openWorldHint=False,
         ),
     )(tools.run_sql)
+    # The guide and the schema again, for a client that offers resources to attach
+    # rather than waiting for the agent to call a tool.
+    server.resource(
+        "duckhaven://dashboard/guide",
+        name="dashboard-guide",
+        title="Writing a dashboard",
+        description="How to write a DuckHaven dashboard file, with a worked example.",
+        mime_type="text/markdown",
+    )(dashboards.guide)
+    server.resource(
+        "duckhaven://dashboard/schema",
+        name="dashboard-schema",
+        title="Dashboard file schema",
+        description="The JSON Schema of a DuckHaven dashboard file.",
+        mime_type="application/schema+json",
+    )(dashboards.schema)
+    server.resource(
+        "duckhaven://workspaces/{workspace}/dashboards/{name}",
+        name="dashboard",
+        title="Dashboard file",
+        description="A dashboard's file as YAML, read with your access.",
+        mime_type="application/yaml",
+    )(tools.read_dashboard_file)
+    server.prompt("build_dashboard", title="Build a dashboard")(dashboards.build_dashboard)
+    server.prompt("explain_dashboard", title="Explain a dashboard")(dashboards.explain_dashboard)
     return server
 
 

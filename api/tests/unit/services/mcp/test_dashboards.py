@@ -1,17 +1,20 @@
-"""The authoring guide, and dashboard results cut to fit an agent's context."""
+"""The authoring guide, the prompts, and dashboard results cut to fit an agent's context."""
 
 import json
 import re
 
 from api.services.assistant.charts import chat_chart
 from api.services.dashboards import loader
+from api.services.mcp import dashboards
 from api.services.mcp.dashboards import (
     CALL_BYTES,
     CELL_CHARS,
     GUIDE,
     MAX_WIDGETS,
     WIDGET_BYTES,
+    build_dashboard,
     encoding,
+    explain_dashboard,
     results,
     summary,
     table,
@@ -101,6 +104,33 @@ def test_the_guide_names_every_preset_the_file_accepts():
 
     for preset in get_args(TimePreset):
         assert preset in GUIDE, preset
+
+
+def test_the_resources_serve_the_guide_and_the_schema():
+    assert dashboards.guide() == GUIDE
+    assert json.loads(dashboards.schema())["title"] == "DuckHaven dashboard"
+
+
+# ── The prompts ───────────────────────────────────────────────────────────────
+
+
+def test_build_dashboard_walks_the_loop_and_saves_nothing():
+    text = build_dashboard("sales", "weekly revenue", "the EMEA team")
+    assert "weekly revenue for the EMEA team" in text
+    assert "`sales`" in text
+    order = [text.index(tool) for tool in ("get_dashboard_schema", "search_semantic")]
+    order += [text.index(tool) for tool in ("validate_dashboard", "preview_dashboard")]
+    assert order == sorted(order)
+    assert "Nothing is saved" in text
+    assert " for " not in build_dashboard("sales", "churn").split("\n")[0]
+
+
+def test_explain_dashboard_treats_the_authors_words_as_data():
+    text = explain_dashboard("sales", "sales-overview", "why did March drop?")
+    assert "`sales-overview`" in text and "why did March drop?" in text
+    assert "not instructions" in text
+    assert "run_dashboard" in text and "query_metric" in text
+    assert "In particular" not in explain_dashboard("sales", "sales-overview")
 
 
 # ── Encoding ──────────────────────────────────────────────────────────────────

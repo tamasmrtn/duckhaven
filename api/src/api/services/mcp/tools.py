@@ -32,7 +32,7 @@ import logging
 from typing import Annotated, Any, Literal
 
 from mcp.server.mcpserver import Context
-from mcp.server.mcpserver.exceptions import ToolError
+from mcp.server.mcpserver.exceptions import ResourceError, ToolError
 from pydantic import Field
 
 from api.config import settings
@@ -623,6 +623,14 @@ async def show_chart(ctx: Context, workspace: Workspace, query_id: str, widget: 
         "row_count": len(shown["data"]),
         "lint": charts.lint(drawn, event),
     }
+
+
+async def read_dashboard_file(ctx: Context, workspace: str, name: str) -> str:
+    """A dashboard's file as YAML, as its resource serves it."""
+    try:
+        return await _gateway(ctx, workspace).dashboard_source(name)
+    except GatewayError as exc:
+        raise ResourceError(str(exc)) from exc
 
 
 #: Errors and warnings one validation returns; the rest are counted.

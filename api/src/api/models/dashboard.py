@@ -273,3 +273,31 @@ class DashboardProposal(Base):
         Index("ix_dashboard_proposals_dashboard", "dashboard_id"),
         CheckConstraint(_in("status", PROPOSAL_STATUSES), name="ck_dashboard_proposals_status"),
     )
+
+
+class DashboardDraftSave(Base):
+    """One draft an MCP client saved, counted against the hourly limit.
+
+    Only saves made over MCP are recorded, and only for the last hour: the
+    next save deletes the older rows of the same person.
+    """
+
+    __tablename__ = "dashboard_draft_saves"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    workspace_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    dashboard_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("dashboards.id", ondelete="CASCADE"), nullable=False
+    )
+    saved_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        Index("ix_dashboard_draft_saves_user", "workspace_id", "user_id", "saved_at"),
+    )

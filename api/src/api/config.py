@@ -597,6 +597,14 @@ class Settings(BaseSettings):
     # can do (the SQL guard and catalog grants still apply); it stops refusing
     # locally what the REST API would have accepted.
     mcp_allow_writes: bool = False
+    # Whether an MCP client may save dashboard drafts, with save_dashboard_draft
+    # and add_widget_to_draft. A draft changes nothing a reader sees until an
+    # owner publishes it, so this is on; it is checked again on every call.
+    mcp_allow_dashboard_drafts: bool = True
+    # Limits on those saves, per person and workspace: how many dashboards may
+    # hold a draft last saved over MCP, and how many saves an hour may make.
+    mcp_dashboard_drafts_per_user: int = 25
+    mcp_dashboard_draft_saves_per_hour: int = 30
     # Per-call ceiling on how long run_sql waits for a query, mirroring the
     # assistant's. A query still running at the deadline is cancelled rather than
     # left to occupy an agent.

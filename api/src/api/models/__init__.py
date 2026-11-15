@@ -16,6 +16,7 @@ from api.models.catalog_migration import (
 from api.models.dashboard import (
     Dashboard,
     DashboardAlias,
+    DashboardDraftSave,
     DashboardPreview,
     DashboardProposal,
     DashboardRef,
@@ -62,6 +63,7 @@ __all__ = [
     "Dashboard",
     "DashboardAlias",
     "DashboardPreview",
+    "DashboardDraftSave",
     "DashboardProposal",
     "DashboardRef",
     "DashboardRevision",

@@ -121,7 +121,12 @@ class DashboardOut(DashboardSummary):
     source_hash: str | None = Field(
         description="sha256 of the file's bytes as last applied from git, as `sha256sum` prints it."
     )
-    client: str | None = Field(description="The client of the last change, from its User-Agent.")
+    client: str | None = Field(
+        description="The client of the last change, from its User-Agent. Over MCP, the agent's."
+    )
+    updated_by_name: str | None = Field(
+        default=None, description="The name of the person who made the last change."
+    )
     created_by: uuid.UUID | None
     published_by: uuid.UUID | None
     refs: list[RefOut] = Field(description="The models, metrics, dimensions and tables it reads.")

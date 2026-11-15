@@ -658,6 +658,72 @@ async def test_a_chart_reaches_the_chat_as_its_own_frame(client, db_session, fac
     assert [(c.tool, c.query_id) for c in calls] == [("show_chart", uuid.UUID(query_id))]
 
 
+async def test_a_proposal_reaches_the_chat_as_its_own_frame(
+    client, db_session, factory, monkeypatch
+):
+    # Writer for the account and owner for the person: the overlap may propose.
+    ws, _catalog, conv = await _seed(db_session, sa_role="writer")
+    sent = []
+
+    async def propose(self, name, *, operations, summary):
+        sent.append((name, operations, summary))
+        return {
+            "id": "p-1",
+            "dashboard": name,
+            "title": "Sales",
+            "summary": summary,
+            "changes": [{"path": "widgets.notes", "change": "removed"}],
+            "managed": False,
+            "expires_at": "2026-11-16T10:00:00Z",
+        }
+
+    monkeypatch.setattr(Gateway, "propose_dashboard_changes", propose)
+    ops = [{"op": "remove_widget", "id": "notes"}]
+    responses = [
+        tool_step(
+            "propose_dashboard_changes",
+            {"dashboard": "sales", "operations": ops, "summary": "Drop the notes."},
+        ),
+        text_step("I proposed removing the notes."),
+    ]
+    with get_agent().override(model=scripted_model(responses)):
+        frames = await _frames(factory, ws, conv, "drop the notes widget")
+
+    assert frames[-1]["type"] == "done"
+    assert sent == [("sales", ops, "Drop the notes.")]
+    proposals = [f for f in frames if f["type"] == "dashboard_proposal"]
+    assert len(proposals) == 1 and proposals[0]["proposal"]["id"] == "p-1"
+    async with factory() as db:
+        transcript = await render_transcript_with_sql(db, conv.id)
+    assert [item["role"] for item in transcript] == ["user", "proposal", "assistant"]
+    assert transcript[1]["proposal"] == proposals[0]
+
+
+async def test_a_reader_account_cannot_propose(client, db_session, factory, monkeypatch):
+    ws, _catalog, conv = await _seed(db_session, sa_role="reader")
+    sent = []
+
+    async def propose(self, name, **kw):
+        sent.append(name)
+
+    monkeypatch.setattr(Gateway, "propose_dashboard_changes", propose)
+    args = {
+        "dashboard": "sales",
+        "operations": [{"op": "remove_widget", "id": "n"}],
+        "summary": "x",
+    }
+    responses = [
+        tool_step("propose_dashboard_changes", args),
+        text_step("I cannot change dashboards here."),
+    ]
+    with get_agent().override(model=scripted_model(responses)):
+        frames = await _frames(factory, ws, conv, "drop the notes widget")
+
+    assert frames[-1]["type"] == "done"
+    assert sent == []
+    assert not [f for f in frames if f["type"] == "dashboard_proposal"]
+
+
 async def test_numbers_no_tool_returned_are_flagged_on_done(client, db_session, factory):
     ws, _catalog, conv = await _seed(db_session, sa_role="reader")
     responses = [

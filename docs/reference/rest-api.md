@@ -626,6 +626,10 @@ file and keeps the old one as a revision.
 | `GET …/dashboard-previews/{dashboard_preview_id}` | Your preview and its file. `writer` |
 | `PUT …/dashboard-previews/{dashboard_preview_id}` | Replace your preview's file. `writer` |
 | `POST …/dashboard-previews/{dashboard_preview_id}/run` | Run your preview as you, as a dashboard runs. `writer` |
+| `POST …/dashboard-proposals` | [Propose changes](#proposing-changes-to-a-dashboard) to a dashboard, to accept or discard (**201**). `writer` |
+| `GET …/dashboard-proposals/{dashboard_proposal_id}` | Your proposal, what it changes, and the file it makes. `writer` |
+| `POST …/dashboard-proposals/{dashboard_proposal_id}/accept` | Save your proposal's file as the dashboard's draft. `writer` |
+| `DELETE …/dashboard-proposals/{dashboard_proposal_id}` | Discard your proposal (**204**). `writer` |
 
 `…` stands for `/api/workspaces/{workspace}`.
 
@@ -808,6 +812,51 @@ then a **404** too.
 
 The web app shows a preview at `/{workspace}/dashboard-previews/{dashboard_preview_id}`, a page that reads the preview
 every two seconds and runs its file again whenever `spec_hash` changes. Reading a preview does not extend it.
+
+### Proposing changes to a dashboard
+
+A proposal holds changes to a dashboard for one person to accept as its draft or discard. The
+[assistant](../ai/assistant.md#dashboards-and-charts) makes them; nothing changes until they are accepted.
+`POST …/dashboard-proposals` takes the dashboard's `name` as `dashboard`, a one-sentence `summary`, and up to 40
+`operations`, applied in order to the dashboard's newest file, its draft when it has one:
+
+| `op` | Fields | What it does |
+|---|---|---|
+| `set_metadata` | `title`, `description`, `labels` | Changes the fields it names |
+| `add_widget` | `widget`, `row`, `position` | Adds a widget before `position` in row `row`, from 0, or at the end of it. Without `row`, in a row of its own at the end |
+| `update_widget` | `id`, `widget` | Replaces the widget, keeping its `id` |
+| `move_widget` | `id`, `row`, `position` | Moves the widget, as `add_widget` places one |
+| `remove_widget` | `id` | Removes the widget. A row left empty goes with it |
+| `add_parameter`, `update_parameter` | `name`, `parameter` | Adds or replaces a [parameter](dashboard-spec.md) |
+| `remove_parameter` | `name` | Removes the parameter |
+
+An operation that cannot apply, such as one naming a widget the dashboard does not have, is a **422**
+`invalid_proposal`: the message names the operation, and `details.operation` is its index, from 0. Operations that
+change nothing are refused the same way. The file they make is checked as publishing checks one, and a problem it adds
+is a **422** `invalid_dashboard` with every problem under `details.diagnostics`. A problem the dashboard had already
+does not stop a proposal.
+
+The response has the proposal's `id`, its `status`, the `changes` it makes, as an apply's plan lists them, the
+`base_version` and `base_hash` it was made against, and the file it makes, as `result_spec` and as canonical YAML in
+`result_source`. `status` is `pending`, `accepted`, `discarded`, `stale` once the dashboard's `version` is not
+`base_version`, or `expired` a day after it was made. `managed` says the dashboard is managed in git.
+
+`POST …/dashboard-proposals/{dashboard_proposal_id}/accept` saves `result_source` as the draft and answers with the
+dashboard, as `?draft=true` reads it, with `updated_via` set to `assistant`. It is refused when the proposal cannot be
+accepted:
+
+- **409** `proposal_decided` when it was accepted or discarded already.
+- **410** `proposal_expired` a day after it was made.
+- **409** `managed_dashboard` for a dashboard managed in git.
+- **409** `proposal_stale` when the dashboard changed after it was made, with the current draft under
+  `details.current`, so a newer edit is never overwritten.
+
+`DELETE …/dashboard-proposals/{dashboard_proposal_id}` discards it, and discarding it again changes nothing; one
+already accepted is a **409** `proposal_decided`. Only the person who made a proposal can read or decide it: to anyone
+else it is a **404**. Expired proposals are deleted when the next proposal is made.
+
+The web app shows a proposal at `/{workspace}/dashboard-proposals/{dashboard_proposal_id}`, a page that runs its file
+as you before you decide.
 
 ## Lineage
 

@@ -821,6 +821,72 @@ async def test_a_preview_the_server_refuses_says_why():
 
 
 @respx.mock
+async def test_a_proposal_sends_its_operations_and_returns_what_the_server_made():
+    route = respx.post(f"{BASE}/workspaces/ws/dashboard-proposals").mock(
+        return_value=httpx.Response(201, json={"id": "p-1", "managed": False})
+    )
+    ops = [{"op": "remove_widget", "id": "notes"}]
+    async with httpx.AsyncClient(base_url=BASE) as client:
+        out = await _gateway(client=client).propose_dashboard_changes(
+            "sales", operations=ops, summary="Drop the notes."
+        )
+    assert out == {"id": "p-1", "managed": False}
+    assert json.loads(route.calls[0].request.content) == {
+        "dashboard": "sales",
+        "summary": "Drop the notes.",
+        "operations": ops,
+    }
+
+
+@respx.mock
+async def test_a_refused_proposal_names_every_problem_in_the_file():
+    respx.post(f"{BASE}/workspaces/ws/dashboard-proposals").mock(
+        return_value=httpx.Response(
+            422,
+            json={
+                "error": "invalid_dashboard",
+                "message": "The dashboard file has 2 problems.",
+                "details": {
+                    "diagnostics": [
+                        {"path": "rows[0]", "message": "The widths add up to 14."},
+                        {"path": "rows[1].widgets[0].query", "message": "No metric 'profit'."},
+                    ]
+                },
+            },
+        )
+    )
+    async with httpx.AsyncClient(base_url=BASE) as client:
+        with pytest.raises(GatewayError) as caught:
+            await _gateway(client=client).propose_dashboard_changes(
+                "sales", operations=[], summary="x"
+            )
+    assert str(caught.value) == (
+        "The resulting file has problems:\n"
+        "- rows[0]: The widths add up to 14.\n"
+        "- rows[1].widgets[0].query: No metric 'profit'."
+    )
+
+
+@respx.mock
+async def test_an_operation_that_cannot_apply_is_named():
+    respx.post(f"{BASE}/workspaces/ws/dashboard-proposals").mock(
+        return_value=httpx.Response(
+            422,
+            json={
+                "error": "invalid_proposal",
+                "message": "Operation 2: The dashboard has no widget 'nope'.",
+                "details": {"operation": 1},
+            },
+        )
+    )
+    async with httpx.AsyncClient(base_url=BASE) as client:
+        with pytest.raises(GatewayError, match="Operation 2: The dashboard has no widget"):
+            await _gateway(client=client).propose_dashboard_changes(
+                "sales", operations=[], summary="x"
+            )
+
+
+@respx.mock
 async def test_a_preview_runs_with_its_values():
     route = respx.post(f"{BASE}/workspaces/ws/dashboard-previews/p-1/run").mock(
         return_value=httpx.Response(200, text=_sse({"type": "widget", "id": "a"}))

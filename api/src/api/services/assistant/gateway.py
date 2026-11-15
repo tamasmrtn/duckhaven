@@ -108,6 +108,20 @@ def _file(spec: dict | str) -> dict:
     return {"source_text": spec} if isinstance(spec, str) else {"spec": spec}
 
 
+def _refused_file(resp: httpx.Response) -> str:
+    """A 422 on a dashboard file, with each problem it lists on a line of its own."""
+    _, detail = _error_parts(resp)
+    try:
+        details = resp.json().get("details") or {}
+    except ValueError:
+        details = {}
+    diagnostics = details.get("diagnostics") if isinstance(details, dict) else None
+    if not diagnostics:
+        return f"Not allowed: {detail}"
+    lines = [f"- {d.get('path') or 'file'}: {d.get('message')}" for d in diagnostics]
+    return "The resulting file has problems:\n" + "\n".join(lines)
+
+
 class GatewayError(Exception):
     """A governed REST call failed. The message is safe to surface to the model.
 
@@ -672,6 +686,23 @@ class Gateway:
         resp = await self._client.post(
             f"/workspaces/{self._ws}/dashboard-validations", json=_file(spec)
         )
+        self._raise_for(resp)
+        return resp.json()
+
+    async def propose_dashboard_changes(
+        self, name: str, *, operations: list[dict], summary: str
+    ) -> dict:
+        """Propose ``operations`` on a dashboard, for its person to accept or discard.
+
+        A refused file names every problem in it, not only the first, so the
+        model can fix them all at once.
+        """
+        resp = await self._client.post(
+            f"/workspaces/{self._ws}/dashboard-proposals",
+            json={"dashboard": name, "summary": summary, "operations": operations},
+        )
+        if resp.status_code == 422:
+            raise GatewayError(_refused_file(resp))
         self._raise_for(resp)
         return resp.json()
 

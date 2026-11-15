@@ -33,8 +33,8 @@ the assistant can see and do with the same grants they already use for people.
 - **Run SQL** — write and execute a query, then reason over a capped sample of the results. The full result set is
   available to you in the UI, exactly as if you had run the query yourself. Decimals and large integers reach it as
   exact values with each column's type, so it quotes them as they are rather than as rounded approximations.
-- **Read dashboards** — find a [dashboard](../querying/dashboards.md), read its file, and run its widgets as you to
-  explain a number on it, saying which window and filters that number covers. See
+- **Read and change dashboards** — run a [dashboard](../querying/dashboards.md)'s widgets as you to explain a number,
+  saying which window and filters it covers, and propose changes for you to accept. See
   [Dashboards and charts](#dashboards-and-charts).
 - **Propose editor edits** — on the worksheet, write or change the SQL in your editor as a highlighted, accept-or-reject
   suggestion (it never edits or runs on its own). If your worksheet has a non-empty text selection when you ask, the
@@ -68,7 +68,7 @@ than as a shared service account.
   stopped, but never adds an agent to the elastic pool.
 - It cannot use a draft or broken semantic definition. Only *published* models reach it, and a definition whose column
   is gone is withheld: the assistant says a metric is defined but broken rather than substituting its own calculation.
-- It cannot change a dashboard. It reads dashboards and tries out widgets, but saves, publishes and deletes nothing.
+- It cannot save, publish or delete a dashboard. A change it proposes waits for you to accept it as the draft.
 - It cannot show an image. An image in an answer appears as its description in brackets, such as `[image: chart]`,
   and is never loaded, so text the model reads in a table or a tool result cannot make your browser send data to
   another site.
@@ -85,8 +85,7 @@ conversation loop, the model abstraction, and the tool-calling machinery. DuckHa
 are deliberately thin: each one is an authenticated call to DuckHaven's own REST API, made **as the service account,
 on behalf of the person asking**.
 
-That single design choice is what makes the assistant safe. Because the tools go through the same endpoints the web app
-uses, they inherit the same checks, in the same order:
+Because the tools go through the same endpoints the web app uses, they inherit the same checks, in the same order:
 
 ```
 workspace membership  →  SQL statement allowlist  →  scoped catalog grants  →  DuckDB execution
@@ -170,10 +169,9 @@ data.
 
 ## Model configuration
 
-The assistant is model-agnostic: the provider and model are deployment configuration, not baked into the code. It
-supports Anthropic, OpenAI, and Mistral natively, and any OpenAI-compatible endpoint (for example a self-hosted Ollama
-or vLLM server) via a base URL — so a fully self-hosted, keyless deployment is possible. See
-[Configuration](../reference/configuration.md#ai-assistant) for the settings.
+The provider and model are deployment configuration. The assistant supports Anthropic, OpenAI, and Mistral natively,
+and any OpenAI-compatible endpoint (for example a self-hosted Ollama or vLLM server) via a base URL, so a fully
+self-hosted, keyless deployment is possible. See [Configuration](../reference/configuration.md#ai-assistant).
 
 ## Product knowledge
 
@@ -196,10 +194,9 @@ by section — and can both **search** the full text of every page and **open** 
 summary does not cover, it searches for the pages that discuss it, reads the best match, and names the path it used
 rather than reasoning from a title. Set `ASSISTANT_DOCS_ENABLED=false` to remove the section and both tools.
 
-Search is ordinary lexical full-text — Postgres's, over the pages the image ships — not a semantic or vector index.
-That is a deliberate choice for a corpus of this size, and it has an honest consequence: a question sharing no words
-with the page that answers it may not find it. When search comes back empty the assistant says the documentation does
-not cover the question rather than inventing an answer, which is the behaviour that matters.
+Search is lexical full-text (Postgres's, over the pages the image ships), not a semantic or vector index, so a
+question that shares no words with the page that answers it may not find it. When search comes back empty the
+assistant says the documentation does not cover the question rather than inventing an answer.
 
 !!! note "It answers for the version you are running"
     The pages the assistant reads ship inside the DuckHaven image, so they describe **your** release rather than the
@@ -218,9 +215,8 @@ elastic, that the first query after it idles out can wait a minute or more; and 
 [elastic compute](../compute/elastic-compute.md) whose workspace has no default is told it cannot start compute and
 should point the user to the workspace owner.
 
-A workspace using none of these is told nothing about any of them — not that they are switched off. That is
-deliberate: the instructions stay short, and an assistant that has never heard of a feature cannot offer it to
-someone who does not have it.
+A workspace using none of these is told nothing about them, not even that they are off: the instructions stay short,
+and the assistant cannot offer a feature it has never heard of.
 
 ## Improving it over time
 
@@ -230,9 +226,8 @@ answer, and product questions it answered without consulting anything. The
 [`assistant-mine-feedback.py`](../reference/operator-scripts.md#assistant-mine-feedbackpy)
 operator script collects those and drafts them as test cases for a person to review.
 
-It is deliberately a script an operator runs rather than an automatic loop. DuckHaven records what the assistant
-*did*, not whether you were satisfied with it, so anything more automatic would be inferring quality from evidence
-that does not contain it.
+It is a script an operator runs rather than an automatic loop, because DuckHaven records what the assistant *did*,
+not whether you were satisfied with it.
 
 ## Semantic grounding
 
@@ -258,6 +253,11 @@ numbers, so a page cannot hand the assistant figures to repeat, and a turn from 
 It can try out up to eight widgets it writes, without saving them, with advice on what reads badly, such as a number
 in a title or more than 12 bars. This uses [dashboard previews](../reference/rest-api.md#previewing-a-dashboard-file),
 so both you and its service account need `writer`.
+
+To change a dashboard, it proposes operations on the newest file, such as adding, moving or removing a widget. The
+server checks the file they make as a save does, and the panel shows a card that links to a
+[review page](../querying/dashboards.md#changes-the-assistant-proposes). Accepting saves the file as the draft, and
+nothing is published. Proposing needs `writer` for both you and its service account.
 
 It draws a chart from a query it ran in the conversation, as a dashboard widget: a line, a bar, a KPI or a table. The
 rows come from the query's stored result, never from the model, and a result over 1,000 rows, or 50 bars, is refused

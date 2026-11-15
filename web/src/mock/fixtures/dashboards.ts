@@ -1,8 +1,10 @@
+import { stringify } from "yaml";
 import type {
   ChartSpec,
   Dashboard,
   DashboardFile,
   DashboardPreview,
+  DashboardProposal,
   DashboardRevision,
   RunColumn,
   RunWidget,
@@ -564,6 +566,58 @@ export let REVISIONS: Record<string, DashboardRevision[]> = initialRevisions();
 /** Previews held for the editor, by id. */
 export let PREVIEWS: Record<string, DashboardPreview> = {};
 
+function proposal(
+  id: string,
+  file: DashboardFile,
+  changes: Partial<DashboardProposal>,
+): DashboardProposal {
+  return {
+    id,
+    dashboard: file.name,
+    title: file.title,
+    status: "pending",
+    summary: "",
+    operations: [],
+    changes: [],
+    base_version: 3,
+    base_hash: `hash-${file.name}`,
+    result_spec: file,
+    result_source: stringify(file),
+    result_hash: `hash-${id}`,
+    managed: false,
+    warnings: [],
+    // Made just now, so it expires a day from whenever the mock starts.
+    created_at: new Date().toISOString(),
+    expires_at: new Date(Date.now() + 24 * 3600_000).toISOString(),
+    decided_at: null,
+    ...changes,
+  };
+}
+
+function initialProposals(): Record<string, DashboardProposal> {
+  const weekly = { ...SALES_FILE, title: "Sales, weekly" };
+  return {
+    "proposal-1": proposal("proposal-1", weekly, {
+      summary: "Retitle the dashboard for its weekly review.",
+      operations: [{ op: "set_metadata", title: "Sales, weekly" }],
+      changes: [{ path: "title", change: "changed" }],
+    }),
+    "proposal-git": proposal(
+      "proposal-git",
+      { ...FINANCE_FILE, title: "Finance, weekly" },
+      {
+        summary: "Retitle the dashboard.",
+        operations: [{ op: "set_metadata", title: "Finance, weekly" }],
+        changes: [{ path: "title", change: "changed" }],
+        managed: true,
+      },
+    ),
+  };
+}
+
+/** Changes the assistant proposed, by id. */
+export let PROPOSALS: Record<string, DashboardProposal> = initialProposals();
+
 /** The JSON Schema the editor completes from: the file's shape, trimmed. */
 export const DASHBOARD_SCHEMA = {
   $schema: "https://json-schema.org/draft/2020-12/schema",
@@ -610,4 +664,5 @@ export function resetDashboards(): void {
   DRAFTS = initialDrafts();
   REVISIONS = initialRevisions();
   PREVIEWS = {};
+  PROPOSALS = initialProposals();
 }

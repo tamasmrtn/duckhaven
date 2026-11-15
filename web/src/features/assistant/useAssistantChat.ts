@@ -4,6 +4,7 @@ import { streamApproval, streamMessage } from "@/api/assistant";
 import type {
   AssistantFrame,
   ChatChart,
+  ChatProposal,
   DashboardPageContext,
   PendingApproval,
 } from "@/types/assistant";
@@ -12,9 +13,14 @@ interface LiveTool {
   tool: string;
 }
 
-/** What a turn has shown so far: its messages, and the charts between them. */
+/**
+ * What a turn has shown so far: its messages, and the charts and proposed
+ * dashboard changes between them.
+ */
 export type StreamItem =
-  { kind: "text"; text: string } | { kind: "chart"; chart: ChatChart };
+  | { kind: "text"; text: string }
+  | { kind: "chart"; chart: ChatChart }
+  | { kind: "proposal"; proposal: ChatProposal };
 
 interface ChatOptions {
   // Current worksheet SQL to send as context (so the assistant can edit it).
@@ -134,6 +140,11 @@ export function useAssistantChat(
             setStreamingItems((items) => [
               ...items,
               { kind: "chart", chart: frame },
+            ]);
+          } else if (frame.type === "dashboard_proposal") {
+            setStreamingItems((items) => [
+              ...items,
+              { kind: "proposal", proposal: frame },
             ]);
           } else if (frame.type === "tool_call") {
             setLiveTools((ts) => [...ts, { tool: frame.tool }]);

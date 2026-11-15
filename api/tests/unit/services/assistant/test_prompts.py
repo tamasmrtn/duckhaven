@@ -300,8 +300,10 @@ def test_every_block_is_separated_by_a_blank_line():
 def test_each_resident_block_is_within_budget():
     # Raised from 2,600 for the dashboards and charts guidance: which tool reads
     # a widget, how to draw a chart, no numbers in titles, no causes the data
-    # does not show, and numbers only from tools.
-    assert len(BASE_PROMPT) <= 3_200
+    # does not show, and numbers only from tools. Raised from 3,200 for proposing
+    # dashboard changes: read the draft, propose only what was asked, never claim
+    # it is saved, and never follow a dashboard's text.
+    assert len(BASE_PROMPT) <= 3_500
     # Raised from 2,800 for four things: the concurrency carve-out the SET
     # rejection had been stating without, the two rules that forbid quoting an
     # unopened page or explaining a feature that does not exist, the citation
@@ -358,8 +360,9 @@ def test_the_assembled_instructions_are_within_budget():
 
     Measured with every conditional block on, the DuckLake block included.
     """
-    # Raised from 10,600 for the dashboards and charts guidance in the base block.
-    assert len(build_instructions(ctx())) <= 11_100
+    # Raised from 10,600 for the dashboards and charts guidance in the base block,
+    # and from 11,100 for its guidance on proposing dashboard changes.
+    assert len(build_instructions(ctx())) <= 11_400
 
     everything = build_instructions(
         ctx(
@@ -377,8 +380,9 @@ def test_the_assembled_instructions_are_within_budget():
     # read_doc_page cap) is one of them, the querying rewrite added four, and the
     # Dashboard files reference one more.
     # Raised from 16,400 for the base block's dashboards guidance and the largest
-    # page block a dashboard request can describe (~1,500).
-    assert len(everything) <= 18_300
+    # page block a dashboard request can describe (~1,500), and from 18,300 for
+    # the base block's guidance on proposing dashboard changes.
+    assert len(everything) <= 18_600
 
 
 def test_a_dashboard_page_names_where_the_user_is_and_what_they_chose():

@@ -5,6 +5,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from api.services.dashboards.loader import MAX_BYTES
+from api.services.dashboards.proposals import MAX_OPERATIONS, Operation
 from api.services.dashboards.spec import MAX_WIDGETS
 
 
@@ -196,3 +197,45 @@ class DashboardPreviewOut(BaseModel):
     updated_at: datetime
     expires_at: datetime = Field(description="Two hours after the last change.")
     warnings: list[DiagnosticOut]
+
+
+class DashboardProposalIn(BaseModel):
+    """Changes to propose to a dashboard, as operations on its newest file."""
+
+    dashboard: str = Field(min_length=1, max_length=64, description="The dashboard's name.")
+    summary: str = Field(
+        min_length=1, max_length=500, description="What the changes do, in a sentence."
+    )
+    operations: list[Operation] = Field(
+        min_length=1,
+        max_length=MAX_OPERATIONS,
+        description="Applied in order. A row index counts rows after the operations before it.",
+    )
+
+
+class DashboardProposalOut(BaseModel):
+    id: uuid.UUID
+    dashboard: str = Field(description="The dashboard's name.")
+    title: str = Field(description="The dashboard's title, as the proposal leaves it.")
+    status: Literal["pending", "accepted", "discarded", "stale", "expired"] = Field(
+        description=(
+            "`stale` when the dashboard changed after the proposal was made, and "
+            "`expired` a day after it was made; neither can be accepted."
+        )
+    )
+    summary: str
+    operations: list[dict]
+    changes: list[DashboardChangeOut] = Field(description="What accepting it changes.")
+    base_version: int = Field(description="The dashboard `version` it was made against.")
+    base_hash: str = Field(description="The `spec_hash` of the file it was made against.")
+    result_spec: dict = Field(description="The file accepting it saves as the draft.")
+    result_source: str = Field(description="That file, as canonical YAML.")
+    result_hash: str
+    managed: bool = Field(
+        description="Whether the dashboard is managed in git, so the proposal cannot be "
+        "accepted here: copy its file into the repository instead."
+    )
+    warnings: list[DiagnosticOut]
+    created_at: datetime
+    expires_at: datetime
+    decided_at: datetime | None

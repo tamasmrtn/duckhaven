@@ -49,7 +49,7 @@ from api.services.assistant.identity import (
     resolve_service_account,
 )
 from api.services.assistant.knowledge.search import search_pages
-from api.services.assistant.persistence import chart_of, load_history, save_turn
+from api.services.assistant.persistence import chart_of, load_history, proposal_of, save_turn
 from api.services.assistant.prompts import format_summary
 
 logger = logging.getLogger(__name__)
@@ -455,6 +455,9 @@ async def _run_turn(
                         chart = chart_of(event.part)
                         if chart is not None:
                             await queue.put(chart)
+                        proposal = proposal_of(event.part)
+                        if proposal is not None:
+                            await queue.put(proposal)
                         continue
                     frame = _event_to_frame(event, scoped=scoped)
                     if frame is None:

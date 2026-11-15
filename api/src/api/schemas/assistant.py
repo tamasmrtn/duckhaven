@@ -88,13 +88,26 @@ class ChatChart(BaseModel):
     result_hash: str
 
 
+class ChatProposal(BaseModel):
+    """Changes the assistant proposed to a dashboard, as its ``dashboard_proposal`` frame
+    streamed them. The chat reads the proposal's state by its id."""
+
+    type: Literal["dashboard_proposal"] = "dashboard_proposal"
+    # The propose_dashboard_changes call that made it.
+    tool_call_id: str
+    # The proposal's id, dashboard, title, summary, changes, managed and expires_at.
+    proposal: dict[str, Any]
+
+
 class TranscriptItem(BaseModel):
     """One rendered line of the conversation for display."""
 
-    role: Literal["user", "assistant", "chart"]
+    role: Literal["user", "assistant", "chart", "proposal"]
     text: str
     # A `chart` line's chart, drawn where its tool returned.
     chart: ChatChart | None = None
+    # A `proposal` line's proposal, shown where its tool returned.
+    proposal: ChatProposal | None = None
     # Numbers in an answer that no tool, prompt or page value held, as written.
     # Flagged for the reader, never edited out. None when there are none.
     unsupported_numbers: list[str] | None = None

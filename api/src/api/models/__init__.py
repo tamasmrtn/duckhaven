@@ -17,6 +17,7 @@ from api.models.dashboard import (
     Dashboard,
     DashboardAlias,
     DashboardPreview,
+    DashboardProposal,
     DashboardRef,
     DashboardRevision,
 )
@@ -61,6 +62,7 @@ __all__ = [
     "Dashboard",
     "DashboardAlias",
     "DashboardPreview",
+    "DashboardProposal",
     "DashboardRef",
     "DashboardRevision",
     "LineageColumnEdge",

@@ -13,6 +13,7 @@ from api.services.assistant.tools import (
     get_dashboard,
     list_dashboards,
     preview_widgets,
+    propose_dashboard_changes,
     run_sql,
     run_widget,
     show_chart,
@@ -92,6 +93,20 @@ class FakeGateway:
     async def run_sql(self, sql, **kw):
         self._record("run_sql", sql=sql, **kw)
         return {"query_id": "q-1"}
+
+    async def propose_dashboard_changes(self, name, **kw):
+        self._record("propose_dashboard_changes", name=name, **kw)
+        return {
+            "id": "p-1",
+            "dashboard": name,
+            "title": "Sales",
+            "summary": kw["summary"],
+            "changes": [{"path": "widgets.orders", "change": "added"}],
+            "managed": name == "git-sales",
+            "expires_at": "2026-11-16T10:00:00Z",
+            "result_spec": {"version": 1},
+            "result_source": "version: 1\n",
+        }
 
 
 def _ctx(gateway, page=None, *, can_write=False):
@@ -294,3 +309,54 @@ async def test_from_a_dashboard_a_write_is_refused_even_with_write_access():
 
     # Reads still run.
     assert await run_sql(_ctx(gw, ON_SALES, can_write=True), sql="SELECT 1") == {"query_id": "q-1"}
+
+
+# ── propose_dashboard_changes ─────────────────────────────────────────────────
+
+ADD = [{"op": "add_widget", "widget": {"id": "orders", "type": "text", "markdown": "x"}}]
+
+
+async def test_a_proposal_goes_to_the_dashboard_on_screen_and_the_chat_gets_its_card():
+    gw = FakeGateway()
+
+    out = await propose_dashboard_changes(
+        _ctx(gw, ON_SALES, can_write=True), operations=ADD, summary="Add orders."
+    )
+
+    assert gw.calls == [
+        (
+            "propose_dashboard_changes",
+            {"name": "sales", "operations": ADD, "summary": "Add orders."},
+        )
+    ]
+    told = out.return_value
+    assert told["proposed"] is True and told["proposal_id"] == "p-1"
+    assert "accept it as the draft" in told["note"]
+    # The model is not handed the whole resulting file back.
+    assert "result_spec" not in told and "result_source" not in told
+    frame = out.metadata["proposal"]
+    assert frame["type"] == "dashboard_proposal" and frame["tool_call_id"] == "call-1"
+    assert frame["proposal"]["id"] == "p-1" and frame["proposal"]["summary"] == "Add orders."
+    assert "result_spec" not in frame["proposal"]
+
+
+async def test_a_proposal_for_a_dashboard_in_git_says_the_file_goes_to_the_repository():
+    out = await propose_dashboard_changes(
+        _ctx(FakeGateway(), can_write=True), operations=ADD, summary="x", dashboard="git-sales"
+    )
+    assert out.return_value["managed"] is True and "repository" in out.return_value["note"]
+
+
+async def test_without_write_access_nothing_is_proposed():
+    gw = FakeGateway()
+    with pytest.raises(ModelRetry, match="writer role"):
+        await propose_dashboard_changes(_ctx(gw, ON_SALES), operations=ADD, summary="x")
+    assert gw.calls == []
+
+
+async def test_a_proposal_the_server_refuses_is_for_the_model_to_fix():
+    gw = FakeGateway(fail="The resulting file has problems:\n- rows[0]: too wide")
+    with pytest.raises(ModelRetry, match="too wide"):
+        await propose_dashboard_changes(
+            _ctx(gw, ON_SALES, can_write=True), operations=ADD, summary="x"
+        )

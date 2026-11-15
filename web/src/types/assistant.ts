@@ -1,4 +1,4 @@
-import type { RunWidget, WidgetSpec } from "./dashboard";
+import type { DashboardChange, RunWidget, WidgetSpec } from "./dashboard";
 
 export interface AssistantStatus {
   enabled: boolean;
@@ -46,15 +46,33 @@ export interface ChatChart {
   result_hash: string;
 }
 
+/** Changes the assistant proposed to a dashboard, shown in the chat as a card. */
+export interface ChatProposal {
+  type: "dashboard_proposal";
+  // The propose_dashboard_changes call that made it.
+  tool_call_id: string;
+  proposal: {
+    id: string;
+    dashboard: string;
+    title: string;
+    summary: string;
+    changes: DashboardChange[];
+    managed: boolean;
+    expires_at: string;
+  };
+}
+
 export interface TranscriptItem {
-  // A `chart` line is a chart the assistant drew, where it drew it.
-  role: "user" | "assistant" | "chart";
+  // A `chart` line is a chart the assistant drew, where it drew it, and a
+  // `proposal` line a change it proposed to a dashboard.
+  role: "user" | "assistant" | "chart" | "proposal";
   text: string;
   // The SQL this turn ran or proposed, if any (attributed server-side).
   sql: string | null;
   // Documentation pages this turn opened. Null on most turns.
   sources: DocSource[] | null;
   chart?: ChatChart | null;
+  proposal?: ChatProposal | null;
   // Numbers in this answer that no tool returned, as written. Absent or null
   // when every number was found.
   unsupported_numbers?: string[] | null;
@@ -98,6 +116,7 @@ export type AssistantFrame =
     }
   | { type: "propose_edit"; sql: string; explanation: string; scoped: boolean }
   | ChatChart
+  | ChatProposal
   | {
       type: "done";
       message_id: string;

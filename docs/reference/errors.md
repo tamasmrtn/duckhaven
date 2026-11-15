@@ -142,6 +142,10 @@ Each message has an entry in [Troubleshoot sign-in and access](../access/trouble
 | `source_changed` | 409 | The dashboard is not the one you [applied the file](rest-api.md#applying-a-file-from-git) against. Its newest file's hash, in `details.current_hash`, is not your `expected_hash`, or another `source_id` manages it. Check what changed, or apply with `force=true` to replace it. |
 | `dashboard_unpublished` | 409 | The dashboard was never published, so its draft is all there is. Delete the dashboard instead of discarding the draft. |
 | `unknown_widget` | 422 | A [dashboard run](rest-api.md#running-a-dashboard) named a widget the dashboard has no data widget for. |
+| `invalid_proposal` | 422 | An operation in a [dashboard proposal](rest-api.md#proposing-changes-to-a-dashboard) cannot apply to the file, such as one naming a widget it does not have, or the operations change nothing. The message names the operation, and `details.operation` is its index, from 0. |
+| `proposal_decided` | 409 | The dashboard proposal was accepted or discarded already. |
+| `proposal_expired` | 410 | The dashboard proposal expired a day after it was made. Ask for the change again. |
+| `proposal_stale` | 409 | The dashboard changed after the proposal was made, so accepting it would undo that change. `details.current` has the current draft. Ask for the change again. |
 
 ## Administration
 

@@ -5,6 +5,7 @@ import {
   DASHBOARDS,
   DRAFTS,
   PREVIEWS,
+  PROPOSALS,
   REVISIONS,
   RUNS,
 } from "../fixtures/dashboards";
@@ -15,6 +16,7 @@ import type {
   Dashboard,
   DashboardFile,
   DashboardPreview,
+  DashboardProposal,
   DashboardRunRequest,
   DashboardSummary,
   Diagnostic,
@@ -130,6 +132,22 @@ function stamp(d: Dashboard) {
   d.updated_at = new Date().toISOString();
   d.updated_by = "u-1";
   d.updated_via = "ui";
+}
+
+function noProposal(id: unknown) {
+  return httpError(
+    404,
+    `No proposal '${String(id)}'. A proposal expires a day after it was made.`,
+  );
+}
+
+/** A proposal as the server shows it: stale once its dashboard has moved on. */
+function shownProposal(ws: string, p: DashboardProposal): DashboardProposal {
+  if (p.status !== "pending") return p;
+  if (Date.parse(p.expires_at) <= Date.now())
+    return { ...p, status: "expired" };
+  const d = find(ws, p.dashboard);
+  return d && d.version !== p.base_version ? { ...p, status: "stale" } : p;
 }
 
 function stream(events: RunEvent[]) {
@@ -467,6 +485,88 @@ export const dashboardHandlers = [
       );
     },
   ),
+
+  http.get("/api/workspaces/:ws/dashboard-proposals/:id", ({ params }) => {
+    const p = PROPOSALS[params.id as string];
+    if (!p) return noProposal(params.id);
+    return HttpResponse.json(shownProposal(params.ws as string, p));
+  }),
+
+  http.post(
+    "/api/workspaces/:ws/dashboard-proposals/:id/accept",
+    ({ params }) => {
+      const p = PROPOSALS[params.id as string];
+      if (!p) return noProposal(params.id);
+      const d = find(params.ws as string, p.dashboard);
+      if (!d) return missing(p.dashboard);
+      const status = shownProposal(params.ws as string, p).status;
+      if (status === "accepted" || status === "discarded") {
+        return validationError(
+          "proposal_decided",
+          `This proposal was ${status} already.`,
+          409,
+        );
+      }
+      if (status === "expired") {
+        return validationError(
+          "proposal_expired",
+          "This proposal expired a day after it was made.",
+          410,
+        );
+      }
+      if (d.managed) {
+        return validationError(
+          "managed_dashboard",
+          `'${d.name}' is managed in git. Change its file there and apply it.`,
+          409,
+        );
+      }
+      if (status === "stale") {
+        return validationError(
+          "proposal_stale",
+          `'${d.name}' changed after this proposal was made.`,
+          409,
+          { current: withDraft(d) },
+        );
+      }
+      stamp(d);
+      d.updated_via = "assistant";
+      Object.assign(p, {
+        status: "accepted",
+        decided_at: new Date().toISOString(),
+      });
+      if (d.status === "draft") {
+        Object.assign(d, {
+          spec: p.result_spec,
+          source_text: p.result_source,
+          title: p.result_spec.title,
+        });
+        return HttpResponse.json(d);
+      }
+      DRAFTS[d.name] = { spec: p.result_spec, source_text: p.result_source };
+      d.has_draft = true;
+      return HttpResponse.json(withDraft(d));
+    },
+  ),
+
+  http.delete("/api/workspaces/:ws/dashboard-proposals/:id", ({ params }) => {
+    const p = PROPOSALS[params.id as string];
+    if (!p) return noProposal(params.id);
+    if (p.status === "accepted") {
+      return validationError(
+        "proposal_decided",
+        "This proposal was accepted already.",
+        409,
+      );
+    }
+    if (p.status === "pending") {
+      Object.assign(p, {
+        status: "discarded",
+        decided_at: new Date().toISOString(),
+      });
+    }
+    return new HttpResponse(null, { status: 204 });
+  }),
 
   http.post("/api/workspaces/:ws/dashboard-previews", async ({ request }) => {
     const { source_text = "" } = await readBody<{ source_text: string }>(

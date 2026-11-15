@@ -188,8 +188,9 @@ so a person reviews every dashboard before anyone else sees it.
   Markdown table to show you. As with paging, only a query your own token ran can be used.
 
 Results are cut to fit an agent's context. A call returns at most 12 widgets and at most 20 rows of each, 5 unless the
-agent asks for more. Cells are cut to 80 characters, and all the widgets together to about 6 KB. The rest is not lost:
-each widget carries a `query_id` that `get_query_result` pages.
+agent asks for more. Cells are cut to 80 characters. Rows are then dropped until the widgets together come to about
+6 KB, though each widget keeps its first row. The rest is not lost: each widget carries a `query_id` that
+`get_query_result` pages.
 
 !!! note "A dashboard's text is someone else's words"
     A dashboard's titles, descriptions and text widgets are written by people in the workspace. The server's

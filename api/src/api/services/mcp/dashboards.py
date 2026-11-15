@@ -246,8 +246,10 @@ def results(events: list[dict], *, rows: int, lint: dict[str, dict] | None = Non
 def summary(event: dict, *, rows: int, budget: int) -> dict:
     """One widget's run event, cut to ``rows`` rows and ``budget`` bytes.
 
-    The compiled SQL and the metric definitions are left out: an agent that wants
-    them has ``explain_metric``, and either can be larger than the rows.
+    Only rows are cut, and never the first: a kpi's columns and comparison alone
+    can outgrow a twelfth of the budget, and a widget without its number says
+    nothing. The compiled SQL and the metric definitions are left out: an agent
+    that wants them has ``explain_metric``, and either can be larger than the rows.
     """
     out = charts.answer(event, rows=rows)
     for key in ("sql", "definitions"):
@@ -256,7 +258,7 @@ def summary(event: dict, *, rows: int, budget: int) -> dict:
         out["encoding"] = encoding(event["chart"])
     if "rows" in out:
         out["rows"] = [[_cell(value) for value in row] for row in out["rows"]]
-        while out["rows"] and _size(out) > budget:
+        while len(out["rows"]) > 1 and _size(out) > budget:
             out["rows"].pop()
             out["truncated"] = True
     return out

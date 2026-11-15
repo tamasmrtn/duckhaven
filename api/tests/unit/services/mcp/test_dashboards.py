@@ -197,6 +197,13 @@ def test_a_widget_over_its_budget_loses_rows_and_says_so():
     assert out["row_count"] == 20
 
 
+def test_a_widget_keeps_its_first_row_however_small_its_budget():
+    """Columns and a comparison can outgrow a twelfth of the budget on their own."""
+    out = summary(_event(), rows=5, budget=10)
+    assert out["rows"] == [["web", "10.5"]]
+    assert out["truncated"] is True
+
+
 def test_a_widget_that_failed_says_why_and_has_no_rows():
     out = summary(_event(state="no_access", error="Not granted"), rows=5, budget=WIDGET_BYTES)
     assert out["state"] == "no_access" and out["error"] == "Not granted"

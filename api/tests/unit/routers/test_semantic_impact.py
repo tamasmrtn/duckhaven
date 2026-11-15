@@ -99,7 +99,10 @@ async def test_a_change_that_breaks_a_published_dashboard_needs_allow_breaking(
     refused = await as_owner.request(method, url, **kwargs)
 
     assert _breaks(refused) == {"sales-overview": reads}
-    assert "breaks 1 published dashboard: sales-overview" in refused.json()["message"]
+    assert (
+        "breaks 1 published dashboard: sales-overview. Change it first"
+        in (refused.json()["message"])
+    )
     assert await _model(as_owner, ws, "sales") == before
     allowed = await as_owner.request(method, url, params={"allow_breaking": "true"}, **kwargs)
     assert allowed.status_code in (200, 204), allowed.text
@@ -129,7 +132,7 @@ def test_a_refusal_names_ten_dashboards_and_counts_the_rest():
     detail = impact.refusal("Deleting 'sales'", found).detail
 
     assert detail["detail"].startswith("Deleting 'sales' breaks 12 published dashboards: board-00")
-    assert "board-09 and 2 more." in detail["detail"]
+    assert "board-09 and 2 more. Change them first" in detail["detail"]
     assert len(detail["affected_dashboards"]) == 12
 
 

@@ -92,14 +92,15 @@ def refusal(change: str, dashboards: list[dict]) -> HTTPException:
     names = ", ".join(d["name"] for d in dashboards[:NAMED])
     if len(dashboards) > NAMED:
         names += f" and {len(dashboards) - NAMED} more"
-    count = f"{len(dashboards)} published dashboard{'s' if len(dashboards) != 1 else ''}"
+    many = len(dashboards) != 1
+    count = f"{len(dashboards)} published dashboard{'s' if many else ''}"
     return HTTPException(
         status_code=status.HTTP_409_CONFLICT,
         detail={
             "error": "breaking_dashboards",
             "detail": (
-                f"{change} breaks {count}: {names}. Change them first, or pass "
-                "allow_breaking=true to make the change anyway."
+                f"{change} breaks {count}: {names}. Change {'them' if many else 'it'} first, "
+                "or pass allow_breaking=true to make the change anyway."
             ),
             "affected_dashboards": dashboards,
         },

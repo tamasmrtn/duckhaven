@@ -5,6 +5,7 @@ from __future__ import annotations
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from datetime import date
 
 from api.schemas.assistant import DashboardContext, WorksheetContext
 from api.services.assistant.gateway import Gateway
@@ -70,6 +71,10 @@ class AssistantDeps:
     # The compute this workspace runs on. None when the lookup failed, in which case
     # the instructions say only what the deployment guarantees.
     default_compute: DefaultCompute | None = None
+    # Today in the workspace's time zone, and that zone, for the relative windows
+    # the assistant writes in SQL. None leaves the date out of the instructions.
+    today: date | None = None
+    timezone: str = "UTC"
     # Ranked documentation search, bound to the runner's session factory.
     #
     # A single narrow capability rather than a database session: documentation is

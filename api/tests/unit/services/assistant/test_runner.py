@@ -27,8 +27,14 @@ from api.services.assistant.agent import get_agent
 from api.services.assistant.gateway import Gateway, GatewayError
 from api.services.assistant.knowledge.loader import load_index
 from api.services.assistant.persistence import render_transcript_with_sql
-from api.services.assistant.prompts import BASE_PROMPT, DOCS_INDEX_PROMPT, PRODUCT_PROMPT
+from api.services.assistant.prompts import (
+    BASE_PROMPT,
+    DOCS_INDEX_PROMPT,
+    PRODUCT_PROMPT,
+    TODAY_PROMPT,
+)
 from api.services.assistant.runner import stream_turn
+from api.services.semantic.timespec import today_in
 
 from .conftest import hanging_model, parse_sse, scripted_model, text_step, tool_step
 
@@ -172,6 +178,22 @@ async def test_resolved_workspace_context_reaches_the_model(
     assert "This deployment has elastic compute" in captured[0]
 
 
+async def test_the_date_reaches_the_model_in_the_workspace_time_zone(client, db_session, factory):
+    """The workspace's own zone, not the server's: near midnight the two name
+    different days, and "last month" turns on which."""
+    ws, _catalog, conv = await _seed(db_session, sa_role="reader")
+    ws.timezone = "Pacific/Kiritimati"
+    await db_session.commit()
+    captured: list[str] = []
+
+    with get_agent().override(model=_instruction_capturing_model(captured)):
+        await _collect_stream(factory, ws, conv, "hello")
+
+    today = today_in("Pacific/Kiritimati")
+    assert f"Today is {today:%A} {today.isoformat()} in the workspace's time zone, " in captured[0]
+    assert "Pacific/Kiritimati" in captured[0]
+
+
 async def test_a_turn_survives_every_advisory_lookup_failing(
     client, db_session, factory, monkeypatch
 ):
@@ -194,8 +216,18 @@ async def test_a_turn_survives_every_advisory_lookup_failing(
     # Thinned to the baseline, not broken: no half-rendered feature paragraphs.
     # The docs index survives, because it ships with the code rather than being
     # resolved per turn — losing the gateway does not lose the documentation.
+    # So does the date, which is read from the workspace row, not the gateway.
     assert captured[0] == "\n".join(
-        [BASE_PROMPT, PRODUCT_PROMPT, DOCS_INDEX_PROMPT.format(index=load_index().prompt_block)]
+        [
+            BASE_PROMPT,
+            PRODUCT_PROMPT,
+            DOCS_INDEX_PROMPT.format(index=load_index().prompt_block),
+            TODAY_PROMPT.format(
+                weekday=today_in("UTC").strftime("%A"),
+                date=today_in("UTC").isoformat(),
+                timezone="UTC",
+            ),
+        ]
     )
 
 

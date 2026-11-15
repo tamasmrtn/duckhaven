@@ -248,6 +248,15 @@ This workspace has at least one DuckLake catalog, which differs from Iceberg:
   but not snapshot history."""
 
 
+# The date relative windows in SQL resolve against. Without it the assistant reads
+# "last quarter" off the newest rows, which is wrong whenever the data lags.
+TODAY_PROMPT = """\
+
+Today is {weekday} {date} in the workspace's time zone, {timezone}. Resolve "last
+month", "last quarter" and other relative windows you write in SQL against this
+date; query_metric resolves its own."""
+
+
 # Where the person is. Only names and values the page's address holds, never what
 # it shows: the numbers are for the tools to read, as the person.
 DASHBOARD_PAGE_PROMPT = """\
@@ -270,6 +279,14 @@ def _storage_block(deps: AssistantDeps) -> str | None:
     if not kinds:
         return None
     return STORAGE_PROMPT.format(kinds=", ".join(kinds))
+
+
+def _today_block(deps: AssistantDeps) -> str | None:
+    if deps.today is None:
+        return None
+    return TODAY_PROMPT.format(
+        weekday=deps.today.strftime("%A"), date=deps.today.isoformat(), timezone=deps.timezone
+    )
 
 
 def _ducklake_block(deps: AssistantDeps) -> str | None:
@@ -324,6 +341,8 @@ _INJECTORS = (
     _storage_block,
     _ducklake_block,
     _compute_block,
+    # Changes once a day.
+    _today_block,
     # Last, and the only block that changes from turn to turn.
     _page_block,
 )

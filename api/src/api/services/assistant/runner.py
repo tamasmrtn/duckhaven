@@ -37,6 +37,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.config import settings
 from api.models.assistant import AssistantConversation
+from api.models.workspace import Workspace
 from api.schemas.assistant import DashboardContext, WorksheetContext
 from api.services.assistant.access import service_account_can_write
 from api.services.assistant.agent import get_agent
@@ -51,6 +52,7 @@ from api.services.assistant.identity import (
 from api.services.assistant.knowledge.search import search_pages
 from api.services.assistant.persistence import chart_of, load_history, proposal_of, save_turn
 from api.services.assistant.prompts import format_summary
+from api.services.semantic.timespec import today_in
 
 logger = logging.getLogger(__name__)
 _tracer = trace.get_tracer("duckhaven.api")
@@ -268,6 +270,9 @@ async def _turn_context(
             db, workspace_id, service_account.id
         ) and await service_account_can_write(db, workspace_id, user_id)
         service_account_id = service_account.id
+        timezone = (
+            await db.scalar(select(Workspace.timezone).where(Workspace.id == workspace_id)) or "UTC"
+        )
 
     async with ephemeral_pat(session_factory, service_account_id, user_id) as token:
         # Import here to avoid a circular import at module load (main imports the
@@ -320,6 +325,8 @@ async def _turn_context(
                     DefaultCompute(compute["name"], compute["elastic"]) if compute else None
                 ),
                 docs_search=_docs_search(session_factory),
+                today=today_in(timezone),
+                timezone=timezone,
             )
 
 

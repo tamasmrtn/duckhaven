@@ -520,6 +520,7 @@ async def preview_dashboard(
 
     Args:
         widgets: Ids of the widgets to run, at most 12. Omitted, the first 12.
+            The widgets share one budget, so name fewer to see more rows of each.
     """
     try:
         loaded = loader.load(file) if isinstance(file, str) else loader.parse(file)
@@ -571,7 +572,8 @@ async def run_dashboard(
     Args:
         name: The dashboard's name, from `list_dashboards`.
         widgets: Ids of the widgets to run, at most 12, from `get_dashboard`.
-            Omitted, every widget runs and the first 12 come back.
+            Omitted, every widget runs and the first 12 come back. The widgets
+            share one budget, so name fewer to see more rows of each.
         draft: Run the unpublished draft instead. Needs the writer role.
     """
     if widgets is not None and not 1 <= len(widgets) <= dashboards.MAX_WIDGETS:

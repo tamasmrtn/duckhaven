@@ -33,7 +33,9 @@ revoked.
 ## The agent disconnects often
 
 **What it means.** The long-lived WebSocket between the agent and the control plane keeps dropping. The agent
-reconnects after 5 seconds each time, and queries running on it fail.
+reconnects after 5 seconds each time. An agent answers a query only on the connection the query arrived on, so each
+query it was running or holding fails with "The agent's connection closed before it sent this run's result". Run them
+again once the connection holds.
 
 **What to do.** Check the network between them. Behind NAT or a load balancer, make sure idle long-lived connections
 are not closed. Tailscale usually keeps them open; a path over the internet may need its MTU lowered.

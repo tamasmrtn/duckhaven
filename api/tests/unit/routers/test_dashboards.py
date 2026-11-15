@@ -689,15 +689,34 @@ async def test_a_stranger_sees_nothing(client, as_owner, ws, db_session):
 # ── Git-managed dashboards ────────────────────────────────────────────────────
 
 
-@pytest.mark.parametrize(
-    ("method", "path", "body"),
-    [
-        ("patch", "", {"base_version": 2, "spec": SPEC}),
-        ("post", "/publish", {"base_version": 2}),
-        ("delete", "/draft", None),
-        ("delete", "", None),
-    ],
-)
+#: Every write to a stored dashboard, each refused while git manages it.
+GUARDED_WRITES = [
+    ("patch", "", {"base_version": 2, "spec": SPEC}),
+    ("post", "/publish", {"base_version": 2}),
+    ("delete", "/draft", None),
+    ("delete", "", None),
+]
+#: The rest: running a dashboard reads it, and its file's own path is how git
+#: changes it (``test_dashboard_source``).
+UNGUARDED = {("POST", "/run"), ("PUT", "/source"), ("DELETE", "/source")}
+
+
+def test_every_write_to_a_dashboard_is_guarded_or_comes_from_git():
+    """A new write route fails here until it calls ``assert_writable`` and joins the list."""
+    from api.routers.dashboards import router
+
+    prefix = "/workspaces/{workspace}/dashboards/{dashboard}"
+    writes = {
+        (method, route.path.removeprefix(prefix))
+        for route in router.routes
+        if route.path.startswith(prefix)
+        for method in route.methods - {"GET", "HEAD"}
+    }
+
+    assert writes == {(m.upper(), path) for m, path, _ in GUARDED_WRITES} | UNGUARDED
+
+
+@pytest.mark.parametrize(("method", "path", "body"), GUARDED_WRITES)
 async def test_a_dashboard_managed_in_git_is_changed_only_from_git(
     as_owner, ws, db_session, method, path, body
 ):

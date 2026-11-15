@@ -136,8 +136,9 @@ Each message has an entry in [Troubleshoot sign-in and access](../access/trouble
 | `unsupported_spec_version` | 422 | The [dashboard file](dashboard-spec.md#versions) is for a format version this server does not read. The message says whether to upgrade DuckHaven or the file. |
 | `invalid_dashboard` | 422 | The [dashboard file](dashboard-spec.md) is not valid, or cannot be published as it stands. `details.diagnostics` lists every problem, with its path, line and column. |
 | `dashboard_conflict` | 409 | The dashboard changed since your `base_version`. `details.current` has the latest draft. |
-| `dashboard_name_taken` | 409 | Another dashboard in the workspace has that name. Choose another `name` in the file. |
+| `dashboard_name_taken` | 409 | Another dashboard in the workspace has that name. Choose another `name` in the file. When you apply a file from git over a dashboard made in DuckHaven, apply it with `adopt=true` to manage that dashboard from git. |
 | `managed_dashboard` | 409 | The dashboard is managed in git. Change its file there and apply it again. |
+| `source_changed` | 409 | The dashboard is not the one you [applied the file](rest-api.md#applying-a-file-from-git) against. Its newest file's hash, in `details.current_hash`, is not your `expected_hash`, or another `source_id` manages it. Check what changed, or apply with `force=true` to replace it. |
 | `dashboard_unpublished` | 409 | The dashboard was never published, so its draft is all there is. Delete the dashboard instead of discarding the draft. |
 | `unknown_widget` | 422 | A [dashboard run](rest-api.md#running-a-dashboard) named a widget the dashboard has no data widget for. |
 

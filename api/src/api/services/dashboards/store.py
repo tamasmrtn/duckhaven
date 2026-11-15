@@ -3,7 +3,7 @@
 Every write to a dashboard, from the REST API, the assistant, MCP or an accepted
 proposal, goes through :func:`assert_writable` first. A dashboard whose file
 lives in git is changed only by applying that file, so the repository stays the
-one place it is edited.
+one place it is edited. :func:`changes` is what an apply reports it changes.
 """
 
 from __future__ import annotations
@@ -69,6 +69,46 @@ def export(spec: DashboardSpec) -> str:
         # A widget reads best starting with what it is.
         row["widgets"] = [{"id": w.pop("id"), "type": w.pop("type"), **w} for w in row["widgets"]]
     return yaml.dump(data, Dumper=_Dumper, sort_keys=False, allow_unicode=True, width=100)
+
+
+def changes(old: DashboardSpec | None, new: DashboardSpec) -> list[tuple[str, str]]:
+    """What replacing ``old`` with ``new`` changes, as ``(path, change)`` pairs in file order.
+
+    A path is a top-level key such as ``title``, ``parameters.<name>``,
+    ``widgets.<id>``, or ``layout`` when widgets moved within or between rows.
+    A change is ``added``, ``removed`` or ``changed``. With no ``old``, every
+    parameter and widget is added.
+    """
+    before = stored(old) if old is not None else {}
+    after = stored(new)
+    found: list[tuple[str, str]] = []
+    if old is not None:
+        for key in DashboardSpec.model_fields:
+            if key not in ("parameters", "rows") and before.get(key) != after.get(key):
+                found.append((key, "changed"))
+    found += _keyed("parameters", before.get("parameters", {}), after.get("parameters", {}))
+    found += _keyed("widgets", _widgets(before), _widgets(after))
+    if old is not None and _layout(before) != _layout(after):
+        found.append(("layout", "changed"))
+    return found
+
+
+def _keyed(kind: str, before: dict, after: dict) -> list[tuple[str, str]]:
+    found = []
+    for key, value in after.items():
+        if key not in before:
+            found.append((f"{kind}.{key}", "added"))
+        elif before[key] != value:
+            found.append((f"{kind}.{key}", "changed"))
+    return found + [(f"{kind}.{key}", "removed") for key in before if key not in after]
+
+
+def _widgets(data: dict) -> dict[str, dict]:
+    return {w["id"]: w for row in data.get("rows", []) for w in row["widgets"]}
+
+
+def _layout(data: dict) -> list[list[str]]:
+    return [[w["id"] for w in row["widgets"]] for row in data.get("rows", [])]
 
 
 def refs(spec: DashboardSpec) -> list[Ref]:

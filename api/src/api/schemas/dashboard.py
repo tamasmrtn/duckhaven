@@ -116,12 +116,51 @@ class DashboardOut(DashboardSummary):
     source_text: str | None = Field(description="The YAML as written, when it was sent as YAML.")
     spec_hash: str = Field(description="sha256 of `spec` as canonical JSON.")
     spec_version: int
-    source_ref: str | None
+    source_ref: str | None = Field(description="The commit the applied file came from.")
+    source_hash: str | None = Field(
+        description="sha256 of the file's bytes as last applied from git, as `sha256sum` prints it."
+    )
     client: str | None = Field(description="The client of the last change, from its User-Agent.")
     created_by: uuid.UUID | None
     published_by: uuid.UUID | None
     refs: list[RefOut] = Field(description="The models, metrics, dimensions and tables it reads.")
     warnings: list[DiagnosticOut]
+
+
+class DashboardChangeOut(BaseModel):
+    path: str = Field(
+        description=(
+            "What changes: a top-level key such as `title`, `parameters.<name>`, "
+            "`widgets.<id>`, `layout` when widgets move within or between rows, or "
+            "`source_text` when only the YAML's text changes, such as a comment."
+        )
+    )
+    change: Literal["added", "removed", "changed"]
+
+
+class DashboardApplyOut(BaseModel):
+    """What applying a file from git does, or would do on a dry run."""
+
+    dry_run: bool
+    action: Literal["create", "update", "unchanged"]
+    name: str = Field(description="The dashboard's name once the file is applied.")
+    renamed_from: str | None = Field(description="Its old name, when this apply renames it.")
+    adopted: bool = Field(description="A dashboard made in DuckHaven becomes managed in git.")
+    published: bool = Field(description="The file is published, so readers see it.")
+    current_hash: str | None = Field(
+        description=(
+            "`spec_hash` of the newest file before the apply: the draft, or the published "
+            "file when there is no draft. Null when the dashboard is created."
+        )
+    )
+    spec_hash: str = Field(description="`spec_hash` of the applied file.")
+    changes: list[DashboardChangeOut] = Field(
+        description="Against the published file when publishing, otherwise the newest file."
+    )
+    warnings: list[DiagnosticOut]
+    dashboard: DashboardOut | None = Field(
+        description="The dashboard once applied; null on a dry run."
+    )
 
 
 class DashboardRevisionSummary(BaseModel):

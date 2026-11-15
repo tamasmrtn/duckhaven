@@ -13,6 +13,7 @@ import { LoadingScreen } from "@/components/app/LoadingScreen";
 import { NotFoundPage } from "@/features/app/NotFoundPage";
 import { AppShell } from "@/components/app/AppShell";
 import { LoginPage } from "@/features/auth/LoginPage";
+import { takeReturnTo } from "@/features/auth/returnTo";
 import { SetupPage } from "@/features/auth/SetupPage";
 import { WelcomePage } from "@/features/auth/WelcomePage";
 import { WorksheetPage } from "@/features/worksheet/WorksheetPage";
@@ -57,6 +58,10 @@ const loginRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/login",
   component: LoginPage,
+  // The page to open after signing in, set by the workspace guard below.
+  validateSearch: (search: Record<string, unknown>): { redirect?: string } => ({
+    redirect: typeof search.redirect === "string" ? search.redirect : undefined,
+  }),
 });
 
 const setupRoute = createRoute({
@@ -70,8 +75,8 @@ const indexRoute = createRoute({
   path: "/",
   // The post-login landing: SSO callbacks redirect here, so resolve the
   // destination from the session rather than always bouncing to /login.
-  // Authenticated -> first workspace (or /welcome when they have none);
-  // unauthenticated -> /login.
+  // Authenticated -> the page kept before single sign-on, else the first
+  // workspace (or /welcome when they have none); unauthenticated -> /login.
   beforeLoad: async () => {
     try {
       await authApi.me();
@@ -81,6 +86,8 @@ const indexRoute = createRoute({
       }
       throw err;
     }
+    const back = takeReturnTo();
+    if (back) throw redirect({ href: back });
     const workspaces = await workspacesApi.list();
     const first = workspaces[0];
     throw redirect(
@@ -103,14 +110,15 @@ const wsRoute = createRoute({
   component: AppShell,
   notFoundComponent: NotFoundPage,
   // Centralized guard for every workspace route: require a session, then a
-  // real workspace. Logged-out deep links redirect to /login; unknown
-  // workspace slugs render the not-found page instead of a blank shell.
-  beforeLoad: async ({ params }) => {
+  // real workspace. Logged-out deep links redirect to /login, which opens
+  // the link again after sign-in; unknown workspace slugs render the
+  // not-found page instead of a blank shell.
+  beforeLoad: async ({ params, location }) => {
     try {
       await authApi.me();
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
-        throw redirect({ to: "/login" });
+        throw redirect({ to: "/login", search: { redirect: location.href } });
       }
       throw err;
     }

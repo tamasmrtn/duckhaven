@@ -1,9 +1,18 @@
-import { describe, it, expect } from 'vitest'
+import { afterEach, describe, it, expect } from 'vitest'
 import { screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { server } from '@tests/mock/server'
 import { http, HttpResponse } from 'msw'
 import { renderWithProviders } from '@tests/utils'
+
+afterEach(() => sessionStorage.clear())
+
+async function signIn() {
+  const user = userEvent.setup()
+  await user.type(await screen.findByLabelText(/email/i), 'test@example.com')
+  await user.type(screen.getByLabelText(/password/i), 'password')
+  await user.click(screen.getByRole('button', { name: /sign in/i }))
+}
 
 describe('LoginPage', () => {
   it('renders email, password inputs and sign-in button', async () => {
@@ -45,6 +54,52 @@ describe('LoginPage', () => {
     await user.click(screen.getByRole('button', { name: /sign in/i }))
 
     await waitFor(() => expect(router.state.location.pathname).toBe('/welcome'))
+  })
+
+  it('opens the first workspace when the redirect points at another site', async () => {
+    const { router } = renderWithProviders({
+      initialRoute: '/login?redirect=%2F%2Fevil.example%2Fx',
+    })
+
+    await signIn()
+
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe('/acme-analytics/worksheets'),
+    )
+  })
+
+  it('opens the page kept before a failed single sign-on', async () => {
+    sessionStorage.setItem('dh-return-to', '/acme-analytics/dashboards')
+    const { router } = renderWithProviders({ initialRoute: '/login?error=sso' })
+
+    await signIn()
+
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe('/acme-analytics/dashboards'),
+    )
+    expect(sessionStorage.getItem('dh-return-to')).toBeNull()
+  })
+
+  it('keeps the page to open when signing in with single sign-on', async () => {
+    server.use(
+      http.get('/api/auth/methods', () =>
+        HttpResponse.json({
+          local: true,
+          ldap: false,
+          oidc_providers: [{ id: 'entra', label: 'Microsoft' }],
+        }),
+      ),
+    )
+    renderWithProviders({
+      initialRoute: '/login?redirect=%2Facme-analytics%2Fdashboards',
+    })
+    const user = userEvent.setup()
+
+    await user.click(
+      await screen.findByRole('button', { name: /sign in with microsoft/i }),
+    )
+
+    expect(sessionStorage.getItem('dh-return-to')).toBe('/acme-analytics/dashboards')
   })
 
   it('says when to retry after too many attempts', async () => {

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import logoLight from "@/assets/logo-light.svg";
 import logoDark from "@/assets/logo-dark.svg";
-import { useNavigate } from "@tanstack/react-router";
+import { useNavigate, useSearch } from "@tanstack/react-router";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -11,6 +11,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { workspacesApi } from "@/api/workspaces";
 import { ApiError } from "@/api/client";
 import { useDocumentTitle } from "@/hooks/useDocumentTitle";
+import { keepReturnTo, safeReturnTo, takeReturnTo } from "./returnTo";
 
 export function LoginPage() {
   useDocumentTitle("Sign in");
@@ -23,6 +24,7 @@ export function LoginPage() {
   );
   const login = useLogin();
   const navigate = useNavigate();
+  const returnTo = safeReturnTo(useSearch({ from: "/login" }).redirect);
   const qc = useQueryClient();
   const setupStatus = useSetupStatus();
   const methods = useAuthMethods();
@@ -40,6 +42,14 @@ export function LoginPage() {
     setError("");
     try {
       await login.mutateAsync({ email, password });
+      // A path kept before a failed single sign-on is used when the link
+      // carries none, and is dropped either way.
+      const kept = takeReturnTo();
+      const back = returnTo ?? kept;
+      if (back) {
+        void navigate({ href: back });
+        return;
+      }
       const workspaces = await qc.fetchQuery({
         queryKey: ["workspaces"],
         queryFn: workspacesApi.list,
@@ -146,6 +156,7 @@ export function LoginPage() {
                   variant="outline"
                   className="w-full h-9"
                   onClick={() => {
+                    if (returnTo) keepReturnTo(returnTo);
                     window.location.href = `/api/auth/oidc/${p.id}/login`;
                   }}
                 >

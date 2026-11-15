@@ -496,6 +496,8 @@ async def test_a_save_against_an_old_version_is_a_conflict_with_the_current_draf
     assert body["error"] == "dashboard_conflict"
     assert body["details"]["current"]["version"] == 2
     assert body["details"]["current"]["spec"]["title"] == "Mine"
+    # Named as on every other read, so the editor can say whose save it was.
+    assert body["details"]["current"]["updated_by_name"] == "Owner"
 
 
 async def test_publishing_an_old_version_is_a_conflict(as_owner, ws):
@@ -508,6 +510,7 @@ async def test_publishing_an_old_version_is_a_conflict(as_owner, ws):
 
     assert resp.status_code == 409
     assert resp.json()["error"] == "dashboard_conflict"
+    assert resp.json()["details"]["current"]["updated_by_name"] == "Owner"
 
 
 # ── Names ─────────────────────────────────────────────────────────────────────

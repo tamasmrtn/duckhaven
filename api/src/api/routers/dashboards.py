@@ -382,8 +382,9 @@ async def _save_draft(
     await store.set_refs(db, row, "draft", spec)
 
 
-def _assert_base(row: Dashboard, base_version: int) -> None:
+async def _assert_base(db: AsyncSession, row: Dashboard, base_version: int) -> None:
     if base_version != row.version:
+        current = await _named(db, _out(row, draft=True))
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
@@ -392,7 +393,7 @@ def _assert_base(row: Dashboard, base_version: int) -> None:
                     f"{row.name!r} changed since version {base_version}; "
                     f"it is at version {row.version}."
                 ),
-                "current": _out(row, draft=True).model_dump(mode="json"),
+                "current": current.model_dump(mode="json"),
             },
         )
 
@@ -530,7 +531,7 @@ async def update_dashboard(
     working. Over MCP, a 429 `draft_quota_exceeded` past the limits on drafts."""
     row = await _dashboard(db, ctx, dashboard)
     store.assert_writable(row)
-    _assert_base(row, body.base_version)
+    await _assert_base(db, row, body.base_version)
     spec = _read(body).spec
     over_mcp = _provenance(request)[0] == "mcp"
     if over_mcp:
@@ -605,7 +606,7 @@ async def publish_dashboard(
     changes."""
     row = await _dashboard(db, ctx, dashboard)
     store.assert_writable(row)
-    _assert_base(row, body.base_version)
+    await _assert_base(db, row, body.base_version)
     if row.draft_spec is None:
         return await _named(db, _out(row))
     loaded = _loaded(row.draft_spec, row.draft_source_text)
@@ -1418,7 +1419,7 @@ async def accept_dashboard_proposal(
             f"{row.name!r} changed after this proposal was made, at version "
             f"{proposal.base_version}; it is at version {row.version}. Ask for the "
             "change again.",
-            current=_out(row, draft=True).model_dump(mode="json"),
+            current=(await _named(db, _out(row, draft=True))).model_dump(mode="json"),
         )
     spec = store.read(proposal.result_spec)
     await _save_draft(db, row, spec, store.export(spec), ctx.user, request)

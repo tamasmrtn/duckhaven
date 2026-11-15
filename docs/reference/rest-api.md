@@ -658,7 +658,11 @@ A response's `spec` is the published file, or the draft when `draft` is `true`. 
 draft, and is invisible to readers: they get **404**, as for a dashboard that does not exist. `refs` lists the models,
 metrics, dimensions and tables the file reads, and `GET …/dashboards?uses=orders` or `?uses=orders.revenue` finds the
 dashboards that read a model, or one of its metrics or dimensions. `updated_via` says how the last change arrived:
-`ui` from the web app, `cli` from `dh`, `rest` from any other client, whose `User-Agent` is kept in `client`.
+`ui` from the web app, `cli` from `dh`, `assistant` when you accept the assistant's proposal, `mcp` from an agent
+through the [MCP server](../ai/mcp-server.md#dashboards), and `rest` from any other client. `client` is the client's
+name and version from its `User-Agent`, or the agent's client over MCP, and `updated_by_name` names the person who
+made the change. Drafts saved over MCP are limited per person, and a save past a limit is **429**
+`draft_quota_exceeded`.
 
 A file's `name` is the dashboard's name, unique in the workspace. Saving a new `name` renames a dashboard never
 published at once, and a published one when it is next published. A taken name is **409** `dashboard_name_taken`.

@@ -12,6 +12,7 @@ name keeps working after a rename.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -27,6 +28,8 @@ from api.models.catalog import Catalog
 from api.models.dashboard import Dashboard, DashboardPreview, DashboardRef, DashboardRevision
 from api.models.user import User
 from api.schemas.dashboard import (
+    DashboardApplyOut,
+    DashboardChangeOut,
     DashboardCreate,
     DashboardIn,
     DashboardOut,
@@ -213,6 +216,7 @@ def _out(row: Dashboard, *, draft: bool = False) -> DashboardOut:
         spec_hash=store.spec_hash(loaded.spec),
         spec_version=loaded.spec.version,
         source_ref=row.source_ref,
+        source_hash=row.source_hash,
         client=row.client,
         created_by=row.created_by,
         published_by=row.published_by,
@@ -463,6 +467,17 @@ async def publish_dashboard(
     if row.draft_spec is None:
         return _out(row)
     loaded = _loaded(row.draft_spec, row.draft_source_text)
+    await _assert_publishable(db, ctx, loaded)
+    row.version += 1
+    _stamp(row, ctx.user, request)
+    await _publish(db, ctx, row, loaded.spec, row.draft_source_text, body.message)
+    await db.commit()
+    await db.refresh(row)
+    return _out(row)
+
+
+async def _assert_publishable(db: AsyncSession, ctx: _Context, loaded: loader.Loaded) -> None:
+    """Refuse a file the workspace finds faults in, as the caller, with a 422 listing them."""
     problems = await validate.problems(
         db,
         loaded,
@@ -474,7 +489,16 @@ async def publish_dashboard(
     if problems:
         raise _invalid("invalid_dashboard", problems)
 
-    spec = loaded.spec
+
+async def _publish(
+    db: AsyncSession,
+    ctx: _Context,
+    row: Dashboard,
+    spec: DashboardSpec,
+    text: str | None,
+    message: str | None,
+) -> None:
+    """Make ``spec`` the published file, record it as a revision, and drop the draft."""
     await _follow(db, row, spec)
     last = (
         await db.execute(
@@ -484,12 +508,10 @@ async def publish_dashboard(
         )
     ).scalar_one()
     now = datetime.now(UTC)
-    row.spec, row.source_text = store.stored(spec), row.draft_source_text
+    row.spec, row.source_text = store.stored(spec), text
     row.spec_hash = store.spec_hash(spec)
     row.draft_spec = row.draft_source_text = None
     row.status, row.published_by, row.published_at = "published", ctx.user.id, now
-    row.version += 1
-    _stamp(row, ctx.user, request)
     db.add(
         DashboardRevision(
             dashboard_id=row.id,
@@ -497,16 +519,13 @@ async def publish_dashboard(
             spec=row.spec,
             source_text=row.source_text,
             spec_hash=row.spec_hash,
-            message=body.message,
+            message=message,
             published_by=ctx.user.id,
             published_at=now,
         )
     )
     await store.set_refs(db, row, "published", spec)
     await store.set_refs(db, row, "draft", None)
-    await db.commit()
-    await db.refresh(row)
-    return _out(row)
 
 
 @router.get(
@@ -536,6 +555,221 @@ async def get_dashboard_source(
         media_type="application/yaml",
         headers={"Content-Disposition": f'inline; filename="{row.name}.dashboard.yml"'},
     )
+
+
+# ── Applying from git ─────────────────────────────────────────────────────────
+
+_FILE_BODY = {
+    "requestBody": {
+        "required": True,
+        "description": "The dashboard file as YAML, byte for byte as it is in git.",
+        "content": {"application/yaml": {"schema": {"type": "string"}}},
+    }
+}
+
+
+def _source_changed(message: str, current_hash: str | None) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={"error": "source_changed", "detail": message, "current_hash": current_hash},
+    )
+
+
+@router.put(
+    "/workspaces/{workspace}/dashboards/{dashboard}/source",
+    response_model=DashboardApplyOut,
+    responses={201: {"model": DashboardApplyOut, "description": "The dashboard was created."}},
+    openapi_extra=_FILE_BODY,
+)
+async def apply_dashboard_source(
+    dashboard: str,
+    request: Request,
+    response: Response,
+    source_id: str | None = Query(
+        default=None,
+        max_length=255,
+        description="Where the file lives, such as the repository. Kept when left out.",
+    ),
+    source_ref: str | None = Query(
+        default=None, max_length=255, description="The commit the file comes from."
+    ),
+    expected_hash: str | None = Query(
+        default=None,
+        max_length=64,
+        description=(
+            "The `spec_hash` the dashboard's newest file must have, as a dry run's "
+            "`current_hash` reports it. Otherwise 409 `source_changed`."
+        ),
+    ),
+    publish: bool = Query(
+        default=False, description="Publish the file. Needs the owner role, except on a dry run."
+    ),
+    adopt: bool = Query(
+        default=False,
+        description=(
+            "Manage a dashboard made in DuckHaven from this file. Needs the owner role, "
+            "except on a dry run."
+        ),
+    ),
+    force: bool = Query(
+        default=False,
+        description="Apply even when `expected_hash` or `source_id` does not match.",
+    ),
+    dry_run: bool = Query(default=False, description="Make every check, and change nothing."),
+    ctx: _Context = Depends(_context("writer")),
+    db: AsyncSession = Depends(get_db),
+) -> DashboardApplyOut:
+    """Apply a dashboard file from git: create the dashboard, or replace its file.
+
+    The body is the file itself, kept byte for byte, comments included. The
+    dashboard is then managed in git: every other write to it is a 409
+    `managed_dashboard` until it is detached. Without `publish` the file becomes
+    the draft. The answer says what changed, and a `dry_run` answers the same
+    way, after the same checks, without changing anything.
+
+    A dashboard not found is created under the file's `name`, which must match
+    the path. One made in DuckHaven is a 409 `dashboard_name_taken` unless
+    `adopt` is set. A file the same as the dashboard's changes nothing, and the
+    answer's `action` is `unchanged`."""
+    if (publish or adopt) and not dry_run and not ctx.at_least("owner"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Publishing or adopting a dashboard needs the owner role.",
+        )
+    raw = await request.body()
+    try:
+        loaded = loader.load(raw)
+    except loader.DashboardInvalid as exc:
+        raise _invalid(exc.code, exc.diagnostics) from exc
+    spec, text = loaded.spec, raw.decode("utf-8")
+    new_hash = store.spec_hash(spec)
+
+    row = await store.find(db, ctx.workspace.id, dashboard)
+    current_hash = None
+    if row is None:
+        if spec.name.lower() != dashboard.lower():
+            message = f"The file is named {spec.name!r}, but was applied as {dashboard!r}."
+            hint = f"Apply it as {spec.name!r}, or change its name."
+            raise _invalid("invalid_dashboard", [loaded.at("name", message, hint)])
+        if expected_hash is not None and not force:
+            raise _source_changed(
+                f"There is no dashboard {dashboard!r}, so its file cannot have that hash.", None
+            )
+    else:
+        newest, newest_text, _ = _shown(row, draft=True)
+        current_hash = store.spec_hash(store.read(newest))
+        if row.source == "ui" and not adopt:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "error": "dashboard_name_taken",
+                    "detail": (
+                        f"{row.name!r} is a dashboard made in DuckHaven. Apply with adopt=true "
+                        "to manage it from this file."
+                    ),
+                },
+            )
+        moved = row.source == "git" and source_id and row.source_id not in (None, source_id)
+        if moved and not force:
+            raise _source_changed(
+                f"{row.name!r} is applied from {row.source_id}, not {source_id}. Apply "
+                "with force=true to manage it from here.",
+                current_hash,
+            )
+        if expected_hash is not None and expected_hash != current_hash and not force:
+            raise _source_changed(
+                f"{row.name!r} changed: its file's hash is {current_hash}, not {expected_hash}. "
+                "Read it again, or apply with force=true to replace it.",
+                current_hash,
+            )
+        if spec.name != row.name:
+            await store.assert_name_free(db, row.workspace_id, spec.name, mine=row.id)
+
+    # Compared with what readers see when publishing, otherwise with the newest file.
+    if row is None:
+        old_data, old_text = None, None
+    elif publish and row.spec is not None:
+        old_data, old_text = row.spec, row.source_text
+    else:
+        old_data, old_text = newest, newest_text
+    old = store.read(old_data) if old_data is not None else None
+    found = store.changes(old, spec)
+    if old is not None and not found and old_text != text:
+        found = [("source_text", "changed")]
+    unchanged = (
+        row is not None
+        and row.source == "git"
+        and (source_id is None or source_id == row.source_id)
+        and not found
+        and (not publish or (row.draft_spec is None and row.spec is not None))
+    )
+    action = "create" if row is None else "unchanged" if unchanged else "update"
+    renames = row is not None and spec.name != row.name and (publish or row.spec is None)
+    plan = {
+        "dry_run": dry_run,
+        "action": action,
+        "name": spec.name if row is None or renames else row.name,
+        "renamed_from": row.name if renames else None,
+        "adopted": row is not None and row.source == "ui",
+        "published": publish and action != "unchanged",
+        "current_hash": current_hash,
+        "spec_hash": new_hash,
+        "changes": [DashboardChangeOut(path=path, change=change) for path, change in found],
+        "warnings": _diagnostics(loaded.warnings),
+    }
+    if publish and action != "unchanged":
+        await _assert_publishable(db, ctx, loaded)
+    if dry_run:
+        return DashboardApplyOut(**plan, dashboard=None)
+    if action == "unchanged":
+        return DashboardApplyOut(**plan, dashboard=_out(row, draft=not publish))
+
+    if row is None:
+        row = Dashboard(
+            workspace_id=ctx.workspace.id, status="draft", version=1, created_by=ctx.user.id
+        )
+        await _follow(db, row, spec)
+        db.add(row)
+        response.status_code = status.HTTP_201_CREATED
+    else:
+        row.version += 1
+    row.source, row.source_id = "git", source_id or row.source_id
+    row.source_ref, row.source_hash = source_ref, hashlib.sha256(raw).hexdigest()
+    _stamp(row, ctx.user, request)
+    await db.flush()  # a new dashboard's id, for its refs and revision
+    if publish:
+        applied = " ".join(p for p in (row.source_id, source_ref and f"at {source_ref}") if p)
+        message = f"Applied from {applied or 'git'}"[:500]
+        await _publish(db, ctx, row, spec, text, message)
+    else:
+        if row.spec is None:
+            await _follow(db, row, spec)
+        row.draft_spec, row.draft_source_text = store.stored(spec), text
+        await store.set_refs(db, row, "draft", spec)
+    await db.commit()
+    await db.refresh(row)
+    return DashboardApplyOut(**plan, dashboard=_out(row, draft=not publish))
+
+
+@router.delete("/workspaces/{workspace}/dashboards/{dashboard}/source", status_code=204)
+async def detach_dashboard_source(
+    dashboard: str,
+    request: Request,
+    ctx: _Context = Depends(_context("owner")),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """Stop managing a dashboard in git, so it is edited in DuckHaven again.
+
+    The dashboard keeps its files, draft and revisions; it forgets only where
+    its file came from. A dashboard not managed in git is left as it is."""
+    row = await _dashboard(db, ctx, dashboard)
+    if row.source != "git":
+        return
+    row.source = "ui"
+    row.source_id = row.source_ref = row.source_hash = None
+    row.version += 1
+    _stamp(row, ctx.user, request)
+    await db.commit()
 
 
 # ── Revisions ─────────────────────────────────────────────────────────────────

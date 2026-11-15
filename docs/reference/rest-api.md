@@ -565,7 +565,7 @@ Define what business terms mean, and compile questions into SQL from those defin
 | `GET …/semantic/models/{model}/metrics/{metric}/dimensions` | The dimensions this metric can be sliced by |
 | `GET …/semantic/search?q=` | Rank metrics and dimensions against a question. Returns `items`, `ambiguous` (equally good metrics) and `broken` (matches whose bindings fail to resolve) |
 | `POST …/semantic/compile` | Compile a metric request to SQL. Does not run it: submit the SQL as a query |
-| `POST …/semantic/imports/{provider}` | Publish definitions from a producer, as `text/plain`: a YAML document for `duckhaven`, a `manifest.json` for `dbt`. `?reconcile=provider_run` (the default) retires models missing from the payload. `writer` |
+| `POST …/semantic/imports/{provider}` | Publish definitions from a producer, as `text/plain`: a YAML document for `duckhaven`, a `manifest.json` for `dbt`. `?reconcile=provider_run` (the default) retires models missing from the payload. `?dry_run=true` reports what it would do and changes nothing. `writer` |
 | `DELETE …/semantic/imports?provider=⟨name⟩` | Remove everything a provider published. `owner` |
 | `GET …/catalogs/{catalog}/schemas/{schema}/tables/{table}/semantic` | The definitions that depend on this table. Optional `column`. `metadata` tier |
 
@@ -583,6 +583,22 @@ the `sql` of the same question over that earlier window. It is `null` when not a
 
 A file the provider cannot read, such as YAML sent to `dbt` or an empty body, answers **422** naming the format that
 provider expects. It is not a 5xx, because resending the same file will never work.
+
+An import answers with what it did: `created`, `updated` and `removed` models, then what it took away by name, in
+`removed_models`, `removed_metrics` and `removed_dimensions` (`model.name`), and `affected_dashboards`.
+
+A change that removes something a published [dashboard](#dashboards) reads breaks that dashboard, since dashboards read
+published models and metrics only. Each of these answers **409** `breaking_dashboards` when it would:
+
+- deleting or deprecating a model
+- deleting a metric or a dimension, or setting a metric's `status` back to `draft`
+- an import that drops a metric or dimension from a published model, or retires a model
+- purging a provider's imports
+
+`details.affected_dashboards` lists each dashboard with its `name`, `title` and what it `reads` of the change: a model
+as its slug, a metric or dimension as `model.name`. Change those dashboards first, or repeat the request with
+`allow_breaking=true`, which makes the change and, on an import, still lists the dashboards. A draft dashboard is not
+counted: publishing it checks it again. An import with `dry_run=true` lists them too, and changes nothing.
 
 ## Dashboards
 

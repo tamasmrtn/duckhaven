@@ -190,6 +190,14 @@ the aggregate its own table:
 The audience then reads exactly the figure you chose to publish, the schedule's runs show when it was last
 refreshed, and a grant change is a visible decision rather than a property of a dashboard.
 
+## When the semantic layer changes
+
+A dashboard reads published models and metrics. A change to the [semantic layer](../metadata/semantic-layer.md) that
+removes one a published dashboard reads, such as deleting a metric, deprecating a model, or an import that drops a
+dimension, is refused, and the refusal names the dashboards. Change them first, or make the change with
+`allow_breaking=true`. See
+[Changes that break a dashboard](../metadata/semantic-layer.md#changes-that-break-a-dashboard).
+
 ## Limits
 
 - A dashboard holds at most 40 widgets, and opens slowly above 16.

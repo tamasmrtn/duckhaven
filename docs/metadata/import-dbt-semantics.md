@@ -148,6 +148,30 @@ By default a payload is treated as dbt's **complete** set for the workspace, and
 models missing from it are retired. Pass `--reconcile none` when publishing
 a subset (`?reconcile=none` over HTTP).
 
+An import that drops a metric or dimension a published [dashboard](../querying/dashboards.md) reads, or retires a model
+one reads, is refused with **409** `breaking_dashboards` and imports nothing. To see what an import would remove and
+break first, send it with `?dry_run=true`:
+
+```bash
+curl -X POST "$DH/api/workspaces/$WS/semantic/imports/dbt?dry_run=true" \
+  -H 'Content-Type: text/plain' \
+  --data-binary @target/manifest.json
+```
+
+```json
+{
+  "provider": "dbt",
+  "dry_run": true,
+  "updated": 1,
+  "removed_metrics": ["shop.gross_revenue"],
+  "affected_dashboards": [
+    {"name": "sales-overview", "title": "Sales overview", "reads": ["shop.gross_revenue"]}
+  ]
+}
+```
+
+(Some fields omitted.) Change those dashboards first, or import with `?allow_breaking=true` to break them on purpose.
+
 An imported model is **read-only in DuckHaven** — `PATCH` returns 409. A model has
 exactly one owner, which is what stops the two copies disagreeing: change it in
 dbt and import again.
@@ -172,6 +196,16 @@ not have. Run `dh semantic validate`, fix the definition in dbt, and import agai
 ### A definition you edit in DuckHaven is refused with 409
 
 Imported models are edited at their source, dbt. Change the dbt project and import again.
+
+### The import is refused with 409 `breaking_dashboards`
+
+The import removes a metric, dimension or model that a published dashboard reads. `details.affected_dashboards` names
+each dashboard and what it reads. Change those dashboards, then import again, or import with `?allow_breaking=true`.
+
+### A dashboard says the model is still a draft
+
+Dashboards read published models only, and an import arrives as a draft. Publish the model with
+`dh semantic publish <project>`.
 
 ## Related
 

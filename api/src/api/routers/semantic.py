@@ -61,6 +61,7 @@ from api.schemas.semantic import (
     ValidationReportOut,
 )
 from api.services import grants as grant_service
+from api.services.dashboards import impact
 from api.services.lineage.resolve import Resolver
 from api.services.polaris import PolarisClient
 from api.services.semantic import store
@@ -92,6 +93,15 @@ from api.services.workspace import (
 )
 
 router = APIRouter()
+
+#: The switch on every change that can break a published dashboard.
+_ALLOW_BREAKING = Query(
+    default=False,
+    description=(
+        "Make the change even though it breaks published dashboards. Without it, such a "
+        "change is a 409 `breaking_dashboards` listing them."
+    ),
+)
 
 
 # ── Request context ───────────────────────────────────────────────────────────
@@ -430,13 +440,16 @@ async def update_model(
 )
 async def delete_model(
     slug: Annotated[str, Path(alias="model")],
+    allow_breaking: bool = _ALLOW_BREAKING,
     ctx: _Context = Depends(_context("owner")),
     db: AsyncSession = Depends(get_db),
 ) -> None:
     """Delete a model and everything defined in it. Owner only.
 
     Deprecating a published model is usually the right move instead: anything
-    still compiling against it breaks the moment it is deleted."""
+    still compiling against it breaks the moment it is deleted. A model a
+    published dashboard reads is a 409 `breaking_dashboards` unless
+    `allow_breaking`."""
     try:
         model = await store.get_model(
             db,
@@ -447,6 +460,13 @@ async def delete_model(
         )
     except store.SemanticNotFound as exc:
         raise _not_found(slug) from exc
+    await impact.gate(
+        db,
+        ctx.workspace.id,
+        impact.Removal(models={model.slug}),
+        change=f"Deleting {model.slug!r}",
+        allow=allow_breaking,
+    )
     await db.delete(model)
     await db.commit()
 
@@ -499,13 +519,16 @@ async def publish_model(
 @router.post("/workspaces/{workspace}/semantic/models/{model}/deprecate", response_model=ModelOut)
 async def deprecate_model(
     slug: Annotated[str, Path(alias="model")],
+    allow_breaking: bool = _ALLOW_BREAKING,
     ctx: _Context = Depends(_context("owner")),
     db: AsyncSession = Depends(get_db),
 ) -> ModelOut:
     """Mark a published model deprecated. Owner only.
 
     It keeps working -- existing queries still compile -- but it is flagged as on
-    the way out, which is what makes retiring one safe."""
+    the way out, which is what makes retiring one safe. Dashboards read
+    published models only, so a model a published dashboard reads is a 409
+    `breaking_dashboards` unless `allow_breaking`."""
     try:
         model = await store.get_model(
             db,
@@ -516,6 +539,13 @@ async def deprecate_model(
         )
     except store.SemanticNotFound as exc:
         raise _not_found(slug) from exc
+    await impact.gate(
+        db,
+        ctx.workspace.id,
+        impact.Removal(models={model.slug}),
+        change=f"Deprecating {model.slug!r}",
+        allow=allow_breaking,
+    )
     model.status = "deprecated"
     model.updated_at = datetime.now(UTC)
     await db.commit()
@@ -800,10 +830,14 @@ async def update_metric(
     slug: Annotated[str, Path(alias="model")],
     metric_name: Annotated[str, Path(alias="metric")],
     body: MetricUpdate,
+    allow_breaking: bool = _ALLOW_BREAKING,
     ctx: _Context = Depends(_context("writer")),
     db: AsyncSession = Depends(get_db),
 ) -> MetricOut:
-    """Change a metric's definition. A partial update. Owner-only unless a draft."""
+    """Change a metric's definition. A partial update. Owner-only unless a draft.
+
+    Dashboards read published metrics only, so taking one a published dashboard
+    reads back to `draft` is a 409 `breaking_dashboards` unless `allow_breaking`."""
     model = await _editable(db, ctx, slug)
     metric = (
         await db.execute(
@@ -815,6 +849,14 @@ async def update_metric(
     if metric is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=f"No metric {metric_name!r}."
+        )
+    if body.status == "draft" and metric.status == "published":
+        await impact.gate(
+            db,
+            ctx.workspace.id,
+            impact.Removal(metrics={(model.slug, metric.name)}),
+            change=f"Taking {model.slug}.{metric.name} back to draft",
+            allow=allow_breaking,
         )
 
     # Checked as the metric will stand after the edit, and before anything
@@ -1020,6 +1062,7 @@ async def delete_dataset(
 async def delete_dimension(
     slug: Annotated[str, Path(alias="model")],
     name: Annotated[str, Path(alias="dimension")],
+    allow_breaking: bool = _ALLOW_BREAKING,
     ctx: _Context = Depends(_context("writer")),
     db: AsyncSession = Depends(get_db),
 ) -> None:
@@ -1035,6 +1078,9 @@ async def delete_dimension(
     metric to another time dimension, or remove the metric, and then this
     succeeds. The metric is never deleted as a side effect of removing a
     dimension.
+
+    A dimension a published dashboard reads is a 409 `breaking_dashboards`
+    unless `allow_breaking`.
     """
     model = await _editable(db, ctx, slug)
     dimension = await _child(db, model.id, SemanticDimension, name, "dimension")
@@ -1066,6 +1112,13 @@ async def delete_dimension(
             },
         )
 
+    await impact.gate(
+        db,
+        ctx.workspace.id,
+        impact.Removal(dimensions={(model.slug, dimension.name)}),
+        change=f"Deleting {model.slug}.{dimension.name}",
+        allow=allow_breaking,
+    )
     await db.delete(dimension)
     await db.commit()
 
@@ -1077,12 +1130,23 @@ async def delete_dimension(
 async def delete_metric(
     slug: Annotated[str, Path(alias="model")],
     name: Annotated[str, Path(alias="metric")],
+    allow_breaking: bool = _ALLOW_BREAKING,
     ctx: _Context = Depends(_context("writer")),
     db: AsyncSession = Depends(get_db),
 ) -> None:
-    """Remove a metric. Nothing else in a model is defined in terms of one."""
+    """Remove a metric. Nothing else in a model is defined in terms of one.
+
+    A published dashboard may be: one that reads it makes this a 409
+    `breaking_dashboards` unless `allow_breaking`."""
     model = await _editable(db, ctx, slug)
     metric = await _child(db, model.id, SemanticMetric, name, "metric")
+    await impact.gate(
+        db,
+        ctx.workspace.id,
+        impact.Removal(metrics={(model.slug, metric.name)}),
+        change=f"Deleting {model.slug}.{metric.name}",
+        allow=allow_breaking,
+    )
     await db.delete(metric)
     await db.commit()
 
@@ -1247,6 +1311,14 @@ async def import_semantics(
     provider: str,
     request: Request,
     reconcile: str = Query(default="provider_run"),
+    dry_run: bool = Query(
+        default=False,
+        description=(
+            "Report what the import would change, and the published dashboards it "
+            "would break, without changing anything."
+        ),
+    ),
+    allow_breaking: bool = _ALLOW_BREAKING,
     ctx: _Context = Depends(_context("writer")),
     db: AsyncSession = Depends(get_db),
 ) -> SemanticImportOut:
@@ -1259,6 +1331,10 @@ async def import_semantics(
     ``reconcile=provider_run`` (the default) treats the payload as this provider's
     complete set and retires models it no longer declares. Pass ``none`` when
     publishing a subset, or the models left out will be removed.
+
+    An import that removes a model, metric or dimension a published dashboard
+    reads is a 409 `breaking_dashboards` unless `allow_breaking`. The answer
+    lists what it removed and, with `allow_breaking`, the dashboards it broke.
     """
     if reconcile not in _RECONCILE_MODES:
         raise HTTPException(
@@ -1329,22 +1405,35 @@ async def import_semantics(
             run_id = dbt_run_id(json.loads(raw))
     run_id = run_id or uuid.uuid4().hex
 
+    # What the import removes is read off the provider's models before and after
+    # it, in one transaction, so a dry run and a refusal see exactly what the
+    # write would do, skipped definitions included, and then roll it back.
+    workspace_id = ctx.workspace.id
+    before = await impact.members(db, workspace_id, provider=provider)
     result = await upsert_models(
         db,
         parsed.models,
         provider=provider,
         provider_run_id=run_id,
-        workspace_id=ctx.workspace.id,
+        workspace_id=workspace_id,
         owner_id=ctx.user.id,
     )
     if reconcile == "provider_run":
         result.removed = await reconcile_provider_run(
             db,
             provider=provider,
-            workspace_id=ctx.workspace.id,
+            workspace_id=workspace_id,
             model_slugs=parsed.model_slugs,
         )
-    await db.commit()
+    removal = impact.removed(before, await impact.members(db, workspace_id, provider=provider))
+    breaks = await impact.affected(db, workspace_id, removal)
+    if dry_run:
+        await db.rollback()
+    elif breaks and not allow_breaking:
+        await db.rollback()
+        raise impact.refusal("This import", breaks)
+    else:
+        await db.commit()
 
     skipped = [
         {"ref": s.ref, "reason": s.reason} if hasattr(s, "ref") else s
@@ -1353,9 +1442,14 @@ async def import_semantics(
     return SemanticImportOut(
         provider=provider,
         run_id=run_id,
+        dry_run=dry_run,
         created=result.created,
         updated=result.updated,
         removed=result.removed,
+        removed_models=sorted(removal.models),
+        removed_metrics=sorted(f"{model}.{name}" for model, name in removal.metrics),
+        removed_dimensions=sorted(f"{model}.{name}" for model, name in removal.dimensions),
+        affected_dashboards=breaks,
         skipped=skipped,
     )
 
@@ -1363,10 +1457,23 @@ async def import_semantics(
 @router.delete("/workspaces/{workspace}/semantic/imports", status_code=status.HTTP_204_NO_CONTENT)
 async def purge_import(
     provider: str = Query(...),
+    allow_breaking: bool = _ALLOW_BREAKING,
     ctx: _Context = Depends(_context("owner")),
     db: AsyncSession = Depends(get_db),
 ) -> None:
-    """Remove everything one provider published into this workspace."""
+    """Remove everything one provider published into this workspace.
+
+    A model a published dashboard reads makes this a 409 `breaking_dashboards`
+    unless `allow_breaking`."""
+    if provider != NATIVE_PROVIDER:  # refused below, as authored here
+        slugs = set(await impact.members(db, ctx.workspace.id, provider=provider))
+        await impact.gate(
+            db,
+            ctx.workspace.id,
+            impact.Removal(models=slugs),
+            change=f"Purging {provider!r}",
+            allow=allow_breaking,
+        )
     try:
         await purge_provider(db, provider=provider, workspace_id=ctx.workspace.id)
     except ValueError as exc:

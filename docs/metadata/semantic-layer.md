@@ -155,6 +155,17 @@ Definitions can be written here or imported from
 exactly one of those: an imported model is read-only in DuckHaven, so the two
 copies cannot disagree.
 
+### Changes that break a dashboard
+
+[Dashboards](../querying/dashboards.md) read published models and published metrics only. Deleting or deprecating a
+model, deleting a metric or a dimension, or taking a metric back to draft breaks every published dashboard that reads
+it. So DuckHaven refuses such a change with `breaking_dashboards`, naming each dashboard and what it reads. Change the
+dashboards first, or make the change with `allow_breaking=true`; their widgets that read what went then show an error.
+
+An import is checked the same way, as a whole: one that drops a metric a published dashboard reads is refused, and
+nothing in it is imported. With `dry_run=true` it lists what it would remove and the dashboards that would break, and
+changes nothing. A draft dashboard is not counted, because publishing it checks it again.
+
 ## When a definition stops being true
 
 Every binding is checked against the live catalog, never a cached copy. Each

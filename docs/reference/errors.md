@@ -128,6 +128,7 @@ Each message has an entry in [Troubleshoot sign-in and access](../access/trouble
 | `imported_model` | 409 | The model came from an import. Change it at the source and import again. |
 | `published_model` | 403 | `'⟨model⟩' is published; only a workspace owner can change it.` A published or deprecated model is changed by a workspace `owner`; ask one, or work in a draft model. |
 | `dataset_in_use`, `dimension_in_use` | 409 | Other definitions depend on it; the message names them. Remove those first. |
+| `breaking_dashboards` | 409 | The change removes a model, metric or dimension that published [dashboards](../querying/dashboards.md) read. `details.affected_dashboards` lists each dashboard and what it reads. Change those dashboards first, or repeat the change with `allow_breaking=true`. |
 
 ## Dashboards
 

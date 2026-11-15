@@ -491,12 +491,40 @@ class SemanticSkippedOut(BaseModel):
     detail: str | None = None
 
 
+class AffectedDashboardOut(BaseModel):
+    """A published dashboard that reads something a change removes."""
+
+    name: str
+    title: str
+    reads: list[str] = Field(
+        description="What it reads of the change: a model's slug, or `model.metric` and "
+        "`model.dimension`."
+    )
+
+
 class SemanticImportOut(BaseModel):
     provider: str
     run_id: str
+    dry_run: bool = Field(default=False, description="Nothing was changed.")
     created: int = 0
     updated: int = 0
     removed: int = 0
+    removed_models: list[str] = Field(default_factory=list, description="By slug.")
+    removed_metrics: list[str] = Field(
+        default_factory=list,
+        description="Published metrics gone from models the import keeps, as `model.metric`.",
+    )
+    removed_dimensions: list[str] = Field(
+        default_factory=list,
+        description="Dimensions gone from models the import keeps, as `model.dimension`.",
+    )
+    affected_dashboards: list[AffectedDashboardOut] = Field(
+        default_factory=list,
+        description=(
+            "The published dashboards that read what the import removes. Without "
+            "`allow_breaking` a real import with any is refused; a dry run lists them."
+        ),
+    )
     skipped: list[SemanticSkippedOut] = Field(default_factory=list)
 
 

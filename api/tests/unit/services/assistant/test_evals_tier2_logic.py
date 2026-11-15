@@ -428,3 +428,197 @@ def test_the_report_keeps_every_sample_beside_its_case():
     assert [o["sample"] for o in outcomes] == [0, 1]
     assert [o["faithfulness"] for o in outcomes] == [5.0, 2.0]
     assert [o["passed"] for o in outcomes] == [True, False]
+
+
+# ── What each judge is shown, and how often it is asked ───────────────────────
+
+
+def _result(**kw):
+    from tests.evals.harness import RunResult
+
+    kw.setdefault("arm", "with-docs")
+    kw.setdefault("case", "c")
+    kw.setdefault("answer", "The chart above shows it.")
+    kw.setdefault("tools_called", [])
+    kw.setdefault("doc_paths", [])
+    kw.setdefault("instructions", "")
+    return RunResult(**kw)
+
+
+def _eval_case(name="c", *, no_number_in_chart_title=False):
+    from tests.evals.metrics import Case
+
+    return Case(
+        name=name,
+        question="Draw me a bar chart of revenue by month.",
+        category="dashboards",
+        provenance="hand",
+        negative=False,
+        expected_sources=(),
+        expected_tools_any=("show_chart",),
+        forbidden_tools=(),
+        must_contain=(),
+        expect_refusal=False,
+        note="",
+        no_number_in_chart_title=no_number_in_chart_title,
+    )
+
+
+_CHART = {
+    "widget": {
+        "type": "bar",
+        "title": "Revenue by month",
+        "columns": {"x": "month", "y": ["revenue"]},
+    },
+    "rows": 12,
+}
+
+
+def _scripted_grades(monkeypatch, scores):
+    """Replace the judge: each call returns the next score, and records its body."""
+    bodies: list[str] = []
+    queue = iter(scores)
+
+    async def fake_grade(rubric, body):
+        bodies.append(body)
+        return judge.GradedVerdict(score=next(queue), reason=f"grade {len(bodies)}")
+
+    monkeypatch.setattr(judge, "_grade", fake_grade)
+    return bodies
+
+
+def test_the_relevancy_judge_is_shown_the_charts_and_proposal_cards():
+    """Five of the six relevancy failures on 2026-11-15 were answers pointing at
+    a chart the judge could not see; told it was drawn, each scored 5."""
+    result = _result(
+        charts=[_CHART],
+        proposals=[
+            {
+                "accepted": True,
+                "dashboard": "sales-overview",
+                "changes": [{"path": "title", "change": "changed"}],
+            },
+            {"accepted": False, "dashboard": "sales-overview", "changes": []},
+        ],
+    )
+
+    shown = judge._shown(result)
+
+    assert "a bar chart titled 'Revenue by month': month against revenue, 12 rows" in shown
+    assert "a card proposing changes to the dashboard 'sales-overview': title changed" in shown
+    # A refused proposal showed nothing.
+    assert shown.count("a card proposing") == 1
+
+
+def test_an_answer_with_nothing_beside_it_shows_nothing():
+    assert judge._shown(_result()) == ""
+
+
+def test_the_relevancy_rubric_counts_what_was_shown_as_part_of_the_answer():
+    rubric = judge.RELEVANCY_RUBRIC
+    assert "SHOWN WITH THE ANSWER" in rubric
+    assert "part of the answer" in rubric
+
+
+async def test_the_relevancy_judge_gets_the_chart_and_the_faithfulness_judge_its_context(
+    monkeypatch,
+):
+    bodies = _scripted_grades(monkeypatch, [5, 5])
+
+    await judge.score_absolute(_eval_case(), _result(charts=[_CHART]))
+
+    faithfulness_body, relevancy_body = bodies
+    assert "CONTEXT:" in faithfulness_body
+    assert "SHOWN WITH THE ANSWER:\n- a bar chart titled 'Revenue by month'" in relevancy_body
+    assert "CONTEXT:" not in relevancy_body
+
+
+async def test_a_grade_on_or_above_the_line_is_asked_for_once(monkeypatch):
+    bodies = _scripted_grades(monkeypatch, [4, 5])
+
+    score = await judge.score_absolute(_eval_case(), _result())
+
+    assert len(bodies) == 2
+    assert score.faithfulness_grades == (4.0,) and score.relevancy_grades == (5.0,)
+
+
+async def test_a_grade_below_the_line_stands_as_the_median_of_three(monkeypatch):
+    """Identical answers graded again came back 3 and 4: one grade made a
+    failure a coin flip on the line."""
+    # Faithfulness 5 once; relevancy 3, then 4 and 4.
+    bodies = _scripted_grades(monkeypatch, [5, 3, 4, 4])
+
+    score = await judge.score_absolute(_eval_case(), _result())
+
+    assert len(bodies) == 1 + judge.GRADES_BELOW_THE_LINE
+    assert score.relevancy == 4.0
+    assert score.relevancy_grades == (3.0, 4.0, 4.0)
+    assert score.passes()
+
+
+async def test_a_judge_that_means_a_low_grade_still_fails_the_sample(monkeypatch):
+    """A median, not the best of three: one generous grade does not rescue it."""
+    _scripted_grades(monkeypatch, [5, 3, 5, 2])
+
+    score = await judge.score_absolute(_eval_case(), _result())
+
+    assert score.relevancy == 3.0
+    assert not score.passes()
+
+
+async def test_the_relevancy_reason_is_kept(monkeypatch):
+    _scripted_grades(monkeypatch, [5, 5])
+
+    score = await judge.score_absolute(_eval_case(), _result())
+
+    assert score.reason == "grade 1"
+    assert score.relevancy_reason == "grade 2"
+
+
+async def test_a_number_in_a_forbidden_chart_title_fails_the_sample_whatever_the_judge_says(
+    monkeypatch,
+):
+    """Both samples on 2026-11-15 put the total in the title, the failure the
+    case defines, and the judge passed one of them."""
+    _scripted_grades(monkeypatch, [5, 5, 5, 5])
+    numbered = {**_CHART, "widget": {**_CHART["widget"], "title": "Revenue: 2,603,612"}}
+    case = _eval_case(no_number_in_chart_title=True)
+
+    failing = await judge.score_absolute(case, _result(charts=[numbered]))
+    clean = await judge.score_absolute(case, _result(charts=[_CHART]))
+
+    assert failing.violations == ("a chart's title holds a number: 'Revenue: 2,603,612'",)
+    assert not failing.passes()
+    assert clean.violations == () and clean.passes()
+
+
+async def test_a_numbered_title_is_not_a_violation_where_the_case_allows_it(monkeypatch):
+    _scripted_grades(monkeypatch, [5, 5])
+    numbered = {**_CHART, "widget": {**_CHART["widget"], "title": "Top 10 countries"}}
+
+    score = await judge.score_absolute(_eval_case(), _result(charts=[numbered]))
+
+    assert score.violations == () and score.passes()
+
+
+def test_the_report_keeps_both_reasons_every_grade_and_any_violation():
+    score = CaseScore(
+        case="c",
+        category="dashboards",
+        provenance="hand",
+        negative=False,
+        grounded=False,
+        faithfulness=5.0,
+        relevancy=4.0,
+        reason="faithful",
+        relevancy_reason="on target",
+        relevancy_grades=(3.0, 4.0, 4.0),
+        violations=("a chart's title holds a number",),
+    )
+
+    (outcome,) = summarise_scores([score], k=1)["outcomes"]
+
+    assert outcome["relevancy_reason"] == "on target"
+    assert outcome["relevancy_grades"] == [3.0, 4.0, 4.0]
+    assert outcome["violations"] == ["a chart's title holds a number"]
+    assert outcome["passed"] is False

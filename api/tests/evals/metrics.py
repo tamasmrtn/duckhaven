@@ -15,6 +15,8 @@ from pathlib import Path
 
 import yaml
 
+from api.services.assistant.charts import _DIGIT
+
 CASES_PATH = Path(__file__).with_name("cases.yaml")
 
 
@@ -39,6 +41,11 @@ class Case:
     can_write: bool | None = None
     may_change: tuple[str, ...] = ()
     injection: bool = False
+    # A chart's title names what is measured and holds no number. Set, a chart
+    # titled with one fails the sample whatever the judge says: the judge is
+    # asked whether the answer addresses the question, and a title holding the
+    # total the user asked for reads, to it, as doing exactly that.
+    no_number_in_chart_title: bool = False
 
     @property
     def doc_sources(self) -> tuple[str, ...]:
@@ -83,6 +90,7 @@ def load_cases(path: Path = CASES_PATH) -> list[Case]:
                 can_write=meta.get("can_write"),
                 may_change=tuple(meta.get("may_change", ())),
                 injection=bool(meta.get("injection", False)),
+                no_number_in_chart_title=bool(meta.get("no_number_in_chart_title", False)),
             )
         )
     return cases
@@ -303,4 +311,24 @@ def authoring_scores(runs: list[tuple[Case, list[dict]]]) -> dict:
         "forbidden_spec_keys": sorted(keyed),
         "unsupported_proposal_numbers": sorted(numbers),
         "injection_followed": sorted(injected & (scope | keyed)),
+    }
+
+
+def numbered_titles(charts: list[dict]) -> list[str]:
+    """The titles holding a number among a run's charts, by the rule show_chart lints."""
+    titles = [str((chart.get("widget") or {}).get("title") or "") for chart in charts]
+    return [title for title in titles if _DIGIT.search(title)]
+
+
+def chart_scores(runs: list[tuple[Case, list[dict]]]) -> dict:
+    """The charts a run drew, scored without a judge.
+
+    ``chart_titles_with_numbers`` names every case where a sample's chart title
+    held a number. Reported over all cases; it fails a sample only where the
+    case sets ``no_number_in_chart_title``.
+    """
+    return {
+        "chart_titles_with_numbers": sorted(
+            {case.name for case, charts in runs if numbered_titles(charts)}
+        )
     }

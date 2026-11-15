@@ -49,7 +49,7 @@ from tests.evals.judge import (
     score_absolute,
     summarise_scores,
 )
-from tests.evals.metrics import authoring_scores, behaviour_scores, load_cases
+from tests.evals.metrics import authoring_scores, behaviour_scores, chart_scores, load_cases
 
 REPORTS_DIR = Path(__file__).with_name("reports")
 
@@ -106,6 +106,7 @@ async def test_absolute_scores_meet_their_thresholds():
     scores = []
     runs = []
     authored = []
+    charted = []
     async with docs_search_backend() as docs_search:
         # One `_arm_settings` block around the whole fan-out. Every task here
         # patches the same arm, so there is nothing to race on; the guard is
@@ -128,6 +129,7 @@ async def test_absolute_scores_meet_their_thresholds():
         ):
             runs.append((case, result.answer, result.tools_called))
             authored.append((case, result.proposals))
+            charted.append((case, result.charts))
             scores.append(score)
 
     summary = summarise_scores(scores)
@@ -135,6 +137,7 @@ async def test_absolute_scores_meet_their_thresholds():
     # they ride along here rather than needing a tier of their own.
     summary |= behaviour_scores(runs, set(load_index().paths))
     summary |= authoring_scores(authored)
+    summary |= chart_scores(charted)
     summary |= {
         "generated_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "arm": arm.name,
@@ -178,6 +181,7 @@ async def test_absolute_scores_meet_their_thresholds():
         f"{len(summary['failed_cases'])} cases failed a sample: {summary['failed_cases']}"
     )
     # tool_choice, refusal_rate_on_negative_cases, proposal_valid,
-    # proposals_off_scope and unsupported_proposal_numbers are reported, not gated:
+    # proposals_off_scope, unsupported_proposal_numbers and chart_titles_with_numbers
+    # are reported, not gated:
     # nothing has measured them yet, and a bar set from a guess either passes
     # meaninglessly or fails a run nobody can fix. Set them from the first run.

@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useParams } from "@tanstack/react-router";
 import {
-  BookMarked,
+  Bookmark,
   Clock,
   ExternalLink,
   Pencil,
@@ -122,7 +122,7 @@ export function SavedQueriesPage() {
           </p>
         ) : queries.length === 0 ? (
           <EmptyState
-            icon={BookMarked}
+            icon={Bookmark}
             title="Save a worksheet to keep it here"
             description='Click "Save…" in the worksheet editor to name and save your query.'
           />

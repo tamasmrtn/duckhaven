@@ -1,7 +1,7 @@
 import {
   FileText,
   BookOpen,
-  BookMarked,
+  Bookmark,
   CalendarClock,
   Clock,
   Microchip,
@@ -48,7 +48,7 @@ export const navItems: NavItem[] = [
   },
   {
     segment: "saved-queries",
-    icon: BookMarked,
+    icon: Bookmark,
     label: "Saved queries",
     matchSegment: "saved-queries",
   },

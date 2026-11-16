@@ -145,8 +145,8 @@ the line. Only grades below the line are repeated, because only those can fail a
 of three, so a judge that means a low grade still fails it. The report keeps every grade and both judges' reasons.
 
 **A case's rule that code can check is checked by code.** `no_number_in_chart_title` fails a sample whose chart title
-holds a number, whatever the judge says. The judge is asked whether an answer addresses the question, and a title
-holding the total the user asked for reads, to it, as doing exactly that.
+holds a number other than a date, whatever the judge says. The judge is asked whether an answer addresses the question,
+and a title holding the total the user asked for reads, to it, as doing exactly that.
 
 **SQL in the eval runs for real.** The fixture gateway executes the assistant's SQL in an in-memory DuckDB holding a
 small seeded copy of the fixture tables. `orders` has 125,000 rows covering the twelve whole months before the current

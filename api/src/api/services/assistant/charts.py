@@ -37,6 +37,19 @@ PREVIEW_ROWS = 20
 READABLE_BARS = 12
 
 _DIGIT = re.compile(r"\d")
+_MONTH = (
+    r"(?:january|february|march|april|may|june|july|august|september|october|november"
+    r"|december|jan|feb|mar|apr|jun|jul|aug|sept|sep|oct|nov|dec)\b\.?"
+)
+_DAY = r"\d{1,2}(?:st|nd|rd|th)?(?:\s?[-–]\s?\d{1,2}(?:st|nd|rd|th)?)?"
+#: Dates a title can name: what is measured, which does not change with the data.
+_DATE = re.compile(
+    r"\b\d{4}-\d{2}(?:-\d{2})?\b"
+    rf"|(?:\b{_DAY}\s+)?\b{_MONTH}(?:\s+{_DAY}\b)?"
+    r"|\b(?:19|20)\d{2}\b"
+    r"|\b(?:Q[1-4]|H[12]|FY\s?\d{2})\b",
+    re.IGNORECASE,
+)
 
 
 class ChartRefused(ValueError):
@@ -77,7 +90,7 @@ def answer(event: dict, *, rows: int) -> dict:
 def lint(widget: dict, event: dict | None) -> list[str]:
     """What would make this widget read badly, as advice for whoever wrote it."""
     notes: list[str] = []
-    if _DIGIT.search(widget.get("title") or ""):
+    if title_holds_number(widget.get("title") or ""):
         notes.append(
             "The title holds a number. A title names what is measured; the number "
             "changes as the data does and the title would not."
@@ -108,6 +121,11 @@ def lint(widget: dict, event: dict | None) -> list[str]:
             "Give each its own widget."
         )
     return notes
+
+
+def title_holds_number(title: str) -> bool:
+    """Whether ``title`` holds a number other than a date, such as a total."""
+    return bool(_DIGIT.search(_DATE.sub("", title)))
 
 
 def _distinct(event: dict, axis: str) -> set:

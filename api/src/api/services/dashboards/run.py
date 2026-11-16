@@ -356,6 +356,10 @@ class _Runner:
         self.started = time.monotonic()
         self.batches = 0
         self.parked: list[_Statement] = []
+        # Looked up once for the view, by _execute, rather than for each statement.
+        self.workspace: Workspace | None = None
+        self.user: User | None = None
+        self.prepared: query_submit.Prepared | None = None
 
     @contextlib.asynccontextmanager
     async def session(self) -> AsyncIterator[AsyncSession]:
@@ -390,6 +394,11 @@ class _Runner:
 
     async def _execute(self) -> None:
         statements = self.plan.statements
+        if statements:
+            async with self.session() as db:
+                self.workspace = await db.get(Workspace, self.plan.workspace_id)
+                self.user = await db.get(User, self.plan.user_id)
+                self.prepared = await query_submit.prepare(db, self.workspace, self.user)
         limit = asyncio.Semaphore(max(1, settings.dashboard_max_inflight))
 
         async def submit(statement: _Statement) -> None:
@@ -431,8 +440,9 @@ class _Runner:
             tags=tags,
         )
         async with self.session() as db:
-            workspace = await db.get(Workspace, self.plan.workspace_id)
-            user = await db.get(User, self.plan.user_id)
+            # Into this session without loading them again.
+            workspace = await db.merge(self.workspace, load=False)
+            user = await db.merge(self.user, load=False)
             try:
                 query = await query_submit.submit_query(
                     db,
@@ -443,6 +453,7 @@ class _Runner:
                     origin="dashboard",
                     client=self.plan.client,
                     dispatch=False,
+                    prepared=self.prepared,
                 )
             except HTTPException as exc:
                 self._fail(statement, _refusal(exc))

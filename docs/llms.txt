@@ -30,7 +30,7 @@
 - [Use Python data tools](https://tamasmrtn.github.io/duckhaven/querying/use-python-data-tools/): Query DuckHaven from Python and read results into pandas, Polars or a marimo notebook with duckhaven-sql-connector.
 - [Connect dbt](https://tamasmrtn.github.io/duckhaven/querying/connect-dbt/): Run a dbt project on DuckHaven with the dbt-duckhaven adapter, so models build in your catalogs on DuckHaven's agents.
 - [Load data with dlt](https://tamasmrtn.github.io/duckhaven/querying/load-data-with-dlt/): Load data from any dlt source into DuckHaven tables with the dlt-duckhaven destination.
-- [Read the session audit trail](https://tamasmrtn.github.io/duckhaven/querying/session-audit/): Use the Connections screen to see which SQL sessions are holding agents, what a dbt or dlt run did, and why a session ended.
+- [Read the session audit trail](https://tamasmrtn.github.io/duckhaven/querying/session-audit/): Use the Connections view of History to see which SQL sessions are holding agents, what a dbt or dlt run did, and why a session ended.
 - [Troubleshoot queries](https://tamasmrtn.github.io/duckhaven/querying/troubleshooting/): Find the message you see in the results pane, in History, or in a tool's error, then follow what to do.
 
 ## Data & storage

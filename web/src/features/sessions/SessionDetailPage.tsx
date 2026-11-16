@@ -18,7 +18,7 @@ import {
 } from "@/components/app/SessionStatusPill";
 import { useSqlSession, useSqlSessionStatements } from "@/queries/sql-sessions";
 import { isLiveSession } from "@/types/sql-session";
-import { formatClient } from "./SessionsPage";
+import { formatClient } from "./ConnectionsView";
 import { cn, shortId } from "@/utils";
 
 function formatDuration(ms: number | null) {
@@ -59,7 +59,13 @@ export function SessionDetailPage() {
             size="sm"
             variant="ghost"
             className="h-7 gap-1.5 px-2"
-            onClick={() => navigate({ to: "/$ws/sessions", params: { ws } })}
+            onClick={() =>
+              navigate({
+                to: "/$ws/history",
+                params: { ws },
+                search: { view: "connections" },
+              })
+            }
           >
             <ArrowLeft className="size-3.5" />
             Connections

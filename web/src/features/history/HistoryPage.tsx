@@ -39,6 +39,7 @@ import { useWorkspaces } from "@/queries/workspaces";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { formatBoundaryDay } from "@/features/admin/metricsTime";
 import { DurationCell, SqlCell } from "@/components/app/queryTableCells";
+import { ConnectionsView } from "@/features/sessions/ConnectionsView";
 import { cn, shortId } from "@/utils";
 import {
   DURATION_UNITS,
@@ -81,7 +82,55 @@ function toLocalInputValue(iso: string | undefined): string {
     .slice(0, 16);
 }
 
+/**
+ * History lists statements one by one, or the SQL sessions (Connections) that
+ * dbt and dlt run them through; `?view=connections` picks the second.
+ */
 export function HistoryPage() {
+  const { ws } = useParams({ from: "/$ws/history" });
+  const { view } = useSearch({ from: "/$ws/history" });
+
+  if (view !== "connections") return <QueriesView />;
+  return (
+    <div className="flex h-full flex-col">
+      <PageHeader
+        title="History"
+        badge={<HistoryViewSwitch ws={ws} view="connections" />}
+      />
+      <ConnectionsView ws={ws} />
+    </div>
+  );
+}
+
+function HistoryViewSwitch({
+  ws,
+  view,
+}: {
+  ws: string;
+  view: "queries" | "connections";
+}) {
+  const navigate = useNavigate();
+  return (
+    <Segmented
+      label="History view"
+      hideLabel
+      options={[
+        { value: "queries" as const, label: "Queries" },
+        { value: "connections" as const, label: "Connections" },
+      ]}
+      value={view}
+      onChange={(v) =>
+        void navigate({
+          to: "/$ws/history",
+          params: { ws },
+          search: v === "connections" ? { view: "connections" } : {},
+        })
+      }
+    />
+  );
+}
+
+function QueriesView() {
   const { ws } = useParams({ from: "/$ws/history" });
   const search = useSearch({ from: "/$ws/history" });
   const navigate = useNavigate();
@@ -297,6 +346,7 @@ export function HistoryPage() {
     <div className="flex h-full flex-col">
       <PageHeader
         title="History"
+        badge={<HistoryViewSwitch ws={ws} view="queries" />}
         actions={
           // Wraps rather than overflowing: on a narrow window the header used
           // to push the workspace toggle off-screen.

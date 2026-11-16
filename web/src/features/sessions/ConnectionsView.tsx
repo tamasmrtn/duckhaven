@@ -1,9 +1,9 @@
 import { useState } from "react";
-import { useNavigate, useParams } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
 import { Plug } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
-import { PageHeader, PageToolbar } from "@/components/ui/page-header";
+import { PageToolbar } from "@/components/ui/page-header";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,
@@ -43,32 +43,27 @@ function formatWhen(iso: string | null | undefined): string {
   return iso ? new Date(iso).toLocaleString() : "—";
 }
 
-export function SessionsPage() {
-  const { ws } = useParams({ from: "/$ws/sessions" });
-
+/**
+ * SQL sessions from tools such as dbt and dlt, shown as a view of History:
+ * each one is a run of statements, which History otherwise lists one by one.
+ */
+export function ConnectionsView({ ws }: { ws: string }) {
   return (
-    <div className="flex h-full flex-col">
-      <PageHeader
-        title="Connections"
-        description="SQL sessions from tools such as dbt and dlt, each with every statement it ran."
-      />
+    <Tabs defaultValue="live" className="flex min-h-0 flex-1 flex-col">
+      <PageToolbar>
+        <TabsList>
+          <TabsTrigger value="live">Live</TabsTrigger>
+          <TabsTrigger value="all">All</TabsTrigger>
+        </TabsList>
+      </PageToolbar>
 
-      <Tabs defaultValue="live" className="flex min-h-0 flex-1 flex-col">
-        <PageToolbar>
-          <TabsList>
-            <TabsTrigger value="live">Live</TabsTrigger>
-            <TabsTrigger value="all">All</TabsTrigger>
-          </TabsList>
-        </PageToolbar>
-
-        <TabsContent value="live" className="mt-0 min-h-0 flex-1 overflow-auto">
-          <SessionsTable ws={ws} live />
-        </TabsContent>
-        <TabsContent value="all" className="mt-0 min-h-0 flex-1 overflow-auto">
-          <SessionsTable ws={ws} />
-        </TabsContent>
-      </Tabs>
-    </div>
+      <TabsContent value="live" className="mt-0 min-h-0 flex-1 overflow-auto">
+        <SessionsTable ws={ws} live />
+      </TabsContent>
+      <TabsContent value="all" className="mt-0 min-h-0 flex-1 overflow-auto">
+        <SessionsTable ws={ws} />
+      </TabsContent>
+    </Tabs>
   );
 }
 

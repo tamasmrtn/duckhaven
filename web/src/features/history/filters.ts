@@ -94,6 +94,8 @@ export interface HistorySearch {
   scope?: string;
   agent?: string;
   origin?: string;
+  /** "connections" shows SQL sessions instead of statements. */
+  view?: "connections";
 }
 
 function str(v: unknown): string | undefined {
@@ -130,6 +132,7 @@ export function parseHistorySearch(
     scope: oneOf(search.scope, ["ws", "all"] as const),
     agent: str(search.agent),
     origin: oneOf(search.origin, ORIGINS),
+    view: oneOf(search.view, ["connections"] as const),
   };
 }
 

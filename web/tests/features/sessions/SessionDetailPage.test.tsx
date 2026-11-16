@@ -6,6 +6,17 @@ import { renderWithProviders } from "@tests/utils";
 const LIVE = "/acme-analytics/sessions/sess-live";
 
 describe("SessionDetailPage", () => {
+  it("goes back to the Connections view of History", async () => {
+    const { router } = renderWithProviders({ initialRoute: LIVE });
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Connections" }),
+    );
+
+    expect(router.state.location.pathname).toBe("/acme-analytics/history");
+    expect(router.state.location.search).toEqual({ view: "connections" });
+  });
+
   it("shows the statement timeline in execution order, not newest first", async () => {
     // A session is one workload read top to bottom — the whole point of grouping
     // a dbt run's statements instead of leaving them as N orphan history rows.

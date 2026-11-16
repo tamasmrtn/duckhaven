@@ -163,7 +163,7 @@ Router/Query/Table, Monaco editor, Radix + shadcn/ui + Tailwind.
 | `src/api/` | Thin `fetch` wrappers. `client.ts` prefixes every call with `/api` and sends cookies; one module per resource. |
 | `src/queries/` | TanStack Query hooks (`useX` query/mutation) wrapping `src/api/`. The data-fetching seam components consume. |
 | `src/features/` | Page-level features: `worksheet/`, `catalog/`, `saved-queries/`, `history/`, `auth/`, `admin/`. |
-| `src/components/app/` | App-shell chrome (`AppShell`, `TopBar`, `LeftRail`, `AgentPicker`, `WorkspaceSwitcher`, `CommandPalette`). |
+| `src/components/app/` | App-shell chrome (`AppShell`, `TopBar`, `MainNav`, `AgentPicker`, `WorkspaceSwitcher`, `CommandPalette`). |
 | `src/components/ui/` | shadcn/ui primitives. |
 | `src/router.tsx` | TanStack route tree. Authed routes nest under `/$ws/...` (`worksheets`, `catalog`, `saved-queries`, `history`, `queries/$queryId` (the dedicated query-profile graph), `admin/*`). |
 | `src/types/` | Shared TypeScript types mirroring the API DTOs. |

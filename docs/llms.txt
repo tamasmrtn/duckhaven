@@ -13,6 +13,7 @@
 
 - [What is DuckHaven?](https://tamasmrtn.github.io/duckhaven/getting-started/what-is-duckhaven/): DuckHaven is a self-hosted data lakehouse.
 - [Quickstart](https://tamasmrtn.github.io/duckhaven/getting-started/quickstart/): Install DuckHaven with Docker Compose, create the first admin, and query a table you created yourself in about fifteen minutes.
+- [Find your way around](https://tamasmrtn.github.io/duckhaven/getting-started/navigate-the-app/): The navigation on the left lists DuckHaven's pages in four groups, and ⌘K finds pages and objects by name.
 - [Command line (dh)](https://tamasmrtn.github.io/duckhaven/getting-started/cli-quickstart/): Install dh, DuckHaven's command-line interface, sign in, and run queries and catalog commands from a terminal or a script.
 - [How DuckHaven works](https://tamasmrtn.github.io/duckhaven/getting-started/how-duckhaven-works/): DuckHaven splits into a control plane that decides what may run and agents that run it, with your tables on object storage you own.
 

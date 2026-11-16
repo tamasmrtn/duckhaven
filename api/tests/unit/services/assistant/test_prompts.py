@@ -391,9 +391,10 @@ def test_the_assembled_instructions_are_within_budget():
     Measured with every conditional block on, the DuckLake block included.
     """
     # Raised from 10,600 for the dashboards and charts guidance in the base block,
-    # from 11,100 for its guidance on proposing dashboard changes, and from 11,400
-    # for the ducklake_*() refusal every workspace now gets.
-    assert len(build_instructions(ctx())) <= 11_600
+    # from 11,100 for its guidance on proposing dashboard changes, from 11,400
+    # for the ducklake_*() refusal every workspace now gets, and from 11,600 for
+    # the docs index line of the page on finding your way around the app.
+    assert len(build_instructions(ctx())) <= 11_700
 
     everything = build_instructions(
         ctx(
@@ -410,13 +411,15 @@ def test_the_assembled_instructions_are_within_budget():
 
     # Every docs page adds one resident `path — title` line to the index; the
     # Agent monitoring page (split out of Monitoring, which had reached the
-    # read_doc_page cap) is one of them, the querying rewrite added four, and the
-    # Dashboard files reference one more.
+    # read_doc_page cap) is one of them, the querying rewrite added four, the
+    # Dashboard files reference one more, and finding your way around the app one
+    # more.
     # Raised from 16,400 for the base block's dashboards guidance and the largest
     # page block a dashboard request can describe (~1,500), and from 18,300 for
     # the base block's guidance on proposing dashboard changes, and from 18,600
-    # for the date block and the ducklake_*() refusal moving into the base block.
-    assert len(everything) <= 18_800
+    # for the date block and the ducklake_*() refusal moving into the base block,
+    # and from 18,800 for that last index line.
+    assert len(everything) <= 18_900
 
 
 def test_a_dashboard_page_names_where_the_user_is_and_what_they_chose():

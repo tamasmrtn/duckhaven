@@ -19,6 +19,11 @@ pages:
   section: Get started
   summary: Install DuckHaven with Docker Compose, create the first admin, and query a table you created
     yourself in about fifteen minutes.
+- path: getting-started/navigate-the-app.md
+  title: Find your way around
+  section: Get started
+  summary: The navigation on the left lists DuckHaven's pages in four groups, and ⌘K finds pages and
+    objects by name.
 - path: getting-started/cli-quickstart.md
   title: Command line (dh)
   section: Get started

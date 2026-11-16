@@ -40,7 +40,8 @@ export function PageHeader({
 
   // A breadcrumb or description forces the title onto its own row inside a
   // left-hand column, so it can stack above/below them; otherwise leading,
-  // title and badge sit directly in the header row as plain flex siblings.
+  // title and badge sit in one group at the start of the header row, which
+  // stays together when the actions wrap onto a row of their own.
   const hasLeftColumn = Boolean(breadcrumb) || Boolean(description);
   const titleRow = (
     <>
@@ -79,7 +80,7 @@ export function PageHeader({
             )}
           </div>
         ) : (
-          titleRow
+          <div className="flex items-center gap-3">{titleRow}</div>
         )}
         {actions}
       </div>

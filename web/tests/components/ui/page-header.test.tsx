@@ -27,6 +27,23 @@ describe('PageHeader', () => {
     expect(screen.getByText('live')).toBeInTheDocument()
   })
 
+  it('keeps a badge beside the title when the actions wrap onto their own row', () => {
+    // The header row spreads its items apart; a badge that was a sibling of the
+    // title went to the far edge once the actions wrapped below.
+    render(
+      <PageHeader
+        title="History"
+        badge={<span>switch</span>}
+        actions={<button>Refresh</button>}
+      />,
+    )
+    const heading = screen.getByRole('heading', { name: 'History' })
+    expect(heading.parentElement).toContainElement(screen.getByText('switch'))
+    expect(heading.parentElement).not.toContainElement(
+      screen.getByRole('button', { name: 'Refresh' }),
+    )
+  })
+
   it('renders breadcrumb, badge, description and actions together', () => {
     render(
       <PageHeader

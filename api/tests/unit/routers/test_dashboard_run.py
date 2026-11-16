@@ -1008,6 +1008,26 @@ def test_past_eight_series_the_largest_are_drawn():
     assert dropped == 2
 
 
+def test_series_come_in_name_order_whatever_order_the_rows_came_in():
+    """A legend lists the series in this order. In the rows' order, a filter that
+    changes which value comes first would reorder the legend, though no colour
+    moved. A missing value comes last."""
+    from api.services.dashboards.chart_spec import ChartSpec, Limits, Measure, Series
+
+    chart = ChartSpec(
+        type="line",
+        y=[Measure(field="revenue", label="Revenue")],
+        series=Series(field="channel"),
+        limits=Limits(rows=None),
+    )
+    names = ["week", "channel", "revenue"]
+    rows = [["2026-10-05", "Web", "3"], ["2026-10-05", None, "1"], ["2026-10-05", "Partner", "2"]]
+    filtered = [["2026-10-05", "Retail", "4"], *rows]
+
+    assert run_service._series(chart, names, rows) == (["Partner", "Web", ""], 0)
+    assert run_service._series(chart, names, filtered)[0] == ["Partner", "Retail", "Web", ""]
+
+
 def _drawn(widget: dict, columns: list[str], rows: list[list]) -> list[list]:
     """The rows a view sends for ``widget``, given a result in this order."""
     from api.schemas.query import RowsPageOut

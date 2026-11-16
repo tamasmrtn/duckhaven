@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { renderWithProviders } from "@tests/utils";
 import { server } from "@tests/mock/server";
-import { CURRENT_USER } from "@/mock/fixtures/users";
+import { CURRENT_USER, currentUser } from "@/mock/fixtures/users";
 
 const ROUTE = "/acme-analytics/settings";
 const TZ = process.env.TZ;
@@ -423,5 +423,47 @@ describe("SettingsPage — Account tab", () => {
         .getByRole("button", { name: /change theme/i })
         .querySelector("svg.lucide-moon"),
     ).toBeInTheDocument();
+  });
+
+  describe("navigation layout", () => {
+    async function openAccountTab() {
+      const user = userEvent.setup();
+      renderWithProviders({ initialRoute: ROUTE });
+      await screen.findByLabelText("Name");
+      await user.click(screen.getByRole("tab", { name: /account/i }));
+      const group = await screen.findByRole("radiogroup", {
+        name: "Navigation",
+      });
+      return { user, group };
+    }
+
+    it("is expanded for a user who never chose", async () => {
+      const { group } = await openAccountTab();
+
+      expect(
+        within(group).getByRole("radio", { name: "Expanded" }),
+      ).toHaveAttribute("aria-checked", "true");
+    });
+
+    it("lays the navigation out as chosen and saves it on the account", async () => {
+      const { user, group } = await openAccountTab();
+
+      await user.click(within(group).getByRole("radio", { name: "Collapsed" }));
+
+      expect(
+        screen.getByRole("navigation", { name: "Main navigation" }),
+      ).toHaveAttribute("data-mode", "collapsed");
+      await waitFor(() => expect(currentUser().sidebar).toBe("collapsed"));
+    });
+
+    it("follows Cmd+B", async () => {
+      const { user, group } = await openAccountTab();
+
+      await user.keyboard("{Control>}b{/Control}");
+
+      expect(
+        within(group).getByRole("radio", { name: "Collapsed" }),
+      ).toHaveAttribute("aria-checked", "true");
+    });
   });
 });

@@ -1,7 +1,14 @@
 import { useState } from "react";
 import { useParams, useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
-import { Sun, Moon, Monitor } from "lucide-react";
+import {
+  Sun,
+  Moon,
+  Monitor,
+  PanelLeft,
+  PanelLeftClose,
+  PanelLeftDashed,
+} from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { PageHeader, PageToolbar } from "@/components/ui/page-header";
 import { Input } from "@/components/ui/input";
@@ -12,6 +19,8 @@ import { cn } from "@/utils";
 import { ApiError } from "@/api/client";
 import { useMe } from "@/queries/auth";
 import { useTheme } from "@/hooks/useTheme";
+import { useNavMode } from "@/hooks/useNavMode";
+import type { NavMode } from "@/types/auth";
 import { useAgents } from "@/queries/agents";
 import { useCatalogs } from "@/queries/catalogs";
 import { useWorkspace, useWorkspaceMembers } from "@/queries/workspaces";
@@ -350,6 +359,13 @@ function DefaultCompute({ ws, isOwner }: { ws: string; isOwner: boolean }) {
 function AccountSettings() {
   const { data: me } = useMe();
   const { theme, setTheme } = useTheme();
+  const { mode: navMode, setMode: setNavMode } = useNavMode();
+
+  const navOptions: { value: NavMode; label: string; icon: typeof Sun }[] = [
+    { value: "expanded", label: "Expanded", icon: PanelLeft },
+    { value: "collapsed", label: "Collapsed", icon: PanelLeftClose },
+    { value: "hover", label: "Expand on hover", icon: PanelLeftDashed },
+  ];
 
   const options: {
     value: "light" | "dark" | "system";
@@ -392,6 +408,38 @@ function AccountSettings() {
               className={cn(
                 "flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm",
                 theme === value
+                  ? "border-[var(--brand-slate-blue)] bg-accent text-text-primary"
+                  : "border-[var(--border-subtle)] text-text-secondary hover:bg-accent/50",
+              )}
+            >
+              <Icon className="size-4" />
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="space-y-2 border-t border-[var(--border-subtle)] pt-6">
+        <p className="text-sm font-medium text-text-primary">Navigation</p>
+        <p className="text-xs text-text-tertiary">
+          Saved to your account, so it follows you to every browser. ⌘B switches
+          between expanded and collapsed.
+        </p>
+        <div
+          className="flex flex-wrap gap-2"
+          role="radiogroup"
+          aria-label="Navigation"
+        >
+          {navOptions.map(({ value, label, icon: Icon }) => (
+            <button
+              key={value}
+              type="button"
+              role="radio"
+              aria-checked={navMode === value}
+              onClick={() => setNavMode(value)}
+              className={cn(
+                "flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm",
+                navMode === value
                   ? "border-[var(--brand-slate-blue)] bg-accent text-text-primary"
                   : "border-[var(--border-subtle)] text-text-secondary hover:bg-accent/50",
               )}

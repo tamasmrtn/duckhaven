@@ -504,6 +504,7 @@ class _Runner:
                     outcomes = await query_service.dispatch_batch(db, queries)
                     if batched:
                         self.batches += 1
+                    aborted: list[_Statement] = []
                     for statement, query, outcome, waiter, wait in zip(
                         group, queries, outcomes, waiters, waits, strict=True
                     ):
@@ -511,7 +512,38 @@ class _Runner:
                             await self._refuse(db, statement, query, outcome)
                             continue
                         await await_query_done(db, query, wait, done=waiter)
+                        if batched and await _aborted(db, statement):
+                            aborted.append(statement)
+                            continue
                         await self._read(db, statement, waiter.result_parquet)
+                for statement in aborted:
+                    await self._again(db, statement)
+
+    async def _again(self, db: AsyncSession, statement: _Statement) -> None:
+        """Send a read its batch never ran once more, on its own.
+
+        A batch stops when one of its reads leaves the connection unusable, and
+        the agent fails the reads after it with ``batch_aborted`` without running
+        them. Each goes again as a new query, so History keeps the aborted run as
+        it ended. A second failure is the widget's error.
+        """
+        statement.id, statement.agent_id = uuid.uuid4(), None
+        await self._submit(statement)
+        if statement.finished:
+            return
+        if statement in self.parked:
+            await self._await_parked(statement)
+            return
+        query = await db.get(Query, statement.id)
+        wait = _wait_s(query)
+        with query_service.completion_waiter(query.id) as waiter:
+            try:
+                await query_service.dispatch_query(db, query)
+            except ValueError as exc:
+                await self._refuse(db, statement, query, exc)
+                return
+            await await_query_done(db, query, wait, done=waiter)
+            await self._read(db, statement, waiter.result_parquet)
 
     async def _await_parked(self, statement: _Statement) -> None:
         async with self.session() as db:
@@ -609,6 +641,12 @@ def _deal(items: list, count: int) -> list[list]:
     """``items`` dealt in turn into ``count`` parts, so the top of the page comes
     first in every part."""
     return [items[i::count] for i in range(count)]
+
+
+async def _aborted(db: AsyncSession, statement: _Statement) -> bool:
+    """Whether the agent skipped this read because its batch broke."""
+    query = await db.get(Query, statement.id)
+    return query.status == "failed" and query.error == query_service.BATCH_ABORTED
 
 
 def _wait_s(query: Query) -> float:

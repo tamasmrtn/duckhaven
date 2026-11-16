@@ -800,7 +800,7 @@ async def test_a_widget_without_a_row_gets_one_of_its_own(gateways):
     ("widget", "row", "refusal"),
     [
         ("revenue", None, "The dashboard already has a widget 'revenue'."),
-        ("orders", 3, "There is no row 3; the dashboard has 1, from 0."),
+        ("orders", 3, "There is no row 3; rows count from 0, and row 1 is a new one at the end."),
     ],
 )
 async def test_a_widget_that_does_not_fit_is_refused_with_the_reason(

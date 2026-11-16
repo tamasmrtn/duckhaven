@@ -47,7 +47,8 @@ class SetMetadata(_Op):
 class AddWidget(_Op):
     """Add a widget, at the end of row ``row``, or before ``position`` in it.
 
-    Without ``row``, the widget gets a row of its own at the end.
+    Without ``row``, or with the row after the last, the widget gets a row of its
+    own at the end.
     """
 
     op: Literal["add_widget"]
@@ -65,7 +66,10 @@ class UpdateWidget(_Op):
 
 
 class MoveWidget(_Op):
-    """Move widget ``id`` to row ``row``, or to a row of its own at the end."""
+    """Move widget ``id`` to row ``row``, or to a row of its own at the end.
+
+    The row after the last is a row of its own at the end too.
+    """
 
     op: Literal["move_widget"]
     id: str
@@ -188,10 +192,13 @@ def _parameter(out: dict, name: str) -> None:
 
 
 def _place(rows: list[dict], widget: dict, row: int | None, position: int | None) -> None:
-    if row is None:
+    if row is None or row == len(rows):
         rows.append({"widgets": [widget]})
         return
-    if row >= len(rows):
-        raise _Refused(f"There is no row {row}; the dashboard has {len(rows)}, from 0.")
+    if row > len(rows):
+        raise _Refused(
+            f"There is no row {row}; rows count from 0, and row {len(rows)} is a new one "
+            "at the end."
+        )
     widgets = rows[row]["widgets"]
     widgets.insert(len(widgets) if position is None else position, widget)

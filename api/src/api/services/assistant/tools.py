@@ -691,7 +691,8 @@ async def propose_dashboard_changes(
     what the user asked for. Each operation is one of:
 
     - ``{"op": "add_widget", "widget": {...}, "row": 0, "position": 1}``; without
-      ``row`` the widget gets a row of its own at the end
+      ``row``, or with the row after the last, the widget gets a row of its own at
+      the end
     - ``{"op": "update_widget", "id": "revenue", "widget": {...}}``, the whole
       widget as it should be, keeping its id
     - ``{"op": "move_widget", "id": "revenue", "row": 1}``

@@ -37,10 +37,14 @@ export function MainNav({ ws }: { ws: string }) {
 
   const [pointerOpen, setPointerOpen] = useState(false);
   const [focusOpen, setFocusOpen] = useState(false);
+  // The pending open or close; undefined when none is.
   const timer = useRef<number | undefined>(undefined);
   // Set between pointerdown and the focus it causes, so a click doesn't count
   // as keyboard focus and pin the panel open.
   const pointerDown = useRef(false);
+  // Set by Escape and cleared when the pointer leaves: a dismissed panel stays
+  // closed under a pointer that is still on the rail (WCAG 1.4.13).
+  const dismissed = useRef(false);
 
   if (!hover && (pointerOpen || focusOpen)) {
     setPointerOpen(false);
@@ -50,10 +54,14 @@ export function MainNav({ ws }: { ws: string }) {
 
   const schedule = (fn: () => void, ms: number) => {
     window.clearTimeout(timer.current);
-    timer.current = window.setTimeout(fn, ms);
+    timer.current = window.setTimeout(() => {
+      timer.current = undefined;
+      fn();
+    }, ms);
   };
   const close = useCallback(() => {
     window.clearTimeout(timer.current);
+    timer.current = undefined;
     setPointerOpen(false);
     setFocusOpen(false);
   }, []);
@@ -64,7 +72,9 @@ export function MainNav({ ws }: { ws: string }) {
   useEffect(() => {
     if (!open) return;
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") close();
+      if (e.key !== "Escape") return;
+      dismissed.current = true;
+      close();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
@@ -77,8 +87,20 @@ export function MainNav({ ws }: { ws: string }) {
             schedule(() => setPointerOpen(true), OPEN_DELAY_MS);
         },
         onPointerLeave: (e: React.PointerEvent) => {
+          dismissed.current = false;
           if (e.pointerType !== "touch")
             schedule(() => setPointerOpen(false), CLOSE_DELAY_MS);
+        },
+        // Choosing a page closes the panel with the pointer still on the rail;
+        // moving it there opens the panel again, after the same delay.
+        onPointerMove: (e: React.PointerEvent) => {
+          if (
+            e.pointerType !== "touch" &&
+            !open &&
+            timer.current === undefined &&
+            !dismissed.current
+          )
+            schedule(() => setPointerOpen(true), OPEN_DELAY_MS);
         },
         onPointerDown: () => {
           pointerDown.current = true;

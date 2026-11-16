@@ -285,7 +285,7 @@ export const SALES_RUN: RunWidget[] = [
           polarity: "up_good",
         },
       ],
-      series: { field: "channel", keys: ["Web", "Retail"] },
+      series: { field: "channel", keys: ["Retail", "Web"] },
       colors: { Web: 0, Retail: 3 },
     }),
     definitions: [REVENUE_DEFINITION],

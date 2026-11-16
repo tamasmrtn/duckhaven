@@ -794,7 +794,10 @@ def _number(value: object) -> Decimal | None:
 
 
 def _series(chart: ChartSpec, names: list[str], data: list[list]) -> tuple[list[str], int]:
-    """The series drawn, largest first when there are too many, and how many were left out."""
+    """The series drawn, and how many were left out: the largest when there are too many.
+
+    They come in name order, with a missing value last, so a legend keeps its order
+    when a filter changes which value the rows hold first."""
     at = names.index(chart.series.field) if chart.series.field in names else None
     if at is None:
         return [], 0
@@ -804,7 +807,7 @@ def _series(chart: ChartSpec, names: list[str], data: list[list]) -> tuple[list[
         key = "" if row[at] is None else str(row[at])
         value = _number(row[measure]) if measure is not None else None
         totals[key] = totals.get(key, Decimal(0)) + (value or 0)
-    keys = list(totals)
+    keys = sorted(totals, key=lambda k: (k == "", k))
     if len(keys) <= MAX_SERIES:
         return keys, 0
     largest = sorted(keys, key=lambda k: totals[k], reverse=True)[:MAX_SERIES]

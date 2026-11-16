@@ -784,8 +784,8 @@ An answered widget also has:
   measure, its `label`, `format`, `unit` and `currency`; `data`, one array per row in column order; `truncated`, `true`
   when the query returned more rows than the widget reads; and the `query_id` that answered it, in History. A line's
   rows come oldest first, with a missing time last. Other widgets' rows come in the order their query returned them.
-- `chart`: what to draw. `type`, the `x` axis, the `y` measures, the `series` field with the `keys` to draw, `colors`
-  mapping each key to a colour slot from 0 to 7, `stack`, `orientation` and `limits`.
+- `chart`: what to draw. `type`, the `x` axis, the `y` measures, the `series` field with the `keys` to draw in name
+  order, `colors` mapping each key to a colour slot from 0 to 7, `stack`, `orientation` and `limits`.
 - `compare`, for a `kpi` with `compare`: `current`, `previous`, `delta`, `delta_pct`, `good` (`true`, `false`, or
   `null` when the metric's polarity is neutral or nothing changed) and `window_text`.
 - `cache` (`hit`, `miss`, `bypass` or `ineligible`), the `sql` that ran, `warnings`, `timing` with `elapsed_ms`

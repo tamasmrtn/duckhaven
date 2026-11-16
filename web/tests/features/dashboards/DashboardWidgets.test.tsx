@@ -58,7 +58,7 @@ describe("dashboard widgets", () => {
 
     expect(
       within(trend).getByRole("img", {
-        name: "Revenue by month. A line chart of Revenue by month, one line per channel: Web, Retail.",
+        name: "Revenue by month. A line chart of Revenue by month, one line per channel: Retail, Web.",
       }),
     ).toBeInTheDocument();
     // Two series: a legend names each, so no colour has to be matched by eye.

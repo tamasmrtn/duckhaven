@@ -80,8 +80,8 @@ Each widget comes back with its rows and with what a reader needs to trust them:
 - **Its chart:** what to draw, decided by the server from the widget's type and its metrics' formats, such as currency
   and percent. A series keeps its colour as filters change, because the colour follows the series' value, not its rank.
   The exception is two values that would take the same colour: the later one in name order takes the next free colour,
-  and can change colour when the other comes and goes. A line with more than 8 series draws the 8 largest; its table
-  view has them all.
+  and can change colour when the other comes and goes. Series come in name order, so the legend keeps its order too. A
+  line with more than 8 series draws the 8 largest; its table view has them all.
 - **A comparison**, for a number with `compare`: the earlier value, the change, and whether the change is good, which
   follows the metric's `polarity`.
 - **Where it came from:** whether the cache answered, the SQL that ran, and the query's id in History.

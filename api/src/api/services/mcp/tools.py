@@ -708,11 +708,11 @@ async def add_widget_to_draft(
     """Add one widget to a dashboard's draft, leaving the rest of the file as it is.
 
     The widget goes at the end of row `row`, counted from 0, or in a row of its
-    own at the end. Its `id` must be new on the dashboard. Nothing is published:
-    an owner reviews the draft and publishes it. The draft is saved from its
-    fields, so comments in its YAML are not kept. Try the widget with
-    `preview_dashboard` first. Saves are limited per hour and per workspace.
-    Needs the writer role.
+    own at the end when `row` is left out or is the row after the last. Its `id`
+    must be new on the dashboard. Nothing is published: an owner reviews the
+    draft and publishes it. The draft is saved from its fields, so comments in
+    its YAML are not kept. Try the widget with `preview_dashboard` first. Saves
+    are limited per hour and per workspace. Needs the writer role.
 
     Args:
         dashboard: The dashboard's name, from `list_dashboards`.

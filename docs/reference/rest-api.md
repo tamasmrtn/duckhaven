@@ -827,7 +827,7 @@ A proposal holds changes to a dashboard for one person to accept as its draft or
 | `op` | Fields | What it does |
 |---|---|---|
 | `set_metadata` | `title`, `description`, `labels` | Changes the fields it names |
-| `add_widget` | `widget`, `row`, `position` | Adds a widget before `position` in row `row`, from 0, or at the end of it. Without `row`, in a row of its own at the end |
+| `add_widget` | `widget`, `row`, `position` | Adds a widget before `position` in row `row`, from 0, or at the end of it. Without `row`, or with the row after the last, in a row of its own at the end |
 | `update_widget` | `id`, `widget` | Replaces the widget, keeping its `id` |
 | `move_widget` | `id`, `row`, `position` | Moves the widget, as `add_widget` places one |
 | `remove_widget` | `id` | Removes the widget. A row left empty goes with it |

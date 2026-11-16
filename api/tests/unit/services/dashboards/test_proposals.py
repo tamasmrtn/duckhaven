@@ -51,6 +51,15 @@ def test_a_widget_without_a_row_gets_a_row_of_its_own_at_the_end():
     ]
 
 
+def test_the_row_after_the_last_is_a_new_row_at_the_end():
+    """Rows count from 0, so on a two-row file row 2 is the next one: a model
+    moving a widget below the others names it rather than leaving row out."""
+    out = _apply({"op": "move_widget", "id": "a", "row": 2})
+    assert _layout(out) == [["b"], ["c"], ["a"]]
+    out = _apply({"op": "add_widget", "widget": _kpi("d"), "row": 2, "position": 0})
+    assert _layout(out) == [["a", "b"], ["c"], ["d"]]
+
+
 def test_moving_the_last_widget_out_of_a_row_drops_the_row():
     out = _apply({"op": "move_widget", "id": "c", "row": 0, "position": 0})
     assert _layout(out) == [["c", "a", "b"]]
@@ -89,7 +98,7 @@ def test_metadata_changes_only_what_it_names():
         ({"op": "remove_widget", "id": "nope"}, "no widget 'nope'"),
         ({"op": "move_widget", "id": "nope"}, "no widget 'nope'"),
         ({"op": "add_widget", "widget": _kpi("a")}, "already has a widget 'a'"),
-        ({"op": "add_widget", "widget": _kpi("d"), "row": 2}, "no row 2"),
+        ({"op": "add_widget", "widget": _kpi("d"), "row": 3}, "no row 3"),
         ({"op": "update_widget", "id": "a", "widget": _kpi("z")}, "keeps the widget's id"),
         ({"op": "remove_parameter", "name": "nope"}, "no parameter 'nope'"),
         ({"op": "update_parameter", "name": "nope", "parameter": {}}, "no parameter 'nope'"),

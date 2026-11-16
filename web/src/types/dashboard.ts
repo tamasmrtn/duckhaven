@@ -265,7 +265,13 @@ export interface ChartMeasure {
 /** What to draw, decided by the server and naming no chart library. */
 export interface ChartSpec {
   type: "kpi" | "line" | "bar" | "table";
-  x: { field: string; kind: "time" | "category"; grain?: string | null } | null;
+  x: {
+    field: string;
+    kind: "time" | "category";
+    grain?: string | null;
+    /** Time values whose period the window holds only in part. */
+    partial?: string[];
+  } | null;
   y: ChartMeasure[];
   series: { field: string; keys: string[] } | null;
   stack: boolean;

@@ -38,6 +38,11 @@ class Axis(BaseModel):
     field: str
     kind: Literal["time", "category"]
     grain: str | None = None
+    partial: list[str] = Field(
+        default_factory=list,
+        description="Time values whose period the window holds only in part, filled when the "
+        "widget runs.",
+    )
 
 
 class Measure(BaseModel):

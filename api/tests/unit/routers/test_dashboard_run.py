@@ -14,7 +14,7 @@ import json
 import os
 import tempfile
 import uuid
-from datetime import timedelta
+from datetime import date, timedelta
 
 import duckdb
 import httpx
@@ -962,6 +962,44 @@ async def test_a_view_starts_a_stopped_workspace_default_once(
     assert {(q.requested_agent_id, q.agent_id) for q in parked} == {(stopped.id, None)}
 
 
+async def test_a_line_over_a_window_that_cuts_its_weeks_says_so(as_owner, ws, agent):
+    """Four days hold no whole week, so every week the line draws is partial."""
+    window = {
+        "kind": "absolute",
+        "start": (TODAY - timedelta(days=3)).isoformat(),
+        "end": (TODAY + timedelta(days=1)).isoformat(),
+    }
+    weekly = {
+        "id": "trend",
+        "type": "line",
+        "title": "Revenue by week",
+        "query": {"model": "sales", "metrics": ["revenue"], "grain": "week", "time_range": window},
+    }
+    await _publish(as_owner, ws, spec(weekly))
+
+    trend = _widgets(await _view(as_owner, ws))["trend"]
+
+    weeks = [row[0] for row in trend["rows"]["data"]]
+    assert weeks and trend["chart"]["x"]["partial"] == weeks
+    assert [w for w in trend["warnings"] if "is partial" in w] == [
+        f"The week {_week(w)} is partial: the window holds {_held(w, window)} of its 7 days."
+        for w in weeks
+    ]
+
+
+def _week(value: str) -> str:
+    from api.services.dashboards.resolve import Window
+
+    start = date.fromisoformat(value[:10])
+    return Window(start=start, end=start + timedelta(days=7), label="").text
+
+
+def _held(value: str, window: dict) -> int:
+    start = date.fromisoformat(value[:10])
+    first = max(start, date.fromisoformat(window["start"]))
+    return (min(start + timedelta(days=7), date.fromisoformat(window["end"])) - first).days
+
+
 # ── Shaping ───────────────────────────────────────────────────────────────────
 
 
@@ -1006,6 +1044,45 @@ def test_past_eight_series_the_largest_are_drawn():
 
     assert keys == [f"c{n}" for n in range(2, 10)]
     assert dropped == 2
+
+
+def _weekly(window_start: date, window_end: date, weeks: list[str]) -> tuple[list[str], list[str]]:
+    """The partial weeks of a weekly line over a window, and what the view says."""
+    from api.services.dashboards.chart_spec import Axis, ChartSpec, Limits, Measure
+    from api.services.dashboards.resolve import Window
+
+    chart = ChartSpec(
+        type="line",
+        x=Axis(field="week", kind="time", grain="week"),
+        y=[Measure(field="revenue", label="Revenue")],
+        limits=Limits(rows=None),
+    )
+    data = [[week, "1"] for week in weeks] + [[None, "1"]]
+    notes = run_service._partial(
+        chart, ["week", "revenue"], data, Window(start=window_start, end=window_end, label="")
+    )
+    return chart.x.partial, notes
+
+
+def test_a_week_the_window_cuts_is_marked_partial():
+    """A weekly line over the last 90 days starts mid-week. Its first week holds
+    a few days' revenue and reads as a dip, though nothing fell."""
+    # Wednesday 19 August to Thursday 12 November, the day after it excluded.
+    partial, notes = _weekly(
+        date(2026, 8, 19),
+        date(2026, 11, 13),
+        ["2026-08-17T00:00:00", "2026-08-24T00:00:00", "2026-11-02T00:00:00", "2026-11-09"],
+    )
+
+    assert partial == ["2026-08-17T00:00:00", "2026-11-09"]
+    assert notes == [
+        "The week 17 – 23 Aug 2026 is partial: the window holds 5 of its 7 days.",
+        "The week 9 – 15 Nov 2026 is partial: the window holds 4 of its 7 days.",
+    ]
+
+
+def test_whole_periods_are_not_marked():
+    assert _weekly(date(2026, 8, 17), date(2026, 8, 31), ["2026-08-17", "2026-08-24"]) == ([], [])
 
 
 def test_series_come_in_name_order_whatever_order_the_rows_came_in():

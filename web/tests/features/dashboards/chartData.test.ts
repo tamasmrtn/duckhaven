@@ -61,6 +61,44 @@ describe("chartData", () => {
     ]);
   });
 
+  it("draws a period the window cuts dashed, from the whole period beside it", () => {
+    const { data, partial } = chartData(
+      spec({
+        x: {
+          field: "week",
+          kind: "time",
+          grain: "week",
+          partial: ["2026-08-17T00:00:00", "2026-11-09T00:00:00"],
+        },
+      }),
+      COLUMNS,
+      [
+        ["Web", "2026-11-09T00:00:00", "40"],
+        ["Web", "2026-08-17T00:00:00", "50"],
+        ["Web", "2026-08-24T00:00:00", "100"],
+        ["Web", "2026-08-31T00:00:00", "110"],
+        ["Web", "2026-11-02T00:00:00", "120"],
+      ],
+    );
+
+    expect(partial).toEqual(
+      new Set(["2026-08-17T00:00:00", "2026-11-09T00:00:00"]),
+    );
+    // The value stays where the tooltip and the table read it.
+    expect(data.map((d) => d.s0)).toEqual([50, 100, 110, 120, 40]);
+    expect(data.map((d) => d.s0Whole)).toEqual([null, 100, 110, 120, null]);
+    expect(data.map((d) => d.s0Partial)).toEqual([50, 100, null, 120, 40]);
+  });
+
+  it("draws every period whole when the window cuts none", () => {
+    const { data, partial } = chartData(spec({}), COLUMNS, [
+      ["Web", "2026-08-17T00:00:00", "50"],
+    ]);
+
+    expect(partial.size).toBe(0);
+    expect(data).toEqual([{ x: "2026-08-17T00:00:00", s0: 50 }]);
+  });
+
   it("draws one series per measure when nothing splits the chart", () => {
     const { data, series } = chartData(
       spec({

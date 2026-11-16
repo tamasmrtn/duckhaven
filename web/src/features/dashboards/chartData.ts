@@ -21,6 +21,8 @@ export type Datum = { x: string } & Record<string, string | number | null>;
 export interface ChartData {
   data: Datum[];
   series: ChartSeries[];
+  /** The x values whose period the window holds only in part. */
+  partial: Set<string>;
 }
 
 /**
@@ -32,6 +34,11 @@ export interface ChartData {
  * recolours the rest. A chart of several measures draws one series per
  * measure, in slot order. A time axis is drawn oldest first, whatever order
  * the rows came in; categories keep the query's order.
+ *
+ * A line over a window that cuts a period, such as the first week of the last
+ * 90 days, draws that period dashed: each series' value is also kept as
+ * `<key>Whole`, null at a cut period, and `<key>Partial`, set only at a cut
+ * period and the points beside it, so the dashed piece joins the solid line.
  */
 export function chartData(
   chart: ChartSpec,
@@ -96,7 +103,18 @@ export function chartData(
     // ISO dates and timestamps sort as text.
     data.sort((a, b) => (a.x < b.x ? -1 : a.x > b.x ? 1 : 0));
   }
-  return { data, series };
+  const partial = new Set(chart.x?.kind === "time" ? chart.x.partial : []);
+  if (chart.type === "line" && partial.size > 0) {
+    const cut = data.map((d) => partial.has(d.x));
+    data.forEach((d, i) => {
+      const near = cut[i] || cut[i - 1] === true || cut[i + 1] === true;
+      for (const s of series) {
+        d[`${s.key}Whole`] = cut[i] ? null : d[s.key];
+        d[`${s.key}Partial`] = near ? d[s.key] : null;
+      }
+    });
+  }
+  return { data, series, partial };
 }
 
 const MONTHS = [

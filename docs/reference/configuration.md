@@ -225,7 +225,7 @@ How a [dashboard](../querying/dashboards.md) view's queries go to an agent.
 
 | Variable | Default | Description |
 |---|---|---|
-| `DASHBOARD_MAX_INFLIGHT` | `4` | How many of one view's queries run at once on an agent: [batches](../querying/query-execution.md#batches-of-reads) on an agent that runs them, single queries on one that does not. More runs a large dashboard sooner, at the cost of more agent memory per view. |
+| `DASHBOARD_MAX_INFLIGHT` | `4` | How many of one view's queries run at once on an agent that does not run [batches](../querying/query-execution.md#batches-of-reads). On one that does, a view's queries go in as few batches as `DASHBOARD_BATCH_MAX_QUERIES` allows, and this many of those batches run at once. |
 | `DASHBOARD_BATCH_MAX_QUERIES` | `20` | The most queries in one batch. The agent protocol carries at most 20, so a higher value is treated as 20. |
 
 ### Agent images and runtimes

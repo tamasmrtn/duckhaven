@@ -173,7 +173,7 @@ disconnect without being torn down):
 | `provisioning` | The container is being created; the agent has not dialed home. |
 | `running` | The agent has registered and is serving work. |
 | `terminating` → `terminated` | The reaper is tearing the agent down (idle or max-lifetime). |
-| `failed` | Provisioning never completed within the deadline, or the instance vanished. |
+| `failed` | Provisioning never completed within the deadline, or the instance vanished or stopped for good. |
 
 Because that column is mutated in place — a restart reuses the same agent row — it only ever
 describes the agent as it is. Every transition is therefore also appended to a separate lifecycle
@@ -199,6 +199,15 @@ Postgres is the single state-of-record: the agent row is written **before** the 
 created, so a crash mid-provision always leaves a reconcilable record. The reaper reconciles the
 cloud against Postgres each cycle — a cloud instance with no live row is terminated (leak cleanup),
 and a row whose instance has vanished is failed. The cloud is never a second source of truth.
+
+On Docker, a row whose container has stopped for good is failed too, and the container is removed on the next cycle.
+That is an `exited` container, such as one killed by hand or by the host: under the `on-failure` restart policy a
+crashed agent shows `restarting` while Docker brings it back. Azure Container Instances report no such state, so there
+only a vanished instance is caught.
+
+When an agent dies with work waiting for it, the reaper starts compute again as it fails the row. Work parked on the
+pool gets a new pool agent; work parked on a named agent, such as a workspace default, restarts that agent. Otherwise
+only a new submit would start compute, and the parked work would wait until `COMPUTE_QUEUE_WAIT_TIMEOUT_S` failed it.
 
 ## Related
 

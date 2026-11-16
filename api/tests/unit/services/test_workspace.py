@@ -230,3 +230,44 @@ async def test_workspace_catalogs_load_in_one_query(db_engine):
     assert len(statements) == 1
     assert backend.name == "one-query-store"
     assert login.token == "pw"
+
+
+async def test_the_default_catalog_loads_in_one_query(db_engine):
+    """Every submitted query looks up the default catalog: the backend and the
+    DuckLake login come in the same query."""
+    from conftest import seed_workspace
+    from sqlalchemy import event
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    from api.models.user import Credential, User
+    from api.services.auth import hash_password
+    from api.services.workspace import get_default_catalog
+
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+    async with factory() as db:
+        user = User(
+            email="default@test.local", password_hash=hash_password("pw"), name="D", role="user"
+        )
+        db.add(user)
+        await db.flush()
+        ws, catalog = await seed_workspace(db, user_id=user.id, slug="one-default")
+        db.add(Credential(kind="ducklake_role", token="pw", catalog_id=catalog.id))
+        await db.commit()
+
+    statements = []
+
+    def count(conn, cursor, statement, *args):
+        statements.append(statement)
+
+    event.listen(db_engine.sync_engine, "before_cursor_execute", count)
+    try:
+        async with factory() as db:
+            default = await get_default_catalog(db, ws.id)
+            backend, login = default.storage_backend, default.ducklake_credential
+    finally:
+        event.remove(db_engine.sync_engine, "before_cursor_execute", count)
+
+    assert len(statements) == 1
+    assert default.id == catalog.id
+    assert backend.name == "one-default-store"
+    assert login.token == "pw"

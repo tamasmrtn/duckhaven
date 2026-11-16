@@ -2,14 +2,18 @@
 
 The dashboard reads an Iceberg table through a published semantic model and an
 SQL widget. Its queries go to the live agent as batches, which send small results
-back inline, and a second view is answered by the result cache.
+back inline, and a second view is answered by the result cache: with its compute
+stopped too. A catalog in scoped mode decides, viewer by viewer, which widgets
+show data.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import uuid
 
+import httpx
 import pytest
 import pytest_asyncio
 
@@ -178,3 +182,128 @@ async def test_a_view_runs_as_batches_and_a_second_comes_from_the_cache(api_clie
     assert cached["by_country"]["rows"]["data"] == widgets["by_country"]["rows"]["data"]
     assert second[-1]["cache_hits"] == 3
     assert second[-1]["batch"]["used"] is False
+
+
+async def _view(client: httpx.AsyncClient, dashboard: str) -> list[dict]:
+    return _events((await client.post(dashboard, json={}, timeout=120)).text)
+
+
+def _by_widget(events: list[dict]) -> dict[str, dict]:
+    return {e["id"]: e for e in events if e["type"] == "widget"}
+
+
+async def _until_cached(client: httpx.AsyncClient, dashboard: str) -> list[dict]:
+    """Views until one is answered wholly from the cache, which admits a run just
+    after it reports done."""
+    async with asyncio.timeout(30):
+        while True:
+            events = await _view(client, dashboard)
+            if events[-1].get("cache_hits") == 3:
+                return events
+            await asyncio.sleep(0.5)
+
+
+async def _extra_agent(api_client: httpx.AsyncClient, spawn_agent) -> tuple[object, str]:
+    """A disposable agent, once it reports the extensions a dashboard needs."""
+    known = {a["id"] for a in (await api_client.get("/api/agents")).json()}
+    proc = spawn_agent()
+    async with asyncio.timeout(60):
+        while True:
+            for a in (await api_client.get("/api/agents")).json():
+                extensions = (a.get("capabilities") or {}).get("extensions", [])
+                if a["id"] not in known and a["status"] == "healthy" and "httpfs" in extensions:
+                    return proc, a["id"]
+            await asyncio.sleep(0.5)
+
+
+async def test_a_view_the_cache_answers_needs_no_compute(
+    api_client, workspace, dashboard, spawn_agent
+):
+    proc, agent_id = await _extra_agent(api_client, spawn_agent)
+    # The view's compute is this agent alone: once it stops, nothing else runs it.
+    await _ok(
+        await api_client.patch(f"/api/workspaces/{workspace}", json={"default_agent_id": agent_id})
+    )
+    first = _by_widget(await _view(api_client, dashboard))
+    assert {w["state"] for w in first.values()} == {"ok"}, first
+    ran = await _ok(await api_client.get(f"/api/queries/{first['latest']['rows']['query_id']}"))
+    assert ran["agent_id"] == agent_id
+    await _until_cached(api_client, dashboard)
+
+    proc.terminate()
+    proc.wait(timeout=15)
+    async with asyncio.timeout(30):
+        while any(
+            a["id"] == agent_id and a["status"] == "healthy"
+            for a in await _ok(await api_client.get("/api/agents"))
+        ):
+            await asyncio.sleep(0.5)
+
+    events = await _view(api_client, dashboard)
+    assert [e for e in events if e["type"] == "compute"] == []
+    widgets = _by_widget(events)
+    assert {(w["state"], w["cache"]) for w in widgets.values()} == {("ok", "hit")}, widgets
+    assert widgets["by_country"]["rows"]["data"] == first["by_country"]["rows"]["data"]
+    assert events[-1]["cache_hits"] == 3
+    assert events[-1]["batch"]["used"] is False
+
+
+async def test_a_scoped_grant_decides_what_each_viewer_sees(
+    stack, api_client, workspace, catalog, dashboard
+):
+    base = f"/api/workspaces/{workspace}"
+    suffix = uuid.uuid4().hex[:8]
+    viewers: dict[str, httpx.AsyncClient] = {}
+    ids: dict[str, str] = {}
+    for name in ("granted", "ungranted"):
+        email, password = f"{name}-{suffix}@xc.test", "xc-password-123"
+        user = await _ok(
+            await api_client.post(
+                "/api/admin/users", json={"email": email, "name": name, "password": password}
+            ),
+            201,
+        )
+        ids[name] = user["id"]
+        await _ok(
+            await api_client.post(
+                f"{base}/members", json={"user_id": user["id"], "role": "reader"}
+            ),
+            201,
+        )
+        client = httpx.AsyncClient(base_url=stack.base_url, timeout=30.0)
+        await _ok(await client.post("/api/auth/login", json={"email": email, "password": password}))
+        viewers[name] = client
+    await _ok(
+        await api_client.patch(
+            f"{base}/catalogs/{catalog}/access-mode", json={"access_mode": "scoped"}
+        )
+    )
+    await _ok(
+        await api_client.put(
+            f"{base}/catalogs/{catalog}/grants",
+            json={
+                "user_id": ids["granted"],
+                "schema_name": "analytics",
+                "table_name": "orders",
+                "tier": "reader",
+            },
+        ),
+        201,
+    )
+    try:
+        granted = _by_widget(await _view(viewers["granted"], dashboard))
+        assert {w["state"] for w in granted.values()} == {"ok"}, granted
+        assert float(granted["revenue"]["rows"]["data"][0][0]) == 175.0
+        # Now cached: what the cache holds is not served to a viewer who may not read it.
+        await _until_cached(viewers["granted"], dashboard)
+
+        events = await _view(viewers["ungranted"], dashboard)
+        denied = _by_widget(events)
+        assert {w["state"] for w in denied.values()} == {"no_access"}, denied
+        for widget in denied.values():
+            assert "rows" not in widget and "sql" not in widget
+            assert "orders" not in json.dumps(widget)
+        assert events[-1]["cache_hits"] == 0
+    finally:
+        for client in viewers.values():
+            await client.aclose()

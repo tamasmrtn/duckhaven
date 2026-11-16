@@ -1,7 +1,11 @@
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
+
+# How the main navigation is laid out. Null on the user means "never chose".
+SidebarMode = Literal["expanded", "collapsed", "hover"]
 
 
 class LoginRequest(BaseModel):
@@ -17,6 +21,7 @@ class UserOut(BaseModel):
     name: str
     role: str
     theme: str
+    sidebar: SidebarMode | None = None
     auth_provider: str
     is_active: bool
     # Populated for the authenticated user (`/me`) so the SPA can hide admin
@@ -35,6 +40,14 @@ class CreateUserRequest(BaseModel):
 class UpdateUserRequest(BaseModel):
     role: str | None = None
     is_active: bool | None = None
+
+
+class UpdateMeRequest(BaseModel):
+    """The caller's own preferences. Only the fields sent are changed."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    sidebar: SidebarMode | None = None
 
 
 class OidcProviderInfo(BaseModel):

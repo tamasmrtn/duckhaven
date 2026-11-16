@@ -6,7 +6,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.config import settings
 from api.deps import get_current_user, get_db, get_session_only_user
 from api.models.user import SERVICE_ACCOUNT_PROVIDER, User
-from api.schemas.auth import AuthMethods, LoginRequest, OidcProviderInfo, UserOut
+from api.schemas.auth import (
+    AuthMethods,
+    LoginRequest,
+    OidcProviderInfo,
+    UpdateMeRequest,
+    UserOut,
+)
 from api.schemas.service_account import PatTokenOut, SelfPatCreateRequest, SelfPatOut
 from api.services import pats
 from api.services.addresses import peer_address
@@ -86,6 +92,24 @@ async def me(user: User = Depends(get_current_user), db: AsyncSession = Depends(
 
     Resolves either credential, so a service account sees the identity its token
     maps to."""
+    return await _user_out_with_permissions(db, user)
+
+
+@me_router.patch("/me", response_model=UserOut)
+async def update_me(
+    body: UpdateMeRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> UserOut:
+    """Change the caller's own preferences.
+
+    Only the fields sent change, and `null` puts a preference back to the app's
+    default. Covers preferences only: role and active state stay with an
+    administrator at `/admin/users/{user_id}`."""
+    for field, value in body.model_dump(exclude_unset=True).items():
+        setattr(user, field, value)
+    await db.commit()
+    await db.refresh(user)
     return await _user_out_with_permissions(db, user)
 
 

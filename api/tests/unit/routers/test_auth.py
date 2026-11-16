@@ -151,6 +151,86 @@ async def test_me_no_cookie(client: AsyncClient):
     assert resp.status_code == 401
 
 
+@pytest.fixture
+async def member(db_session):
+    user = User(
+        email="member@test.local",
+        password_hash=hash_password("secret"),
+        name="Member",
+        role="user",
+    )
+    db_session.add(user)
+    await db_session.commit()
+    return user
+
+
+async def _login_member(client: AsyncClient) -> None:
+    resp = await client.post(
+        "/auth/login", json={"email": "member@test.local", "password": "secret"}
+    )
+    assert resp.status_code == 200
+
+
+async def test_me_has_no_navigation_choice_until_one_is_made(client: AsyncClient, member: User):
+    await _login_member(client)
+
+    assert (await client.get("/me")).json()["sidebar"] is None
+
+
+async def test_patch_me_saves_the_navigation_mode(client: AsyncClient, member: User):
+    await _login_member(client)
+
+    resp = await client.patch("/me", json={"sidebar": "collapsed"})
+
+    assert resp.status_code == 200
+    assert resp.json()["sidebar"] == "collapsed"
+    assert (await client.get("/me")).json()["sidebar"] == "collapsed"
+
+
+async def test_patch_me_null_returns_to_the_default(client: AsyncClient, member: User):
+    await _login_member(client)
+    await client.patch("/me", json={"sidebar": "hover"})
+
+    resp = await client.patch("/me", json={"sidebar": None})
+
+    assert resp.status_code == 200
+    assert resp.json()["sidebar"] is None
+
+
+async def test_patch_me_leaves_unsent_fields_alone(client: AsyncClient, member: User):
+    await _login_member(client)
+    await client.patch("/me", json={"sidebar": "hover"})
+
+    resp = await client.patch("/me", json={})
+
+    assert resp.status_code == 200
+    assert resp.json()["sidebar"] == "hover"
+
+
+async def test_patch_me_rejects_an_unknown_mode(client: AsyncClient, member: User):
+    await _login_member(client)
+
+    resp = await client.patch("/me", json={"sidebar": "floating"})
+
+    assert resp.status_code == 422
+
+
+async def test_patch_me_cannot_change_role(client: AsyncClient, member: User, db_session):
+    await _login_member(client)
+
+    resp = await client.patch("/me", json={"role": "admin", "is_active": True})
+
+    assert resp.status_code == 422
+    await db_session.refresh(member)
+    assert member.role == "user"
+
+
+async def test_patch_me_needs_a_credential(client: AsyncClient):
+    resp = await client.patch("/me", json={"sidebar": "collapsed"})
+
+    assert resp.status_code == 401
+
+
 async def test_logout_clears_session(client: AsyncClient, admin_user: User):
     await client.post("/auth/login", json={"email": "admin@test.local", "password": "secret"})
     resp = await client.post("/auth/logout")

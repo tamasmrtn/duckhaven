@@ -201,6 +201,30 @@ The OpenAPI schema groups endpoints by tag:
 
 The agents' own control channel is a WebSocket at `/agents/connect`, not part of this API.
 
+## Your preferences
+
+`GET /api/me` returns you, with your resolved `permissions`. `PATCH /api/me` changes your own preferences and returns
+the same object. Only the fields you send change.
+
+| Field | Values | Meaning |
+|---|---|---|
+| `sidebar` | `expanded`, `collapsed`, `hover`, or `null` | How the main navigation is laid out. `null` means you never chose, so you get the default, `expanded`. |
+
+```bash
+curl -s -X PATCH "$DH/api/me" \
+  -H "Content-Type: application/json" -H "Authorization: Bearer $DH_TOKEN" \
+  -d '{"sidebar": "collapsed"}'
+```
+
+```json
+{"id": "…", "email": "ana@example.com", "name": "Ana", "role": "user", "theme": "system",
+  "sidebar": "collapsed", "auth_provider": "local", "is_active": true, "permissions": [],
+  "created_at": "2026-10-19T14:23:12Z"}
+```
+
+An unknown value, or a field that is not a preference such as `role`, answers **422**. Your role and whether your
+account is active are changed by an admin, at `/api/admin/users/{user_id}`.
+
 ## Your own tokens
 
 A signed-in person can issue themselves a token, for a command-line client, without an admin. `dh auth login` does this

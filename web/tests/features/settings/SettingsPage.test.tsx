@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect } from "vitest";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
@@ -7,6 +7,23 @@ import { server } from "@tests/mock/server";
 import { CURRENT_USER } from "@/mock/fixtures/users";
 
 const ROUTE = "/acme-analytics/settings";
+const TZ = process.env.TZ;
+
+// Records the body of every workspace PATCH, answering with the workspace as
+// the mock API stores it.
+function recordPatches() {
+  const sent: Record<string, unknown>[] = [];
+  server.events.on("request:start", async ({ request }) => {
+    if (request.method === "PATCH" && request.url.includes("/api/workspaces/"))
+      sent.push((await request.clone().json()) as Record<string, unknown>);
+  });
+  return sent;
+}
+
+afterEach(() => {
+  process.env.TZ = TZ;
+  server.events.removeAllListeners();
+});
 
 describe("SettingsPage — Workspace tab", () => {
   // Regression: the tabs sat in the page body, unlike every other page,
@@ -210,6 +227,121 @@ describe("SettingsPage — Workspace tab", () => {
     ).toBeInTheDocument();
   });
 
+  it("shows the workspace's time zone and what today is there", async () => {
+    server.use(
+      http.get("/api/workspaces/:ws", () =>
+        HttpResponse.json({
+          id: "ws-1",
+          slug: "acme-analytics",
+          name: "acme-analytics",
+          description: null,
+          default_catalog: "acme_analytics",
+          storage_backend_id: "sb-1",
+          storage_backend_kind: "s3",
+          timezone: "Pacific/Kiritimati",
+          created_at: "2026-01-01T00:00:00Z",
+        }),
+      ),
+    );
+    renderWithProviders({ initialRoute: ROUTE });
+
+    const picker = await screen.findByRole("combobox", { name: "Time zone" });
+    expect(picker).toHaveTextContent("Pacific/Kiritimati");
+    expect(picker).toHaveTextContent("UTC+14:00");
+    const today = new Intl.DateTimeFormat("en-GB", {
+      timeZone: "Pacific/Kiritimati",
+      weekday: "short",
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+    })
+      .format(new Date())
+      .replace(",", "");
+    expect(screen.getByText(new RegExp(`Today here is ${today}\\.`))).toBeVisible();
+  });
+
+  it("sets the time zone by searching for a city", async () => {
+    const sent = recordPatches();
+    const user = userEvent.setup();
+    renderWithProviders({ initialRoute: ROUTE });
+
+    const picker = await screen.findByRole("combobox", { name: "Time zone" });
+    expect(picker).toHaveTextContent("UTC");
+    await user.click(picker);
+    await user.type(screen.getByPlaceholderText(/search a city/i), "kolkata");
+    await user.click(await screen.findByRole("option", { name: /Kolkata/ }));
+
+    await waitFor(() => expect(sent).toEqual([{ timezone: "Asia/Kolkata" }]));
+    await waitFor(() => expect(picker).toHaveTextContent("Asia/Kolkata"));
+  });
+
+  // Regression: cmdk's letter-by-letter match put America/Kentucky/Louisville
+  // and America/North_Dakota/Beulah above Kolkata, so Enter saved one of them.
+  it("saves the zone a search names when Enter is pressed", async () => {
+    process.env.TZ = "UTC";
+    const sent = recordPatches();
+    const user = userEvent.setup();
+    renderWithProviders({ initialRoute: ROUTE });
+
+    await user.click(
+      await screen.findByRole("combobox", { name: "Time zone" }),
+    );
+    await user.type(
+      screen.getByPlaceholderText(/search a city/i),
+      "kolkata{Enter}",
+    );
+
+    await waitFor(() => expect(sent).toEqual([{ timezone: "Asia/Kolkata" }]));
+  });
+
+  it("finds a time zone by its offset", async () => {
+    const user = userEvent.setup();
+    renderWithProviders({ initialRoute: ROUTE });
+
+    await user.click(
+      await screen.findByRole("combobox", { name: "Time zone" }),
+    );
+    await user.type(screen.getByPlaceholderText(/search a city/i), "+5:45");
+    expect(
+      await screen.findByRole("option", { name: /Kathmandu/ }),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("option", { name: /Amsterdam/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("offers the browser's time zone first, by its current name", async () => {
+    process.env.TZ = "Asia/Calcutta";
+    const sent = recordPatches();
+    const user = userEvent.setup();
+    renderWithProviders({ initialRoute: ROUTE });
+
+    await user.click(
+      await screen.findByRole("combobox", { name: "Time zone" }),
+    );
+    const suggested = screen.getByRole("group", { name: "Your browser" });
+    await user.click(within(suggested).getByRole("option", { name: /Kolkata/ }));
+
+    await waitFor(() => expect(sent).toEqual([{ timezone: "Asia/Kolkata" }]));
+  });
+
+  it("sends nothing when the current time zone is picked again", async () => {
+    process.env.TZ = "UTC";
+    const sent = recordPatches();
+    const user = userEvent.setup();
+    renderWithProviders({ initialRoute: ROUTE });
+
+    const picker = await screen.findByRole("combobox", { name: "Time zone" });
+    await user.click(picker);
+    expect(
+      screen.queryByRole("group", { name: "Your browser" }),
+    ).not.toBeInTheDocument();
+    await user.click(screen.getByRole("option", { name: /^UTC/ }));
+
+    expect(picker).toHaveAttribute("aria-expanded", "false");
+    expect(sent).toEqual([]);
+  });
+
   it("requires typing the workspace name to confirm delete", async () => {
     const user = userEvent.setup();
     const { router } = renderWithProviders({ initialRoute: ROUTE });
@@ -248,6 +380,10 @@ describe("SettingsPage — Workspace tab", () => {
       screen.getByRole("button", { name: /delete workspace/i }),
     ).toBeDisabled();
     expect(await screen.findByLabelText("Default compute")).toBeDisabled();
+    expect(screen.getByRole("combobox", { name: "Time zone" })).toBeDisabled();
+    expect(
+      screen.getByText("Only a workspace owner can change the time zone."),
+    ).toBeVisible();
   });
 });
 

@@ -9,6 +9,7 @@ export function useUpdateWorkspace(ws: string) {
       description?: string;
       result_cache_enabled?: boolean;
       default_agent_id?: string | null;
+      timezone?: string;
     }) => workspacesApi.update(ws, data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["workspaces"] });

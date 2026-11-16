@@ -208,7 +208,7 @@ the same object. Only the fields you send change.
 
 | Field | Values | Meaning |
 |---|---|---|
-| `sidebar` | `expanded`, `collapsed`, `hover`, or `null` | How the main navigation is laid out. `null` means you never chose, so you get the default, `expanded`. |
+| `sidebar` | `expanded`, `collapsed`, `hover`, or `null` | How the [main navigation](../getting-started/navigate-the-app.md) is laid out. `null` means you never chose, so you get the default, `expanded`. |
 
 ```bash
 curl -s -X PATCH "$DH/api/me" \

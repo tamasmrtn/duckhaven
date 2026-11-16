@@ -30,7 +30,7 @@ Three forces shape every decision:
 
 We're **not** trying to look like the large hosted data platforms. Those
 products serve very different audiences (enterprise admins, BI analysts) and
-lean on heavy chrome — large left rails, multi-pane assistant panels, dense
+lean on heavy chrome — many-level left navigation, multi-pane assistant panels, dense
 ribbon toolbars. We borrow their proven *patterns* (catalog tree on the
 left, tabbed worksheets, role/warehouse context selector in the worksheet
 header, results below the editor) but keep the surface area roughly half
@@ -53,7 +53,10 @@ the size.
 - **No marketplace, no governance dashboard**. Those are enterprise
   distractions. Lineage is the exception we did take: it earns its place as a
   tab on the table you are already looking at, not as a destination of its own.
-- **No expandable mega-nav**. Five top-level destinations max.
+- **No mega-nav**. One level of destinations, in four labelled groups, with no
+  nested menus and no fold-out sections. A new destination joins a group, or
+  becomes a view of a page that already exists (Connections is a view of
+  History).
 
 ---
 
@@ -253,7 +256,7 @@ momentary and decorative, where resting `#64748b` keeps 4.4:1.
 
 - **Lucide** as the single icon set (matches the rounded-rectangle, 2 px
   stroke aesthetic DuckDB uses).
-- 16 px in toolbars and tree rows; 20 px in primary nav; 14 px inline with
+- 16 px in toolbars, tree rows and the main navigation; 14 px inline with
   body text.
 - **Never emoji**, anywhere — including empty states and toasts.
 - Two custom SVGs we maintain in-repo:
@@ -275,6 +278,8 @@ Conservative. We're a developer tool, not a marketing page.
 | Query status pill color change | 160 ms | `ease-in-out` |
 | Skeleton shimmer | 1400 ms loop | `linear` |
 | Worksheet split-pane drag | 0 ms (direct) | — |
+| Navigation opening over the page (expand on hover) | 150 ms | `ease-out` |
+| Navigation collapsing or expanding in place | 0 ms (direct) | — |
 
 `prefers-reduced-motion` zeros out everything except status-pill color
 transitions (those convey meaning, not decoration).
@@ -287,35 +292,79 @@ button settles into its disabled-while-running state. No looping.
 
 ## 3. Information Architecture
 
-Five top-level destinations, surfaced as a thin **left rail** (icons +
-labels on hover/expand). The rail is collapsed to icons by default;
-expanded state is remembered per user.
+The **main navigation** on the left lists the destinations in four labelled
+groups. The top bar holds, left to right: the navigation toggle, the
+workspace switcher, ⌘K search, and the assistant, theme and user menu.
 
 ```
-┌──┬──────────────────────────────────────────────────────────────────┐
-│🦆│  TopBar:  workspace switcher │ ⌘K search │ user menu             │
-├──┴──────────────────────────────────────────────────────────────────┤
-│ 📝 │                                                                 │
-│ 📚 │                       MAIN CONTENT AREA                          │
-│ 💾 │                       (route-specific)                          │
-│ 🛰 │                                                                 │
-│ 📊 │                                                                 │
-│ ⚙  │                                                                 │
-└────┴─────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│ ◧ │ 🦆 Workspace ▾ │ ⌘K Search…               ✦  ◐  User ▾          │
+├──────────────────┬───────────────────────────────────────────────────┤
+│ SQL              │                                                   │
+│  Worksheets      │                                                   │
+│  Saved queries   │                                                   │
+│  Schedules       │               MAIN CONTENT AREA                   │
+│  History         │               (route-specific)                    │
+│ DATA             │                                                   │
+│  Catalog         │                                                   │
+│  Lakehouse health│                                                   │
+│ ANALYTICS        │                                                   │
+│  Dashboards      │                                                   │
+│  Semantic models │                                                   │
+│ MANAGE           │                                                   │
+│  Compute         │                                                   │
+│  Admin           │                                                   │
+└──────────────────┴───────────────────────────────────────────────────┘
 ```
 
-| Rail icon | Label | Destination |
-|---|---|---|
-| 📝 (file-text) | Worksheets | Tabbed SQL editor — **default landing** |
-| 📚 (book-open) | Catalog | Workspace → schema → table browser, read-only details view |
-| 💾 (database) | Saved queries | Library of named queries, owned + shared |
-| 📊 (clock-history) | History | Workspace query log; admins get an All-workspaces audit toggle |
-| ⚙ (cog) | Admin | Storage backends, agents, users, maintenance (visible only to admins) |
+| Group | Destination | Icon | Notes |
+|---|---|---|---|
+| SQL | Worksheets | file-text | Tabbed SQL editor; the **default landing** |
+| SQL | Saved queries | bookmark | Named queries shared with the workspace |
+| SQL | Schedules | calendar-clock | Saved queries run on a timer |
+| SQL | History | clock | Statements, or (**Connections** view) the SQL sessions dbt and dlt open; also current on a query profile and a session |
+| Data | Catalog | book-open | Catalog → schema → table browser |
+| Data | Lakehouse health | heart-pulse | Table health scores and recommendations |
+| Analytics | Dashboards | layout-dashboard | |
+| Analytics | Semantic models | ruler | |
+| Manage | Compute | microchip | Agents; not admin-gated, a per-agent grant is enough |
+| Manage | Admin | settings | Only for users holding a global permission |
 
-User menu (top-right): name, "Theme: light/dark/system", "Sign out".
+Settings lives in the user menu, not the navigation. Every destination,
+Settings and Connections included, is also in ⌘K under **Navigate**, in the
+navigation's order.
 
-The yellow duck mark in the top-left **does not** navigate — clicking it
-opens the workspace switcher, the most common destination-change action.
+### Layout modes
+
+The user picks one in **Settings → Account → Navigation**; it is saved on
+their account (`users.sidebar`, `PATCH /api/me`), so it follows them across
+browsers. A null value means "never chose" and gets the default.
+localStorage `dh-sidebar` only caches it for the first paint.
+
+| Mode | Behaviour |
+|---|---|
+| **Expanded** (default) | 200 px column beside the page: 28 px rows of icon + label, group names as small-caps labels |
+| **Collapsed** | 48 px icon rail, a 1 px divider in place of each group name, a tooltip per icon |
+| **Expand on hover** | The 48 px rail, which opens to 200 px *over* the page (z-30, `--shadow-e3`) after a 200 ms pointer rest or on keyboard focus, and closes 300 ms after the pointer leaves, on Escape, or on choosing a page. The page never moves |
+
+- The toggle at the far left of the top bar and **⌘B / Ctrl+B** switch
+  between expanded and collapsed; from expand-on-hover they pin it expanded.
+  The toggle's name stays "Toggle navigation" and `aria-expanded` carries
+  the state.
+- Collapsed and expanded share one layout — a 24 px slot above each group
+  holds its name or the divider — so the icon under the pointer never moves
+  when expand-on-hover opens.
+- Below 768 px there is no rail: a menu button in the top bar opens the
+  expanded list in a drawer, which closes on navigation. The saved mode is
+  untouched.
+- Each group is a `role="group"` named after it; the names are not headings,
+  which would come before every page's `h1`. Items are links with
+  `aria-current="page"` and the brand-yellow bar.
+- User-facing copy says "navigation", never "sidebar": the worksheet's left
+  pane is "the sidebar".
+
+The duck mark in the top bar **does not** navigate — clicking it opens the
+workspace switcher, the most common destination-change action.
 
 ---
 
@@ -634,13 +683,14 @@ destructive actions).
 - **Global shortcuts**:
    - `⌘K` / `Ctrl+K`: command palette
    - `⌘.` / `Ctrl+.`: workspace switcher
+   - `⌘B` / `Ctrl+B`: expand or collapse the main navigation
+   - `⌘I` / `Ctrl+I`: open or close the assistant
    - `⌘↵` / `Ctrl+↵`: Run query
    - `⌘S` / `Ctrl+S`: Save worksheet (no autosave — the editor isn't a
      notebook; we don't want surprise persistence of half-typed SQL)
-   - `⌘W` / `Ctrl+W`: Close current tab (with unsaved-changes guard)
    - `Esc`: dismiss modal / cancel running query (with confirm if >1 s)
 - The first tab stop is a **Skip to main content** link that moves focus to `<main>`, so keyboard users do not tab
-  through the top bar and rail on every page.
+  through the top bar and navigation on every page.
 - Tab order matches visual order. Tree rows use ↑↓ for navigation, → / ←
   for expand/collapse, `Enter` for "open in active worksheet", `⌘Enter`
   for "open in new tab".

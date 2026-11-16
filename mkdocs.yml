@@ -163,6 +163,7 @@ nav:
   - Get started:
       - What is DuckHaven?: getting-started/what-is-duckhaven.md
       - Quickstart: getting-started/quickstart.md
+      - Find your way around: getting-started/navigate-the-app.md
       - Command line (dh): getting-started/cli-quickstart.md
       - How DuckHaven works: getting-started/how-duckhaven-works.md
   - Use:

@@ -8,6 +8,8 @@ from sqlalchemy import select, update
 
 from api.models.catalog import Catalog, WorkspaceCatalog
 from api.models.catalog_grant import CatalogGrant
+from api.models.dashboard import Dashboard
+from api.models.semantic import SemanticDataset, SemanticModel
 from api.models.storage_backend import StorageBackend
 from api.models.user import User
 from api.models.workspace import Workspace, WorkspaceMember
@@ -362,3 +364,172 @@ async def test_search_isolates_one_catalogs_metadata_failure(
     resp = await auth_client.get(f"/workspaces/{slug}/search", params={"q": "lineitem"})
     assert resp.status_code == 200, resp.text
     assert resp.json()["items"] == []
+
+
+# --- Dashboards and semantic models ------------------------------------------
+
+
+async def _workspace(db_session, slug: str) -> Workspace:
+    return (await db_session.execute(select(Workspace).where(Workspace.slug == slug))).scalar_one()
+
+
+async def _add_dashboard(db_session, ws: Workspace, name: str, title: str, status: str) -> None:
+    db_session.add(
+        Dashboard(workspace_id=ws.id, name=name, title=title, status=status, spec_version=1)
+    )
+    await db_session.commit()
+
+
+async def _add_reader(db_session, ws: Workspace) -> User:
+    reader = User(
+        email="reader@test.local", password_hash=hash_password("pw"), name="Reader", role="user"
+    )
+    db_session.add(reader)
+    await db_session.commit()
+    await db_session.refresh(reader)
+    db_session.add(WorkspaceMember(workspace_id=ws.id, user_id=reader.id, role="reader"))
+    await db_session.commit()
+    return reader
+
+
+async def _search(client: AsyncClient, slug: str, **params) -> list[dict]:
+    resp = await client.get(f"/workspaces/{slug}/search", params=params)
+    assert resp.status_code == 200, resp.text
+    return resp.json()["items"]
+
+
+async def test_finds_a_dashboard_by_title(
+    auth_client: AsyncClient, backend: StorageBackend, db_session, fake_polaris
+):
+    slug = await _make_workspace(auth_client, backend)
+    ws = await _workspace(db_session, slug)
+    await _add_dashboard(db_session, ws, "rev-weekly", "Weekly revenue", "published")
+
+    hits = [r for r in await _search(auth_client, slug, q="revenue") if r["type"] == "dashboard"]
+
+    assert [(h["name"], h["title"]) for h in hits] == [("rev-weekly", "Weekly revenue")]
+
+
+async def test_a_reader_does_not_find_an_unpublished_dashboard(
+    auth_client: AsyncClient, backend: StorageBackend, db_session, fake_polaris
+):
+    slug = await _make_workspace(auth_client, backend)
+    ws = await _workspace(db_session, slug)
+    await _add_dashboard(db_session, ws, "rev-live", "Revenue live", "published")
+    await _add_dashboard(db_session, ws, "rev-wip", "Revenue draft", "draft")
+
+    owner_hits = {r["name"] for r in await _search(auth_client, slug, q="rev", types="dashboard")}
+    reader = await _add_reader(db_session, ws)
+    await _login(auth_client, reader.email)
+    reader_hits = {r["name"] for r in await _search(auth_client, slug, q="rev", types="dashboard")}
+
+    assert owner_hits == {"rev-live", "rev-wip"}
+    assert reader_hits == {"rev-live"}
+
+
+async def test_finds_a_semantic_model_by_name(
+    auth_client: AsyncClient, backend: StorageBackend, db_session, fake_polaris
+):
+    slug = await _make_workspace(auth_client, backend)
+    ws = await _workspace(db_session, slug)
+    db_session.add(SemanticModel(workspace_id=ws.id, slug="sales", name="Sales funnel"))
+    await db_session.commit()
+
+    hits = await _search(auth_client, slug, q="funnel", types="semantic_model")
+
+    assert [(h["type"], h["name"], h["title"]) for h in hits] == [
+        ("semantic_model", "sales", "Sales funnel")
+    ]
+
+
+async def test_a_model_on_an_ungranted_table_is_not_found(
+    auth_client: AsyncClient, backend: StorageBackend, db_session, fake_polaris
+):
+    slug = await _make_workspace(auth_client, backend)
+    ws = await _workspace(db_session, slug)
+    await auth_client.post(f"/workspaces/{slug}/catalogs/{slug}/schemas", json={"name": "fin"})
+    r = await auth_client.post(
+        f"/workspaces/{slug}/catalogs/{slug}/schemas/fin/tables",
+        json={"name": "ledger", "columns": _COLS},
+    )
+    assert r.status_code == 201, r.text
+    cat = (await db_session.execute(select(Catalog).where(Catalog.name == slug))).scalar_one()
+    model = SemanticModel(workspace_id=ws.id, slug="ledger-model", name="Ledger")
+    db_session.add(model)
+    await db_session.flush()
+    db_session.add(
+        SemanticDataset(
+            model_id=model.id,
+            name="ledger",
+            catalog_id=cat.id,
+            schema_name="fin",
+            table_name="ledger",
+        )
+    )
+    await db_session.commit()
+    open_hits = await _search(auth_client, slug, q="ledger", types="semantic_model")
+    await db_session.execute(
+        update(WorkspaceCatalog)
+        .where(WorkspaceCatalog.workspace_id == ws.id, WorkspaceCatalog.catalog_id == cat.id)
+        .values(access_mode="scoped")
+    )
+    await db_session.commit()
+    reader = await _add_reader(db_session, ws)
+    await _login(auth_client, reader.email)
+
+    assert [h["name"] for h in open_hits] == ["ledger-model"]
+    assert await _search(auth_client, slug, q="ledger", types="semantic_model") == []
+
+
+async def test_types_narrows_to_dashboards(
+    auth_client: AsyncClient, backend: StorageBackend, db_session, fake_polaris
+):
+    slug = await _make_workspace(auth_client, backend)
+    ws = await _workspace(db_session, slug)
+    await _add_dashboard(db_session, ws, "alpha-board", "Alpha board", "published")
+    await auth_client.post(
+        f"/workspaces/{slug}/saved-queries", json={"name": "alpha query", "sql": "SELECT 1"}
+    )
+
+    hits = await _search(auth_client, slug, q="alpha", types="dashboard")
+
+    assert {h["type"] for h in hits} == {"dashboard"}
+
+
+async def test_many_table_matches_do_not_hide_the_workspace_objects(
+    auth_client: AsyncClient, backend: StorageBackend, db_session, fake_polaris
+):
+    """A broad term matching more tables than the limit still returns the
+    saved queries and dashboards it matches: they are listed first."""
+    slug = await _make_workspace(auth_client, backend)
+    ws = await _workspace(db_session, slug)
+    await auth_client.post(f"/workspaces/{slug}/catalogs/{slug}/schemas", json={"name": "s"})
+    for i in range(3):
+        r = await auth_client.post(
+            f"/workspaces/{slug}/catalogs/{slug}/schemas/s/tables",
+            json={"name": f"sales_{i}", "columns": _COLS},
+        )
+        assert r.status_code == 201, r.text
+    await auth_client.post(
+        f"/workspaces/{slug}/saved-queries", json={"name": "sales by day", "sql": "SELECT 1"}
+    )
+    await _add_dashboard(db_session, ws, "sales", "Sales", "published")
+
+    resp = await auth_client.get(f"/workspaces/{slug}/search", params={"q": "sales", "limit": 2})
+    body = resp.json()
+
+    assert {r["type"] for r in body["items"]} == {"saved_query", "dashboard"}
+    assert body["has_more"] is True
+
+
+async def test_an_underscore_in_a_dashboard_search_is_literal(
+    auth_client: AsyncClient, backend: StorageBackend, db_session, fake_polaris
+):
+    slug = await _make_workspace(auth_client, backend)
+    ws = await _workspace(db_session, slug)
+    await _add_dashboard(db_session, ws, "daily_kpis", "Daily KPIs", "published")
+    await _add_dashboard(db_session, ws, "dailyxkpis", "Other", "published")
+
+    hits = await _search(auth_client, slug, q="daily_", types="dashboard")
+
+    assert [h["name"] for h in hits] == ["daily_kpis"]

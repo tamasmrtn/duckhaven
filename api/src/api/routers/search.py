@@ -4,8 +4,10 @@ Fans out over every catalog attached to the workspace, matching catalog,
 schema and table names by substring and reusing the exact grant redaction the
 schema/table list endpoints already apply (`schemas.py`'s `list_schemas` /
 `list_tables`) so a scoped-catalog grant can't be bypassed by searching
-instead of browsing. Also matches saved-query names. `types` narrows the
-report, which is how the catalog tree searches objects without saved queries.
+instead of browsing. Also matches saved queries, dashboards and semantic
+models by name, each hidden exactly as its own list endpoint hides it. `types`
+narrows the report, which is how the catalog tree searches objects without
+the rest.
 Deliberately narrow — the palette's and tree's data source, not a
 general-purpose search framework.
 """
@@ -15,17 +17,21 @@ from __future__ import annotations
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import get_current_user, get_db, get_polaris_client
+from api.models.dashboard import Dashboard
 from api.models.query import SavedQuery
+from api.models.semantic import SemanticModel
 from api.models.user import User
 from api.schemas.search import SearchResultOut, SearchResultsOut
 from api.services import catalog_tree
 from api.services import grants as grant_service
 from api.services.polaris import PolarisClient
+from api.services.semantic import store as semantic_store
 from api.services.workspace import (
+    ROLE_ORDER,
     assert_workspace_member,
     get_workspace,
     resolve_workspace_catalogs,
@@ -37,7 +43,15 @@ DEFAULT_LIMIT = 20
 # High enough for the catalog tree to show every match for a short prefix.
 MAX_LIMIT = 200
 
-ResultType = Literal["catalog", "schema", "table", "saved_query"]
+ResultType = Literal["catalog", "schema", "table", "saved_query", "dashboard", "semantic_model"]
+ALL_TYPES: tuple[ResultType, ...] = (
+    "catalog",
+    "schema",
+    "table",
+    "saved_query",
+    "dashboard",
+    "semantic_model",
+)
 
 
 def _escape_like(s: str) -> str:
@@ -59,7 +73,7 @@ async def search_workspace(
     db: AsyncSession = Depends(get_db),
     polaris: PolarisClient = Depends(get_polaris_client),
 ) -> SearchResultsOut:
-    """Find catalogs, schemas, tables and saved queries by name across the workspace.
+    """Find catalogs, schemas, tables, saved queries, dashboards and semantic models by name.
 
     Prefix and substring matching over names only, not contents. Results are
     filtered by grant, so a caller never sees an object they could not open.
@@ -70,17 +84,85 @@ async def search_workspace(
     workspace = await get_workspace(db, ws)
     if workspace is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
-    await assert_workspace_member(db, workspace.id, user.id)
+    member = await assert_workspace_member(db, workspace.id, user.id)
 
     needle = q.strip().lower()
     if not needle:
         return SearchResultsOut(items=[])
-    wanted = set(types or ("catalog", "schema", "table", "saved_query"))
+    wanted = set(types or ALL_TYPES)
+    pattern = f"%{_escape_like(q.strip())}%"
 
     catalogs = await resolve_workspace_catalogs(db, workspace.id)
+    # The workspace's own objects come first, so a broad term that matches many
+    # tables cannot push every saved query, dashboard and model past the limit.
+    # The palette groups results by type, so this order is not what it shows.
+    results: list[SearchResultOut] = []
+    if "saved_query" in wanted:
+        sq_result = await db.execute(
+            select(SavedQuery)
+            .where(
+                SavedQuery.workspace_id == workspace.id,
+                SavedQuery.name.ilike(pattern, escape="\\"),
+            )
+            .order_by(SavedQuery.name)
+            .limit(limit + 1)
+        )
+        for sq in sq_result.scalars().all():
+            results.append(
+                SearchResultOut(
+                    type="saved_query",
+                    name=sq.name,
+                    id=sq.id,
+                    sql=sq.sql,
+                    default_agent_id=sq.default_agent_id,
+                )
+            )
+
+    if "dashboard" in wanted:
+        stmt = select(Dashboard).where(
+            Dashboard.workspace_id == workspace.id,
+            or_(
+                Dashboard.name.ilike(pattern, escape="\\"),
+                Dashboard.title.ilike(pattern, escape="\\"),
+            ),
+        )
+        # As the dashboard list: a dashboard nobody has published is invisible
+        # to readers.
+        if ROLE_ORDER.get(member.role, -1) < ROLE_ORDER["writer"]:
+            stmt = stmt.where(Dashboard.status == "published")
+        for d in (await db.execute(stmt.order_by(Dashboard.name).limit(limit + 1))).scalars():
+            results.append(SearchResultOut(type="dashboard", name=d.name, title=d.title, id=d.id))
+
+    if "semantic_model" in wanted:
+        stmt = (
+            select(SemanticModel)
+            .where(
+                SemanticModel.workspace_id == workspace.id,
+                or_(
+                    SemanticModel.slug.ilike(pattern, escape="\\"),
+                    SemanticModel.name.ilike(pattern, escape="\\"),
+                ),
+            )
+            .order_by(SemanticModel.slug)
+            .limit(limit + 1)
+        )
+        for m in (await db.execute(stmt)).scalars():
+            # The models list's own check: a model is hidden unless every table
+            # it is built on is visible to the caller.
+            if await semantic_store.visible(
+                db, m, workspace_id=workspace.id, user_id=user.id, catalogs=catalogs
+            ):
+                results.append(
+                    SearchResultOut(type="semantic_model", name=m.slug, title=m.name, id=m.id)
+                )
+
+    # Already more than the limit: the catalog listing below is the expensive
+    # part, and nothing it found would be returned.
+    if len(results) > limit:
+        return SearchResultsOut(items=results[:limit], has_more=True)
+
     # Catalog names need no listing and no grant check: every attached catalog is
     # already visible in the tree to every member.
-    results: list[SearchResultOut] = []
     if "catalog" in wanted:
         results.extend(
             SearchResultOut(type="catalog", catalog=cat.slug, name=cat.slug)
@@ -130,25 +212,5 @@ async def search_workspace(
                 results.append(
                     SearchResultOut(type="table", catalog=cat.slug, schema_name=s.name, name=t.name)
                 )
-
-    if "saved_query" in wanted and len(results) < limit:
-        sq_result = await db.execute(
-            select(SavedQuery)
-            .where(
-                SavedQuery.workspace_id == workspace.id,
-                SavedQuery.name.ilike(f"%{_escape_like(q.strip())}%", escape="\\"),
-            )
-            .limit(limit - len(results))
-        )
-        for sq in sq_result.scalars().all():
-            results.append(
-                SearchResultOut(
-                    type="saved_query",
-                    name=sq.name,
-                    id=sq.id,
-                    sql=sq.sql,
-                    default_agent_id=sq.default_agent_id,
-                )
-            )
 
     return SearchResultsOut(items=results[:limit], has_more=len(results) > limit)

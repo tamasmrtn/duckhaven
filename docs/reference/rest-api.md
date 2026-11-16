@@ -188,7 +188,7 @@ The OpenAPI schema groups endpoints by tag:
 | `catalog` | Catalogs, [storage migrations](#catalog-storage-migrations), schemas, tables, samples, snapshots |
 | `queries` | Queries, results, profiles, saved queries, history |
 | `worksheets` | Your private [worksheets](#worksheets) |
-| `search` | Finding catalogs, schemas, tables and saved queries by name |
+| `search` | Finding catalogs, schemas, tables, saved queries, dashboards and semantic models by name |
 | `lineage` | A table's [lineage](#lineage), and importing lineage |
 | `semantic` | [Semantic models](#semantic-layer) |
 | `dashboards` | [Dashboards](#dashboards), and the [dashboard file format](dashboard-spec.md)'s JSON Schema |
@@ -560,12 +560,24 @@ Saved queries carry `created_by`, `updated_by` and `updated_at`. Changing the SQ
 
 ## Search endpoint
 
-`GET /api/workspaces/{workspace}/search?q=` finds catalogs, schemas, tables and saved queries whose names contain `q`,
-ignoring case, filtered by your grants. It returns `{"items": […], "has_more": …}`. `limit` (default 20, at most 200)
-caps it, and there is no cursor: narrow the query instead.
+`GET /api/workspaces/{workspace}/search?q=` finds catalogs, schemas, tables, saved queries, dashboards and semantic
+models whose names contain `q`, ignoring case. It returns `{"items": […], "has_more": …}`. `limit` (default 20, at most
+200) caps it, and there is no cursor: narrow the query instead.
 
-`types` (repeatable: `catalog`, `schema`, `table`, `saved_query`) limits the kinds returned and skips the work the
-others need: asking for catalogs and schemas only never lists tables.
+You find only what you could open:
+
+- Schemas, tables and semantic models are filtered by your grants. A model is hidden unless you can see every table it
+  is built on.
+- A reader finds only published dashboards; a writer also finds dashboards that were never published.
+
+A dashboard matches on its name or its title, and a semantic model on its slug or its name. Their results carry the key
+their page is addressed by in `name` (the dashboard's name, the model's slug) and the label to show in `title`.
+
+Saved queries, dashboards and semantic models come first, so a term that matches many tables still returns them when
+`has_more` is true.
+
+`types` (repeatable: `catalog`, `schema`, `table`, `saved_query`, `dashboard`, `semantic_model`) limits the kinds
+returned and skips the work the others need: asking for catalogs and schemas only never lists tables.
 
 ## Semantic layer
 

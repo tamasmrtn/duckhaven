@@ -629,16 +629,40 @@ def _many() -> list[dict]:
     ]
 
 
-async def test_misses_go_to_the_agent_in_batches(as_owner, ws, agent, monkeypatch):
-    monkeypatch.setattr(settings, "dashboard_max_inflight", 2)
+async def test_a_views_misses_go_to_the_agent_as_one_batch(as_owner, ws, agent, monkeypatch):
+    # Lanes to spare: a batch opens a connection, which costs the agent more
+    # than these reads, so the view still sends only one.
+    monkeypatch.setattr(settings, "dashboard_max_inflight", 4)
     await _publish(as_owner, ws, spec(*_many()))
 
     events = await _view(as_owner, ws)
 
+    [batch] = agent.of(FrameType.DISPATCH_BATCH)
+    assert agent.of(FrameType.DISPATCH_QUERY) == []
+    # In the page's order, so the top of the page comes first.
+    widgets = _widgets(events)
+    assert [q["sql"] for q in batch["payload"]["queries"]] == [
+        widgets[f"k{n}"]["sql"] for n in range(8)
+    ]
+    assert events[-1]["batch"] == {"used": True, "batches": 1}
+    assert events[-1]["widgets"] == {"ok": 8}
+
+
+async def test_batches_past_the_limit_run_side_by_side(as_owner, ws, agent, monkeypatch):
+    monkeypatch.setattr(settings, "dashboard_max_inflight", 2)
+    monkeypatch.setattr(settings, "dashboard_batch_max_queries", 4)
+    await _publish(as_owner, ws, spec(*_many()))
+    agent.hold = True
+    releasing = asyncio.create_task(agent.release_once_running(2))
+    try:
+        events = await _view(as_owner, ws)
+    finally:
+        await releasing
+
     batches = agent.of(FrameType.DISPATCH_BATCH)
     assert [len(f["payload"]["queries"]) for f in batches] == [4, 4]
-    assert agent.of(FrameType.DISPATCH_QUERY) == []
-    # Dealt in turn: the first two widgets lead their lanes, which run side by side.
+    assert agent.most_running == 2
+    # Dealt in turn: the first two widgets lead the two batches.
     widgets = _widgets(events)
     assert {f["payload"]["queries"][0]["sql"] for f in batches} == {
         widgets["k0"]["sql"],

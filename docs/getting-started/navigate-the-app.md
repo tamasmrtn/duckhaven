@@ -39,7 +39,8 @@ find, by name:
 - any page in the table above, and **Connections** and **Settings**.
 
 You find only what you could open: a table you hold no grant on, or a dashboard nobody has published while you are a
-reader, does not appear. With nothing typed, ⌘K lists the tables you opened recently.
+reader, does not appear. With nothing typed, ⌘K lists under **Recent** the last eight tables and schemas you opened in
+the workspace.
 
 ## Collapse or expand the navigation
 

@@ -113,6 +113,7 @@ function describe(
   chart: ChartSpec,
   series: ChartSeries[],
   chosen: string | null,
+  partial: string[],
 ): string {
   const measures = [...new Set(chart.y.map((m) => m.label))].join(" and ");
   const by =
@@ -124,7 +125,11 @@ function describe(
       ? `, one ${chart.type === "line" ? "line" : "bar"} per ${chart.series.field}: ${series.map((s) => s.label).join(", ")}`
       : "";
   const marked = chosen === null ? "" : ` ${chosen} is selected.`;
-  return `A ${chart.type} chart of ${measures} by ${by}${split}.${marked}`;
+  const cut =
+    partial.length === 0
+      ? ""
+      : ` The window holds only part of ${partial.join(" and ")}.`;
+  return `A ${chart.type} chart of ${measures} by ${by}${split}.${marked}${cut}`;
 }
 
 /**
@@ -133,7 +138,9 @@ function describe(
  * and each series' colour slot); this only draws it.
  *
  * The chart is a picture with a text alternative. Every value it shows is
- * also in the widget's table view, so nothing depends on hovering.
+ * also in the widget's table view, so nothing depends on hovering. A period
+ * the window holds only in part is drawn dashed, with a hollow point, as its
+ * value is not comparable with the whole periods beside it.
  *
  * With a `selection`, a click on a bar filters the rest of the dashboard by
  * that bar's category, and a click on the chosen bar clears the filter. The
@@ -151,7 +158,7 @@ export function ChartWidget({
   const dark = useIsDark();
   const chart = event.chart!;
   const rows = event.rows!;
-  const { data, series } = useMemo(
+  const { data, series, partial } = useMemo(
     () => chartData(chart, rows.columns, rows.data),
     [chart, rows],
   );
@@ -196,6 +203,7 @@ export function ChartWidget({
   const grain = chart.x?.kind === "time" ? (chart.x.grain ?? null) : null;
   const xLabel = (x: string) =>
     chart.x?.kind === "time" ? formatPeriod(x, grain, true) : x || "(none)";
+  const cut = data.filter((d) => partial.has(d.x)).map((d) => xLabel(d.x));
   const legend =
     series.length > 1 ? (
       <Legend
@@ -203,6 +211,8 @@ export function ChartWidget({
         items={series.map((s, i) => ({ label: s.label, color: colors[i] }))}
       />
     ) : null;
+  const tooltipTitle = (x: string) =>
+    partial.has(x) ? `${xLabel(x)} (partial)` : xLabel(x);
   const tooltip = (
     <Tooltip
       {...TOOLTIP_PROPS}
@@ -217,7 +227,9 @@ export function ChartWidget({
             datum={payload?.[0]?.payload as Datum | undefined}
             series={series}
             colors={colors}
-            title={xLabel(String((payload?.[0]?.payload as Datum)?.x ?? ""))}
+            title={tooltipTitle(
+              String((payload?.[0]?.payload as Datum)?.x ?? ""),
+            )}
             hint={hint(payload?.[0]?.payload as Datum | undefined)}
           />
         ) : null
@@ -245,10 +257,54 @@ export function ChartWidget({
           tickFormatter={tick}
         />
         {tooltip}
+        {/* A period the window cuts is a dashed piece under the solid line,
+            joined to the whole period beside it. */}
+        {partial.size > 0 &&
+          series.map((s, i) => (
+            <Line
+              key={`${s.key}Partial`}
+              dataKey={`${s.key}Partial`}
+              name={s.label}
+              type="linear"
+              stroke={colors[i]}
+              strokeWidth={2}
+              strokeDasharray="4 4"
+              strokeLinecap="round"
+              dot={(props: {
+                cx?: number;
+                cy?: number;
+                index: number;
+                payload: Datum;
+              }) =>
+                partial.has(props.payload.x) &&
+                props.cx != null &&
+                props.cy != null ? (
+                  <circle
+                    key={props.index}
+                    cx={props.cx}
+                    cy={props.cy}
+                    r={4}
+                    fill="var(--bg-surface)"
+                    stroke={colors[i]}
+                    strokeWidth={2}
+                  />
+                ) : (
+                  <g key={props.index} />
+                )
+              }
+              activeDot={{
+                r: 4,
+                fill: colors[i],
+                stroke: "var(--bg-surface)",
+                strokeWidth: 2,
+              }}
+              isAnimationActive={false}
+            />
+          ))}
         {series.map((s, i) => (
           <Line
             key={s.key}
-            dataKey={s.key}
+            dataKey={partial.size > 0 ? `${s.key}Whole` : s.key}
             name={s.label}
             type="linear"
             stroke={colors[i]}
@@ -424,7 +480,7 @@ export function ChartWidget({
       <div
         className="h-56 [&_*:focus:not(:focus-visible)]:outline-none"
         role="img"
-        aria-label={`${label}. ${describe(chart, series, chosen)}`}
+        aria-label={`${label}. ${describe(chart, series, chosen, cut)}`}
         data-testid="widget-chart"
       >
         <ResponsiveContainer width="100%" height="100%">

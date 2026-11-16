@@ -68,7 +68,12 @@ def test_a_line_plots_time_and_splits_by_its_dimension():
         ),
         METRICS,
     )
-    assert chart.x.model_dump() == {"field": "month", "kind": "time", "grain": "month"}
+    assert chart.x.model_dump() == {
+        "field": "month",
+        "kind": "time",
+        "grain": "month",
+        "partial": [],
+    }
     assert chart.series.field == "region"
     assert (chart.stack, chart.orientation) == (False, None)
 

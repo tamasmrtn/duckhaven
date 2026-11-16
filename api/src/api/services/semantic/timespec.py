@@ -105,6 +105,12 @@ def _shift(d: date, grain: str, periods: int) -> date:
     raise SemanticError(f"Unknown time grain {grain!r}.", alternatives=list(GRAINS))
 
 
+def period_of(d: date, grain: str) -> tuple[date, date]:
+    """The period of ``grain`` that holds ``d``, half-open, as DATE_TRUNC buckets it."""
+    start = _start_of(d, grain)
+    return start, _shift(start, grain, 1)
+
+
 def _utcnow() -> datetime:
     return datetime.now(UTC)
 

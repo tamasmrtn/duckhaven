@@ -74,6 +74,7 @@ from api.services.semantic import store as semantic_store
 from api.services.semantic.compile import CompiledQuery, compile_metric_query, legal_dimensions
 from api.services.semantic.errors import SemanticError
 from api.services.semantic.model import LoadedModel, load_model
+from api.services.semantic.timespec import period_of
 from api.services.sql_sessions.service import await_query_done
 
 logger = logging.getLogger(__name__)
@@ -685,6 +686,8 @@ def _widget_event(w: _Widget, run: Plan) -> dict:
     names = [c["name"] for c in columns]
     warnings = list(w.compiled.warnings) if w.compiled else []
     warnings.extend(left_out)
+    if w.widget.query is not None and resolved.window is not None:
+        warnings.extend(_partial(chart, names, data, resolved.window))
     event.update(
         rows={
             "columns": columns,
@@ -733,6 +736,36 @@ def drawn(
         at = names.index(chart.x.field)
         data.sort(key=lambda row: _in_time(row[at]))
     return columns, data, chart, left_out
+
+
+def _partial(chart: ChartSpec, names: list[str], data: list[list], window: Window) -> list[str]:
+    """Mark the periods on a time axis that ``window`` holds only in part, and say which.
+
+    A weekly line over the last 90 days starts mid-week, and a sum over its first
+    week reads as a dip though nothing fell. Only a metric query's axis is
+    marked: its periods are DATE_TRUNC's, which an SQL widget's need not be."""
+    axis = chart.x
+    if axis is None or axis.kind != "time" or axis.grain in (None, "day"):
+        return []
+    if axis.field not in names:
+        return []
+    at = names.index(axis.field)
+    notes: list[str] = []
+    for value in dict.fromkeys(row[at] for row in data if row[at] is not None):
+        try:
+            day = date.fromisoformat(str(value)[:10])
+        except ValueError:
+            continue
+        start, end = period_of(day, axis.grain)
+        held = (min(end, window.end) - max(start, window.start)).days
+        days = (end - start).days
+        if held < days:
+            axis.partial.append(str(value))
+            period = Window(start=start, end=end, label="").text
+            notes.append(
+                f"The {axis.grain} {period} is partial: the window holds {held} of its {days} days."
+            )
+    return notes
 
 
 def _in_time(value: object) -> tuple:

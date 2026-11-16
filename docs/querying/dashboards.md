@@ -81,7 +81,10 @@ Each widget comes back with its rows and with what a reader needs to trust them:
   and percent. A series keeps its colour as filters change, because the colour follows the series' value, not its rank.
   The exception is two values that would take the same colour: the later one in name order takes the next free colour,
   and can change colour when the other comes and goes. Series come in name order, so the legend keeps its order too. A
-  line with more than 8 series draws the 8 largest; its table view has them all.
+  line with more than 8 series draws the 8 largest; its table view has them all. A period the window holds only in
+  part, such as the first week of the last 90 days, is drawn dashed, and a note under the widget names it: it covers
+  fewer days than the periods beside it, so a sum there reads low though nothing fell. Only a metric widget's periods
+  are checked, as an SQL widget's buckets are its own.
 - **A comparison**, for a number with `compare`: the earlier value, the change, and whether the change is good, which
   follows the metric's `polarity`.
 - **Where it came from:** whether the cache answered, the SQL that ran, and the query's id in History.

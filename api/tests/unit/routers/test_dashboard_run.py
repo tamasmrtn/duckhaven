@@ -872,6 +872,66 @@ async def test_a_view_with_no_compute_up_says_compute_is_starting(
     assert {(q.agent_id, q.origin, q.status) for q in parked} == {(None, "dashboard", "cancelled")}
 
 
+async def test_a_view_decides_where_to_run_once_not_for_each_query(
+    as_owner, ws, agent, sessions, monkeypatch
+):
+    decided = []
+    resolve_compute = query_service.resolve_compute
+
+    async def counted(*args, **kwargs):
+        decided.append(kwargs.get("principal_id"))
+        return await resolve_compute(*args, **kwargs)
+
+    monkeypatch.setattr(query_service, "resolve_compute", counted)
+    await _publish(as_owner, ws, spec())
+    events = await _view(as_owner, ws)
+
+    assert {w["state"] for w in _widgets(events).values()} == {"ok"}
+    async with sessions() as db:
+        ran = (await db.scalars(sa.select(Query))).all()
+    assert len(ran) > 1
+    assert len(decided) == 1
+
+
+async def test_a_view_starts_a_stopped_workspace_default_once(
+    ws, sessions, fake_polaris, monkeypatch
+):
+    from api.services.compute.backends import get_backend
+
+    monkeypatch.setattr(settings, "elastic_compute_enabled", True)
+    monkeypatch.setattr(settings, "elastic_provider", "null")
+    get_backend("null")._instances.clear()
+    async with sessions() as db:
+        stopped = Agent(
+            name="idle-default", status="unavailable", provider="null", lifecycle="terminated"
+        )
+        db.add(stopped)
+        await db.flush()
+        workspace = (await db.scalars(sa.select(Workspace).where(Workspace.slug == ws))).one()
+        workspace.default_agent_id = stopped.id
+        await db.commit()
+    stream = run_service.stream(await _plan(sessions, ws, fake_polaris), sessions, fake_polaris)
+    try:
+        events = []
+        async with asyncio.timeout(5):
+            while not events or events[-1]["type"] != "compute":
+                frame = await anext(stream)
+                if frame.startswith("data: "):
+                    events.append(json.loads(frame.removeprefix("data: ")))
+    finally:
+        await stream.aclose()
+        get_backend("null")._instances.clear()
+
+    async with sessions() as db:
+        started = await db.get(Agent, stopped.id)
+        parked = (await db.scalars(sa.select(Query))).all()
+    # Every query of the view went to the agent decided for the view as a whole,
+    # and the one that started it saved that.
+    assert started.lifecycle == "provisioning"
+    assert len(parked) > 1
+    assert {(q.requested_agent_id, q.agent_id) for q in parked} == {(stopped.id, None)}
+
+
 # ── Shaping ───────────────────────────────────────────────────────────────────
 
 

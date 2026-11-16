@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Literal
 
@@ -25,6 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.config import settings
 from api.models.agent import Agent
+from api.models.catalog import Catalog
 from api.models.query import Query, SavedQuery
 from api.models.user import User
 from api.models.workspace import Workspace
@@ -60,6 +62,42 @@ logger = logging.getLogger(__name__)
 Origin = Literal["dashboard"] | None
 
 
+@dataclass(frozen=True)
+class Prepared:
+    """What each run one user submits to a workspace looks up alike, looked up once.
+
+    For a caller that submits several runs together, as a dashboard view does:
+    :func:`prepare` once, then pass it to each :func:`submit_query`, which
+    otherwise looks these up for every run. It applies to runs that name no
+    agent and leave ``scale_out`` on; any other run decides its compute itself.
+    """
+
+    #: The workspace's catalogs. Only read, so they need no session.
+    catalogs: list[Catalog]
+    #: The slug of the workspace's default catalog.
+    default_catalog: str | None
+    #: Where a run that names no agent goes.
+    decision: query_service.ComputeDecision
+
+
+async def prepare(db: AsyncSession, workspace: Workspace, user: User) -> Prepared:
+    """Look up, as ``user``, what :class:`Prepared` holds."""
+    catalogs = await resolve_workspace_catalogs(db, workspace.id)
+    default = await get_default_catalog(db, workspace.id)
+    decision = await query_service.resolve_compute(
+        db,
+        workspace,
+        principal_id=user.id,
+        allow_scale_out=user.email != ASSISTANT_EMAIL,
+        catalogs=catalogs,
+    )
+    return Prepared(
+        catalogs=catalogs,
+        default_catalog=default.slug if default is not None else None,
+        decision=decision,
+    )
+
+
 async def submit_query(
     db: AsyncSession,
     workspace: Workspace,
@@ -70,6 +108,7 @@ async def submit_query(
     origin: Origin = None,
     client: tuple[str | None, str | None] = (None, None),
     dispatch: bool = True,
+    prepared: Prepared | None = None,
 ) -> Query:
     """Submit ``body`` as ``user``, who the caller has checked is a member of ``workspace``.
 
@@ -82,9 +121,11 @@ async def submit_query(
     with its ``agent_id`` set, and the caller sends it, so that several runs can
     go to that agent together (``query.dispatch_batch``). The grant and dispatch
     checks then happen there, and recording a refusal is the caller's. A cache
-    hit and a run parked for compute are unaffected."""
+    hit and a run parked for compute are unaffected.
+
+    ``prepared`` is from :func:`prepare`, for the same workspace and user."""
     try:
-        query = await _submit(db, workspace, body, user, polaris, origin, dispatch)
+        query = await _submit(db, workspace, body, user, polaris, origin, dispatch, prepared)
         # Stamped once here rather than on each way a run can start.
         query.client_name, query.client_version = client
         query.tags = body.tags
@@ -103,6 +144,7 @@ async def _submit(
     polaris: PolarisClient,
     origin: Origin,
     dispatch: bool,
+    prepared: Prepared | None = None,
 ) -> Query:
     await query_service.refuse_taken_query_id(db, body.id)
     # Values for placeholders become literals here, before any check reads the SQL:
@@ -146,16 +188,29 @@ async def _submit(
     # Without it, pick the connected agent the server would choose — default
     # runtime first, never a beta one — so a caller that doesn't care which agent
     # runs its SQL (the assistant, a script) needn't pick one itself.
-    catalogs = await resolve_workspace_catalogs(db, workspace.id)
+    if prepared is not None:
+        catalogs = prepared.catalogs
+    else:
+        catalogs = await resolve_workspace_catalogs(db, workspace.id)
     if body.agent_id is None:
         # Decided once: the cache lookup and the dispatch below act on the same answer.
         # The assistant never adds an agent to the pool, whatever the request says.
         allow_scale_out = body.scale_out and user.email != ASSISTANT_EMAIL
-        decision = await query_service.resolve_compute(
-            db, workspace, principal_id=user.id, allow_scale_out=allow_scale_out
-        )
+        if prepared is not None and body.scale_out:
+            decision = prepared.decision
+            if decision.agent is not None:
+                # Into this session, so that starting it is saved.
+                decision = replace(decision, agent=await db.merge(decision.agent, load=False))
+        else:
+            decision = await query_service.resolve_compute(
+                db,
+                workspace,
+                principal_id=user.id,
+                allow_scale_out=allow_scale_out,
+                catalogs=catalogs,
+            )
         cache = await _cache_lookup(
-            db, workspace, catalogs, body, decision.agent, polaris, origin=origin
+            db, workspace, catalogs, body, decision.agent, polaris, origin=origin, prepared=prepared
         )
         if cache.hit:
             return await _serve_cached(
@@ -195,7 +250,9 @@ async def _submit(
         await assert_agent_use(db, user, agent, workspace)
         # Before the connectivity probe too: a cached result needs no agent, so a
         # hit is answered even while the chosen agent is down or starting.
-        cache = await _cache_lookup(db, workspace, catalogs, body, agent, polaris, origin=origin)
+        cache = await _cache_lookup(
+            db, workspace, catalogs, body, agent, polaris, origin=origin, prepared=prepared
+        )
         if cache.hit:
             return await _serve_cached(
                 db, workspace, user, body, cache, catalogs, polaris, origin=origin
@@ -287,14 +344,19 @@ async def _cache_lookup(
     polaris: PolarisClient,
     *,
     origin: Origin,
+    prepared: Prepared | None = None,
 ) -> result_cache.Lookup:
     """Whether the result cache can answer this run, in the context the chosen (or
     likely) agent would run it in: the catalog and schema it would `USE`, its
     runtime and its time zone."""
     if not catalogs:
         return result_cache.Lookup(status=result_cache.BYPASS, detail="no_catalogs")
-    default = await get_default_catalog(db, workspace.id)
-    current = body.catalog or (default.slug if default is not None else catalogs[0].slug)
+    if prepared is not None:
+        default = prepared.default_catalog
+    else:
+        found = await get_default_catalog(db, workspace.id)
+        default = found.slug if found is not None else None
+    current = body.catalog or default or catalogs[0].slug
     context = result_cache.context_for(
         agent, current_catalog=current, current_schema=body.schema_name or DEFAULT_SCHEMA
     )

@@ -209,6 +209,68 @@ async def test_reconcile_fails_row_whose_instance_vanished(
     assert await _lifecycle(session_factory, aid) == "failed"
 
 
+async def test_reconcile_fails_a_row_whose_instance_stopped_and_removes_it(
+    session_factory, null_backend, monkeypatch
+):
+    # A killed agent container is still listed, but will never answer again. While
+    # it counted as live its row stayed running and held its place in the pool.
+    monkeypatch.setattr(settings, "elastic_idle_timeout_s", 900.0)
+    async with session_factory() as db:
+        agent = await _add_running_agent(
+            db, instance_id="dh-killed", last_active_s=10, provisioned_s=20
+        )
+        await db.commit()
+        aid = agent.id
+    null_backend._instances.add("dh-killed")
+
+    async def stopped() -> set[str]:
+        return {"dh-killed"} & null_backend._instances
+
+    monkeypatch.setattr(null_backend, "list_stopped", stopped)
+
+    reaped = await reaper.run_cycle(session_factory)
+
+    assert reaped["dead_rows_failed"] == 1
+    assert reaped["orphans_terminated"] == 0
+    assert await _lifecycle(session_factory, aid) == "failed"
+
+    # Its row retired, the stopped instance is removed like any retired row's.
+    reaped = await reaper.run_cycle(session_factory)
+
+    assert reaped["terminations_retried"] == 1
+    assert "dh-killed" not in null_backend._instances
+
+
+async def test_a_provisioning_row_whose_instance_stopped_is_failed_at_once(
+    session_factory, null_backend, monkeypatch
+):
+    # The settling window is for an instance not created yet; one that has
+    # stopped was created, ran and exited, and is not coming back.
+    async with session_factory() as db:
+        agent = Agent(
+            name="crashed-on-start",
+            status="unavailable",
+            provider="null",
+            lifecycle="provisioning",
+            instance_id="dh-crashed-on-start",
+            provisioned_at=datetime.now(tz=UTC),
+        )
+        db.add(agent)
+        await db.commit()
+        aid = agent.id
+    null_backend._instances.add("dh-crashed-on-start")
+
+    async def stopped() -> set[str]:
+        return {"dh-crashed-on-start"}
+
+    monkeypatch.setattr(null_backend, "list_stopped", stopped)
+
+    reaped = await reaper.run_cycle(session_factory)
+
+    assert reaped["dead_rows_failed"] == 1
+    assert await _lifecycle(session_factory, aid) == "failed"
+
+
 async def test_run_tick_runs_when_leader(session_factory, null_backend):
     result = await reaper.run_tick(session_factory)
     assert result is not None
@@ -522,6 +584,9 @@ class _LazyDeleteBackend:
 
     async def list_managed(self) -> set[str]:
         return set(self._instances)
+
+    async def list_stopped(self) -> set[str]:
+        return set()
 
 
 @pytest.fixture

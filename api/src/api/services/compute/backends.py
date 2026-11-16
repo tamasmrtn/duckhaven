@@ -89,6 +89,11 @@ class NullBackend:
         """Instance ids the backend currently holds (the leak-sweep source)."""
         return set(self._instances)
 
+    async def list_stopped(self) -> set[str]:
+        """Instances that still exist but have stopped for good: none, since a null
+        instance has no process to stop."""
+        return set()
+
     async def capacity(self) -> tuple[float, float] | None:
         """No platform to measure, so no opinion on how big an agent may be."""
         return None

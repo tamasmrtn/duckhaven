@@ -261,7 +261,13 @@ class _FakeContainers:
 
     def list(self, all: bool = False, filters: dict | None = None):  # noqa: A002
         self.list_args = {"all": all, "filters": filters}
-        return list(self.existing.values())
+        # The daemon's status filter, so a test can see which states it selects.
+        states = (filters or {}).get("status")
+        return [
+            c
+            for c in self.existing.values()
+            if states is None or c.attrs.get("State", {}).get("Status") in states
+        ]
 
 
 class _FakeImages:
@@ -349,6 +355,25 @@ async def test_address_is_none_rather_than_raising_when_the_daemon_fails(backend
 
 async def test_status_reports_gone_for_a_missing_container(backend):
     assert await backend.status("dh-agent-vanished") == "gone"
+
+
+async def test_list_stopped_names_the_containers_that_will_not_start_again(backend):
+    """``exited`` is final under the on-failure restart policy, and a crashed
+    container is ``restarting`` while Docker brings it back."""
+    for name, state in [
+        ("dh-up", "running"),
+        ("dh-crashed", "restarting"),
+        ("dh-starting", "created"),
+        ("dh-killed", "exited"),
+        ("dh-unremovable", "dead"),
+    ]:
+        backend.fake.containers.existing[name] = _FakeContainer(name, {"State": {"Status": state}})
+
+    assert await backend.list_stopped() == {"dh-killed", "dh-unremovable"}
+    assert backend.fake.containers.list_args == {
+        "all": True,
+        "filters": {"label": "duckhaven-managed=true", "status": ["exited", "dead"]},
+    }
 
 
 async def test_status_reads_the_container_state(backend, req):

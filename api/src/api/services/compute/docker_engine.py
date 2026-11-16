@@ -269,3 +269,23 @@ class DockerEngineBackend:
             return {c.name for c in containers}
 
         return await asyncio.to_thread(_list)
+
+    async def list_stopped(self) -> set[str]:
+        """Managed containers that have stopped and will not start again.
+
+        Under the ``on-failure`` restart policy ``exited`` is final: a container
+        that crashed shows ``restarting`` while Docker brings it back, and one that
+        exited cleanly or was stopped or killed by hand is never restarted.
+        ``dead`` is one Docker failed to remove. Both are in ``list_managed`` too,
+        which is how the leak sweep removes them once their rows are retired.
+        """
+        client = self._client()
+
+        def _list() -> set[str]:
+            containers = client.containers.list(
+                all=True,
+                filters={"label": f"{_MANAGED_LABEL}=true", "status": ["exited", "dead"]},
+            )
+            return {c.name for c in containers}
+
+        return await asyncio.to_thread(_list)

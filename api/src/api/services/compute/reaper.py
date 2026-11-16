@@ -271,7 +271,9 @@ async def _reconcile_leaks(db: AsyncSession, provider: str) -> dict[str, int]:
     """Reconcile the cloud against Postgres for one provider.
 
     * A cloud instance backing no active row → terminate (orphan).
-    * An active row whose instance is gone from the cloud → fail (dead instance).
+    * An active row whose instance is gone from the cloud, or has stopped and will
+      not start again → fail (dead instance). A stopped instance is then removed as
+      a retired row's, on the next cycle.
     """
     result = {
         "orphans_terminated": 0,
@@ -281,6 +283,10 @@ async def _reconcile_leaks(db: AsyncSession, provider: str) -> dict[str, int]:
     }
     backend = get_backend(provider)
     live = await backend.list_managed()
+    # Still listed, but never coming back: a killed agent container. Counted as
+    # live, its row stayed running, held a place in the pool, and work waited for
+    # an agent that could not answer until the parked-run budget ran out.
+    stopped = await backend.list_stopped()
 
     # Every row, not just the active ones. An instance whose row says it should be
     # gone is a *pending or failed deletion*, which is a different thing from an
@@ -344,15 +350,26 @@ async def _reconcile_leaks(db: AsyncSession, provider: str) -> dict[str, int]:
             continue
         if agent.lifecycle not in _ACTIVE_LIFECYCLE:
             continue
-        if agent.instance_id and agent.instance_id not in live:
-            if agent.lifecycle == "provisioning" and _aware(agent.provisioned_at) >= settle_cutoff:
+        gone = agent.instance_id not in live
+        if agent.instance_id and (gone or agent.instance_id in stopped):
+            # Only a missing instance may be one not created yet; a stopped one ran.
+            if (
+                gone
+                and agent.lifecycle == "provisioning"
+                and _aware(agent.provisioned_at) >= settle_cutoff
+            ):
                 continue
             agent.lifecycle = "failed"
             agent.status = "unavailable"
             agent.terminated_at = now
             record_lifecycle_event(db, agent.id, "failed", reason="dead_row")
             result["dead_rows_failed"] += 1
-            logger.warning("Failed agent %s: backing instance %s gone", agent.id, agent.instance_id)
+            logger.warning(
+                "Failed agent %s: backing instance %s %s",
+                agent.id,
+                agent.instance_id,
+                "gone" if gone else "stopped",
+            )
     await db.commit()
     return result
 

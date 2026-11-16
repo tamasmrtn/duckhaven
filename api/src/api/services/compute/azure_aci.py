@@ -240,6 +240,12 @@ class AzureAciBackend:
         """
         return settings.elastic_azure_price_currency or None
 
+    async def list_stopped(self) -> set[str]:
+        """Instances that still exist but have stopped for good. Not detected on
+        ACI: a group's provisioning state does not say whether its container is
+        still running, so a stopped group is failed only once it is gone."""
+        return set()
+
     async def list_managed(self) -> set[str]:
         client, rg = self._client_and_rg()
 

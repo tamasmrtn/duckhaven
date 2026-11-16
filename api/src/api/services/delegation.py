@@ -70,6 +70,20 @@ def principals_for(db: AsyncSession, user_id: uuid.UUID) -> tuple[uuid.UUID, ...
     return (user_id,)
 
 
+def person_for(db: AsyncSession, user_id: uuid.UUID) -> uuid.UUID:
+    """The person a request by ``user_id`` is made for.
+
+    The delegator when ``user_id`` is the actor of the delegation bound to
+    ``db``, otherwise ``user_id``. For what is kept for a person to act on
+    later, such as a proposal they review: the assistant makes it, but it is
+    theirs.
+    """
+    delegation = bound(db)
+    if delegation is not None and delegation.actor_id == user_id:
+        return delegation.delegator_id
+    return user_id
+
+
 @contextlib.contextmanager
 def acting_for(
     db: AsyncSession, actor_id: uuid.UUID | None, delegator_id: uuid.UUID | None

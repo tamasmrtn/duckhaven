@@ -57,6 +57,7 @@ from api.schemas.dashboard import (
     RefOut,
 )
 from api.schemas.page import Page
+from api.services import delegation
 from api.services.dashboards import loader, proposals, store, validate
 from api.services.dashboards import run as run_service
 from api.services.dashboards.spec import (
@@ -1326,7 +1327,8 @@ async def create_dashboard_proposal(
     422 `invalid_dashboard` listing every problem. One the dashboard had already
     does not stop a proposal. A dashboard managed in git takes proposals, but
     they cannot be accepted here. Only you can read or decide a proposal, and it
-    expires after a day."""
+    expires after a day. One the assistant makes is the person's it acted for,
+    and the assistant cannot read or decide it."""
     row = await _dashboard(db, ctx, body.dashboard)
     newest, newest_text, _ = _shown(row, draft=True)
     base = _loaded(newest, newest_text)
@@ -1354,7 +1356,9 @@ async def create_dashboard_proposal(
     proposal = DashboardProposal(
         workspace_id=ctx.workspace.id,
         dashboard_id=row.id,
-        created_by=ctx.user.id,
+        # The assistant proposes with a token for its own account, acting for
+        # the person who asked; the proposal is that person's to decide.
+        created_by=delegation.person_for(db, ctx.user.id),
         summary=body.summary,
         operations=[op.model_dump(mode="json", exclude_none=True) for op in body.operations],
         base_version=row.version,

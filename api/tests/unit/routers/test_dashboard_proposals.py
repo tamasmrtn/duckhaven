@@ -13,6 +13,9 @@ from datetime import UTC, datetime, timedelta
 import sqlalchemy as sa
 
 from api.models.dashboard import DashboardProposal
+from api.models.user import Credential, User
+from api.models.workspace import Workspace, WorkspaceMember
+from api.services.auth import generate_pat, hash_token
 
 from . import test_dashboard_run as runs
 from .test_dashboard_run import _kpi, spec
@@ -253,6 +256,65 @@ async def test_only_its_person_can_read_or_decide_a_proposal(as_owner, ws, clien
 
     assert [r.status_code for r in other] == [404, 404, 404]
     assert [r.status_code for r in reader] == [403, 403]
+
+
+async def test_a_proposal_the_assistant_makes_is_the_persons_it_acted_for(
+    as_owner, ws, client, owner, db_session
+):
+    """The assistant proposes with a token for its own account, acting for the person
+    who asked. The person decides the proposal; the assistant cannot read it back."""
+    await _dashboard(as_owner, ws)
+    account = User(
+        email="assistant@service-account.local",
+        name="Assistant",
+        role="user",
+        auth_provider="service_account",
+    )
+    db_session.add(account)
+    await db_session.commit()
+    workspace = (
+        await db_session.execute(sa.select(Workspace).where(Workspace.slug == ws))
+    ).scalar_one()
+    db_session.add(WorkspaceMember(workspace_id=workspace.id, user_id=account.id, role="writer"))
+    token = generate_pat()
+    db_session.add(
+        Credential(
+            user_id=account.id,
+            on_behalf_of_id=owner.id,
+            kind="pat",
+            token_hash=hash_token(token),
+            expires_at=datetime.now(tz=UTC) + timedelta(minutes=5),
+        )
+    )
+    await db_session.commit()
+    assistant = {"Authorization": f"Bearer {token}"}
+
+    client.cookies.clear()
+    made = await client.post(
+        _proposals(ws),
+        json={"dashboard": NAME, "summary": "Add orders.", "operations": [ADD_ORDERS]},
+        headers=assistant,
+    )
+    assert made.status_code == 201, made.text
+    url = f"{_proposals(ws)}/{made.json()['id']}"
+    by_assistant = [
+        await client.get(url, headers=assistant),
+        await client.post(f"{url}/accept", headers=assistant),
+        await client.delete(url, headers=assistant),
+    ]
+
+    assert [r.status_code for r in by_assistant] == [404, 404, 404]
+    row = (
+        await db_session.execute(
+            sa.select(DashboardProposal).where(DashboardProposal.id == uuid.UUID(made.json()["id"]))
+        )
+    ).scalar_one()
+    assert row.created_by == owner.id
+    await client.post("/auth/login", json={"email": "owner@d.local", "password": "pw"})
+    assert (await client.get(url)).json()["status"] == "pending"
+    accepted = await client.post(f"{url}/accept")
+    assert accepted.status_code == 200, accepted.text
+    assert accepted.json()["spec_hash"] == made.json()["result_hash"]
 
 
 YAML = """\

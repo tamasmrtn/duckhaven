@@ -52,8 +52,10 @@ export function ProfilePanel({
     return <EmptyState message={noProfileMessage(error)} />;
   }
 
+  // One scroll for the whole panel, so a short results pane scrolls the
+  // summary away rather than leaving the tree no height at all.
   return (
-    <div className="flex h-full flex-col overflow-hidden">
+    <div className="h-full overflow-auto">
       {cached && (
         <div className="border-b border-[var(--border-subtle)] bg-accent px-4 py-1.5 text-2xs text-text-secondary">
           Served from the result cache: nothing ran for this query. This is the
@@ -71,15 +73,13 @@ export function ProfilePanel({
           — give it more memory or reduce intermediate result size.
         </div>
       )}
-      <div className="flex items-center gap-2 border-b border-[var(--border-subtle)] px-4 py-1 text-2xs uppercase tracking-wide text-text-tertiary">
+      <div className="sticky top-0 z-10 flex items-center gap-2 border-b border-[var(--border-subtle)] bg-[var(--bg-canvas)] px-4 py-1 text-2xs uppercase tracking-wide text-text-tertiary">
         <span className="flex-1">Operator</span>
         <span className="w-40 text-right">Rows (read → out)</span>
         <span className="w-16 text-right">Bytes</span>
         <span className="w-24 text-right">Time</span>
       </div>
-      <div className="flex-1 overflow-auto">
-        <ProfileTree tree={profile.tree} summary={profile.summary} />
-      </div>
+      <ProfileTree tree={profile.tree} summary={profile.summary} />
     </div>
   );
 }

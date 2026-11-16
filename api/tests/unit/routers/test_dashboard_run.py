@@ -829,11 +829,21 @@ async def test_closing_the_stream_cancels_the_queries_still_running(
     ws, agent, sessions, fake_polaris
 ):
     agent.hold = True
-    stream = run_service.stream(await _plan(sessions, ws, fake_polaris), sessions, fake_polaris)
+    run = await _plan(sessions, ws, fake_polaris)
+    stream = run_service.stream(run, sessions, fake_polaris)
     start = json.loads((await anext(stream)).removeprefix("data: "))
     assert start["type"] == "start"
+
+    def sent() -> set[str]:
+        frames = agent.of(FrameType.DISPATCH_BATCH)
+        return {q["query_id"] for f in frames for q in f["payload"]["queries"]}
+
+    # Closed once every query is running on the agent. Closed while the view's
+    # lanes are still dispatching, the test database's single write lock is
+    # held by the lanes being cancelled until their statements play out, and
+    # the cancel can wait past its timeout; Postgres has no such lock.
     async with asyncio.timeout(5):
-        while not agent.of(FrameType.DISPATCH_BATCH):
+        while len(sent()) < len(run.statements):
             await asyncio.sleep(0.01)
 
     await stream.aclose()
@@ -841,12 +851,8 @@ async def test_closing_the_stream_cancels_the_queries_still_running(
     async with sessions() as db:
         statuses = {q.status for q in (await db.scalars(sa.select(Query))).all()}
     assert statuses == {"cancelled"}
-    cancelled = {f["payload"]["query_id"] for f in agent.of(FrameType.CANCEL_QUERY)}
-    # Every query the agent holds is cancelled there; others never reached it.
-    sent = {
-        q["query_id"] for f in agent.of(FrameType.DISPATCH_BATCH) for q in f["payload"]["queries"]
-    }
-    assert sent <= cancelled
+    # Every query the agent holds is cancelled there.
+    assert {f["payload"]["query_id"] for f in agent.of(FrameType.CANCEL_QUERY)} == sent()
     agent.hold = False
 
 

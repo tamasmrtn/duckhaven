@@ -857,7 +857,8 @@ accepted:
 
 `DELETE …/dashboard-proposals/{dashboard_proposal_id}` discards it, and discarding it again changes nothing; one
 already accepted is a **409** `proposal_decided`. Only the person who made a proposal can read or decide it: to anyone
-else it is a **404**. Expired proposals are deleted when the next proposal is made.
+else it is a **404**. A proposal the assistant makes belongs to the person it acted for, so the assistant cannot read,
+accept or discard it. Expired proposals are deleted when the next proposal is made.
 
 The web app shows a proposal at `/{workspace}/dashboard-proposals/{dashboard_proposal_id}`, a page that runs its file
 as you before you decide.

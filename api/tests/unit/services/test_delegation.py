@@ -117,6 +117,16 @@ async def test_a_delegation_adds_the_person_to_checks_for_the_account_only(
     assert delegation.principals_for(db_session, account.id) == (account.id,)
 
 
+async def test_what_the_account_keeps_for_later_belongs_to_the_person(db_session, account, person):
+    someone_else = uuid.uuid4()
+    assert delegation.person_for(db_session, account.id) == account.id
+
+    _act_for(db_session, account, person)
+
+    assert delegation.person_for(db_session, account.id) == person.id
+    assert delegation.person_for(db_session, someone_else) == someone_else
+
+
 async def test_acting_for_restores_whatever_was_bound_before(db_session, account, person):
     earlier = Delegation(actor_id=account.id, delegator_id=uuid.uuid4())
     delegation.bind(db_session, earlier)

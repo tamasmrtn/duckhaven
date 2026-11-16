@@ -190,7 +190,8 @@ the reads name, and runs them one after another, each sized as a
 
 Each read stays its own query, with its own status, result and error; one that fails does not stop the rest.
 Cancelling a read skips it if it has not started and interrupts it if it has. A read whose worker cannot be stopped
-leaves the connection unusable, so the reads after it fail with `batch_aborted`. A batch holds one person's reads
+leaves the connection unusable, so the reads after it fail with `batch_aborted` without running; a
+[dashboard](dashboards.md) view sends each of them once more on its own. A batch holds one person's reads
 only. An agent that does not support batches gets the reads one at a time.
 
 A [dashboard](dashboards.md) view sends its reads as batches.

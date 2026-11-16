@@ -54,6 +54,10 @@ Opening a connection costs the agent more CPU than a typical widget's query, so 
 batch serves a view sooner than several, and an agent serves about twice as many views. An older agent gets the queries
 one at a time, at most 4 of them running at once. See [Configuration](../reference/configuration.md#dashboards).
 
+A read that leaves its connection unusable fails, and the agent skips the reads after it in that batch with
+`batch_aborted`. The view sends each skipped read once more, on its own, as a new query. History keeps the skipped run
+as it failed, beside the one that answered the widget. A read that fails a second time shows the error in its widget.
+
 When no compute is running, the queries wait for it as any query would, and the view says that compute is starting.
 With [elastic compute](../compute/elastic-compute.md) that starts an agent.
 

@@ -2,6 +2,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest
+import sqlalchemy as sa
 from conftest import seed_workspace
 
 from api.config import settings
@@ -269,6 +270,96 @@ async def test_a_provisioning_row_whose_instance_stopped_is_failed_at_once(
 
     assert reaped["dead_rows_failed"] == 1
     assert await _lifecycle(session_factory, aid) == "failed"
+
+
+async def _kill(null_backend, monkeypatch, instance_id: str) -> None:
+    """``instance_id`` is still listed, and has stopped for good."""
+    null_backend._instances.add(instance_id)
+
+    async def stopped() -> set[str]:
+        return {instance_id} & null_backend._instances
+
+    monkeypatch.setattr(null_backend, "list_stopped", stopped)
+
+
+async def test_a_dead_pool_agent_is_replaced_for_the_work_parked_behind_it(
+    session_factory, elastic_on, null_backend, monkeypatch
+):
+    # The agent died, and a view parked its runs: it still counted against the
+    # pool's cap, so the submit started nothing, and only a submit starts compute.
+    monkeypatch.setattr(settings, "elastic_idle_timeout_s", 900.0)
+    async with session_factory() as db:
+        ws, _ = await seed_workspace(db, user_id=uuid.uuid4())
+        dead = await _add_running_agent(
+            db, instance_id="dh-killed", last_active_s=10, provisioned_s=20
+        )
+        db.add(Query(workspace_id=ws.id, sql="SELECT 1", status="queued", origin="dashboard"))
+        await db.commit()
+        dead_id = dead.id
+    await _kill(null_backend, monkeypatch, "dh-killed")
+
+    reaped = await reaper.run_cycle(session_factory)
+
+    assert (reaped["dead_rows_failed"], reaped["dead_rows_replaced"]) == (1, 1)
+    async with session_factory() as db:
+        [replacement] = (
+            (await db.execute(sa.select(Agent).where(Agent.lifecycle == "provisioning")))
+            .scalars()
+            .all()
+        )
+    assert replacement.id != dead_id
+    assert replacement.pool_key == "object_store"
+
+
+async def test_a_dead_pool_agent_with_nothing_waiting_is_not_replaced(
+    session_factory, elastic_on, null_backend, monkeypatch
+):
+    monkeypatch.setattr(settings, "elastic_idle_timeout_s", 900.0)
+    async with session_factory() as db:
+        await _add_running_agent(db, instance_id="dh-killed", last_active_s=10, provisioned_s=20)
+        await db.commit()
+    await _kill(null_backend, monkeypatch, "dh-killed")
+
+    reaped = await reaper.run_cycle(session_factory)
+
+    assert (reaped["dead_rows_failed"], reaped["dead_rows_replaced"]) == (1, 0)
+    async with session_factory() as db:
+        starting = (
+            (await db.execute(sa.select(Agent).where(Agent.lifecycle == "provisioning")))
+            .scalars()
+            .all()
+        )
+    assert starting == []
+
+
+async def test_a_dead_workspace_default_is_restarted_for_the_work_parked_on_it(
+    session_factory, elastic_on, null_backend, monkeypatch
+):
+    monkeypatch.setattr(settings, "elastic_idle_timeout_s", 900.0)
+    async with session_factory() as db:
+        ws, _ = await seed_workspace(db, user_id=uuid.uuid4())
+        default = await _add_running_agent(
+            db, instance_id="dh-default-killed", last_active_s=10, provisioned_s=20
+        )
+        default.pool_key = None
+        ws.default_agent_id = default.id
+        db.add(
+            Query(
+                workspace_id=ws.id,
+                sql="SELECT 1",
+                status="queued",
+                requested_agent_id=default.id,
+            )
+        )
+        await db.commit()
+        default_id = default.id
+    await _kill(null_backend, monkeypatch, "dh-default-killed")
+
+    reaped = await reaper.run_cycle(session_factory)
+
+    assert (reaped["dead_rows_failed"], reaped["dead_rows_replaced"]) == (1, 1)
+    # Restarted in place: the same row, on a new instance.
+    assert await _lifecycle(session_factory, default_id) == "provisioning"
 
 
 async def test_run_tick_runs_when_leader(session_factory, null_backend):

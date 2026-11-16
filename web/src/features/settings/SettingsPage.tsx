@@ -21,6 +21,8 @@ import {
   useDeleteWorkspace,
 } from "@/queries/workspaces.mutations";
 import { ConfirmDropDialog } from "@/features/catalog/ConfirmDropDialog";
+import { TimeZoneSelect } from "./TimeZoneSelect";
+import { todayIn } from "./timeZones";
 
 export function SettingsPage() {
   const { ws } = useParams({ from: "/$ws/settings" });
@@ -125,6 +127,8 @@ function WorkspaceSettings({ ws }: { ws: string }) {
         </Button>
       </div>
 
+      <WorkspaceTimeZone ws={ws} isOwner={isOwner} />
+
       <div className="space-y-2 border-t border-[var(--border-subtle)] pt-6">
         <p className="text-sm font-medium text-text-primary">Result cache</p>
         <div className="flex items-start gap-2">
@@ -195,6 +199,51 @@ function WorkspaceSettings({ ws }: { ws: string }) {
           void navigate({ to: "/welcome" });
         }}
       />
+    </div>
+  );
+}
+
+function WorkspaceTimeZone({ ws, isOwner }: { ws: string; isOwner: boolean }) {
+  const { data: workspace } = useWorkspace(ws);
+  const update = useUpdateWorkspace(ws);
+  if (!workspace) return null;
+  const zone = workspace.timezone ?? "UTC";
+
+  async function change(timezone: string) {
+    try {
+      await update.mutateAsync({ timezone });
+      toast.success(`Time zone set to ${timezone}`);
+    } catch (err) {
+      toast.error(
+        err instanceof ApiError
+          ? err.message
+          : "Failed to update the time zone",
+      );
+    }
+  }
+
+  return (
+    <div className="space-y-2 border-t border-[var(--border-subtle)] pt-6">
+      <Label htmlFor="ws-timezone" className="text-sm font-medium">
+        Time zone
+      </Label>
+      <TimeZoneSelect
+        id="ws-timezone"
+        value={zone}
+        disabled={!isOwner || update.isPending}
+        onChange={(next) => void change(next)}
+      />
+      <p className="text-xs text-text-tertiary">
+        Today here is {todayIn(zone, new Date())}. Relative windows such as last
+        7 days or month to date start from this date, in metrics, dashboards and
+        the assistant. Schedules still run in UTC, and timestamps in results are
+        unchanged.
+      </p>
+      {!isOwner && (
+        <p className="text-xs text-text-tertiary">
+          Only a workspace owner can change the time zone.
+        </p>
+      )}
     </div>
   );
 }

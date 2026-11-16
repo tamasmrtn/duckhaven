@@ -569,6 +569,42 @@ describe("HistoryPage", () => {
     await waitFor(() => expect(calls).toBe(2));
   });
 
+  it("switches to the SQL sessions that ran statements, and back", async () => {
+    const { router } = renderWithProviders({
+      initialRoute: "/acme-analytics/history?user=all",
+    });
+    await screen.findByText(/raw\.users/);
+    const views = screen.getByRole("group", { name: "History view" });
+
+    await userEvent.click(
+      within(views).getByRole("button", { name: "Connections" }),
+    );
+
+    expect(router.state.location.search).toEqual({ view: "connections" });
+    expect(
+      await screen.findByRole("tab", { name: "Live" }),
+    ).toBeInTheDocument();
+    // Statement filters describe statements, not sessions.
+    expect(
+      screen.queryByRole("textbox", { name: "search SQL" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("group", { name: "filter by origin" }),
+    ).not.toBeInTheDocument();
+
+    await userEvent.click(
+      within(screen.getByRole("group", { name: "History view" })).getByRole(
+        "button",
+        { name: "Queries" },
+      ),
+    );
+
+    expect(router.state.location.search).toEqual({});
+    expect(
+      await screen.findByRole("textbox", { name: "search SQL" }),
+    ).toBeInTheDocument();
+  });
+
   it("keeps who and where in the header, apart from the query filters", async () => {
     renderWithProviders({ initialRoute: "/acme-analytics/history?user=all" });
     await screen.findByText(/raw\.users/);

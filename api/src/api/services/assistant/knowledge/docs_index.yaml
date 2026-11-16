@@ -91,8 +91,8 @@ pages:
 - path: querying/session-audit.md
   title: Read the session audit trail
   section: Querying
-  summary: Use the Connections screen to see which SQL sessions are holding agents, what a dbt or
-    dlt run did, and why a session ended.
+  summary: Use the Connections view of History to see which SQL sessions are holding agents, what
+    a dbt or dlt run did, and why a session ended.
 - path: querying/troubleshooting.md
   title: Troubleshoot queries
   section: Querying

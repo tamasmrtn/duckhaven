@@ -181,7 +181,7 @@ deployment that does not stage files; the Iceberg catalog and the object store d
 ## Audit and visibility
 
 Every session is recorded, and every statement it runs is a query tagged with its session, so a `dbt run` reads as one
-workload instead of hundreds of history entries. The **Connections** screen shows them; see
+workload instead of hundreds of history entries. The **Connections** view of **History** shows them; see
 [Read the session audit trail](session-audit.md).
 
 - **The client** is read from the `User-Agent` when the session opens, for example `dbt-duckhaven 0.5.0`, and each

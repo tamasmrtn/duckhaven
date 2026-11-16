@@ -8,7 +8,7 @@ Run a dbt project on DuckHaven with the `dbt-duckhaven` adapter, so models build
 
 The adapter reuses `dbt-duckdb`'s SQL and macros and changes only the connection: each dbt thread opens a
 [SQL session](sql-sessions.md) through the DuckHaven API, authenticates with a token, and every statement is checked and
-recorded like any other query. A run shows up on the **Connections** screen as one session per thread.
+recorded like any other query. A run shows up in the **Connections** view of **History** as one session per thread.
 
 ## Before you begin
 
@@ -127,7 +127,8 @@ SELECT * FROM sales.marts.customer_revenue ORDER BY revenue DESC;
 | acme | 2 | 162.25 |
 | globex | 1 | 75.50 |
 
-The run's sessions appear on the **Connections** screen with the client `dbt-duckhaven`, and each statement in History;
+The run's sessions appear in the **Connections** view of **History** with the client `dbt-duckhaven`, and each
+statement in History;
 see [Read the session audit trail](session-audit.md).
 
 ## What works

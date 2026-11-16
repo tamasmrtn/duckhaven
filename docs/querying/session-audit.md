@@ -4,8 +4,8 @@ type: how-to
 
 # Read the session audit trail
 
-Use the **Connections** screen to see which SQL sessions are holding agents, what a dbt or dlt run did, and why a
-session ended.
+Use the **Connections** view of **History** to see which SQL sessions are holding agents, what a dbt or dlt run did,
+and why a session ended.
 
 When dbt or dlt runs against DuckHaven it opens a [SQL session](sql-sessions.md) and runs many statements through it;
 one `dbt run` can be hundreds. Read one at a time in History they are noise. Read as one session they are a build you
@@ -15,11 +15,12 @@ can follow, time and attribute.
 
 - **You need:** membership of the workspace. Force-closing another member's session needs the `queries:admin`
   permission.
-- **Enabled by:** `SQL_SESSIONS_ENABLED=true`. Without it, the screen says "SQL connections are not enabled".
+- **Enabled by:** `SQL_SESSIONS_ENABLED=true`. Without it, the view says "SQL connections are not enabled".
 
 ## See which sessions are holding agents
 
-Open **Connections** in the left navigation. The **Live** tab lists sessions that are still open.
+Open **History** in the left navigation and choose **Connections** next to the title. The **Live** tab lists sessions
+that are still open.
 
 An open session holds memory on its agent for its whole life, not only while a statement runs. A forgotten dbt shell,
 or a client that crashed without closing, lowers how much work that agent accepts. If queries queue on an agent that

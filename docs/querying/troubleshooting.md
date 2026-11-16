@@ -203,8 +203,8 @@ not reuse object-store connections.
 ## "session is closed"
 
 **What it means.** The session ended, because the client closed it, it was idle or too old, or its agent
-disconnected, and the statement was refused (**409** `session_not_open`). The session's **Ended because** on the
-Connections screen says which.
+disconnected, and the statement was refused (**409** `session_not_open`). The session's **Ended because**, in the
+**Connections** view of **History**, says which.
 
 **What to do.** Open a new session. dbt and dlt do this on their next run.
 

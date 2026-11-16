@@ -26,7 +26,6 @@ import {
 } from "@/features/dashboards/params";
 import { SavedQueriesPage } from "@/features/saved-queries/SavedQueriesPage";
 import { SchedulesPage } from "@/features/schedules/SchedulesPage";
-import { SessionsPage } from "@/features/sessions/SessionsPage";
 import { SemanticPage } from "@/features/semantic/SemanticPage";
 import { SemanticModelDetail } from "@/features/semantic/SemanticModelDetail";
 import { SessionDetailPage } from "@/features/sessions/SessionDetailPage";
@@ -234,10 +233,17 @@ const schedulesRoute = createRoute({
   component: SchedulesPage,
 });
 
+// Connections is a view of History; the old address still lands there.
 const sessionsRoute = createRoute({
   getParentRoute: () => wsRoute,
   path: "/sessions",
-  component: SessionsPage,
+  beforeLoad: ({ params }) => {
+    throw redirect({
+      to: "/$ws/history",
+      params,
+      search: { view: "connections" },
+    });
+  },
 });
 
 const sessionDetailRoute = createRoute({

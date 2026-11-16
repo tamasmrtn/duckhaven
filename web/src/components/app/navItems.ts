@@ -25,6 +25,9 @@ export interface NavItem {
   // palette) but not shown in the icon-only rail — e.g. Settings, which
   // lives in the user menu instead.
   hiddenFromRail?: boolean;
+  // Other route segments that belong to this destination, so it stays marked
+  // as the current page on them.
+  alsoActiveOn?: string[];
 }
 
 export const navItems: NavItem[] = [
@@ -69,6 +72,9 @@ export const navItems: NavItem[] = [
     icon: Plug,
     label: "Connections",
     matchSegment: "sessions",
+    // A view of History (/sessions redirects there), so it has no rail entry
+    // of its own; the palette still finds it by name.
+    hiddenFromRail: true,
   },
   // Not admin-gated: a per-agent grant entitles its holder to that agent's
   // status and monitoring page without any global permission, and the page
@@ -84,6 +90,8 @@ export const navItems: NavItem[] = [
     icon: Clock,
     label: "History",
     matchSegment: "history",
+    // A connection's page and a query's profile are both reached from History.
+    alsoActiveOn: ["sessions", "queries"],
   },
   {
     segment: "health",

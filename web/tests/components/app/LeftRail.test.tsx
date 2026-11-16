@@ -71,6 +71,20 @@ describe('LeftRail active item', () => {
     expect(screen.getByRole('button', { name: 'Catalog' })).not.toHaveAttribute('aria-current')
   })
 
+  it('marks History on a connection and on a query profile', () => {
+    for (const path of ['/acme/sessions/sess-live', '/acme/queries/q-1']) {
+      route.pathname = path
+      const { unmount } = renderRail()
+      expect(screen.getByRole('button', { name: 'History' })).toHaveAttribute('aria-current', 'page')
+      unmount()
+    }
+  })
+
+  it('has no entry of its own for Connections, a view of History', () => {
+    renderRail()
+    expect(screen.queryByRole('button', { name: 'Connections' })).toBeNull()
+  })
+
   it('still marks a destination on its nested pages', () => {
     route.pathname = '/acme/catalog/tpch/sf10'
     renderRail()

@@ -6,9 +6,23 @@ import { renderWithProviders } from "@tests/utils";
 import { server } from "@tests/mock/server";
 import { CURRENT_USER } from "@/mock/fixtures/users";
 
-const ROUTE = "/acme-analytics/sessions";
+const ROUTE = "/acme-analytics/history?view=connections";
 
-describe("SessionsPage", () => {
+describe("ConnectionsView", () => {
+  it("is where the old Connections address lands", async () => {
+    const { router } = renderWithProviders({
+      initialRoute: "/acme-analytics/sessions",
+    });
+
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe("/acme-analytics/history"),
+    );
+    expect(router.state.location.search).toEqual({ view: "connections" });
+    expect(
+      await screen.findByRole("status", { name: "open" }),
+    ).toBeInTheDocument();
+  });
+
   it("shows only sessions still holding an agent slot on the Live tab", async () => {
     renderWithProviders({ initialRoute: ROUTE });
 

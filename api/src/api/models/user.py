@@ -26,6 +26,9 @@ class User(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     role: Mapped[str] = mapped_column(String(50), nullable=False, default="user")
     theme: Mapped[str] = mapped_column(String(50), nullable=False, default="system")
+    # How the main navigation is laid out: "expanded", "collapsed" or "hover".
+    # Null means the user never chose, so they get the app's default.
+    sidebar: Mapped[str | None] = mapped_column(String(20), nullable=True)
     # How this account authenticates: "local", "ldap", or "oidc:<provider id>" (a
     # bare "oidc" on rows from before providers were told apart). Guards against a
     # federated login binding to an account of another provider.

@@ -6,6 +6,7 @@ export const CURRENT_USER: User = {
   name: "Marton",
   role: "admin",
   theme: "system",
+  sidebar: null,
   auth_provider: "local",
   is_active: true,
   permissions: [
@@ -18,6 +19,23 @@ export const CURRENT_USER: User = {
   ],
   created_at: "2026-01-01T00:00:00Z",
 };
+
+// What PATCH /api/me has changed on the signed-in user since the last reset.
+let currentUserChanges: Partial<User> = {};
+
+/** The signed-in user as `/api/me` answers: the fixture plus saved preferences. */
+export function currentUser(): User {
+  return { ...CURRENT_USER, ...currentUserChanges };
+}
+
+export function updateCurrentUser(changes: Partial<User>): User {
+  currentUserChanges = { ...currentUserChanges, ...changes };
+  return currentUser();
+}
+
+export function resetUsers(): void {
+  currentUserChanges = {};
+}
 
 export const ALL_USERS: User[] = [
   CURRENT_USER,

@@ -6,6 +6,10 @@ finds the numbers in an answer that appear in no tool result and in nothing the
 person wrote, allowing for how numbers are written: rounding, thousands
 separators, percentages, and K, M and B for thousands, millions and billions.
 
+A difference of two numbers the answer gives, such as one row's lead over
+another, is not flagged: the reader can check it against the two beside it. Nor
+are the days of a month or a window's length, which say when, not how much.
+
 It flags and never edits. A number it flags may be right, worked out from ones a
 tool returned; the flag says only that no tool returned it, so a reader knows
 which figures to check.
@@ -17,6 +21,7 @@ import json
 import re
 from collections.abc import Iterable
 from decimal import Decimal, InvalidOperation
+from itertools import combinations
 
 from pydantic_ai.messages import ModelMessage, ModelRequest, ToolReturnPart, UserPromptPart
 
@@ -41,6 +46,23 @@ _WRITTEN = re.compile(
 # Any number inside text a tool returned or the person wrote, dates and windows
 # included: "15 Oct – 13 Nov 2026" holds 15, 13 and 2026.
 _ANY = re.compile(r"-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?")
+_MONTH = (
+    r"(?:january|february|march|april|may|june|july|august|september|october|november"
+    r"|december|jan|feb|mar|apr|jun|jul|aug|sept|sep|oct|nov|dec)\b\.?"
+)
+_DAY = r"\d{1,2}(?:st|nd|rd|th)?(?:\s?[-–]\s?\d{1,2}(?:st|nd|rd|th)?)?"
+_PERIOD = r"(?:hour|day|week|month|quarter|year)"
+#: A date written with its month's name, with its days and year if it has them:
+#: "1–31 October 2026", "Oct 3".
+DATES = rf"(?:\b{_DAY}\s+)?\b{_MONTH}(?:\s+{_DAY}\b)?(?:,?\s+\d{{4}}\b)?"
+# Numbers that say when rather than how much: dates, ordinals such as "the 31st",
+# and a window's length, "the last 90 days" or "a 28-day window".
+_WHEN = re.compile(
+    rf"{DATES}|\b\d{{1,2}}(?:st|nd|rd|th)\b"
+    rf"|\b(?:last|past|previous|prior|next|trailing|rolling)\s+\d+\s+{_PERIOD}s?\b"
+    rf"|\b\d+-{_PERIOD}\b",
+    re.IGNORECASE,
+)
 _MAX_FLAGGED = 10
 
 
@@ -51,8 +73,9 @@ def unsupported_numbers(answer: str, messages: Iterable[ModelMessage], *extra: s
     the model was shown, such as the page's parameter values.
     """
     known = _known(messages, extra)
-    flagged: list[str] = []
-    for match in _WRITTEN.finditer(_CODE.sub(" ", answer)):
+    unheld: list[tuple[str, list[tuple[Decimal, Decimal]]]] = []
+    given: list[Decimal] = []
+    for match in _WRITTEN.finditer(_WHEN.sub(" ", _CODE.sub(" ", answer))):
         digits, suffix = match.group(1).rstrip(","), (match.group(2) or "").strip().lower()
         try:
             value = Decimal(digits.replace(",", ""))
@@ -60,8 +83,15 @@ def unsupported_numbers(answer: str, messages: Iterable[ModelMessage], *extra: s
             continue
         if not suffix and value <= _TRIVIAL:
             continue
-        written = match.group(0).strip()
-        if written in flagged or _held(value, digits, suffix, known):
+        readings = _readings(value, digits, suffix)
+        if not _held(readings, known):
+            unheld.append((match.group(0).strip(), readings))
+        elif suffix != "%":
+            given.append(readings[0][0])
+    differences = [abs(a - b) for a, b in combinations(given, 2)]
+    flagged: list[str] = []
+    for written, readings in unheld:
+        if written in flagged or _held(readings, differences):
             continue
         flagged.append(written)
         if len(flagged) == _MAX_FLAGGED:
@@ -69,8 +99,16 @@ def unsupported_numbers(answer: str, messages: Iterable[ModelMessage], *extra: s
     return flagged
 
 
-def _held(value: Decimal, digits: str, suffix: str, known: list[Decimal]) -> bool:
-    """Whether a known number, rounded as the answer wrote it, gives ``value``."""
+def _held(readings: list[tuple[Decimal, Decimal]], known: list[Decimal]) -> bool:
+    """Whether a known number, rounded as the answer wrote it, gives a reading."""
+    # Rounding to the step shown, with slack for a model that rounded half the
+    # other way. A drop written as a positive number is still the same number.
+    return any(abs(abs(n) - r) <= s for r, s in readings for n in known)
+
+
+def _readings(value: Decimal, digits: str, suffix: str) -> list[tuple[Decimal, Decimal]]:
+    """What a number written as ``digits`` and ``suffix`` may stand for, each with
+    the step it was rounded to."""
     decimals = len(digits.partition(".")[2])
     step = Decimal(1).scaleb(-decimals)
     readings = []
@@ -82,9 +120,7 @@ def _held(value: Decimal, digits: str, suffix: str, known: list[Decimal]) -> boo
         readings.append((value * scale, step * scale))
     else:
         readings.append((value, step))
-    # Rounding to the step shown, with slack for a model that rounded half the
-    # other way. A drop written as a positive number is still the same number.
-    return any(abs(abs(n) - r) <= s for r, s in readings for n in known)
+    return readings
 
 
 def _known(messages: Iterable[ModelMessage], extra: Iterable[str]) -> list[Decimal]:

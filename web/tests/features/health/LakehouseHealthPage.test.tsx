@@ -10,7 +10,9 @@ describe('LakehouseHealthPage', () => {
   it('renders the workspace score, table list and recommendations', async () => {
     renderWithProviders({ initialRoute: HEALTH_ROUTE })
 
-    expect(await screen.findByText('Lakehouse health')).toBeInTheDocument()
+    expect(
+      await screen.findByRole('heading', { name: 'Lakehouse health', level: 1 }),
+    ).toBeInTheDocument()
 
     // The overall gauge and both scanned tables. The unhealthy table also
     // appears in the recommendation feed, so allow more than one match.

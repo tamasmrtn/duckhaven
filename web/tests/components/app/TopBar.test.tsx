@@ -27,3 +27,21 @@ describe('TopBar user menu accessible name', () => {
     expect(button).toHaveAttribute('aria-label', expect.stringMatching(/^Account menu, /))
   })
 })
+
+describe('TopBar navigation toggle', () => {
+  it('says whether the navigation is expanded, and flips it', async () => {
+    const user = userEvent.setup()
+    renderWithProviders({ initialRoute: ROUTE })
+    const toggle = await screen.findByRole('button', { name: 'Toggle navigation' })
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    expect(toggle).toHaveAttribute('aria-controls', 'main-navigation')
+
+    await user.click(toggle)
+
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.getByRole('navigation', { name: 'Main navigation' })).toHaveAttribute(
+      'data-mode',
+      'collapsed',
+    )
+  })
+})

@@ -26,25 +26,27 @@ import { useNavigate } from "@tanstack/react-router";
 import { useTheme } from "@/hooks/useTheme";
 import { useAssistant } from "@/features/assistant/AssistantContext";
 import { cn } from "@/utils";
-import { navItems } from "./navItems";
+import type { ReactNode } from "react";
+// The Settings item's icon/label come from navItems.ts (its single source of
+// truth), even though it renders here in the user menu rather than the
+// navigation — see navItems.ts's hiddenFromRail comment.
+import { settingsItem } from "./navItems";
 import { StorageIcon } from "./StorageIcon";
 import type { Workspace } from "@/types/workspace";
-
-// The Settings item's icon/label come from navItems.ts (its single source of
-// truth), even though it renders here in the user menu rather than the rail —
-// see navItems.ts's hiddenFromRail comment.
-const settingsItem = navItems.find((item) => item.segment === "settings")!;
 
 interface TopBarProps {
   workspace?: Workspace;
   onWorkspaceSwitcher: () => void;
   onCommandPalette: () => void;
+  /** The navigation's toggle, or its drawer button on a phone. */
+  leading?: ReactNode;
 }
 
 export function TopBar({
   workspace,
   onWorkspaceSwitcher,
   onCommandPalette,
+  leading,
 }: TopBarProps) {
   const { data: me } = useMe();
   const logout = useLogout();
@@ -59,7 +61,9 @@ export function TopBar({
   };
 
   return (
-    <header className="flex h-12 items-center gap-2 border-b border-[var(--border-subtle)] bg-[var(--bg-surface)] px-4 shrink-0">
+    // pl-2.5 centres the 28px toggle over the 48px collapsed rail.
+    <header className="flex h-12 items-center gap-2 border-b border-[var(--border-subtle)] bg-[var(--bg-surface)] pl-2.5 pr-4 shrink-0">
+      {leading}
       {/* Duck mark + workspace switcher */}
       <button
         type="button"

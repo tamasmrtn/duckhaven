@@ -21,6 +21,8 @@ import {
   Table2,
   Layers,
   Bookmark as SavedQueryIcon,
+  LayoutDashboard as DashboardIcon,
+  Ruler as ModelIcon,
   Clock,
 } from "lucide-react";
 import { useWorkspaces } from "@/queries/workspaces";
@@ -104,6 +106,8 @@ export function CommandPalette({
     (r): r is SearchResult & { type: "table" } => r.type === "table",
   );
   const savedQueryResults = results.filter((r) => r.type === "saved_query");
+  const dashboardResults = results.filter((r) => r.type === "dashboard");
+  const modelResults = results.filter((r) => r.type === "semantic_model");
   const recent =
     currentWs && !searching
       ? getRecentlyViewed(currentWs).filter(isRoutableEntry)
@@ -118,7 +122,7 @@ export function CommandPalette({
         <DialogHeader className="sr-only">
           <DialogTitle>Command palette</DialogTitle>
           <DialogDescription>
-            Search commands, workspaces, and tables.
+            Search commands, workspaces, tables, dashboards and models.
           </DialogDescription>
         </DialogHeader>
         <Command className="rounded-lg" shouldFilter={false}>
@@ -225,6 +229,52 @@ export function CommandPalette({
                   >
                     <SavedQueryIcon className="size-4 text-text-secondary" />
                     <span className="truncate">{r.name}</span>
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            )}
+
+            {dashboardResults.length > 0 && (
+              <CommandGroup heading="Dashboards">
+                {dashboardResults.map((r) => (
+                  <CommandItem
+                    key={`dashboard-${r.name}`}
+                    value={`dashboard ${r.name}`}
+                    onSelect={() =>
+                      go(
+                        `/${encodeURIComponent(currentWs!)}/dashboards/${encodeURIComponent(r.name)}`,
+                      )
+                    }
+                    className="gap-2"
+                  >
+                    <DashboardIcon className="size-4 text-text-secondary" />
+                    <span className="truncate">{r.title ?? r.name}</span>
+                    <span className="ml-auto truncate text-2xs text-text-tertiary">
+                      {r.name}
+                    </span>
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            )}
+
+            {modelResults.length > 0 && (
+              <CommandGroup heading="Semantic models">
+                {modelResults.map((r) => (
+                  <CommandItem
+                    key={`semantic-model-${r.name}`}
+                    value={`semantic model ${r.name}`}
+                    onSelect={() =>
+                      go(
+                        `/${encodeURIComponent(currentWs!)}/semantic/${encodeURIComponent(r.name)}`,
+                      )
+                    }
+                    className="gap-2"
+                  >
+                    <ModelIcon className="size-4 text-text-secondary" />
+                    <span className="truncate">{r.title ?? r.name}</span>
+                    <span className="ml-auto truncate text-2xs text-text-tertiary">
+                      {r.name}
+                    </span>
                   </CommandItem>
                 ))}
               </CommandGroup>

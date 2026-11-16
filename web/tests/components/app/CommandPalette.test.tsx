@@ -80,6 +80,40 @@ describe('CommandPalette', () => {
     )
   })
 
+  it('finds a dashboard by its title and opens it', async () => {
+    const { router } = renderWithProviders({ initialRoute: WS_ROUTE })
+    const dialog = await openPalette()
+    const input = within(dialog).getByPlaceholderText(/search commands/i)
+
+    await userEvent.type(input, 'sales overview')
+    const group = (await within(dialog).findByText('Dashboards')).closest(
+      '[cmdk-group]',
+    ) as HTMLElement
+    await userEvent.click(within(group).getByText('Sales overview'))
+
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe(
+        '/acme-analytics/dashboards/sales-overview',
+      ),
+    )
+  })
+
+  it('finds a semantic model by its name and opens it by slug', async () => {
+    const { router } = renderWithProviders({ initialRoute: WS_ROUTE })
+    const dialog = await openPalette()
+    const input = within(dialog).getByPlaceholderText(/search commands/i)
+
+    await userEvent.type(input, 'sales')
+    const group = (await within(dialog).findByText('Semantic models')).closest(
+      '[cmdk-group]',
+    ) as HTMLElement
+    await userEvent.click(within(group).getByText('Sales'))
+
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe('/acme-analytics/semantic/sales'),
+    )
+  })
+
   it('shows recently viewed objects for an empty query', async () => {
     recordRecentlyViewed('acme-analytics', {
       type: 'table',

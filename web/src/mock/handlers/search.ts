@@ -6,6 +6,8 @@ import {
   defaultCatalogSlug,
 } from "../fixtures/catalogs";
 import { SAVED_QUERIES } from "../fixtures/queries";
+import { DASHBOARDS } from "../fixtures/dashboards";
+import { SEMANTIC_MODELS } from "../fixtures/semantic";
 import { findWorkspace } from "../fixtures/workspaces";
 import { httpError } from "../lib/errors";
 import type { SearchResult } from "@/types/search";
@@ -22,11 +24,57 @@ export const searchHandlers = [
     const wanted = new Set(
       requested.length
         ? requested
-        : ["catalog", "schema", "table", "saved_query"],
+        : [
+            "catalog",
+            "schema",
+            "table",
+            "saved_query",
+            "dashboard",
+            "semantic_model",
+          ],
     );
     const limit = Number(url.searchParams.get("limit") ?? 20);
 
+    // The workspace's own objects first, as the server orders them, so many
+    // table matches cannot push them past the limit.
     const results: SearchResult[] = [];
+    for (const sq of SAVED_QUERIES) {
+      if (!wanted.has("saved_query")) break;
+      if (sq.workspace_id === ws.id && sq.name.toLowerCase().includes(needle)) {
+        results.push({
+          type: "saved_query",
+          name: sq.name,
+          id: sq.id,
+          sql: sq.sql,
+          default_agent_id: sq.default_agent_id,
+        });
+      }
+    }
+    // Scoped as their own list handlers scope them: dashboards to ws-1, models
+    // to every workspace.
+    const dashboards =
+      wanted.has("dashboard") && ws.id === "ws-1" ? DASHBOARDS : [];
+    for (const d of dashboards) {
+      if (`${d.name} ${d.title}`.toLowerCase().includes(needle)) {
+        results.push({
+          type: "dashboard",
+          name: d.name,
+          title: d.title,
+          id: d.id,
+        });
+      }
+    }
+    for (const m of wanted.has("semantic_model") ? SEMANTIC_MODELS : []) {
+      if (`${m.slug} ${m.name}`.toLowerCase().includes(needle)) {
+        results.push({
+          type: "semantic_model",
+          name: m.slug,
+          title: m.name,
+          id: m.id,
+        });
+      }
+    }
+
     const def = defaultCatalogSlug(ws.id);
 
     const catalogStores: { slug: string; list: (typeof SCHEMAS)[string] }[] = [
@@ -60,19 +108,6 @@ export const searchHandlers = [
             });
           }
         }
-      }
-    }
-
-    for (const sq of SAVED_QUERIES) {
-      if (!wanted.has("saved_query")) break;
-      if (sq.workspace_id === ws.id && sq.name.toLowerCase().includes(needle)) {
-        results.push({
-          type: "saved_query",
-          name: sq.name,
-          id: sq.id,
-          sql: sq.sql,
-          default_agent_id: sq.default_agent_id,
-        });
       }
     }
 

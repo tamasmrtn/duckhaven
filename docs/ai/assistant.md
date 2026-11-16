@@ -226,8 +226,8 @@ answer, and product questions it answered without consulting anything. The
 [`assistant-mine-feedback.py`](../reference/operator-scripts.md#assistant-mine-feedbackpy)
 operator script collects those and drafts them as test cases for a person to review.
 
-It is a script an operator runs rather than an automatic loop, because DuckHaven records what the assistant *did*,
-not whether you were satisfied with it.
+It is a script, not an automatic loop, because DuckHaven records what the assistant *did*, not whether you were
+satisfied with it.
 
 ## Semantic grounding
 
@@ -237,7 +237,7 @@ the correct date column come from what the organization agreed rather than from 
 
 Free SQL is still available and still right for anything the semantic models do not cover. It is not blocked when a
 metric exists, but bypassing one is [flagged and recorded](../metadata/semantic-layer.md#how-the-assistant-uses-it), so
-how often the agreed definitions get worked around is a number you can look at rather than a hope.
+you can see how often agreed definitions are worked around.
 
 ## Dashboards and charts
 
@@ -266,8 +266,8 @@ puts it [on a dashboard](../querying/dashboards.md#adding-a-chart-from-the-assis
 new draft.
 
 Under an answer, the panel lists numbers no tool returned and you did not write (`unsupported_numbers` in the `done`
-frame), allowing for rounding, percentages and K, M or B. The answer is never edited: a listed number may be right,
-and the list says which figures to check.
+frame), allowing for rounding, percentages and K, M or B, and leaving out dates, window lengths and gaps between two
+numbers it gives. The answer is never edited: a listed number may be right, and the list says which figures to check.
 
 ## Related
 

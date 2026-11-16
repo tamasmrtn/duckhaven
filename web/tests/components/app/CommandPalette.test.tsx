@@ -34,6 +34,49 @@ describe('CommandPalette', () => {
     )
   })
 
+  it('lists pages in the navigation\'s order, with Settings and Connections too', async () => {
+    renderWithProviders({ initialRoute: WS_ROUTE })
+    await screen.findByText('events.sql')
+    const dialog = await openPalette()
+
+    const group = (await within(dialog).findByText('Navigate')).closest(
+      '[cmdk-group]',
+    ) as HTMLElement
+    await within(group).findByText('Admin')
+
+    expect(
+      within(group)
+        .getAllByRole('option')
+        .map((o) => o.textContent),
+    ).toEqual([
+      'Worksheets',
+      'Saved queries',
+      'Schedules',
+      'History',
+      'Connections',
+      'Catalog',
+      'Lakehouse health',
+      'Dashboards',
+      'Semantic models',
+      'Compute',
+      'Admin',
+      'Settings',
+    ])
+  })
+
+  it('opens Connections as the view of History it is', async () => {
+    const { router } = renderWithProviders({ initialRoute: WS_ROUTE })
+    await screen.findByText('events.sql')
+    const dialog = await openPalette()
+
+    await userEvent.click(await within(dialog).findByText('Connections'))
+
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe('/acme-analytics/history'),
+    )
+    expect(router.state.location.search).toEqual({ view: 'connections' })
+  })
+
   it('does not search until at least 2 characters are typed', async () => {
     renderWithProviders({ initialRoute: WS_ROUTE })
     const dialog = await openPalette()

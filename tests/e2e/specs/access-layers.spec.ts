@@ -164,10 +164,11 @@ test("layer 1 — a non-admin cannot reach the admin area", async () => {
   await expect(
     memberPage.getByRole("button", { name: "Storage backends" }),
   ).toHaveCount(0);
-  // ...and the Admin nav entry is absent for them.
-  await expect(
-    memberPage.getByRole("button", { name: "Admin", exact: true }),
-  ).toHaveCount(0);
+  // ...and the Admin nav entry is absent for them, in a navigation that is
+  // otherwise there.
+  const nav = memberPage.getByRole("navigation", { name: "Main navigation" });
+  await expect(nav.getByRole("link", { name: "Compute" })).toBeVisible();
+  await expect(nav.getByRole("link", { name: "Admin", exact: true })).toHaveCount(0);
 
   // Server-side: the admin API is 403 for the member.
   const member = await apiLogin(MEMBER_EMAIL, MEMBER_PW);

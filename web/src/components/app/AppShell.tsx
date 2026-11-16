@@ -7,17 +7,21 @@ import {
 } from "@/features/assistant/AssistantContext";
 import { AssistantPanel } from "@/features/assistant/AssistantPanel";
 import { ThemeProvider } from "@/hooks/useTheme";
+import { NavModeProvider, useNavMode } from "@/hooks/useNavMode";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { TopBar } from "./TopBar";
-import { LeftRail } from "./LeftRail";
+import { MainNav, MobileNav, NavToggle } from "./MainNav";
 import { WorkspaceSwitcher } from "./WorkspaceSwitcher";
 import { CommandPalette } from "./CommandPalette";
 
 export function AppShell() {
   return (
     <ThemeProvider>
-      <AssistantProvider>
-        <AppShellInner />
-      </AssistantProvider>
+      <NavModeProvider>
+        <AssistantProvider>
+          <AppShellInner />
+        </AssistantProvider>
+      </NavModeProvider>
     </ThemeProvider>
   );
 }
@@ -29,6 +33,9 @@ function AppShellInner() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const mainRef = useRef<HTMLElement>(null);
   const { open: assistantOpen, toggle: toggleAssistant } = useAssistant();
+  const { toggle: toggleNav } = useNavMode();
+  // Below 768px the navigation is a drawer, and the saved layout waits.
+  const isMobile = useMediaQuery("(max-width: 767px)");
   const [panelWidth, setPanelWidth] = useState(400);
   const draggingPanel = useRef(false);
 
@@ -49,10 +56,21 @@ function AppShellInner() {
         e.preventDefault();
         toggleAssistant();
       }
+      // Cmd/Ctrl+B expands or collapses the navigation, as in most editors.
+      if (
+        mod &&
+        !e.altKey &&
+        !e.shiftKey &&
+        e.key.toLowerCase() === "b" &&
+        !isMobile
+      ) {
+        e.preventDefault();
+        if (!e.repeat) toggleNav();
+      }
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [toggleAssistant]);
+  }, [toggleAssistant, toggleNav, isMobile]);
 
   const onPanelDragStart = useCallback(
     (e: React.MouseEvent) => {
@@ -79,9 +97,9 @@ function AppShellInner() {
 
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-[var(--bg-canvas)]">
-      {/* First tab stop: skips the top bar and rail's ~14 controls. A plain
-          anchor would add a history entry under the router, so focus the
-          landmark directly. */}
+      {/* First tab stop: skips the top bar's and navigation's ~16 controls.
+          A plain anchor would add a history entry under the router, so focus
+          the landmark directly. */}
       <a
         href="#main-content"
         onClick={(e) => {
@@ -96,14 +114,17 @@ function AppShellInner() {
         workspace={workspace}
         onWorkspaceSwitcher={() => setSwitcherOpen(true)}
         onCommandPalette={() => setPaletteOpen(true)}
+        leading={isMobile ? <MobileNav ws={ws} /> : <NavToggle />}
       />
       <div className="flex flex-1 overflow-hidden">
-        <LeftRail ws={ws} />
+        {!isMobile && <MainNav ws={ws} />}
+        {/* isolate: the page's own layers (the editor's widgets reach z-50)
+            stay below the navigation when it opens over the page. */}
         <main
           id="main-content"
           ref={mainRef}
           tabIndex={-1}
-          className="flex flex-1 flex-col overflow-hidden focus:outline-none"
+          className="isolate flex flex-1 flex-col overflow-hidden focus:outline-none"
         >
           <Outlet />
         </main>

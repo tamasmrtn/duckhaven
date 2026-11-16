@@ -62,8 +62,8 @@ describe("AdminLayout access gate", () => {
     renderWithProviders({ initialRoute: ADMIN_ROUTE });
     await screen.findByRole("button", { name: "Catalog access" });
 
-    // Scoped to the admin tab bar: the left rail legitimately still has a
-    // Compute button, which is the whole point of the move.
+    // Scoped to the admin tab bar: the main navigation legitimately still has
+    // a Compute link, which is the whole point of the move.
     const tabs = within(
       screen.getByRole("navigation", { name: "Admin sections" }),
     );
@@ -73,7 +73,11 @@ describe("AdminLayout access gate", () => {
     expect(
       tabs.queryByRole("button", { name: "Compute" }),
     ).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Compute" })).toBeInTheDocument();
+    expect(
+      within(
+        screen.getByRole("navigation", { name: "Main navigation" }),
+      ).getByRole("link", { name: "Compute" }),
+    ).toBeInTheDocument();
   });
 
   it("still blocks a user holding no global permission", async () => {

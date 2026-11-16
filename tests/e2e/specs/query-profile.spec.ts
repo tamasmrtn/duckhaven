@@ -70,7 +70,10 @@ test("clicking a history row opens the dedicated query-profile page", async ({
   await worksheetPage.run(HEAVY_SQL);
 
   // Navigate to History and click the most recent row.
-  await page.getByRole("button", { name: "History" }).click();
+  await page
+    .getByRole("navigation", { name: "Main navigation" })
+    .getByRole("link", { name: "History" })
+    .click();
   await expect(page).toHaveURL(/\/history/);
   await page.locator("table tbody tr").first().click();
 

@@ -21,6 +21,7 @@ import { resetLineage } from "./fixtures/lineage";
 import { resetSemantic } from "./fixtures/semantic";
 import { resetWorksheets } from "./fixtures/worksheets";
 import { resetDashboards } from "./fixtures/dashboards";
+import { resetUsers } from "./fixtures/users";
 import { resetLiveQueries } from "./handlers/queries";
 import { resetSeed } from "./lib/seed";
 
@@ -43,6 +44,7 @@ export function resetMockState(): void {
   resetSemantic();
   resetWorksheets();
   resetDashboards();
+  resetUsers();
   resetLiveQueries();
   resetSeed();
 }

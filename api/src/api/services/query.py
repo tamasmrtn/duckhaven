@@ -1150,6 +1150,7 @@ async def _auto_pick(
     *,
     principal_id: uuid.UUID | None = None,
     for_session: bool = False,
+    catalogs: list[Catalog] | None = None,
 ) -> Agent | None:
     """A connected agent whose capabilities support *every* backend kind across
     the workspace's catalogs (all are attached on each query).
@@ -1169,7 +1170,8 @@ async def _auto_pick(
     connected = await connected_agent_ids(db)
     if not connected:
         return None
-    catalogs = await resolve_workspace_catalogs(db, workspace.id)
+    if catalogs is None:
+        catalogs = await resolve_workspace_catalogs(db, workspace.id)
     # The agent needs the extensions for every catalog's kind *and* backend.
     pairs = {(c.kind, c.storage_backend.kind) for c in catalogs} or {
         ("iceberg_polaris", "object_store")
@@ -1258,6 +1260,7 @@ async def resolve_compute(
     allow_scale_out: bool = True,
     allow_start: bool = True,
     honor_default: bool = True,
+    catalogs: list[Catalog] | None = None,
 ) -> ComputeDecision:
     """Decide where work that named no agent runs. Read-only: nothing is started.
 
@@ -1274,7 +1277,8 @@ async def resolve_compute(
     ``allow_scale_out=False`` is for callers that must never add an agent (the
     assistant). ``allow_start=False`` is for background reads that should fail
     rather than wake compute. ``honor_default=False`` is for housekeeping that has
-    no principal to embed a grant for.
+    no principal to embed a grant for. ``catalogs``, the workspace's, saves looking
+    them up again for a caller that already has them.
     """
     from api.config import settings
 
@@ -1284,7 +1288,9 @@ async def resolve_compute(
         else None
     )
     if default is None:
-        agent = await _auto_pick(db, workspace, principal_id=principal_id, for_session=for_session)
+        agent = await _auto_pick(
+            db, workspace, principal_id=principal_id, for_session=for_session, catalogs=catalogs
+        )
         if agent is not None:
             return ComputeDecision(Placement.USE, agent)
         if settings.elastic_compute_enabled and allow_scale_out and allow_start:
@@ -1297,7 +1303,8 @@ async def resolve_compute(
         )
 
     if await is_agent_connected(db, default.id):
-        catalogs = await resolve_workspace_catalogs(db, workspace.id)
+        if catalogs is None:
+            catalogs = await resolve_workspace_catalogs(db, workspace.id)
         try:
             await runtime_service.check_dispatchable(default, catalogs, for_session=for_session)
         except runtime_service.AgentNotDispatchable as exc:

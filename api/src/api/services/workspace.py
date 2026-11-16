@@ -379,7 +379,10 @@ async def resolve_workspace_catalogs(db: AsyncSession, workspace_id: uuid.UUID) 
 
 
 async def get_default_catalog(db: AsyncSession, workspace_id: uuid.UUID) -> Catalog | None:
-    """The workspace's default catalog (the one `USE`d for unqualified names)."""
+    """The workspace's default catalog (the one `USE`d for unqualified names).
+
+    Joined, as in :func:`resolve_workspace_catalogs`: every submitted query looks
+    it up, and select-in loading cost two more statements each time."""
     row = await db.execute(
         select(Catalog)
         .join(WorkspaceCatalog, WorkspaceCatalog.catalog_id == Catalog.id)
@@ -387,7 +390,7 @@ async def get_default_catalog(db: AsyncSession, workspace_id: uuid.UUID) -> Cata
             WorkspaceCatalog.workspace_id == workspace_id,
             WorkspaceCatalog.is_default.is_(True),
         )
-        .options(selectinload(Catalog.storage_backend), selectinload(Catalog.ducklake_credential))
+        .options(joinedload(Catalog.storage_backend), joinedload(Catalog.ducklake_credential))
     )
     return row.scalar_one_or_none()
 

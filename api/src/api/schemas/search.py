@@ -13,10 +13,13 @@ class SearchResultOut(BaseModel):
     separate routable id; a catalog result carries its slug in both `name` and
     `catalog`); saved queries carry their real id plus
     enough to seed a worksheet tab the same way SavedQueriesPage does.
+    Dashboards and semantic models carry the key their page is addressed by in
+    `name` (a dashboard's name, a model's slug) and the label to show in `title`.
     """
 
-    type: Literal["catalog", "schema", "table", "saved_query"]
+    type: Literal["catalog", "schema", "table", "saved_query", "dashboard", "semantic_model"]
     name: str
+    title: str | None = None
     catalog: str | None = None
     schema_name: str | None = None
     id: uuid.UUID | None = None

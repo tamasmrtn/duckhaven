@@ -2,7 +2,7 @@
 
 Unit tests (api/tests/unit/routers/test_search.py) cover permission
 boundaries against FakePolaris; this exercises the real fan-out over a live
-Polaris catalog plus a real saved-query row, end to end.
+Polaris catalog plus real saved-query and dashboard rows, end to end.
 """
 
 from __future__ import annotations
@@ -60,6 +60,30 @@ async def test_search_matches_table_schema_and_saved_query(admin_client, workspa
 
     schema_results = [r for r in results if r["type"] == "schema"]
     assert not schema_results  # "lead" doesn't match "marketing" or "analytics"
+
+
+async def test_search_matches_a_dashboard_by_title(admin_client, workspace) -> None:
+    workspace_slug, _ = workspace
+    created = await admin_client.post(
+        f"/workspaces/{workspace_slug}/dashboards",
+        json={
+            "spec": {
+                "version": 1,
+                "name": "pipeline-board",
+                "title": "Lead pipeline",
+                "rows": [{"widgets": [{"id": "notes", "type": "text", "markdown": "Leads."}]}],
+            }
+        },
+    )
+    assert created.status_code == 201, created.text
+
+    results = (
+        await admin_client.get(
+            f"/workspaces/{workspace_slug}/search", params={"q": "pipeline", "types": "dashboard"}
+        )
+    ).json()["items"]
+
+    assert [(r["name"], r["title"]) for r in results] == [("pipeline-board", "Lead pipeline")]
 
 
 async def test_search_endpoint_requires_auth(app_client, workspace) -> None:

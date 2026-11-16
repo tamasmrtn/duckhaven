@@ -22,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import uuid
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 
@@ -38,9 +39,16 @@ from api.metrics import (
 from api.models.agent import Agent
 from api.models.query import Query
 from api.models.sql_session import SqlSession
+from api.models.workspace import Workspace
 from api.services.agent_telemetry import record_lifecycle_event
 from api.services.compute.backends import get_backend
-from api.services.compute.service import revoke_bootstrap_credentials, terminate_agent
+from api.services.compute.service import (
+    ensure_agent,
+    resolve_pool_key,
+    restart_elastic_agent,
+    revoke_bootstrap_credentials,
+    terminate_agent,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +59,8 @@ _REAPER_LOCK_KEY = 0x64687363 + 0x100
 _ACTIVE_LIFECYCLE = ("provisioning", "running")
 _QUERY_IN_FLIGHT = ("queued", "running")
 _SESSION_OPEN = ("pending", "opening", "open", "closing")
+# The origins of runs parked for the elastic pool (compute.service.bind_queued_work).
+_POOL_ORIGINS = ("elastic", "dashboard", "describe")
 
 
 def _aware(value: datetime) -> datetime:
@@ -280,6 +290,7 @@ async def _reconcile_leaks(db: AsyncSession, provider: str) -> dict[str, int]:
         "dead_rows_failed": 0,
         "terminations_retried": 0,
         "terminations_completed": 0,
+        "dead_rows_replaced": 0,
     }
     backend = get_backend(provider)
     live = await backend.list_managed()
@@ -332,6 +343,7 @@ async def _reconcile_leaks(db: AsyncSession, provider: str) -> dict[str, int]:
     # had an instance, so if it is missing now it really is gone, whatever its age; and
     # _reap_lifecycle fails a provisioning row once the deadline passes anyway.
     settle_cutoff = now - timedelta(seconds=settings.elastic_provisioning_deadline_s)
+    died: list[Agent] = []
     for agent in rows:
         # Finish a termination that was interrupted. terminate_agent commits
         # "terminating", then calls the backend and closes the socket before
@@ -364,6 +376,7 @@ async def _reconcile_leaks(db: AsyncSession, provider: str) -> dict[str, int]:
             agent.terminated_at = now
             record_lifecycle_event(db, agent.id, "failed", reason="dead_row")
             result["dead_rows_failed"] += 1
+            died.append(agent)
             logger.warning(
                 "Failed agent %s: backing instance %s %s",
                 agent.id,
@@ -371,7 +384,64 @@ async def _reconcile_leaks(db: AsyncSession, provider: str) -> dict[str, int]:
                 "gone" if gone else "stopped",
             )
     await db.commit()
+    for agent in died:
+        try:
+            if await _replace_for_parked_work(db, agent):
+                result["dead_rows_replaced"] += 1
+        except Exception:
+            # The parked work still fails at its own budget, as it did before.
+            logger.exception("Could not replace dead agent %s for its parked work", agent.id)
     return result
+
+
+async def _replace_for_parked_work(db: AsyncSession, agent: Agent) -> bool:
+    """Start compute again for work left waiting on ``agent``, which just died.
+
+    Work that finds no agent parks until one registers, and only a submit starts
+    one. An agent that died with work parked on it, or that still counted against
+    its pool's cap when a cold start parked behind it, was replaced by nobody: the
+    work waited out its budget and failed. A pool agent is replaced through
+    ``ensure_agent``, which starts nothing while its pool has supply; a named agent,
+    such as a workspace default, is restarted. True when compute was started.
+    """
+    if agent.pool_key is None:
+        if not await _has_work_parked_on(db, agent.id):
+            return False
+        return await restart_elastic_agent(db, agent) is not None
+
+    parked = await db.execute(
+        sa.select(Query.workspace_id)
+        .where(
+            Query.agent_id.is_(None),
+            Query.requested_agent_id.is_(None),
+            Query.origin.in_(_POOL_ORIGINS),
+            Query.status == "queued",
+        )
+        .union(
+            sa.select(SqlSession.workspace_id).where(
+                SqlSession.agent_id.is_(None),
+                SqlSession.requested_agent_id.is_(None),
+                SqlSession.status == "pending",
+            )
+        )
+    )
+    for workspace_id in parked.scalars().all():
+        workspace = await db.get(Workspace, workspace_id)
+        if workspace is not None and await resolve_pool_key(db, workspace) == agent.pool_key:
+            return await ensure_agent(db, agent.pool_key) is not None
+    return False
+
+
+async def _has_work_parked_on(db: AsyncSession, agent_id: uuid.UUID) -> bool:
+    queued = sa.select(Query.id).where(
+        Query.requested_agent_id == agent_id, Query.status == "queued"
+    )
+    pending = sa.select(SqlSession.id).where(
+        SqlSession.requested_agent_id == agent_id, SqlSession.status == "pending"
+    )
+    return bool(
+        (await db.execute(sa.select(sa.or_(sa.exists(queued), sa.exists(pending))))).scalar()
+    )
 
 
 async def _providers_to_reconcile(db: AsyncSession) -> list[str]:
@@ -407,6 +477,7 @@ async def run_cycle(session_factory: async_sessionmaker[AsyncSession]) -> dict[s
             "dead_rows_failed": 0,
             "terminations_retried": 0,
             "terminations_completed": 0,
+            "dead_rows_replaced": 0,
         }
         for provider in await _providers_to_reconcile(db):
             try:

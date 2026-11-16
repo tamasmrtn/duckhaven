@@ -2,6 +2,7 @@
  * Phone-width layouts. At 360px the catalog's 280px tree left its detail pane a
  * ~30px sliver, and the worksheet toolbar's Save buttons were clipped off the
  * right edge by an `overflow-hidden` ancestor, so neither could be reached.
+ * The main navigation is a drawer here, so it takes no width from the page.
  */
 import { expect, test } from "../fixtures/test";
 import { BASE_URL, DEFAULT_CATALOG, WS_SLUG } from "../helpers";
@@ -36,4 +37,16 @@ test("the worksheet's save actions stay on screen", async ({ page }) => {
     expect(box, `no box for ${String(name)}`).not.toBeNull();
     expect(box!.x + box!.width).toBeLessThanOrEqual(PHONE.width);
   }
+});
+
+test("the navigation is a drawer that closes once a page is chosen", async ({ page }) => {
+  await page.goto(`${BASE_URL}/${WS_SLUG}/catalog`);
+  await expect(page.getByRole("navigation", { name: "Main navigation" })).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Open navigation" }).click();
+  const drawer = page.getByRole("dialog", { name: "Navigation" });
+  await drawer.getByRole("link", { name: "History" }).click();
+
+  await expect(page).toHaveURL(new RegExp(`/${WS_SLUG}/history`));
+  await expect(drawer).toHaveCount(0);
 });

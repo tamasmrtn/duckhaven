@@ -20,7 +20,7 @@ import {
   Book,
   Table2,
   Layers,
-  BookMarked as SavedQueryIcon,
+  Bookmark as SavedQueryIcon,
   Clock,
 } from "lucide-react";
 import { useWorkspaces } from "@/queries/workspaces";

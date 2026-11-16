@@ -24,11 +24,13 @@ function renderRail() {
 }
 
 describe('LeftRail icons', () => {
-  it('uses a bookmarked book for Saved queries and an open book for Catalog', () => {
+  it('uses a bookmark for Saved queries and an open book for Catalog', () => {
     const { getByLabelText } = renderRail()
 
+    // Two books side by side read as one thing; a bookmark is what a saved
+    // query is.
     expect(
-      getByLabelText('Saved queries').querySelector('svg.lucide-book-marked'),
+      getByLabelText('Saved queries').querySelector('svg.lucide-bookmark'),
     ).toBeTruthy()
     expect(
       getByLabelText('Catalog').querySelector('svg.lucide-book-open'),

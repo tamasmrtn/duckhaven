@@ -359,6 +359,9 @@ async def _dispatched(db: AsyncSession, agent_id: uuid.UUID, queries: list[Query
 
 #: The most queries one DISPATCH_BATCH frame carries. A longer batch goes in parts.
 BATCH_MAX_QUERIES = 20
+#: The error the agent gives each query of a batch it could not run because an
+#: earlier one left the connection unusable. The query itself never ran.
+BATCH_ABORTED = "batch_aborted"
 
 
 async def dispatch_batch(

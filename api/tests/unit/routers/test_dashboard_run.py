@@ -116,6 +116,12 @@ class FakeAgent:
         self.files: dict[str, bytes] = {}
         self.hold = False
         self.fail: str | None = None
+        # The read of each batch, by position, that leaves its connection unusable,
+        # as an agent's abandoned worker does: it fails, and the reads after it
+        # fail with batch_aborted without running.
+        self.abandon_at: int | None = None
+        # Answer every query sent on its own with batch_aborted too.
+        self.abort_alone = False
         self.running = 0
         self.most_running = 0
         self.tasks: set[asyncio.Task] = set()
@@ -168,10 +174,26 @@ class FakeAgent:
         try:
             while self.hold:
                 await asyncio.sleep(0.01)
-            for item in work:
-                await self._done(item["query_id"], item["sql"], inline)
+            for n, item in enumerate(work):
+                if inline and self.abandon_at is not None and n >= self.abandon_at:
+                    error = "batch_aborted" if n > self.abandon_at else "could not be stopped"
+                    await self._failed(item["query_id"], error)
+                elif not inline and self.abort_alone:
+                    await self._failed(item["query_id"], "batch_aborted")
+                else:
+                    await self._done(item["query_id"], item["sql"], inline)
         finally:
             self.running -= 1
+
+    async def _failed(self, query_id: str, error: str) -> None:
+        payload = {"query_id": query_id, "status": "failed", "error": error}
+        async with self.sessions() as db:
+            await query_service.handle_agent_frame(
+                db,
+                Frame(type=FrameType.QUERY_DONE, payload=payload),
+                self.polaris,
+                agent_id=self.agent_id,
+            )
 
     async def _done(self, query_id: str, sql: str, inline: bool) -> None:
         payload: dict = {"query_id": query_id}
@@ -646,6 +668,51 @@ async def test_a_views_misses_go_to_the_agent_as_one_batch(as_owner, ws, agent, 
     ]
     assert events[-1]["batch"] == {"used": True, "batches": 1}
     assert events[-1]["widgets"] == {"ok": 8}
+
+
+async def test_reads_a_broken_batch_skipped_are_sent_again_on_their_own(
+    as_owner, ws, agent, db_session
+):
+    agent.abandon_at = 2
+    await _publish(as_owner, ws, spec(*_many()))
+
+    events = await _view(as_owner, ws)
+
+    [batch] = agent.of(FrameType.DISPATCH_BATCH)
+    sent = [q["query_id"] for q in batch["payload"]["queries"]]
+    # The read that broke the connection fails; the five it stopped run alone.
+    again = agent.of(FrameType.DISPATCH_QUERY)
+    assert [f["payload"]["sql"] for f in again] == [
+        q["sql"] for q in batch["payload"]["queries"][3:]
+    ]
+    widgets = _widgets(events)
+    assert widgets["k2"]["state"] == "error"
+    assert "could not be stopped" in widgets["k2"]["error"]
+    assert [widgets[f"k{n}"]["state"] for n in (0, 1, 3, 4, 5, 6, 7)] == ["ok"] * 7
+    assert events[-1]["widgets"] == {"ok": 7, "error": 1}
+    # Each is a new query: History keeps the aborted runs as they ended.
+    for n, query_id in zip(range(3, 8), sent[3:], strict=True):
+        assert widgets[f"k{n}"]["rows"]["query_id"] != query_id
+    aborted = (
+        await db_session.execute(
+            sa.select(Query).where(Query.id.in_([uuid.UUID(i) for i in sent[3:]]))
+        )
+    ).scalars()
+    assert {(q.status, q.error) for q in aborted} == {("failed", "batch_aborted")}
+
+
+async def test_a_read_is_sent_again_only_once(as_owner, ws, agent):
+    agent.abandon_at = 0
+    agent.abort_alone = True
+    await _publish(as_owner, ws, spec(*_many()[:3]))
+
+    events = await _view(as_owner, ws)
+
+    assert len(agent.of(FrameType.DISPATCH_BATCH)) == 1
+    assert len(agent.of(FrameType.DISPATCH_QUERY)) == 2
+    widgets = _widgets(events)
+    assert [widgets[f"k{n}"]["error"] for n in (1, 2)] == ["batch_aborted"] * 2
+    assert events[-1]["widgets"] == {"error": 3}
 
 
 async def test_batches_past_the_limit_run_side_by_side(as_owner, ws, agent, monkeypatch):

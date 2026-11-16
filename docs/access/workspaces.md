@@ -60,10 +60,18 @@ default returns the workspace to automatic choice. Deleting the agent clears it 
 
 A workspace's time zone decides what **today** is for the semantic layer's relative
 [time windows](../metadata/semantic-layer.md#why-every-metric-names-a-time-column), so month to date on the 1st means
-this month wherever the server runs. It is UTC until an owner sets an IANA name, such as `Europe/London`, with
-`timezone` on `PATCH /api/workspaces/{workspace}`; **Settings** has no control for it. A name that is not in the IANA
-database, such as `+01:00` or `europe/london`, is refused with a 422. The [assistant](../ai/assistant.md) is told
-today's date in this time zone too, for the relative windows it writes in SQL.
+this month wherever the server runs. The [assistant](../ai/assistant.md) is told today's date in this time zone too,
+for the relative windows it writes in SQL.
+
+A workspace is on UTC until an owner picks another zone from **Settings** → **Workspace** → **Time zone**. The list
+holds every IANA zone your browser knows, grouped by region. Search it by city (`Lisbon`), by IANA name
+(`America/Chicago`), or by the offset or name in force today (`+5:30`, `UTC-8`, `PST`, `India Standard Time`). Your
+browser's own zone is offered at the top. Below the control is today's date in the workspace's zone, so you can check
+the setting at a glance. Other members see the zone but cannot change it.
+
+The setting stores the zone's IANA name, never a fixed offset, so daylight saving follows the zone. From the API, set
+it with `timezone` on `PATCH /api/workspaces/{workspace}`. A name that is not in the IANA database, such as `+01:00`
+or `europe/london`, is refused with a 422.
 
 The time zone moves only the dates a window resolves to. Schedules still run on cron expressions in UTC, and
 timestamps in results are unchanged. For a `TIMESTAMPTZ` time dimension, a window's edges are midnight in the agent's

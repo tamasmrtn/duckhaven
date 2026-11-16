@@ -15,7 +15,7 @@ from pathlib import Path
 
 import yaml
 
-from api.services.assistant.charts import _DIGIT
+from api.services.assistant.charts import title_holds_number
 
 CASES_PATH = Path(__file__).with_name("cases.yaml")
 
@@ -317,7 +317,7 @@ def authoring_scores(runs: list[tuple[Case, list[dict]]]) -> dict:
 def numbered_titles(charts: list[dict]) -> list[str]:
     """The titles holding a number among a run's charts, by the rule show_chart lints."""
     titles = [str((chart.get("widget") or {}).get("title") or "") for chart in charts]
-    return [title for title in titles if _DIGIT.search(title)]
+    return [title for title in titles if title_holds_number(title)]
 
 
 def chart_scores(runs: list[tuple[Case, list[dict]]]) -> dict:

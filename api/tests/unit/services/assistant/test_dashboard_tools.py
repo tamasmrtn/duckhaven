@@ -207,7 +207,7 @@ async def test_widgets_are_previewed_each_in_a_row_of_its_own_in_one_preview():
     parameters = {"period": {"type": "time_range", "default": "last_30_days"}}
 
     out = await preview_widgets(
-        ctx, [_kpi("a"), _kpi("b", "Revenue 2026")], parameters=parameters, params={"period": "ytd"}
+        ctx, [_kpi("a"), _kpi("b", "Total 42")], parameters=parameters, params={"period": "ytd"}
     )
 
     spec = gw.calls[0][1]["spec"]

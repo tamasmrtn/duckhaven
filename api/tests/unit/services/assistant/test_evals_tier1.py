@@ -1778,6 +1778,7 @@ def test_a_case_can_forbid_a_number_in_a_chart_title():
     [
         (["Revenue by region"], []),
         (["Revenue by region: 2,603,612"], ["Revenue by region: 2,603,612"]),
+        (["Revenue by region, October 2026"], []),
         ([], []),
     ],
 )

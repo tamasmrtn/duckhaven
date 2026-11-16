@@ -83,9 +83,33 @@ def test_a_widget_that_failed_says_why_and_nothing_else():
 
 
 def test_a_number_in_a_title_is_called_out():
-    notes = lint({"type": "bar", "title": "Revenue 2026"}, None)
+    notes = lint({"type": "bar", "title": "Revenue: 2,603,612"}, None)
     assert any("title holds a number" in n for n in notes)
     assert lint({"type": "bar", "title": "Revenue by country"}, None) == []
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "Revenue by channel, October 2026",
+        "Revenue, 1–31 October 2026",
+        "Orders since Oct 3",
+        "Revenue 2026",
+        "Signups, 2026-10",
+        "Revenue, Q3 2026",
+        "Revenue 2025–2026",
+    ],
+)
+def test_a_date_in_a_title_is_not_a_number(title):
+    """A date names what is measured, and stays as the data changes."""
+    assert lint({"type": "bar", "title": title}, None) == []
+
+
+@pytest.mark.parametrize(
+    "title", ["Revenue, October 2026: 178,504", "Top 3 markets", "Orders up 12% in May"]
+)
+def test_a_number_beside_a_date_is_still_called_out(title):
+    assert any("title holds a number" in n for n in lint({"type": "bar", "title": title}, None))
 
 
 @pytest.mark.parametrize(

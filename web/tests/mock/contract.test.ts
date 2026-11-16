@@ -540,6 +540,19 @@ describe("search contract", () => {
     expect(report).toHaveProperty("has_more");
   });
 
+  it("labels a dashboard with its title and addresses it by name", async () => {
+    const report = await searchApi.report("acme-analytics", "sales", {
+      types: ["dashboard"],
+    });
+    expect(report.items).toContainEqual(
+      expect.objectContaining({
+        type: "dashboard",
+        name: "sales-overview",
+        title: "Sales overview",
+      }),
+    );
+  });
+
   it("returns the envelope, not a bare array, for a blank query", async () => {
     const res = await fetch("/api/workspaces/acme-analytics/search?q=");
     expect(await res.json()).toEqual({ items: [], has_more: false });

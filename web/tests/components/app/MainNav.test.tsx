@@ -240,6 +240,38 @@ describe('MainNav expand on hover', () => {
     expect(isOpen(nav)).toBe(false)
   })
 
+  // Regression: with the pointer still on the rail after a click, the panel
+  // stayed shut, unlabelled and without tooltips, until the pointer left.
+  it('opens again when the pointer moves on the rail after a page is chosen', async () => {
+    const { nav, links } = await renderHoverNav()
+    fireEvent.pointerEnter(nav)
+    act(() => vi.advanceTimersByTime(200))
+    fireEvent.click(links.getByRole('link', { name: 'Catalog' }))
+
+    fireEvent.pointerMove(nav)
+    act(() => vi.advanceTimersByTime(199))
+    expect(isOpen(nav)).toBe(false)
+    act(() => vi.advanceTimersByTime(1))
+
+    expect(isOpen(nav)).toBe(true)
+  })
+
+  it('stays closed after Escape until the pointer leaves and comes back', async () => {
+    const { nav } = await renderHoverNav()
+    fireEvent.pointerEnter(nav)
+    act(() => vi.advanceTimersByTime(200))
+    fireEvent.keyDown(window, { key: 'Escape' })
+
+    fireEvent.pointerMove(nav)
+    act(() => vi.advanceTimersByTime(1000))
+    expect(isOpen(nav)).toBe(false)
+
+    fireEvent.pointerLeave(nav)
+    fireEvent.pointerEnter(nav)
+    act(() => vi.advanceTimersByTime(200))
+    expect(isOpen(nav)).toBe(true)
+  })
+
   it('shows no tooltips, since opening shows the labels', async () => {
     const { links } = await renderHoverNav()
 

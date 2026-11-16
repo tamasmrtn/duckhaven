@@ -48,9 +48,11 @@ Closing the page, or the request, cancels every query of that view still waiting
 
 The queries the cache cannot answer go to an agent together. An agent that supports
 [batches](query-execution.md#batches-of-reads) runs a batch's queries one after another on one connection, which saves
-each query its own connection and catalog attach. A view's queries are split across up to `DASHBOARD_MAX_INFLIGHT`
-(4) batches, which run side by side; a batch holds at most `DASHBOARD_BATCH_MAX_QUERIES` (20). An older agent gets the
-queries one at a time, at most 4 of them running at once. See [Configuration](../reference/configuration.md#dashboards).
+each query its own connection and catalog attach. A view sends its queries in as few batches as possible: a batch holds
+at most `DASHBOARD_BATCH_MAX_QUERIES` (20), and past that up to `DASHBOARD_MAX_INFLIGHT` (4) batches run side by side.
+Opening a connection costs the agent more CPU than a typical widget's query, so for a dashboard of small reads one
+batch serves a view sooner than several, and an agent serves about twice as many views. An older agent gets the queries
+one at a time, at most 4 of them running at once. See [Configuration](../reference/configuration.md#dashboards).
 
 When no compute is running, the queries wait for it as any query would, and the view says that compute is starting.
 With [elastic compute](../compute/elastic-compute.md) that starts an agent.

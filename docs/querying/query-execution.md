@@ -205,6 +205,9 @@ Measured on one agent, 16 reads from first submitted to last finished:
 When each read does real work, a batch is no faster, since its reads run in turn, but it holds one connection
 instead of sixteen.
 
+Each connection is a new DuckDB database that verifies every extension it loads, about half a second of CPU on a
+2-vCPU agent, so batching small reads saves the agent more than it saves the reads.
+
 ## Scheduled vs. interactive runs
 
 Most queries are **interactive**: a person presses Run, picks the agent, and waits

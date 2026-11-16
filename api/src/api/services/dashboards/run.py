@@ -10,10 +10,13 @@ the view runs:
    takes (``query_submit``), with ``origin="dashboard"``, so the viewer's grants
    apply to each one. A cache hit is answered at once and never starts compute; a
    statement with no compute up parks until an agent takes it.
-2. The misses bound for a connected agent go out together, in up to
-   ``dashboard_max_inflight`` lanes per agent: a lane is one batch where the agent
-   runs batches (``query.dispatch_batch``), or single queries one after another
-   where it does not.
+2. The misses bound for a connected agent go out together. Where the agent runs
+   batches (``query.dispatch_batch``) they go in as few as
+   ``dashboard_batch_max_queries`` allows, since each batch opens a connection
+   and loading its extensions costs the agent far more CPU than a small read.
+   Up to ``dashboard_max_inflight`` lanes per agent run side by side: a lane runs
+   its batches, or where the agent runs no batches its single queries, one after
+   another.
 3. Each widget is sent as soon as its statements finish.
 
 Closing the stream cancels every statement still queued or running.
@@ -462,9 +465,12 @@ class _Runner:
             )
         lanes = max(1, settings.dashboard_max_inflight)
         if batched:
+            # As few batches as the limit allows: each opens a connection, a new
+            # database that verifies every extension it loads (~0.5 s of CPU on a
+            # 2-vCPU agent), and a dashboard's reads are mostly far cheaper than
+            # that. Each read still runs on all of the connection's threads.
             most = min(settings.dashboard_batch_max_queries, query_service.BATCH_MAX_QUERIES)
-            count = max(min(lanes, len(statements)), math.ceil(len(statements) / max(1, most)))
-            groups = _deal(statements, count)
+            groups = _deal(statements, math.ceil(len(statements) / max(1, most)))
         else:
             groups = [[s] for s in statements]
         async with asyncio.TaskGroup() as group:

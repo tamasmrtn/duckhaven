@@ -6,6 +6,8 @@ from pydantic import BaseModel, ConfigDict
 
 # How the main navigation is laid out. Null on the user means "never chose".
 SidebarMode = Literal["expanded", "collapsed", "hover"]
+# The app's colors; "system" follows the operating system's light or dark mode.
+ThemeMode = Literal["light", "dark", "system"]
 
 
 class LoginRequest(BaseModel):
@@ -47,6 +49,7 @@ class UpdateMeRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    theme: ThemeMode | None = None
     sidebar: SidebarMode | None = None
 
 

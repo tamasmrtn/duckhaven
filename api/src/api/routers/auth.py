@@ -95,6 +95,11 @@ async def me(user: User = Depends(get_current_user), db: AsyncSession = Depends(
     return await _user_out_with_permissions(db, user)
 
 
+# What `null` puts a preference back to, for the columns that store their
+# default rather than leaving it null.
+_PREFERENCE_DEFAULTS = {"theme": "system"}
+
+
 @me_router.patch("/me", response_model=UserOut)
 async def update_me(
     body: UpdateMeRequest,
@@ -107,7 +112,7 @@ async def update_me(
     default. Covers preferences only: role and active state stay with an
     administrator at `/admin/users/{user_id}`."""
     for field, value in body.model_dump(exclude_unset=True).items():
-        setattr(user, field, value)
+        setattr(user, field, _PREFERENCE_DEFAULTS.get(field) if value is None else value)
     await db.commit()
     await db.refresh(user)
     return await _user_out_with_permissions(db, user)

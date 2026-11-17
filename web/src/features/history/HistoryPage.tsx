@@ -60,7 +60,9 @@ const ORIGIN_OPTIONS = [
   { value: "all" as const, label: "All" },
   { value: "interactive" as const, label: "Interactive" },
   { value: "scheduled" as const, label: "Scheduled" },
-  { value: "session" as const, label: "Connection" },
+  // Not "Connection": the Connections view sits beside this filter, and the
+  // two would read as one control.
+  { value: "session" as const, label: "SQL session" },
 ];
 
 const PAGE_SIZE = 50;

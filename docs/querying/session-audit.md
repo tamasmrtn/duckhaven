@@ -71,7 +71,7 @@ statement to open its [profile](query-profiles.md).
 
 History lists every session statement too. To connect the two:
 
-1. In **History**, set the origin filter to **Connection** to keep only statements run in sessions.
+1. In **History**, set the origin filter to **SQL session** to keep only statements run in sessions.
 2. Click a statement's session id in the **Connection** column to open its session.
 
 The **Client** column names the tool for each statement, the same as its session's.

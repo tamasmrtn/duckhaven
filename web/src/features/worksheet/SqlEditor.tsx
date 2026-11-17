@@ -221,11 +221,13 @@ export const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(
       // Dropping a table from the catalog sidebar inserts its fully-qualified
       // name at the drop position, instead of the sidebar's click handler
       // overwriting the whole tab (see CatalogTree's draggable table rows).
-      const domNode = editor.getDomNode();
-      domNode?.addEventListener("dragover", (e) => {
+      // Listen on the container: Monaco replaces the node getDomNode() returns
+      // each time the model changes, which switching worksheet tabs does.
+      const container = editor.getContainerDomNode();
+      container.addEventListener("dragover", (e) => {
         e.preventDefault();
       });
-      domNode?.addEventListener("drop", (e) => {
+      container.addEventListener("drop", (e) => {
         e.preventDefault();
         const text = e.dataTransfer?.getData("text/plain");
         if (!text) return;

@@ -54,6 +54,7 @@ import {
   durationToMs,
   rangeBoundary,
   resolveFilters,
+  toLocalInputValue,
 } from "./filters";
 
 const ORIGIN_OPTIONS = [
@@ -66,23 +67,6 @@ const ORIGIN_OPTIONS = [
 ];
 
 const PAGE_SIZE = 50;
-
-/**
- * A UTC instant as the local wall-clock string `datetime-local` expects.
- *
- * The input reads and writes local time while the URL holds UTC, so the offset
- * has to be applied on the way out — slicing the ISO string instead shows the
- * UTC hour in a local-time field, and re-editing shifts the value by the offset
- * again each time.
- */
-function toLocalInputValue(iso: string | undefined): string {
-  if (!iso) return "";
-  const ms = Date.parse(iso);
-  if (Number.isNaN(ms)) return "";
-  return new Date(ms - new Date(ms).getTimezoneOffset() * 60_000)
-    .toISOString()
-    .slice(0, 16);
-}
 
 /**
  * History lists statements one by one, or the SQL sessions (Connections) that

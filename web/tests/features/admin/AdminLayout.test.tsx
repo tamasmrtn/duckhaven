@@ -56,6 +56,35 @@ describe("AdminLayout access gate", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("offers Audit only to those who hold audit:read", async () => {
+    renderWithProviders({ initialRoute: ADMIN_ROUTE });
+    const tabs = within(
+      await screen.findByRole("navigation", { name: "Admin sections" }),
+    );
+    expect(tabs.getByRole("button", { name: "Audit" })).toBeInTheDocument();
+  });
+
+  it("hides Audit from an admin of another section", async () => {
+    server.use(
+      http.get("/api/me", () =>
+        HttpResponse.json({
+          ...CURRENT_USER,
+          role: "user",
+          permissions: ["users:manage"],
+        }),
+      ),
+    );
+    renderWithProviders({ initialRoute: "/acme-analytics/admin/users" });
+
+    const tabs = within(
+      await screen.findByRole("navigation", { name: "Admin sections" }),
+    );
+    expect(tabs.getByRole("button", { name: "Users" })).toBeInTheDocument();
+    expect(
+      tabs.queryByRole("button", { name: "Audit" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("no longer offers Compute — it moved out to the main nav", async () => {
     // A per-agent grantee holds no global permission, so gating their agent's
     // monitoring page behind this shell would have locked them out of it.

@@ -56,27 +56,33 @@ AUDITED: dict[tuple[str, str], set[str]] = {
         "workspace_member.role_change",
     },
     ("DELETE", "/admin/users/{user_id}/workspaces/{workspace}"): {"workspace_member.remove"},
+    ("POST", "/admin/users"): {"user.create"},
+    ("PATCH", "/admin/users/{user_id}"): {"user.role_change", "user.deactivate", "user.reactivate"},
+    ("POST", "/admin/users/{user_id}/revoke-sessions"): {"user.sessions_revoke"},
+    ("POST", "/admin/service-accounts"): {"service_account.create"},
+    ("PATCH", "/admin/service-accounts/{service_account_id}"): {
+        "service_account.role_change",
+        "service_account.deactivate",
+        "service_account.reactivate",
+    },
+    ("DELETE", "/admin/service-accounts/{service_account_id}"): {"service_account.delete"},
+    ("POST", "/admin/service-accounts/{service_account_id}/pats"): {"pat.issue"},
+    ("DELETE", "/admin/service-accounts/{service_account_id}/pats/{pat_id}"): {"pat.revoke"},
+    ("POST", "/me/pats"): {"pat.issue"},
+    ("DELETE", "/me/pats/{pat_id}"): {"pat.revoke"},
+    ("POST", "/setup/admin"): {"setup.first_admin"},
 }
 
 # Routes not yet wired, each moved into AUDITED by the commit that wires it.
 PENDING: set[tuple[str, str]] = {
-    ("POST", "/admin/users"),
-    ("PATCH", "/admin/users/{user_id}"),
-    ("POST", "/admin/users/{user_id}/revoke-sessions"),
-    ("POST", "/admin/service-accounts"),
-    ("PATCH", "/admin/service-accounts/{service_account_id}"),
-    ("DELETE", "/admin/service-accounts/{service_account_id}"),
-    ("POST", "/admin/service-accounts/{service_account_id}/pats"),
-    ("DELETE", "/admin/service-accounts/{service_account_id}/pats/{pat_id}"),
-    ("POST", "/me/pats"),
-    ("DELETE", "/me/pats/{pat_id}"),
-    ("POST", "/setup/admin"),
     ("POST", "/auth/login"),
     ("POST", "/auth/logout"),
 }
 
 # Actions recorded somewhere other than one route's handler.
-RECORDED_ELSEWHERE: dict[str, str] = {}
+RECORDED_ELSEWHERE: dict[str, str] = {
+    "user.provision": "a federated sign-in (OIDC callback or LDAP bind) creating the account",
+}
 
 # Actions not yet recorded anywhere; emptied as PENDING is.
 PENDING_ACTIONS: set[str] = set(ACTIONS) - set(RECORDED_ELSEWHERE) - set().union(*AUDITED.values())

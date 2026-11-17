@@ -8,6 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import get_db, require_permission
+from api.models.catalog_grant import CatalogGrant
 from api.models.query import Query
 from api.models.rbac import Role
 from api.models.user import SERVICE_ACCOUNT_PROVIDER, Credential, User
@@ -22,6 +23,8 @@ from api.schemas.service_account import (
     UpdateServiceAccountRequest,
 )
 from api.services import pats
+from api.services.audit import record
+from api.services.audit.events import record_account_update
 from api.services.auth import get_user_by_email
 from api.services.paging import paginate
 from api.services.permissions import Permission
@@ -132,6 +135,15 @@ async def create_service_account(
         auth_provider=SERVICE_ACCOUNT_PROVIDER,
     )
     db.add(account)
+    await db.flush()
+    record(
+        db,
+        "service_account.create",
+        target_id=account.id,
+        target_name=account.email,
+        subject=account,
+        after={"role": account.role},
+    )
     await db.commit()
     await db.refresh(account)
     return ServiceAccountOut(
@@ -167,6 +179,8 @@ async def update_service_account(
 
     if body.role is not None:
         await _assert_role_exists(db, body.role)
+    record_account_update(db, "service_account", account, role=body.role, is_active=body.is_active)
+    if body.role is not None:
         account.role = body.role
     if body.is_active is not None:
         account.is_active = body.is_active
@@ -205,7 +219,23 @@ async def delete_service_account(
             status_code=status.HTTP_409_CONFLICT,
             detail="Service account has history and cannot be deleted; disable it instead.",
         )
-    await db.execute(delete(WorkspaceMember).where(WorkspaceMember.user_id == service_account_id))
+    memberships = await db.execute(
+        delete(WorkspaceMember)
+        .where(WorkspaceMember.user_id == service_account_id)
+        .returning(WorkspaceMember.workspace_id)
+    )
+    grants = await db.scalar(
+        select(func.count()).select_from(CatalogGrant).where(CatalogGrant.user_id == account.id)
+    )
+    record(
+        db,
+        "service_account.delete",
+        target_id=account.id,
+        target_name=account.email,
+        subject=account,
+        before={"role": account.role, "is_active": account.is_active},
+        details={"memberships_removed": len(memberships.all()), "grants_removed": grants},
+    )
     await db.delete(account)
     try:
         await db.commit()

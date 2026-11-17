@@ -18,6 +18,7 @@ from api.models.user import SERVICE_ACCOUNT_PROVIDER, User
 from api.schemas.auth import UserOut
 from api.schemas.setup import FirstAdminRequest, SetupStatus
 from api.services.addresses import peer_address
+from api.services.audit import record
 from api.services.auth import create_session, hash_password, set_session_cookie
 from api.services.login_limiter import check_attempt
 
@@ -94,6 +95,19 @@ async def create_first_admin(
         role="admin",
     )
     db.add(user)
+    await db.flush()
+    # Nobody is signed in yet: the person holding the setup token acts, as the
+    # account they are creating.
+    record(
+        db,
+        "setup.first_admin",
+        target_id=user.id,
+        target_name=user.email,
+        subject=user,
+        after={"role": "admin"},
+        details={"authorized_by": "setup_token"},
+        actor=user,
+    )
     await db.commit()
     await db.refresh(user)
 

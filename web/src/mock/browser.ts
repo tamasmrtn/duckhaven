@@ -21,6 +21,7 @@ import { semanticHandlers } from "./handlers/semantic";
 import { worksheetHandlers } from "./handlers/worksheets";
 import { searchHandlers } from "./handlers/search";
 import { dashboardHandlers } from "./handlers/dashboards";
+import { auditHandlers } from "./handlers/audit";
 
 export const worker = setupWorker(
   ...authHandlers,
@@ -45,4 +46,5 @@ export const worker = setupWorker(
   ...searchHandlers,
   ...worksheetHandlers,
   ...dashboardHandlers,
+  ...auditHandlers,
 );

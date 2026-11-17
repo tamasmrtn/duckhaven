@@ -136,6 +136,27 @@ describe("present mode", SLOW, () => {
     expect(runs).toHaveLength(1);
   });
 
+  it("leaves out the notes and labels meant for editors", async () => {
+    renderWithProviders({ initialRoute: ROUTE });
+    // The owner sees that a draft waits, and the dashboard's status.
+    expect(
+      await screen.findByText(/Unpublished changes wait in a draft/),
+    ).toBeVisible();
+    expect(screen.getByText("published")).toBeVisible();
+
+    await userEvent.click(screen.getByRole("button", { name: "Present" }));
+    const presented = await screen.findByRole("dialog", {
+      name: "Sales overview, presented",
+    });
+    await within(presented).findByRole("region", {
+      name: "Revenue by country",
+    });
+    expect(
+      within(presented).queryByText(/Unpublished changes wait in a draft/),
+    ).not.toBeInTheDocument();
+    expect(within(presented).queryByText("published")).not.toBeInTheDocument();
+  });
+
   it("opens straight into present mode from its link", async () => {
     renderWithProviders({ initialRoute: `${ROUTE}?present=true&refresh=30` });
 

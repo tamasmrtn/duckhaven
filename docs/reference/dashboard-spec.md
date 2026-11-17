@@ -155,6 +155,8 @@ same `model`, with no extra YAML, except a widget that:
 
 A row holds 1 to 8 widgets side by side, on a 12-column grid. `width` is a widget's share of the 12 columns. Widgets
 without a width split whatever is left equally, and a row's widths must leave at least one column for each of them.
+Every widget keeps at least 14rem (224px): where the row is too narrow for that, as on a phone or in the editor's
+preview, a widget wraps onto a line of its own and takes the line's full width.
 
 A dashboard holds at most 40 widgets. Every widget runs when the dashboard opens, so above 16 it opens slowly and
 validation says so as a warning.

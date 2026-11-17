@@ -53,7 +53,8 @@ export function KpiWidget({ event }: { event: RunWidget }) {
           )}
           data-testid="kpi-delta"
         >
-          <Arrow className="size-3.5" aria-hidden />
+          {/* Never squeezed: the arrow says the direction without colour. */}
+          <Arrow className="size-3.5 shrink-0" aria-hidden />
           <span className="sr-only">
             {direction}
             {verdict}:

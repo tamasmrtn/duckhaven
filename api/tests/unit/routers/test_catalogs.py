@@ -251,3 +251,123 @@ async def test_attach_is_idempotent_and_can_move_the_default(
     }
     assert listing[catalog] is True
     assert sum(1 for v in listing.values() if v) == 1
+
+
+# --- who may attach an existing catalog ---------------------------------------
+
+
+async def _user(db_session, email: str, *, role: str = "user") -> User:
+    u = User(email=email, password_hash=hash_password("pw"), name=email, role=role)
+    db_session.add(u)
+    await db_session.commit()
+    await db_session.refresh(u)
+    return u
+
+
+async def _login(client: AsyncClient, email: str) -> None:
+    resp = await client.post("/auth/login", json={"email": email, "password": "pw"})
+    assert resp.status_code == 200, resp.text
+
+
+async def test_owner_cannot_attach_a_catalog_they_did_not_create(
+    client, owner, db_session, fake_polaris
+):
+    """Anyone can create a workspace and own it, so owning the target workspace
+    cannot be what lets a catalog in: that would open every catalog, scoped or
+    not, to every signed-in user."""
+    await seed_workspace(db_session, user_id=owner.id, slug="fin", name="Fin")
+    await _login(client, owner.email)
+    created = await client.post(
+        "/workspaces/fin/catalogs", json={"name": "finance", "access_mode": "scoped"}
+    )
+    assert created.status_code == 201, created.text
+
+    await _user(db_session, "outsider@test.local")
+    await _login(client, "outsider@test.local")
+    mine = await client.post("/workspaces", json={"slug": "mine", "name": "Mine"})
+    assert mine.status_code == 201, mine.text
+
+    attach = await client.put("/workspaces/mine/catalogs/finance", json={})
+    assert attach.status_code == 403
+    assert "catalogs:admin" in attach.text
+    # The picker offers only what the caller may attach.
+    assert "finance" not in {c["slug"] for c in (await client.get("/catalogs")).json()}
+
+
+async def test_admin_can_attach_any_catalog(client, owner, db_session, fake_polaris):
+    await seed_workspace(db_session, user_id=owner.id, slug="src", name="Src")
+    await _login(client, owner.email)
+    await client.post("/workspaces/src/catalogs", json={"name": "shared"})
+
+    admin = await _user(db_session, "admin@test.local", role="admin")
+    await seed_workspace(db_session, user_id=admin.id, slug="adm", name="Adm")
+    await _login(client, "admin@test.local")
+    assert "shared" in {c["slug"] for c in (await client.get("/catalogs")).json()}
+
+    attach = await client.put("/workspaces/adm/catalogs/shared", json={})
+    assert attach.status_code == 201, attach.text
+
+
+async def test_attaching_a_scoped_catalog_starts_scoped(
+    auth_client, owner, db_session, fake_polaris
+):
+    """Sharing a restricted catalog must not open it to the new workspace's
+    members in the window before its owner restricts it there too."""
+    await seed_workspace(db_session, user_id=owner.id, slug="one", name="One")
+    await seed_workspace(db_session, user_id=owner.id, slug="two", name="Two")
+    await auth_client.post(
+        "/workspaces/one/catalogs", json={"name": "locked", "access_mode": "scoped"}
+    )
+
+    attach = await auth_client.put("/workspaces/two/catalogs/locked", json={})
+    assert attach.status_code == 201, attach.text
+    assert attach.json()["access_mode"] == "scoped"
+    by_slug = {c["slug"]: c for c in (await auth_client.get("/workspaces/two/catalogs")).json()}
+    assert by_slug["locked"]["access_mode"] == "scoped"
+
+
+async def test_attaching_a_detached_catalog_with_grants_starts_scoped(
+    auth_client, owner, db_session, fake_polaris
+):
+    """Grants outlive the attachments; only a scoped attachment reads them, so a
+    catalog that carries any is re-attached scoped."""
+    await seed_workspace(db_session, user_id=owner.id, slug="one", name="One")
+    await seed_workspace(db_session, user_id=owner.id, slug="two", name="Two")
+    await auth_client.post(
+        "/workspaces/one/catalogs", json={"name": "locked", "access_mode": "scoped"}
+    )
+    assert (await auth_client.delete("/workspaces/one/catalogs/locked")).status_code == 204
+
+    attach = await auth_client.put("/workspaces/two/catalogs/locked", json={})
+    assert attach.status_code == 201, attach.text
+    assert attach.json()["access_mode"] == "scoped"
+
+
+async def test_attaching_an_open_catalog_stays_open(auth_client, owner, db_session, fake_polaris):
+    await seed_workspace(db_session, user_id=owner.id, slug="one", name="One")
+    await seed_workspace(db_session, user_id=owner.id, slug="two", name="Two")
+    await auth_client.post("/workspaces/one/catalogs", json={"name": "plain"})
+
+    attach = await auth_client.put("/workspaces/two/catalogs/plain", json={})
+    assert attach.status_code == 201, attach.text
+    assert attach.json()["access_mode"] == "open"
+
+
+async def test_owner_can_set_the_default_of_an_attached_catalog_they_did_not_create(
+    client, owner, db_session, fake_polaris
+):
+    """The creator gate is on letting a catalog in. Updating an attachment the
+    workspace already has stays the owner's call."""
+    ws, catalog = await seed_workspace(db_session, user_id=owner.id, slug="team", name="Team")
+    await _login(client, owner.email)
+    await client.post("/workspaces/team/catalogs", json={"name": "second"})
+
+    from api.models.workspace import WorkspaceMember
+
+    colleague = await _user(db_session, "colleague@test.local")
+    db_session.add(WorkspaceMember(workspace_id=ws.id, user_id=colleague.id, role="owner"))
+    await db_session.commit()
+    await _login(client, "colleague@test.local")
+
+    moved = await client.put("/workspaces/team/catalogs/second", json={"make_default": True})
+    assert moved.status_code == 200, moved.text

@@ -1,9 +1,9 @@
 """Catalog lifecycle endpoints: list / create / attach / detach / drop.
 
-Catalogs are decoupled, first-class entities bound to workspaces M:N. All
-mutations are gated by the *existing* workspace-role check (no new RBAC):
-create/attach/detach require workspace `owner`; a global drop requires the
-catalog's creator or an admin and is refused while any binding remains.
+Catalogs are decoupled, first-class entities bound to workspaces M:N.
+Create/attach/detach require workspace `owner`. Attaching an *existing* catalog
+also requires its creator or `catalogs:admin`, the same gate as a global drop,
+which is refused while any binding remains.
 """
 
 from __future__ import annotations
@@ -68,16 +68,42 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+async def _administers(db: AsyncSession, user: User, catalog: Catalog) -> bool:
+    """Whether ``user`` may administer ``catalog``: its creator, or `catalogs:admin`."""
+    return catalog.created_by == user.id or await has_permission(
+        db, user, Permission.CATALOGS_ADMIN
+    )
+
+
 async def _catalog_for_admin(db: AsyncSession, user: User, catalog_id: uuid.UUID) -> Catalog:
     """Load a catalog, enforcing the same creator-or-admin gate as drop."""
     catalog = await db.get(Catalog, catalog_id)
     if catalog is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
-    if not await has_permission(db, user, Permission.CATALOGS_ADMIN) and (
-        catalog.created_by != user.id
-    ):
+    if not await _administers(db, user, catalog):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
     return catalog
+
+
+async def _inherited_access_mode(db: AsyncSession, catalog_id: uuid.UUID) -> str:
+    """The access mode a new attachment of an existing catalog starts in.
+
+    ``scoped`` when any workspace attaches the catalog scoped, or when it carries
+    grants (which only a scoped attachment reads), so sharing a restricted
+    catalog never opens it to the new workspace's members. Otherwise ``open``,
+    the default. The workspace owner can change it afterwards.
+    """
+    scoped = await db.scalar(
+        select(func.count())
+        .select_from(WorkspaceCatalog)
+        .where(WorkspaceCatalog.catalog_id == catalog_id, WorkspaceCatalog.access_mode == "scoped")
+    )
+    if scoped:
+        return "scoped"
+    grants = await db.scalar(
+        select(func.count()).select_from(CatalogGrant).where(CatalogGrant.catalog_id == catalog_id)
+    )
+    return "scoped" if grants else "open"
 
 
 @router.post("/admin/catalogs/ducklake/reconcile-roles")
@@ -370,8 +396,11 @@ async def list_all_catalogs(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> list[CatalogOut]:
-    """Every catalog in the deployment — the source for the attach picker."""
-    catalogs = await catalog_service.list_attachable(db)
+    """The catalogs the caller may attach to a workspace: every catalog for
+    `catalogs:admin`, otherwise the ones they created. The source for the attach
+    picker."""
+    admin = await has_permission(db, user, Permission.CATALOGS_ADMIN)
+    catalogs = await catalog_service.list_attachable(db, created_by=None if admin else user.id)
     return [_catalog_out(c, attached_workspaces=await _binding_count(db, c.id)) for c in catalogs]
 
 
@@ -515,7 +544,12 @@ async def attach_workspace_catalog(
     A membership write, so it is a PUT on the membership's own address -- the
     same one DELETE detaches -- rather than an action. Idempotent: 201 the first
     time, 200 when it was already attached. Catalogs are shared M:N, so this
-    binds an existing catalog rather than creating one. Owner only.
+    binds an existing catalog rather than creating one.
+
+    Workspace owner only. A new attachment also needs the catalog's creator or
+    `catalogs:admin`: anyone may create a workspace, so owning one cannot be
+    what lets a catalog into it. It starts in the mode the catalog is already
+    restricted by (see :func:`_inherited_access_mode`).
     """
     workspace = await get_workspace(db, ws)
     if workspace is None:
@@ -533,6 +567,14 @@ async def attach_workspace_catalog(
     link = await _attachment(db, workspace.id, found.id)
 
     if link is None:
+        if not await _administers(db, user, found):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    f"Only the creator of catalog '{found.slug}' or an admin with "
+                    "catalogs:admin can attach it to a workspace."
+                ),
+            )
         try:
             link = await catalog_service.attach_catalog(
                 db,
@@ -540,6 +582,7 @@ async def attach_workspace_catalog(
                 catalog=found,
                 attached_by=user.id,
                 make_default=body.make_default,
+                access_mode=await _inherited_access_mode(db, found.id),
             )
         except IntegrityError:
             # Two concurrent first attaches: the loser lost the race to the
@@ -563,6 +606,7 @@ async def attach_workspace_catalog(
         found,
         is_default=link.is_default,
         attached_workspaces=await _binding_count(db, found.id),
+        access_mode=link.access_mode,
     )
 
 

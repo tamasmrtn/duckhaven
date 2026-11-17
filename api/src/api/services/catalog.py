@@ -239,11 +239,13 @@ async def drop_catalog(db: AsyncSession, polaris: PolarisClient, *, catalog: Cat
     await db.flush()
 
 
-async def list_attachable(db: AsyncSession) -> list[Catalog]:
-    """Every catalog in the deployment (the attach picker's source)."""
-    rows = await db.execute(
-        select(Catalog).options(selectinload(Catalog.storage_backend)).order_by(Catalog.slug)
-    )
+async def list_attachable(db: AsyncSession, *, created_by: uuid.UUID | None) -> list[Catalog]:
+    """The attach picker's source: the catalogs ``created_by`` created, or every
+    catalog in the deployment when ``created_by`` is None."""
+    stmt = select(Catalog).options(selectinload(Catalog.storage_backend)).order_by(Catalog.slug)
+    if created_by is not None:
+        stmt = stmt.where(Catalog.created_by == created_by)
+    rows = await db.execute(stmt)
     return list(rows.scalars().all())
 
 

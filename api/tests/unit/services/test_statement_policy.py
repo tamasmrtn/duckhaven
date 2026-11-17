@@ -51,6 +51,8 @@ ALLOWED = [
         for name in _NEWLY_CONFINED
     ),
     "ATTACH 'sales' AS sales (TYPE ICEBERG)",
+    "ATTACH 'sales' (TYPE ICEBERG)",
+    "ATTACH IF NOT EXISTS 'sales' AS SALES (TYPE ICEBERG)",
     # A URL-looking string as data (not a file arg) is fine.
     "SELECT 'http://not-a-file' AS c",
     # DESCRIBE is read-only introspection dbt relies on for column metadata.
@@ -88,6 +90,12 @@ DENIED = [
     ("LOAD spatial", "command"),
     ("ATTACH 'evil.db' AS evil", "attach_target"),
     ("ATTACH 'other' AS other (TYPE ICEBERG)", "attach_target"),
+    # The grant check knows a catalog by its alias, so a managed catalog under
+    # another name would be checked as that name: a built-in one is never
+    # checked, and another workspace catalog may be open.
+    ("ATTACH 'sales' AS duckhaven (TYPE ICEBERG)", "attach_alias"),
+    ("ATTACH 'sales' AS analytics (TYPE ICEBERG)", "attach_alias"),
+    ("ATTACH 'sales' AS x", "attach_alias"),
     ("SELECT * FROM read_parquet('/etc/passwd')", "read_path"),
     ("SELECT * FROM read_csv('s3://other/x.csv')", "read_path"),
     ("SELECT * FROM read_json_auto('/tmp/x.json')", "read_path"),
@@ -238,3 +246,25 @@ def test_bare_relative_replacement_scan_is_confined():
 @pytest.mark.parametrize("sql", DIVERGENCE_ALLOWED)
 def test_divergence_fixes_do_not_over_reject(sql):
     _check(sql)  # must not raise
+
+
+def test_attach_by_polaris_name_must_use_the_slug():
+    """A catalog may be attached by its Polaris name, but only under its slug."""
+    managed = {"sales": "sales", "wh_sales": "sales"}
+    assert_statement_allowed(
+        "ATTACH 'wh_sales' AS sales (TYPE ICEBERG)",
+        staging_prefixes=_STAGING,
+        managed_catalogs=managed,
+    )
+    for sql in ("ATTACH 'wh_sales' (TYPE ICEBERG)", "ATTACH 'wh_sales' AS wh_sales"):
+        with pytest.raises(StatementNotAllowed) as exc:
+            assert_statement_allowed(sql, staging_prefixes=_STAGING, managed_catalogs=managed)
+        assert exc.value.rule == "attach_alias"
+
+
+def test_an_ambiguous_attach_name_is_refused():
+    with pytest.raises(StatementNotAllowed) as exc:
+        assert_statement_allowed(
+            "ATTACH 'b' AS b", staging_prefixes=_STAGING, managed_catalogs={"b": None}
+        )
+    assert exc.value.rule == "attach_target"

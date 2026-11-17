@@ -598,7 +598,7 @@ async def run_statement(
     body.sql = sql_params.render_for_request(body.sql, body.parameters)
 
     catalogs = await resolve_workspace_catalogs(db, session.workspace_id)
-    managed = {c.slug for c in catalogs} | {c.polaris_name for c in catalogs}
+    managed = session_service.attach_names(catalogs)
     prefixes = session_service.staging_prefixes(session, catalogs)
 
     # Capability-scoped statement policy (the session path's relaxed I8).

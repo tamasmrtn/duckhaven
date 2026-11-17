@@ -55,6 +55,23 @@ async def _catalog_descriptors(catalogs: list[Catalog]) -> list[dict[str, object
     return [await build_catalog_attach(c) for c in catalogs]
 
 
+def attach_names(catalogs: list[Catalog]) -> dict[str, str | None]:
+    """The names a session ``ATTACH`` may open, each mapped to the slug it must
+    be attached as (the statement policy's ``managed_catalogs``).
+
+    A catalog is attached by its slug or its Polaris name. A name that is one
+    catalog's slug and another's Polaris name maps to ``None``: attaching it
+    would open one catalog under the other's name, so it is refused.
+    """
+    names: dict[str, str | None] = {}
+    for catalog in catalogs:
+        for name in {catalog.slug, catalog.polaris_name}:
+            if name is None:
+                continue
+            names[name] = catalog.slug if names.get(name, catalog.slug) == catalog.slug else None
+    return names
+
+
 def staging_prefixes(session: SqlSession, catalogs: list[Catalog]) -> list[str]:
     """The locations a session's statements may read and write files under.
 

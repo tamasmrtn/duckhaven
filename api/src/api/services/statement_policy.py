@@ -21,13 +21,18 @@ from __future__ import annotations
 
 import posixpath
 import re
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
+from collections.abc import Set as AbstractSet
 
 import sqlglot
 from sqlglot import exp
 
 from api.services.sql_denylist import ForeignAccessDenied, function_name
 from api.services.sql_denylist import check_statement as check_denylist
+
+# The names an ATTACH may open: each mapped to the slug it must be attached as
+# (None when ambiguous), or a plain set when every name is its own slug.
+ManagedCatalogs = Mapping[str, str | None] | AbstractSet[str]
 
 # SET names dbt/dlt legitimately need. Everything else is denied — crucially
 # anything that could widen the sandbox (memory_limit, threads,
@@ -427,18 +432,44 @@ def _check_pragma(stmt: exp.Pragma) -> None:
         )
 
 
-def _check_attach(stmt: exp.Attach, managed_catalogs: set[str]) -> None:
-    literal = stmt.find(exp.Literal)
-    name = literal.this if literal is not None and literal.is_string else None
-    if name is None or name not in managed_catalogs:
+def _attach_targets(managed_catalogs: ManagedCatalogs) -> Mapping[str, str | None]:
+    """Each name an ``ATTACH`` may open, mapped to the slug it must be attached as.
+
+    A plain set names catalogs whose attach name is their slug. ``None`` marks a
+    name that is ambiguous between two catalogs, which is never attachable.
+    """
+    if isinstance(managed_catalogs, Mapping):
+        return managed_catalogs
+    return {name: name for name in managed_catalogs}
+
+
+def _check_attach(stmt: exp.Attach, managed_catalogs: ManagedCatalogs) -> None:
+    target = stmt.this
+    alias = target.alias if isinstance(target, exp.Alias) else None
+    if isinstance(target, exp.Alias):
+        target = target.this
+    name = target.this if isinstance(target, exp.Literal) and target.is_string else None
+    targets = _attach_targets(managed_catalogs)
+    if name is None or name not in targets or targets[name] is None:
         raise StatementNotAllowed(
             f"ATTACH is only permitted for the managed catalog(s), not {name!r}",
             "attach_target",
         )
+    # The grant check knows a catalog by its alias, so the alias must be the
+    # catalog's own slug. Under any other name a scoped catalog would be read as
+    # whatever that name means to the check: an open catalog, or a built-in one
+    # that is never checked at all. Without `AS`, DuckDB names the attachment
+    # after the path, so the path must then be the slug itself.
+    slug = targets[name]
+    if (alias or name).lower() != slug:
+        raise StatementNotAllowed(
+            f"ATTACH of {name!r} must name it {slug!r}: ATTACH {name!r} AS {slug}",
+            "attach_alias",
+        )
 
 
 def _check_statement(
-    stmt: exp.Expression, staging_prefixes: list[str], managed_catalogs: set[str]
+    stmt: exp.Expression, staging_prefixes: list[str], managed_catalogs: ManagedCatalogs
 ) -> None:
     # File-reading functions and bare-path replacement scans are checked in every
     # statement type (a SELECT/INSERT can embed read_parquet('s3://…') or
@@ -478,7 +509,7 @@ def _check_statement(
 
 
 def assert_statement_allowed(
-    sql: str, *, staging_prefixes: list[str], managed_catalogs: set[str]
+    sql: str, *, staging_prefixes: list[str], managed_catalogs: ManagedCatalogs
 ) -> list[exp.Expression]:
     """Raise ``StatementNotAllowed`` if any statement in ``sql`` violates policy.
 
@@ -488,7 +519,8 @@ def assert_statement_allowed(
 
     ``staging_prefixes`` are the object-storage URI prefixes a ``COPY``/``read_*``
     may touch (the session's ``staging_uri`` + its catalog roots); ``managed_catalogs``
-    are the catalog names an ``ATTACH`` may reference.
+    are the names an ``ATTACH`` may open, each mapped to the slug it must be
+    attached as (a plain set when every name is its own slug).
     """
     try:
         statements = sqlglot.parse(sql, read="duckdb")

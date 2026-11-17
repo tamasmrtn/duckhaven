@@ -1,6 +1,6 @@
 /** Server worksheets: autosave, per-tab results, and saved-query round trips. */
 import { expect, test } from "../fixtures/test";
-import { setMonacoValue } from "../helpers";
+import { DEFAULT_CATALOG, DEFAULT_SCHEMA, setMonacoValue } from "../helpers";
 
 test("a worksheet's SQL survives a reload @smoke", async ({ page, worksheetPage }) => {
   await worksheetPage.goto();
@@ -58,4 +58,29 @@ test("a saved query reopens linked and saves in place", async ({ page, worksheet
   await page.getByRole("group", { name: "Sidebar" }).getByRole("button", { name: "Worksheets" }).click();
   await page.getByRole("list", { name: "My worksheets" }).getByRole("button", { name: new RegExp(`^${name}`) }).click();
   await expect(page.getByRole("tab", { name: new RegExp(name) })).toBeVisible();
+});
+
+test("a table dragged from the catalog search lands in the editor after a tab switch", async ({
+  page,
+  worksheetPage,
+}) => {
+  const table = `qa_drag_${Date.now()}`;
+  await worksheetPage.goto();
+  await worksheetPage.newTabButton.click();
+  await worksheetPage.runAndReadRows(`CREATE TABLE ${table} (id BIGINT)`);
+
+  // A new tab gives the editor another model, and Monaco another view node.
+  await worksheetPage.newTabButton.click();
+  await page.getByRole("textbox", { name: "Search tables" }).fill(table);
+  await page
+    .getByRole("button", { name: new RegExp(table) })
+    .dragTo(page.locator(".monaco-editor .view-lines"));
+
+  await expect
+    .poll(() =>
+      page.evaluate(() => (window as any).monaco?.editor?.getEditors?.()[0]?.getValue()),
+    )
+    .toBe(`${DEFAULT_CATALOG}.${DEFAULT_SCHEMA}.${table}`);
+
+  await worksheetPage.runAndReadRows(`DROP TABLE ${table}`);
 });

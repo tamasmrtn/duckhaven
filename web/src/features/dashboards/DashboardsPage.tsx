@@ -35,7 +35,7 @@ export function DashboardsPage() {
         description="Numbers, charts and tables from this workspace's data. Each one runs as you, with your access."
         actions={
           <Button
-            variant="outline"
+            variant="brand"
             size="sm"
             className="h-7 gap-1.5 text-xs"
             onClick={() => setCreating(true)}

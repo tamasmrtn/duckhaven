@@ -151,6 +151,18 @@ describe("DashboardProposalPage", SLOW, () => {
     expect(screen.queryByRole("button", { name: "Discard" })).toBeNull();
   });
 
+  it("makes accepting the page's one brand-yellow action", async () => {
+    open("proposal-1");
+    await heading("Sales overview");
+
+    expect(screen.getByRole("button", { name: "Accept as draft" })).toHaveClass(
+      "bg-[var(--brand-yellow)]",
+    );
+    expect(screen.getByRole("button", { name: "Discard" })).not.toHaveClass(
+      "bg-[var(--brand-yellow)]",
+    );
+  });
+
   it("says how to get changes that are gone", async () => {
     open("gone");
 

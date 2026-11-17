@@ -58,10 +58,15 @@ describe("DashboardsPage", () => {
       await screen.findByRole("button", { name: "New dashboard" }),
     );
     const dialog = await screen.findByRole("dialog", { name: "New dashboard" });
-    await userEvent.type(within(dialog).getByLabelText("Title"), "Café revenue");
+    await userEvent.type(
+      within(dialog).getByLabelText("Title"),
+      "Café revenue",
+    );
     // The name follows the title until it is typed over.
     expect(within(dialog).getByLabelText("Name")).toHaveValue("cafe-revenue");
-    await userEvent.click(within(dialog).getByRole("button", { name: "Create" }));
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: "Create" }),
+    );
 
     await waitFor(() =>
       expect(router.state.location.pathname).toBe(
@@ -69,7 +74,9 @@ describe("DashboardsPage", () => {
       ),
     );
     const file = await screen.findByRole("textbox", { name: "Dashboard file" });
-    expect((file as HTMLTextAreaElement).value).toContain('title: "Café revenue"');
+    expect((file as HTMLTextAreaElement).value).toContain(
+      'title: "Café revenue"',
+    );
   });
 
   it("says when the name is taken, and offers no name the server would refuse", async () => {
@@ -80,7 +87,10 @@ describe("DashboardsPage", () => {
     );
     const dialog = await screen.findByRole("dialog", { name: "New dashboard" });
     const create = within(dialog).getByRole("button", { name: "Create" });
-    await userEvent.type(within(dialog).getByLabelText("Title"), "Sales overview");
+    await userEvent.type(
+      within(dialog).getByLabelText("Title"),
+      "Sales overview",
+    );
     await userEvent.click(create);
 
     expect(await within(dialog).findByRole("alert")).toHaveTextContent(
@@ -91,5 +101,13 @@ describe("DashboardsPage", () => {
     await userEvent.clear(name);
     await userEvent.type(name, "Sales 2");
     expect(create).toBeDisabled();
+  });
+});
+
+describe("DashboardsPage primary action", () => {
+  it("makes New dashboard the page's one brand-yellow action", async () => {
+    renderWithProviders({ initialRoute: ROUTE });
+    const button = await screen.findByRole("button", { name: "New dashboard" });
+    expect(button).toHaveClass("bg-[var(--brand-yellow)]");
   });
 });

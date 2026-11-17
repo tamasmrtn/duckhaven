@@ -240,7 +240,7 @@ describe("HistoryPage", () => {
     // The seeded workspace mixes interactive runs with a session's statements.
     await screen.findByText(/raw\.users/);
 
-    fireEvent.click(screen.getByRole("button", { name: "Connection" }));
+    fireEvent.click(screen.getByRole("button", { name: "SQL session" }));
 
     expect(
       await screen.findByText(/analytics\.stg_orders AS SELECT/),

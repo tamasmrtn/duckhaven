@@ -132,7 +132,7 @@ a colleague; it opens on the first page.
 | **Time** | Last hour, 24 hours, 7 days, 30 days, all time, or a range. Presets roll from when you opened the page and show the date they start |
 | **Status**, **Statement type** | Several values at once |
 | **Slower than** | A number and a unit |
-| **Origin** | **Interactive**, **Scheduled** or **Connection** (a [SQL session](sql-sessions.md)) |
+| **Origin** | **Interactive**, **Scheduled** or **SQL session** (statements run over a [SQL session](sql-sessions.md)) |
 | **Sort** | By *Started* or *Duration*, over every matching run |
 
 - **Duration** is the time the agent spent running the statement. For a run that failed before the agent reported one,

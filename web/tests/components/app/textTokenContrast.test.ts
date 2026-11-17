@@ -87,6 +87,17 @@ describe("text token contrast", () => {
     );
   });
 
+  it.each([
+    ["light", 0, "#f1f5f9"],
+    ["dark", 1, "#1e293b"],
+  ])("keeps the %s navigation marker at 3:1 beside the current page", (_theme, i, tint) => {
+    // On the navigation's surface, and on the current page's tint.
+    const markers = values("--nav-marker");
+    expect(markers).toHaveLength(2);
+    expect(contrast(markers[i], values("--bg-surface")[i])).toBeGreaterThanOrEqual(3);
+    expect(contrast(markers[i], tint)).toBeGreaterThanOrEqual(3);
+  });
+
   it.each(["queued", "running", "success", "failed", "cancelled"])(
     "keeps the %s pill fill at 4.5:1 against its white label",
     (status) => {

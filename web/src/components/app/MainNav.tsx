@@ -231,12 +231,12 @@ function NavGroups({
                             "relative flex h-7 items-center gap-2 rounded-md px-2 text-sm text-text-secondary transition-colors",
                             "hover:bg-accent hover:text-text-primary",
                             "focus-visible:outline-2 focus-visible:outline-[var(--brand-slate-blue)] focus-visible:outline-offset-2",
-                            active && "bg-accent text-text-primary",
+                            active && "bg-accent font-medium text-text-primary",
                           )}
                         >
                           {active && (
                             <span
-                              className="absolute -left-2 h-5 w-0.5 rounded-r bg-[var(--brand-yellow)]"
+                              className="absolute -left-2 h-5 w-0.5 rounded-r bg-[var(--nav-marker)]"
                               aria-hidden
                             />
                           )}

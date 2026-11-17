@@ -125,6 +125,20 @@ describe('MainNav current page', () => {
   })
 })
 
+describe('MainNav marking', () => {
+  // jsdom computes no colour or layout, so these pin the classes that make the
+  // current page and the groups readable; the marker's contrast is pinned in
+  // textTokenContrast.test.ts.
+  it('sets the current page in a heavier weight, beside an ink marker', async () => {
+    const { links } = await renderNav()
+
+    const current = links.getByRole('link', { name: 'Saved queries' })
+    expect(current).toHaveClass('font-medium')
+    expect(current.querySelector('span[aria-hidden]')).toHaveClass('bg-[var(--nav-marker)]')
+    expect(links.getByRole('link', { name: 'Catalog' })).not.toHaveClass('font-medium')
+  })
+})
+
 describe('MainNav modes', () => {
   it('is expanded, with its labels on screen, for a user who never chose', async () => {
     const { nav, links } = await renderNav()

@@ -23,7 +23,7 @@ your account remembers both.
 | **Analytics** | **Dashboards**, **Semantic models** |
 | **Manage** | **Compute**, **Admin** |
 
-A yellow bar marks the page you are on.
+A bar beside its name marks the page you are on: ink in the light theme, yellow in the dark.
 
 - **Connections**, the SQL sessions that dbt and dlt open, is a view of **History**: open **History** and choose
   **Connections** next to the title. See [Read the session audit trail](../querying/session-audit.md).

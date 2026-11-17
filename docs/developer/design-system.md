@@ -359,7 +359,8 @@ localStorage `dh-sidebar` only caches it for the first paint.
   untouched.
 - Each group is a `role="group"` named after it; the names are not headings,
   which would come before every page's `h1`. Items are links with
-  `aria-current="page"` and the brand-yellow bar.
+  `aria-current="page"`, set in medium weight beside a `--nav-marker` bar
+  (ink in light mode, where the brand yellow is 1.1:1; yellow in dark).
 - User-facing copy says "navigation", never "sidebar": the worksheet's left
   pane is "the sidebar".
 

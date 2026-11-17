@@ -215,6 +215,37 @@ async def test_patch_me_rejects_an_unknown_mode(client: AsyncClient, member: Use
     assert resp.status_code == 422
 
 
+async def test_patch_me_saves_the_theme(client: AsyncClient, member: User):
+    await _login_member(client)
+    assert (await client.get("/me")).json()["theme"] == "system"
+
+    resp = await client.patch("/me", json={"theme": "dark"})
+
+    assert resp.status_code == 200
+    assert resp.json()["theme"] == "dark"
+    assert (await client.get("/me")).json()["theme"] == "dark"
+
+
+async def test_patch_me_null_puts_the_theme_back_to_system(client: AsyncClient, member: User):
+    await _login_member(client)
+    await client.patch("/me", json={"theme": "light", "sidebar": "hover"})
+
+    resp = await client.patch("/me", json={"theme": None})
+
+    assert resp.status_code == 200
+    assert resp.json()["theme"] == "system"
+    assert resp.json()["sidebar"] == "hover"
+
+
+async def test_patch_me_rejects_an_unknown_theme(client: AsyncClient, member: User):
+    await _login_member(client)
+
+    resp = await client.patch("/me", json={"theme": "neon"})
+
+    assert resp.status_code == 422
+    assert (await client.get("/me")).json()["theme"] == "system"
+
+
 async def test_patch_me_cannot_change_role(client: AsyncClient, member: User, db_session):
     await _login_member(client)
 

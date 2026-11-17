@@ -348,15 +348,29 @@ async def ensure_polaris_catalog(
 # `catalog.schema.table` SQL, so they must be identifier-safe.
 _CATALOG_SLUG_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 
+# Names a catalog may not take. `duckhaven`, `system` and `temp` are the built-in
+# catalogs the grant check exempts (`grants.SYSTEM_CATALOGS`), so a catalog under
+# one of them would be read without its grants; `memory` is DuckDB's own default
+# database, which an attach under that alias collides with.
+RESERVED_CATALOG_SLUGS: frozenset[str] = frozenset({"duckhaven", "system", "temp", "memory"})
+
 
 def validate_catalog_slug(slug: str) -> str:
-    """Return ``slug`` if it is identifier-safe, else raise 422."""
+    """Return ``slug`` if it is identifier-safe and not reserved, else raise 422."""
     if not _CATALOG_SLUG_RE.match(slug) or len(slug) > 255:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=(
                 "Catalog slug must match ^[a-z][a-z0-9_]*$ (lowercase, "
                 "start with a letter, only letters/digits/underscores)."
+            ),
+        )
+    if slug in RESERVED_CATALOG_SLUGS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail=(
+                f"Catalog slug '{slug}' is reserved for a built-in catalog. "
+                f"Reserved: {', '.join(sorted(RESERVED_CATALOG_SLUGS))}."
             ),
         )
     return slug

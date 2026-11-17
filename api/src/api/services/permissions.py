@@ -17,6 +17,7 @@ class Permission(StrEnum):
     MAINTENANCE_MANAGE = "maintenance:manage"
     CATALOGS_ADMIN = "catalogs:admin"
     QUERIES_ADMIN = "queries:admin"
+    AUDIT_READ = "audit:read"
 
 
 # Canonical definition of the built-in (system) roles. The database tables are

@@ -24,6 +24,7 @@ workspace membership to query anything.
 | `catalogs:admin` | Attach any catalog to a workspace, drop it, migrate its storage, export it, and rotate or reconcile DuckLake catalog roles; without it, only a catalog's creator can |
 | `maintenance:manage` | Change the maintenance policy, start a scan, and apply a recommendation (applying also needs workspace `writer`) |
 | `queries:admin` | Read query history across workspaces and filter it by another user; list an agent's queries; filter and force-close other people's SQL sessions |
+| `audit:read` | Read the access audit log: every access change, sign-in and authorization denial in the deployment, whoever made it and whichever workspace it was in |
 
 For people who sign in through an identity provider, the global role comes from their group membership on every
 sign-in; see [Connect an IdP](../access/connect-idp.md) and [Connect LDAP / AD](../access/connect-ldap.md).

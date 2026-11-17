@@ -253,6 +253,16 @@ pages:
   section: Access
   summary: Remove someone's access cleanly when they leave, and keep a way in when your identity provider
     is down.
+- path: access/audit-log.md
+  title: Access audit log
+  section: Access
+  summary: DuckHaven records every change to who can reach what, every sign-in, and every request
+    refused for lack of access, in an append-only log kept for a year.
+- path: access/review-access-changes.md
+  title: Review access changes
+  section: Access
+  summary: Find who changed someone's access, and what they changed, by filtering the access audit
+    log through the REST API.
 - path: access/troubleshooting.md
   title: Troubleshoot sign-in and access
   section: Access
@@ -339,8 +349,8 @@ pages:
 - path: operations/monitoring.md
   title: Monitoring
   section: Operate
-  summary: DuckHaven exports Prometheus metrics for alerting, records every query in History, and
-    gives each agent a monitoring page.
+  summary: DuckHaven exports Prometheus metrics for alerting, records every query in History and every
+    access change in the audit log, and gives each agent a monitoring page.
 - path: operations/tracing.md
   title: Distributed tracing
   section: Operate
@@ -377,6 +387,11 @@ pages:
   section: Reference
   summary: Every global permission, workspace role, data-grant tier and agent tier in DuckHaven, and
     what each one allows.
+- path: reference/audit-events.md
+  title: Audit events
+  section: Reference
+  summary: Every action the access audit log records, the fields each event carries, and what each
+    action puts in before, after and details.
 - path: reference/agent-configuration.md
   title: Agent configuration
   section: Reference

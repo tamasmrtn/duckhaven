@@ -116,12 +116,11 @@ Both of those only export: they need a Prometheus or a trace backend to read the
 renders blank unless you deployed one would be the wrong default.
 
 !!! note "Growth"
-    The `queries` table that backs the query figures and the audit log is **not** currently pruned — it grows for the
-    life of the deployment.
+    The `queries` table that backs the query figures and query history is **not** pruned — it grows for the life of
+    the deployment.
 
 ## Related
 
-- [Monitoring](../operations/monitoring.md) — query history and the audit log, Prometheus metrics, alert rules and a
-  Grafana dashboard.
+- [Monitoring](../operations/monitoring.md) — query history, Prometheus metrics, alert rules and a Grafana dashboard.
 - [Agents](agents.md) and [Elastic compute](elastic-compute.md) — what is being monitored.
 - [Scaling compute](scaling.md) — what to do when an agent is saturated.

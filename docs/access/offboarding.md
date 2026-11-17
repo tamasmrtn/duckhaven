@@ -24,6 +24,9 @@ When someone leaves, what you do depends on how they signed in:
 
 `Revoke sessions` (in the same **⋯** menu) force-logs-out a user without disabling the account.
 
+To see what access the person held and who gave it to them, [review the changes to their
+access](review-access-changes.md#find-what-changed-one-persons-access) in the audit log.
+
 !!! warning "`Revoke sessions` does not revoke access tokens"
     It deletes browser sessions only. A user who has issued themselves a
     [personal access token](../reference/rest-api.md#managing-your-own-tokens) — with `dh auth login`, for instance —
@@ -59,7 +62,8 @@ locks you out:
 - If SSO is misbehaving, sign in with the local admin using the email/password form (skip the "Sign in with SSO"
   button), then investigate from **Admin**.
 
-Treat the break-glass admin like any other privileged credential: rotate it periodically and audit its use.
+Treat the break-glass admin like any other privileged credential: rotate it periodically, and review its sign-ins and
+changes in the [access audit log](audit-log.md) with its id as `actor_id`.
 
 ## If it goes wrong
 
@@ -77,4 +81,5 @@ has two.
 
 - [Manage users & access](manage-users.md) — roles and memberships.
 - [How access works](how-access-works.md#signing-in) — how sign-in methods combine.
+- [Review access changes](review-access-changes.md) — who changed someone's access, and when.
 - [Connect an IdP (SSO)](connect-idp.md) and [Connect LDAP / AD](connect-ldap.md).

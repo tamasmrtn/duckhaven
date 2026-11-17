@@ -575,6 +575,8 @@ class _Snapshot:
     agent_lifecycles: dict[tuple[str, str], int] | None = None
     # kind -> (count, age in seconds of the oldest); None when not the reap leader.
     parked: dict[str, tuple[int, float]] | None = None
+    # table -> seconds behind; None when this replica has no system catalog store.
+    system_catalog_lag: dict[str, float] | None = None
 
 
 _snapshot = _Snapshot()
@@ -622,6 +624,16 @@ class _ScrapeCollector:
                 oldest.add_metric([kind], age)
             yield parked
             yield oldest
+        if snap.system_catalog_lag is not None:
+            lag = GaugeMetricFamily(
+                "duckhaven_system_catalog_publish_lag_seconds",
+                "Seconds each system catalog table is behind the control plane, by table; "
+                "a DB-wide value (use max across replicas).",
+                labels=["table"],
+            )
+            for table, seconds in sorted(snap.system_catalog_lag.items()):
+                lag.add_metric([table], seconds)
+            yield lag
         if snap.pool:
             for key, doc in (
                 ("size", "Configured connection pool size."),
@@ -908,6 +920,23 @@ async def _collect_sql_sessions_active(db: AsyncSession) -> int:
     ).scalar_one()
 
 
+async def _collect_system_catalog_lag() -> dict[str, float] | None:
+    """How far behind the system catalog is, read from its store at scrape time.
+
+    Read rather than remembered, so it keeps growing when every replica's
+    publisher has stopped. None when this replica has no store, or cannot reach it
+    within two seconds.
+    """
+    from api.services.system_catalog import publisher, store
+
+    if not settings.system_catalog_enabled or not store.has_engine():
+        return None
+    try:
+        return await asyncio.wait_for(publisher.lag_seconds(), timeout=2.0)
+    except Exception:  # noqa: BLE001 - a scrape never fails over the system catalog
+        return None
+
+
 async def render(db: AsyncSession) -> tuple[bytes, str]:
     """Refresh the scrape-time snapshot and return the exposition payload."""
     global _snapshot
@@ -919,5 +948,6 @@ async def render(db: AsyncSession) -> tuple[bytes, str]:
             sql_sessions_active=await _collect_sql_sessions_active(db),
             agent_lifecycles=await _collect_agent_lifecycles(db) if is_reap_leader() else None,
             parked=await _collect_parked_queries(db) if is_reap_leader() else None,
+            system_catalog_lag=await _collect_system_catalog_lag(),
         )
         return generate_latest(REGISTRY), CONTENT_TYPE_LATEST

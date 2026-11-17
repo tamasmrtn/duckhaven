@@ -4,13 +4,43 @@ type: how-to
 
 # Review access changes
 
-Find who changed someone's access, and what they changed, by filtering the access audit log through the REST API.
+Find who changed someone's access, and what they changed, by filtering the access audit log on the **Audit** page or
+through the REST API.
 
 ## Before you begin
 
-- **You need:** the `audit:read` permission, which the `admin` role holds, and a token for it: your own from
-  `dh auth login`, or a [service account](service-accounts.md)'s with the `admin` role.
+- **You need:** the `audit:read` permission, which the `admin` role holds. For the REST API, also a token for it: your
+  own from `dh auth login`, or a [service account](service-accounts.md)'s with the `admin` role.
 - **Applies to:** every deployment. The log is always on; [Access audit log](audit-log.md) explains what it records.
+
+## In the web app
+
+1. Open **Admin** → **Audit**.
+
+    The events of the last 30 days are listed newest first: when each happened, who acted (**By**), the action, what
+    it changed (**Target**, with its workspace below), and whose access changed (**Affecting**).
+
+2. Narrow the list with the filters above it. They combine:
+
+    | Filter | Shows |
+    |---|---|
+    | **Last 30 days** | Another window, from **Last hour** to **All time**, or a **Custom range** with a start and an end |
+    | **All events** | One category: **Accounts**, **Access**, **Tokens**, **Sign-ins** or **Refusals** |
+    | **Any outcome** | **Succeeded**, **Failed** (a refused sign-in) or **Denied** (a request refused for lack of access) |
+    | **By** | What one person or service account changed, including the calls the [assistant](../ai/assistant.md) made for them |
+    | **Affecting** | Every change to one person's or service account's access, by anyone |
+    | **Workspace…** | One workspace, by its slug |
+    | **Changes to own access** | Only changes people made to their own access; each is marked **Own access** |
+
+3. Select an event to open it.
+
+    **Change** lists each value before and after, **Details** what else was recorded, and **Request** the request ID,
+    the source IP and how the actor signed in.
+
+The filters are kept in the page's address, so a filtered view can be bookmarked, or sent to someone else who holds
+`audit:read`. More events than fit on the page load with **Load more**.
+
+## With the REST API
 
 The examples read the server address and the token from two variables:
 
@@ -19,7 +49,7 @@ export DH=https://duckhaven.example.com
 export DH_TOKEN=dh_pat_…
 ```
 
-## List the latest access changes
+### List the latest access changes
 
 ```bash
 curl -s -H "Authorization: Bearer $DH_TOKEN" \
@@ -59,7 +89,7 @@ curl -s -G -H "Authorization: Bearer $DH_TOKEN" "$DH/api/admin/audit/events" \
   -d category=access -d limit=20 -d cursor=M2RiNDFhYzAtYTUyYy00ODhiLWExNzAtNTA5MjU2OGQ0NDNh
 ```
 
-## Find what changed one person's access
+### Find what changed one person's access
 
 Look up the person's id, then ask for the events whose subject they are:
 
@@ -76,7 +106,7 @@ The second call lists every role, membership, grant and token change made to Ana
 To see what Ana changed instead, pass `actor_id`. It also matches the calls the [assistant](../ai/assistant.md) made
 for her, which name its service account as the actor and Ana as `actor.on_behalf_of_email`.
 
-## Find people who changed their own access
+### Find people who changed their own access
 
 ```bash
 curl -s -H "Authorization: Bearer $DH_TOKEN" \
@@ -86,7 +116,7 @@ curl -s -H "Authorization: Bearer $DH_TOKEN" \
 Each event is one where the actor was also the subject: an admin adding themselves to a workspace, raising their own
 role, or issuing themselves a token.
 
-## Narrow by time, workspace or action
+### Narrow by time, workspace or action
 
 Filters combine. This lists the data grants created, changed or removed in `analytics` during November 2026:
 
@@ -111,7 +141,7 @@ curl -s -G -H "Authorization: Bearer $DH_TOKEN" "$DH/api/admin/audit/events" \
 
 Every action, and the fields it records, is in the [audit events reference](../reference/audit-events.md).
 
-## Find refused sign-ins
+### Find refused sign-ins
 
 ```bash
 curl -s -H "Authorization: Bearer $DH_TOKEN" \
@@ -122,6 +152,10 @@ curl -s -H "Authorization: Bearer $DH_TOKEN" \
 for too many attempts are `auth.rate_limited`.
 
 ## If it goes wrong
+
+### Admin has no Audit tab
+
+Your account lacks `audit:read`. An admin can give you the `admin` role in **Admin** → **Users**.
 
 ### `403` with `"error": "forbidden"`
 
@@ -139,6 +173,8 @@ The event the cursor points at was deleted by the retention purge. Start again w
 - It is not an access change. Queries and other work in a workspace are in History, and storage backends,
   maintenance policy and agent lifecycle are not recorded; see
   [What is recorded](audit-log.md#what-is-recorded).
+- It is outside the time range. The **Audit** page shows the last 30 days until you choose another range; the REST
+  API returns every event unless you send `since` or `until`.
 - It is older than `AUDIT_RETENTION_DAYS`, 365 days by default.
 
 ### A refusal shows once, though it happened many times
@@ -147,6 +183,6 @@ The same refusal by the same caller with the same details is recorded once a min
 
 ## Related
 
-- [Access audit log](audit-log.md) — what is recorded, when, and for how long.
+- [Access audit log](audit-log.md) — what is recorded, when, and for how long, and how an event reads.
 - [Audit events](../reference/audit-events.md) — every action and field.
 - [Manage users & access](manage-users.md) — making the changes the log records.

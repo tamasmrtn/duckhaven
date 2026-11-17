@@ -262,7 +262,7 @@ pages:
   title: Review access changes
   section: Access
   summary: Find who changed someone's access, and what they changed, by filtering the access audit
-    log through the REST API.
+    log on the Audit page or through the REST API.
 - path: access/troubleshooting.md
   title: Troubleshoot sign-in and access
   section: Access

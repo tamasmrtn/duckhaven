@@ -76,7 +76,7 @@
 - [Connect LDAP / AD](https://tamasmrtn.github.io/duckhaven/access/connect-ldap/): Let people sign in to DuckHaven with their LDAP or Active Directory credentials on the normal login form.
 - [Offboarding & break-glass](https://tamasmrtn.github.io/duckhaven/access/offboarding/): Remove someone's access cleanly when they leave, and keep a way in when your identity provider is down.
 - [Access audit log](https://tamasmrtn.github.io/duckhaven/access/audit-log/): DuckHaven records every change to who can reach what, every sign-in, and every request refused for lack of access, in an append-only log kept for a year.
-- [Review access changes](https://tamasmrtn.github.io/duckhaven/access/review-access-changes/): Find who changed someone's access, and what they changed, by filtering the access audit log through the REST API.
+- [Review access changes](https://tamasmrtn.github.io/duckhaven/access/review-access-changes/): Find who changed someone's access, and what they changed, by filtering the access audit log on the Audit page or through the REST API.
 - [Troubleshoot sign-in and access](https://tamasmrtn.github.io/duckhaven/access/troubleshooting/): Find the message you see on the setup or login screen, in the results pane, or in an API response, then follow what to do.
 
 ## Compute

@@ -13,8 +13,8 @@ access changed, and the values before and after.
 
 !!! info "Availability"
     On in every deployment, with no setting to turn it off. Reading it needs the `audit:read` permission, which the
-    `admin` role holds. The log is read through the REST API at `GET /api/admin/audit/events`; there is no page for it
-    in the web app.
+    `admin` role holds, and it is read in the web app at **Admin** → **Audit** or through the REST API at
+    `GET /api/admin/audit/events`.
 
 ## What is recorded
 
@@ -48,6 +48,9 @@ the type `system` or names the account the task ran as.
 The **subject** is whose access changed. When the subject is the actor, or the person a delegated call acted for, the
 event is marked `self_change`. That is the mark to watch: an admin can make themselves a member of any workspace, and
 every such change is recorded with it.
+
+On the **Audit** page the actor is under **By**, with the person a delegated call acted for on the line below it, the
+subject is under **Affecting**, and a `self_change` event carries an **Own access** badge.
 
 Names are kept as they were when the event happened. An event about a user, workspace or catalog that has since been
 deleted still reads in full.
@@ -95,7 +98,7 @@ are still saved.
 
 ## Related
 
-- [Review access changes](review-access-changes.md) — find a change with the REST API.
+- [Review access changes](review-access-changes.md) — find a change in the web app or with the REST API.
 - [Audit events](../reference/audit-events.md) — every action and field.
 - [How access works](how-access-works.md) — the access the log records changes to.
 - [Offboarding & break-glass](offboarding.md) — removing access, and reviewing the break-glass admin's use.

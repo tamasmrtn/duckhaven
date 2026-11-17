@@ -332,7 +332,7 @@ async def list_workspace_queries(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> Page[QueryOut]:
-    """Query log, newest first. Doubles as the admin audit trail.
+    """Query log, newest first.
 
     Paged with a keyset cursor rather than an offset, because history is written
     to continuously and an offset page would duplicate and skip rows under load

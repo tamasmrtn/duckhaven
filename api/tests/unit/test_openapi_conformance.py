@@ -69,6 +69,7 @@ BOUNDED_COLLECTIONS = {
 #: class names, so a tag spanning unrelated resources produces an unusable class.
 ALLOWED_TAGS = {
     "admin-agents",
+    "admin-audit",
     "admin-maintenance",
     "admin-service-accounts",
     "admin-storage",

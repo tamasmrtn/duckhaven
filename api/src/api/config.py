@@ -201,6 +201,11 @@ class Settings(BaseSettings):
     # to roll back (reverse-migrate) if a problem surfaces post-cutover.
     migration_retention_days: int = 7
 
+    # ── Audit log ─────────────────────────────────────────────────────────────
+    # Days an access audit event is kept before a daily purge deletes it; 0 keeps
+    # every event. A year, as Snowflake's and Databricks' audit history keep.
+    audit_retention_days: int = Field(default=365, ge=0)
+
     # ── Lineage ───────────────────────────────────────────────────────────────
     # How long a relationship goes unconfirmed before the graph says so. Applied
     # per producer, not per relationship: an import that stopped running ages out

@@ -3,7 +3,7 @@ import re
 import uuid
 
 from fastapi import HTTPException, status
-from sqlalchemy import ColumnElement, and_, delete, select
+from sqlalchemy import ColumnElement, and_, delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, selectinload
 
@@ -16,6 +16,7 @@ from api.models.sql_session import SqlSession
 from api.models.storage_backend import StorageBackend
 from api.models.worksheet import Worksheet
 from api.models.workspace import Workspace, WorkspaceMember
+from api.services.audit import record
 from api.services.delegation import principals_for
 from api.services.polaris import (
     PolarisCatalog,
@@ -206,7 +207,18 @@ async def update_workspace(
         workspace.description = description
     if result_cache_enabled is not None:
         workspace.result_cache_enabled = result_cache_enabled
-    if default_agent_id is not UNSET:
+    if default_agent_id is not UNSET and default_agent_id != workspace.default_agent_id:
+        # Every member gets `use` on the default agent for this workspace's work,
+        # whatever its access mode, so choosing it is an access change.
+        record(
+            db,
+            "workspace.default_agent_change",
+            target_id=workspace.id,
+            target_name=workspace.slug,
+            workspace=workspace,
+            before={"default_agent_id": workspace.default_agent_id},
+            after={"default_agent_id": default_agent_id},
+        )
         workspace.default_agent_id = default_agent_id
     if timezone is not None:
         workspace.timezone = timezone
@@ -229,6 +241,24 @@ async def delete_workspace(db: AsyncSession, workspace: Workspace) -> None:
     `agent_grants`/`semantic_models`/`lineage_edges` already cascade/null at
     the DB level.
     """
+    members = await db.scalar(
+        select(func.count())
+        .select_from(WorkspaceMember)
+        .where(WorkspaceMember.workspace_id == workspace.id)
+    )
+    attachments = await db.scalar(
+        select(func.count())
+        .select_from(WorkspaceCatalog)
+        .where(WorkspaceCatalog.workspace_id == workspace.id)
+    )
+    record(
+        db,
+        "workspace.delete",
+        target_id=workspace.id,
+        target_name=workspace.slug,
+        workspace=workspace,
+        details={"members_removed": members, "catalogs_detached": attachments},
+    )
     for model in (
         WorkspaceMember,
         Schedule,

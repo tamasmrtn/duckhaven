@@ -548,7 +548,6 @@ PER_USER_LOOKUPS = {
     "routers/admin/agent_access.py::upsert_agent_grant",
     "routers/admin/service_accounts.py::delete_service_account",
     "routers/admin/users.py::list_user_workspaces",
-    "routers/admin/users.py::remove_user_from_workspace",
     "routers/grants.py::upsert_grant",
 }
 _ACCESS_MODELS = {"WorkspaceMember", "CatalogGrant", "AgentGrant"}

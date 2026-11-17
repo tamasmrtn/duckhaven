@@ -47,16 +47,19 @@ AUDITED: dict[tuple[str, str], set[str]] = {
     ("PATCH", "/admin/agents/{agent_id}/access-mode"): {"agent.access_mode_change"},
     ("PUT", "/admin/agents/{agent_id}/grants"): {"agent_grant.create", "agent_grant.tier_change"},
     ("DELETE", "/admin/agents/{agent_id}/grants/{grant_id}"): {"agent_grant.delete"},
+    ("POST", "/workspaces"): {"workspace.create", "workspace_member.add"},
+    ("PATCH", "/workspaces/{workspace}"): {"workspace.default_agent_change"},
+    ("DELETE", "/workspaces/{workspace}"): {"workspace.delete"},
+    ("POST", "/workspaces/{workspace}/members"): {"workspace_member.add"},
+    ("PUT", "/admin/users/{user_id}/workspaces/{workspace}"): {
+        "workspace_member.add",
+        "workspace_member.role_change",
+    },
+    ("DELETE", "/admin/users/{user_id}/workspaces/{workspace}"): {"workspace_member.remove"},
 }
 
 # Routes not yet wired, each moved into AUDITED by the commit that wires it.
 PENDING: set[tuple[str, str]] = {
-    ("POST", "/workspaces"),
-    ("PATCH", "/workspaces/{workspace}"),
-    ("DELETE", "/workspaces/{workspace}"),
-    ("POST", "/workspaces/{workspace}/members"),
-    ("PUT", "/admin/users/{user_id}/workspaces/{workspace}"),
-    ("DELETE", "/admin/users/{user_id}/workspaces/{workspace}"),
     ("POST", "/admin/users"),
     ("PATCH", "/admin/users/{user_id}"),
     ("POST", "/admin/users/{user_id}/revoke-sessions"),

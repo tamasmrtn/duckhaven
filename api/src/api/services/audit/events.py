@@ -88,6 +88,30 @@ def record_catalog_attached(
     )
 
 
+def record_membership(
+    db: AsyncSession,
+    action: str,
+    *,
+    workspace: Any,
+    member: User,
+    before: str | None = None,
+    after: str | None = None,
+    details: dict | None = None,
+) -> None:
+    """A workspace membership added, re-roled or removed; ``before``/``after`` are roles."""
+    record(
+        db,
+        action,
+        target_id=member.id,
+        target_name=member.email,
+        workspace=workspace,
+        subject=member,
+        before=None if before is None else {"role": before},
+        after=None if after is None else {"role": after},
+        details=details,
+    )
+
+
 async def record_catalog_grant(
     db: AsyncSession,
     action: str,

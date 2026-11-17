@@ -167,8 +167,10 @@ move or remove a widget or a parameter, or change the title, description or labe
 the file they make as saving does. A problem the change would add, such as a metric that does not exist, refuses the
 proposal and tells the assistant what to fix.
 
-The chat shows a card with the proposal's summary and what it changes. **Review changes** opens a page that lists the
-changes and runs the file they make, as you. On it:
+The chat shows a card with the proposal's summary and what it changes. A changed title or description shows the text
+it has and the text it would get, such as `Title changed: “Sales overview” → “Sales, weekly”`. **Review changes**
+opens a page, named by the dashboard's current title, that lists the changes and runs the file they make, as you. On
+it:
 
 - **Accept as draft** saves the file as the dashboard's draft, and opens the editor on it. The draft is written as
   canonical YAML, so comments in the draft it replaces are not kept. Publishing it is an owner's decision, as for any

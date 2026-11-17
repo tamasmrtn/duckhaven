@@ -11,7 +11,7 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { PageHeader } from "@/components/ui/page-header";
 import { Skeleton } from "@/components/ui/skeleton";
 import { describeChange } from "@/features/assistant/ChatProposal";
-import { useDashboardProposal } from "@/queries/dashboards";
+import { useDashboard, useDashboardProposal } from "@/queries/dashboards";
 import type { DashboardProposal } from "@/types/dashboard";
 import { EditorPreview } from "./EditorPreview";
 import { useLiveFile } from "./useLiveFile";
@@ -85,6 +85,9 @@ function Review({ ws, proposal }: { ws: string; proposal: DashboardProposal }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const live = useLiveFile(ws, proposal.result_source);
+  // The file the changes apply to, as writers see it now. The heading names
+  // the dashboard by its current title, not the one the changes would leave.
+  const { data: base } = useDashboard(ws, proposal.dashboard, true);
   const [failure, setFailure] = useState<string | null>(null);
   const pending = proposal.status === "pending";
   const note = decided(proposal);
@@ -145,7 +148,7 @@ function Review({ ws, proposal }: { ws: string; proposal: DashboardProposal }) {
   return (
     <div className="flex h-full flex-col">
       <PageHeader
-        title={`Proposed changes to ${proposal.title}`}
+        title={`Proposed changes to ${base?.title ?? proposal.dashboard}`}
         description={
           <>
             The assistant proposed these changes to{" "}
@@ -221,7 +224,9 @@ function Review({ ws, proposal }: { ws: string; proposal: DashboardProposal }) {
           <p className="text-sm text-text-primary">{proposal.summary}</p>
           <ul className="flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-text-secondary">
             {proposal.changes.map((change) => (
-              <li key={change.path}>{describeChange(change)}</li>
+              <li key={change.path}>
+                {describeChange(change, base?.spec, proposal.result_spec)}
+              </li>
             ))}
           </ul>
         </section>

@@ -33,12 +33,16 @@ describe("DashboardProposalPage", SLOW, () => {
   it("lists the changes and runs the file they make, as you", async () => {
     open("proposal-1");
 
-    expect(await heading("Sales, weekly")).toBeVisible();
+    expect(await heading("Sales overview")).toBeVisible();
     expect(
       screen.getByText("Retitle the dashboard for its weekly review."),
     ).toBeVisible();
     const changes = screen.getByRole("region", { name: "Changes" });
-    expect(within(changes).getByText("Title changed")).toBeVisible();
+    expect(
+      within(changes).getByText(
+        "Title changed: “Sales overview” → “Sales, weekly”",
+      ),
+    ).toBeVisible();
     const preview = await screen.findByRole("region", { name: "Preview" });
     expect(within(preview).getByText("Preview, viewing as you")).toBeVisible();
     expect(
@@ -51,7 +55,7 @@ describe("DashboardProposalPage", SLOW, () => {
   it("saves the file as the draft when accepted, and opens the editor", async () => {
     const user = userEvent.setup();
     const { router } = open("proposal-1");
-    await heading("Sales, weekly");
+    await heading("Sales overview");
 
     await user.click(screen.getByRole("button", { name: "Accept as draft" }));
 
@@ -74,7 +78,7 @@ describe("DashboardProposalPage", SLOW, () => {
   it("leaves the dashboard as it was when discarded", async () => {
     const user = userEvent.setup();
     open("proposal-1");
-    await heading("Sales, weekly");
+    await heading("Sales overview");
 
     await user.click(screen.getByRole("button", { name: "Discard" }));
 
@@ -92,7 +96,7 @@ describe("DashboardProposalPage", SLOW, () => {
     DASHBOARDS.find((d) => d.name === "sales-overview")!.version += 1;
     open("proposal-1");
 
-    await heading("Sales, weekly");
+    await heading("Sales overview");
 
     expect(
       screen.getByText(
@@ -108,7 +112,7 @@ describe("DashboardProposalPage", SLOW, () => {
   it("says why a stale proposal was refused when accepting it", async () => {
     const user = userEvent.setup();
     open("proposal-1");
-    await heading("Sales, weekly");
+    await heading("Sales overview");
     // Someone saves the dashboard while the page is open.
     DASHBOARDS.find((d) => d.name === "sales-overview")!.version += 1;
 
@@ -125,7 +129,7 @@ describe("DashboardProposalPage", SLOW, () => {
   it("offers the file to copy for a dashboard managed in git", async () => {
     open("proposal-git");
 
-    await heading("Finance, weekly");
+    await heading("Finance weekly");
 
     expect(screen.getByText(/managed in git/)).toBeVisible();
     expect(screen.getByRole("button", { name: "Copy file" })).toBeVisible();
@@ -138,7 +142,7 @@ describe("DashboardProposalPage", SLOW, () => {
     PROPOSALS["proposal-1"].expires_at = new Date(Date.now() - 1).toISOString();
     open("proposal-1");
 
-    await heading("Sales, weekly");
+    await heading("Sales overview");
 
     expect(screen.getByText(/These changes expired a day after/)).toBeVisible();
     expect(

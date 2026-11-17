@@ -2,10 +2,11 @@ import { Link } from "@tanstack/react-router";
 import { FilePen } from "lucide-react";
 import { ApiError } from "@/api/client";
 import { Button } from "@/components/ui/button";
-import { useDashboardProposal } from "@/queries/dashboards";
+import { useDashboard, useDashboardProposal } from "@/queries/dashboards";
 import type { ChatProposal } from "@/types/assistant";
 import type {
   DashboardChange,
+  DashboardFile,
   DashboardProposalStatus,
 } from "@/types/dashboard";
 
@@ -21,8 +22,22 @@ const STATUS: Record<DashboardProposalStatus | "gone", string> = {
   gone: "Expired",
 };
 
-/** A change as a reviewer reads it: what it touches, and how. */
-export function describeChange(change: DashboardChange): string {
+/** A top-level text of a file, such as its title, if it has one. */
+function textAt(file: DashboardFile | undefined, key: string): string | null {
+  const value = (file as Record<string, unknown> | undefined)?.[key];
+  return typeof value === "string" ? value : null;
+}
+
+/**
+ * A change as a reviewer reads it: what it touches, and how. Given the file
+ * before and after, a changed text such as the title says what it was and
+ * what it becomes, so it can be judged without opening the file.
+ */
+export function describeChange(
+  change: DashboardChange,
+  before?: DashboardFile,
+  after?: DashboardFile,
+): string {
   const [kind, name] = change.path.split(/\.(.*)/s);
   const what =
     kind === "widgets"
@@ -32,6 +47,21 @@ export function describeChange(change: DashboardChange): string {
         : kind === "layout"
           ? "Layout"
           : kind.charAt(0).toUpperCase() + kind.slice(1);
+  if (name === undefined) {
+    const from = textAt(before, kind);
+    const to = textAt(after, kind);
+    if (
+      change.change === "changed" &&
+      from !== null &&
+      to !== null &&
+      from !== to
+    )
+      return `${what} changed: “${from}” → “${to}”`;
+    if (change.change === "added" && to !== null)
+      return `${what} added: “${to}”`;
+    if (change.change === "removed" && from !== null)
+      return `${what} removed: “${from}”`;
+  }
   return `${what} ${change.change}`;
 }
 
@@ -48,12 +78,16 @@ export function ChatProposalCard({
 }) {
   const { proposal } = card;
   const { data, error } = useDashboardProposal(ws, proposal.id);
+  // The dashboard as writers see it now: `proposal.title` is the title the
+  // changes would leave, so naming the dashboard by it reads as if done.
+  const { data: base } = useDashboard(ws, proposal.dashboard, true);
+  const target = base?.title ?? proposal.dashboard;
   const gone = error instanceof ApiError && error.status === 404;
   const status = gone ? "gone" : data?.status;
   const more = proposal.changes.length - LISTED;
   return (
     <section
-      aria-label={`Proposed changes to ${proposal.title}`}
+      aria-label={`Proposed changes to ${target}`}
       className="flex min-w-0 flex-col gap-2 self-stretch rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-3 py-2"
     >
       <header className="flex items-start gap-2">
@@ -63,7 +97,7 @@ export function ChatProposalCard({
         />
         <div className="min-w-0 space-y-0.5">
           <h3 className="truncate text-xs font-medium text-text-secondary">
-            Proposed changes to {proposal.title}
+            Proposed changes to {target}
           </h3>
           {status && (
             <p className="text-2xs text-text-tertiary">{STATUS[status]}</p>
@@ -74,7 +108,9 @@ export function ChatProposalCard({
       <p className="text-xs text-text-primary">{proposal.summary}</p>
       <ul className="space-y-0.5 text-2xs text-text-secondary">
         {proposal.changes.slice(0, LISTED).map((change) => (
-          <li key={change.path}>{describeChange(change)}</li>
+          <li key={change.path}>
+            {describeChange(change, base?.spec, data?.result_spec)}
+          </li>
         ))}
         {more > 0 && (
           <li className="text-text-tertiary">

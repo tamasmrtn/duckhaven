@@ -191,6 +191,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     result_cache_task = asyncio.create_task(sweeper_loop(async_session_factory))
 
+    # Unconditional: the audit log is always on, and so is its retention.
+    from api.services.audit.retention import retention_loop
+
+    audit_retention_task = asyncio.create_task(retention_loop(async_session_factory))
+
     compute_reaper_task: asyncio.Task | None = None
     if settings.elastic_compute_enabled:
         from api.services.compute.reaper import reaper_loop as compute_reaper_loop
@@ -211,6 +216,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             compute_reaper_task,
             presence_task,
             result_cache_task,
+            audit_retention_task,
         ):
             if task is not None:
                 task.cancel()

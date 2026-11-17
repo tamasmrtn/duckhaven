@@ -58,6 +58,7 @@ from api.routers.admin import users as admin_users
 from api.services.agent_dispatch import drain_local_agents
 from api.services.assistant.identity import ASSISTANT_EMAIL
 from api.services.assistant.knowledge.sync import sync_corpus
+from api.services.audit import AuditContextMiddleware
 from api.services.bootstrap import ensure_assistant_service_account, seed_agent_bootstrap_token
 from api.services.catalog_backends import (
     CatalogBackendBadRequest,
@@ -258,6 +259,10 @@ api_app.add_middleware(
     same_site="lax",
     max_age=600,
 )
+
+# Outermost, so every handler and exception handler below sees the request's
+# audit context (request id, source address, and the actor once authenticated).
+api_app.add_middleware(AuditContextMiddleware)
 
 
 # Every 4xx and 5xx leaves through one of the three handlers below, so the body

@@ -52,6 +52,7 @@ from api.services.assistant.identity import (
 from api.services.assistant.knowledge.search import search_pages
 from api.services.assistant.persistence import chart_of, load_history, proposal_of, save_turn
 from api.services.assistant.prompts import format_summary
+from api.services.audit.context import origin_client
 from api.services.semantic.timespec import today_in
 
 logger = logging.getLogger(__name__)
@@ -279,7 +280,8 @@ async def _turn_context(
         # assistant router, which imports this module).
         from api.main import api_app
 
-        transport = ASGITransport(app=api_app)
+        # The person's own address, so what these calls record shows where they were.
+        transport = ASGITransport(app=api_app, client=origin_client())
         async with httpx.AsyncClient(
             transport=transport,
             base_url="http://assistant.internal",

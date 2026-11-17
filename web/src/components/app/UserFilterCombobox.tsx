@@ -20,13 +20,20 @@ import { useAdminUsers } from "@/queries/users";
  * Filters the query history list by user. Admin-only — unlike the agent
  * filter, this reveals who ran a query, so it stays behind the same
  * `queries:admin` permission the server already enforces.
+ *
+ * The audit log uses it twice, for who acted and whose access changed, so the
+ * label and the no-filter choice can be named.
  */
 export function UserFilterCombobox({
   value,
   onChange,
+  label = "filter by user",
+  allLabel = "All users",
 }: {
   value: string | null;
   onChange: (userId: string | null) => void;
+  label?: string;
+  allLabel?: string;
 }) {
   const [open, setOpen] = useState(false);
   const { data: users = [] } = useAdminUsers();
@@ -39,11 +46,11 @@ export function UserFilterCombobox({
           variant="outline"
           role="combobox"
           aria-expanded={open}
-          aria-label="filter by user"
+          aria-label={label}
           className="h-7 w-[180px] justify-between gap-1 text-xs"
         >
           <span className="truncate">
-            {selected ? (selected.name ?? selected.email) : "All users"}
+            {selected ? (selected.name ?? selected.email) : allLabel}
           </span>
           <ChevronsUpDown className="ml-auto size-3.5 shrink-0 opacity-50" />
         </Button>
@@ -55,13 +62,13 @@ export function UserFilterCombobox({
             <CommandEmpty>No users found.</CommandEmpty>
             <CommandGroup>
               <CommandItem
-                value="all users"
+                value={allLabel.toLowerCase()}
                 onSelect={() => {
                   onChange(null);
                   setOpen(false);
                 }}
               >
-                All users
+                {allLabel}
               </CommandItem>
               {users.map((u) => (
                 <CommandItem

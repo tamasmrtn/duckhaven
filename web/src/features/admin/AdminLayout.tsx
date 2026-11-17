@@ -58,6 +58,13 @@ const tabs = [
     description:
       "Which catalogs follow the workspace role, and which are scoped.",
   },
+  {
+    segment: "audit",
+    label: "Audit",
+    permission: "audit:read",
+    description:
+      "Who changed whose access, who signed in, and what was refused.",
+  },
 ];
 
 export function AdminLayout() {
@@ -71,7 +78,7 @@ export function AdminLayout() {
     permissions.includes(permission),
   );
 
-  // Six screens share the "Admin" header, so the tab names the section.
+  // Seven screens share the "Admin" header, so the tab names the section.
   const section = visibleTabs.find(({ segment }) =>
     pathname.includes(`/admin/${segment}`),
   );

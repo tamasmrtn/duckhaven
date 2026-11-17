@@ -2,7 +2,13 @@ import { describe, it, expect } from 'vitest'
 import { renderHook, waitFor } from '@testing-library/react'
 import { server } from '@tests/mock/server'
 import { http, HttpResponse } from 'msw'
-import { useMe, useLogin, useLogout } from '@/queries/auth'
+import {
+  NAV_MODE_CACHE_KEY,
+  THEME_CACHE_KEY,
+  useMe,
+  useLogin,
+  useLogout,
+} from '@/queries/auth'
 import { CURRENT_USER } from '@/mock/fixtures/users'
 import { createWrapper } from '@tests/utils'
 
@@ -43,6 +49,19 @@ describe('useLogout()', () => {
     const { result } = renderHook(() => useLogout(), { wrapper })
     await result.current.mutateAsync()
     expect(queryClient.getQueryData(['me'])).toBeUndefined()
+    queryClient.clear()
+  })
+
+  it("forgets this browser's cached layout and theme, so the next person starts from the defaults", async () => {
+    localStorage.setItem(NAV_MODE_CACHE_KEY, 'collapsed')
+    localStorage.setItem(THEME_CACHE_KEY, 'dark')
+    const { queryClient, wrapper } = createWrapper()
+
+    const { result } = renderHook(() => useLogout(), { wrapper })
+    await result.current.mutateAsync()
+
+    expect(localStorage.getItem(NAV_MODE_CACHE_KEY)).toBeNull()
+    expect(localStorage.getItem(THEME_CACHE_KEY)).toBeNull()
     queryClient.clear()
   })
 })

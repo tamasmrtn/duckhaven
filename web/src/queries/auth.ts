@@ -7,6 +7,7 @@ import { authApi } from "@/api/auth";
  * matches it before `/me` answers. The account stays the source of truth.
  */
 export const NAV_MODE_CACHE_KEY = "dh-sidebar";
+export const THEME_CACHE_KEY = "dh-theme";
 
 export function useMe() {
   return useQuery({
@@ -58,10 +59,11 @@ export function useLogout() {
     mutationFn: authApi.logout,
     onSuccess: () => {
       qc.clear();
-      // The next person on this browser starts from the default until their
-      // own account answers, not from this one's layout.
+      // The next person on this browser starts from the defaults until their
+      // own account answers, not from this one's layout and theme.
       try {
         localStorage.removeItem(NAV_MODE_CACHE_KEY);
+        localStorage.removeItem(THEME_CACHE_KEY);
       } catch {
         // Nothing was cached.
       }

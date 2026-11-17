@@ -2,29 +2,14 @@ import {
   createContext,
   useCallback,
   useContext,
-  useEffect,
   useMemo,
-  useState,
   type ReactNode,
 } from "react";
-import { useQueryClient } from "@tanstack/react-query";
-import { NAV_MODE_CACHE_KEY, useMe, useUpdateMe } from "@/queries/auth";
-import { NAV_MODES, type NavMode, type User } from "@/types/auth";
+import { NAV_MODE_CACHE_KEY } from "@/queries/auth";
+import { NAV_MODES, type NavMode } from "@/types/auth";
+import { useAccountPreference } from "./useAccountPreference";
 
 export const DEFAULT_NAV_MODE: NavMode = "expanded";
-
-function isNavMode(value: unknown): value is NavMode {
-  return (NAV_MODES as readonly unknown[]).includes(value);
-}
-
-function readCache(): NavMode {
-  try {
-    const cached = localStorage.getItem(NAV_MODE_CACHE_KEY);
-    return isNavMode(cached) ? cached : DEFAULT_NAV_MODE;
-  } catch {
-    return DEFAULT_NAV_MODE;
-  }
-}
 
 interface NavModeContextValue {
   mode: NavMode;
@@ -41,40 +26,13 @@ const NavModeContext = createContext<NavModeContextValue | null>(null);
  * Settings never disagree.
  */
 export function NavModeProvider({ children }: { children: ReactNode }) {
-  const qc = useQueryClient();
-  const { data: me } = useMe();
-  const { mutate } = useUpdateMe();
-  const [mode, setLocalMode] = useState<NavMode>(readCache);
-
-  // Adopt the account's choice whenever it arrives or changes. Null means the
-  // user never chose, so they get the default rather than whatever this
-  // browser last showed someone else.
-  const accountKey = me ? `${me.id}:${me.sidebar ?? ""}` : null;
-  const [adoptedKey, setAdoptedKey] = useState<string | null>(null);
-  if (me && accountKey !== adoptedKey) {
-    setAdoptedKey(accountKey);
-    setLocalMode(isNavMode(me.sidebar) ? me.sidebar : DEFAULT_NAV_MODE);
-  }
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(NAV_MODE_CACHE_KEY, mode);
-    } catch {
-      // Only the first-paint cache is lost; the account still has it.
-    }
-  }, [mode]);
-
-  const setMode = useCallback(
-    (next: NavMode) => {
-      setLocalMode(next);
-      // A `/me` read already in flight would answer with the old choice.
-      void qc.cancelQueries({ queryKey: ["me"] });
-      qc.setQueryData<User>(["me"], (user) =>
-        user ? { ...user, sidebar: next } : user,
-      );
-      mutate({ sidebar: next });
-    },
-    [qc, mutate],
+  // An account that never chose gets the default, not whatever this browser
+  // last showed someone else.
+  const [mode, setMode] = useAccountPreference(
+    "sidebar",
+    NAV_MODES,
+    DEFAULT_NAV_MODE,
+    NAV_MODE_CACHE_KEY,
   );
 
   const toggle = useCallback(

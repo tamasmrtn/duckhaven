@@ -408,7 +408,7 @@ describe("SettingsPage — Account tab", () => {
     expect(within(panel).getByText(CURRENT_USER.name)).toBeInTheDocument();
   });
 
-  it("keeps the theme control in sync with the top-bar toggle", async () => {
+  it("saves the theme on the account and keeps the top-bar toggle in sync", async () => {
     const user = userEvent.setup();
     renderWithProviders({ initialRoute: ROUTE });
     await screen.findByLabelText("Name");
@@ -420,6 +420,7 @@ describe("SettingsPage — Account tab", () => {
     await waitFor(() =>
       expect(darkOption).toHaveAttribute("aria-checked", "true"),
     );
+    await waitFor(() => expect(currentUser().theme).toBe("dark"));
     // The top-bar theme dropdown trigger is mounted at the same time (same
     // AppShell) — its icon must reflect the same ThemeProvider state.
     expect(

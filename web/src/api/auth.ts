@@ -1,5 +1,5 @@
 import { get, patch, post } from "./client";
-import type { AuthMethods, NavMode, User } from "@/types/auth";
+import type { AuthMethods, NavMode, Theme, User } from "@/types/auth";
 
 export const authApi = {
   login: (email: string, password: string) =>
@@ -10,7 +10,8 @@ export const authApi = {
   me: () => get<User>("/me"),
 
   /** Change the caller's own preferences; only the fields sent change. */
-  updateMe: (body: { sidebar?: NavMode | null }) => patch<User>("/me", body),
+  updateMe: (body: { theme?: Theme | null; sidebar?: NavMode | null }) =>
+    patch<User>("/me", body),
 
   methods: () => get<AuthMethods>("/auth/methods"),
 };

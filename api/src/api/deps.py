@@ -11,6 +11,7 @@ from api.models.user import User
 from api.services import delegation
 from api.services.agent_access import ResolvedAgent, assert_agent_tier
 from api.services.audit import set_actor
+from api.services.audit.events import record_permission_denied
 from api.services.auth import get_pat_credential, get_session_credential
 from api.services.permissions import Permission
 from api.services.polaris import PolarisClient
@@ -139,6 +140,7 @@ def require_permission(
         db: AsyncSession = Depends(get_db),
     ) -> User:
         if not await has_permission(db, user, permission):
+            await record_permission_denied(db, permission.value)
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
         return user
 

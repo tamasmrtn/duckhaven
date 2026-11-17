@@ -75,16 +75,12 @@ AUDITED: dict[tuple[str, str], set[str]] = {
     ("POST", "/auth/logout"): {"auth.sign_out"},
 }
 
-# Routes not yet wired, each moved into AUDITED by the commit that wires it.
-PENDING: set[tuple[str, str]] = set()
-
 # Actions recorded somewhere other than one route's handler.
 RECORDED_ELSEWHERE: dict[str, str] = {
     "user.provision": "a federated sign-in (OIDC callback or LDAP bind) creating the account",
+    "authz.permission_denied": "the require_permission dependency, on any route that has one",
+    "authz.grant_denied": "the data grant check, on every path that runs or reads a statement",
 }
-
-# Actions not yet recorded anywhere; emptied as PENDING is.
-PENDING_ACTIONS: set[str] = set(ACTIONS) - set(RECORDED_ELSEWHERE) - set().union(*AUDITED.values())
 
 _WORK = "work inside a workspace, governed by the access the audit log records"
 _TABLE = "/workspaces/{workspace}/catalogs/{catalog}/schemas/{schema}/tables/{table}"
@@ -143,30 +139,25 @@ def _exempt(key: tuple[str, str]) -> bool:
     return key in EXEMPT or any(key[1].startswith(prefix) for prefix in EXEMPT_PREFIXES)
 
 
-def test_every_mutating_route_is_audited_exempt_or_pending():
-    unplaced = sorted(
-        key
-        for key in _mutating_routes()
-        if key not in AUDITED and key not in PENDING and not _exempt(key)
-    )
+def test_every_mutating_route_is_audited_or_exempt():
+    unplaced = sorted(key for key in _mutating_routes() if key not in AUDITED and not _exempt(key))
     assert unplaced == [], "Place each route in AUDITED or EXEMPT (with a reason)"
 
 
 def test_no_route_is_in_two_places():
-    for key in AUDITED.keys() | PENDING:
+    for key in AUDITED:
         assert not _exempt(key), f"{key} is both audited and exempt"
-    assert not (AUDITED.keys() & PENDING)
 
 
 def test_every_listed_route_exists():
     routes = _mutating_routes()
-    stale = sorted((AUDITED.keys() | PENDING | EXEMPT.keys()) - routes)
+    stale = sorted((AUDITED.keys() | EXEMPT.keys()) - routes)
     assert stale == []
     for prefix in EXEMPT_PREFIXES:
         assert any(path.startswith(prefix) for _, path in routes), prefix
 
 
 def test_every_action_is_recorded_somewhere():
-    named = set().union(*AUDITED.values()) | set(RECORDED_ELSEWHERE) | PENDING_ACTIONS
+    named = set().union(*AUDITED.values()) | set(RECORDED_ELSEWHERE)
     assert named <= set(ACTIONS), sorted(named - set(ACTIONS))
     assert set(ACTIONS) - named == set()

@@ -22,7 +22,10 @@ control plane's "never run user SQL" invariant (I1) is preserved.
 
 from __future__ import annotations
 
+import functools
+import inspect
 import uuid
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -35,6 +38,7 @@ from sqlglot import exp
 from api.models.catalog import Catalog, WorkspaceCatalog
 from api.models.catalog_grant import CatalogGrant
 from api.models.workspace import WorkspaceMember
+from api.services.audit.events import record_grant_denied
 from api.services.delegation import principals_for
 from api.services.sql_denylist import function_name
 from api.services.statement_policy import StatementNotAllowed, check_file_reads
@@ -67,6 +71,35 @@ class GrantDenied(ValueError):
     records the run as failed; ``routers/queries.py`` catches it explicitly to
     return HTTP 403.
     """
+
+
+def _records_denial[**P](
+    check: Callable[P, Awaitable[None]],
+) -> Callable[P, Awaitable[None]]:
+    """Record a refusal by ``check`` in the audit log, then let it propagate.
+
+    Here rather than where each caller turns it into a 403, so a refusal is
+    recorded the same way on every path: a request, a scheduled run, a dashboard
+    refresh, a result read back.
+    """
+    signature = inspect.signature(check)
+
+    @functools.wraps(check)
+    async def checked(*args: P.args, **kwargs: P.kwargs) -> None:
+        try:
+            await check(*args, **kwargs)
+        except GrantDenied as exc:
+            given = signature.bind(*args, **kwargs).arguments
+            await record_grant_denied(
+                given["db"],
+                workspace_id=given["workspace_id"],
+                principal_id=given["principal_id"],
+                reason=str(exc),
+                sql=given.get("sql"),
+            )
+            raise
+
+    return checked
 
 
 @dataclass(frozen=True)
@@ -737,6 +770,7 @@ def is_exempt_ref(catalog: str | None, schema: str | None) -> bool:
     return is_system_catalog(catalog) or is_metadata_schema(schema)
 
 
+@_records_denial
 async def assert_query_access(
     db: AsyncSession,
     workspace_id: uuid.UUID,
@@ -827,6 +861,7 @@ async def assert_query_access(
         context = context_after(stmt, context)
 
 
+@_records_denial
 async def assert_chosen_schema_reachable(
     db: AsyncSession,
     workspace_id: uuid.UUID,

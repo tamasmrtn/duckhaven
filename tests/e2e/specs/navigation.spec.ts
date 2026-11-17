@@ -86,3 +86,30 @@ test("the old Connections address opens History's Connections view", async ({ pa
   await expect(page).toHaveURL(new RegExp(`/${WS_SLUG}/history\\?view=connections$`));
   await expect(page.getByRole("group", { name: "History view" })).toBeVisible();
 });
+
+test.describe("the theme", () => {
+  test.afterEach(async ({ page }) => {
+    // Every spec signs in as the same admin, so put the theme back.
+    await page.request.patch(`${BASE_URL}/api/me`, { data: { theme: null } });
+  });
+
+  test("a theme chosen in Settings follows the account to another browser", async ({
+    page,
+    browser,
+  }) => {
+    await page.goto(`${BASE_URL}/${WS_SLUG}/settings`);
+    await page.getByRole("tab", { name: "Account" }).click();
+    await page.getByRole("radiogroup", { name: "Theme" }).getByRole("radio", { name: "Dark" }).click();
+    await expect(page.locator("html")).toHaveClass(/\bdark\b/);
+
+    // Another browser, with none of this one's local storage.
+    const other = await browser.newContext({
+      storageState: ADMIN_STORAGE_STATE,
+      colorScheme: "light",
+    });
+    const otherPage = await other.newPage();
+    await otherPage.goto(`${BASE_URL}/${WS_SLUG}/catalog`);
+    await expect(otherPage.locator("html")).toHaveClass(/\bdark\b/);
+    await other.close();
+  });
+});

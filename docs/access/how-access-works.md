@@ -150,3 +150,4 @@ DuckHaven is the only place permissions are enforced. Polaris sees a single serv
 - [Scoped access](scoped-access.md) — data grants in depth.
 - [Agent access](agent-access.md) — reserving compute.
 - [Manage users & access](manage-users.md) — the how-to for layers 1 and 2.
+- [Access audit log](audit-log.md) — the record of every change to these layers.

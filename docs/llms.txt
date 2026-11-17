@@ -75,6 +75,8 @@
 - [Connect an IdP (SSO)](https://tamasmrtn.github.io/duckhaven/access/connect-idp/): Let people sign in to DuckHaven through your OpenID Connect identity provider, such as Microsoft Entra ID, Okta, Keycloak, Authentik, AWS Cognito or Google Workspace.
 - [Connect LDAP / AD](https://tamasmrtn.github.io/duckhaven/access/connect-ldap/): Let people sign in to DuckHaven with their LDAP or Active Directory credentials on the normal login form.
 - [Offboarding & break-glass](https://tamasmrtn.github.io/duckhaven/access/offboarding/): Remove someone's access cleanly when they leave, and keep a way in when your identity provider is down.
+- [Access audit log](https://tamasmrtn.github.io/duckhaven/access/audit-log/): DuckHaven records every change to who can reach what, every sign-in, and every request refused for lack of access, in an append-only log kept for a year.
+- [Review access changes](https://tamasmrtn.github.io/duckhaven/access/review-access-changes/): Find who changed someone's access, and what they changed, by filtering the access audit log through the REST API.
 - [Troubleshoot sign-in and access](https://tamasmrtn.github.io/duckhaven/access/troubleshooting/): Find the message you see on the setup or login screen, in the results pane, or in an API response, then follow what to do.
 
 ## Compute
@@ -101,7 +103,7 @@
 
 ## Operate
 
-- [Monitoring](https://tamasmrtn.github.io/duckhaven/operations/monitoring/): DuckHaven exports Prometheus metrics for alerting, records every query in History, and gives each agent a monitoring page.
+- [Monitoring](https://tamasmrtn.github.io/duckhaven/operations/monitoring/): DuckHaven exports Prometheus metrics for alerting, records every query in History and every access change in the audit log, and gives each agent a monitoring page.
 - [Distributed tracing](https://tamasmrtn.github.io/duckhaven/operations/tracing/): DuckHaven emits OpenTelemetry traces alongside the Prometheus metrics.
 - [HA failover runbook](https://tamasmrtn.github.io/duckhaven/operations/ha-failover/): Run three drills that prove the highly-available control plane survives losing its Postgres primary or an API replica, and never runs background work twice.
 - [Troubleshoot the deployment](https://tamasmrtn.github.io/duckhaven/operations/troubleshooting/): Find what you see on the control-plane host, behind your proxy or on the network, then follow what to do.
@@ -113,6 +115,7 @@
 - [SQL support](https://tamasmrtn.github.io/duckhaven/reference/sql-support/): DuckHaven runs DuckDB SQL, checked against an allowlist before an agent runs it; statements such as ATTACH, INSTALL and SET are rejected.
 - [Dashboard files](https://tamasmrtn.github.io/duckhaven/reference/dashboard-spec/): A dashboard is one YAML file, <name>.dashboard.yml, that lists parameters and rows of widgets.
 - [Permissions](https://tamasmrtn.github.io/duckhaven/reference/permissions/): Every global permission, workspace role, data-grant tier and agent tier in DuckHaven, and what each one allows.
+- [Audit events](https://tamasmrtn.github.io/duckhaven/reference/audit-events/): Every action the access audit log records, the fields each event carries, and what each action puts in before, after and details.
 - [Agent configuration](https://tamasmrtn.github.io/duckhaven/reference/agent-configuration/): Every environment variable an agent reads; an agent needs only CONTROL_PLANE_URL and BOOTSTRAP_TOKEN.
 - [CLI reference](https://tamasmrtn.github.io/duckhaven/reference/cli/): Every dh command, its summary and its flags.
 - [REST API](https://tamasmrtn.github.io/duckhaven/reference/rest-api/): DuckHaven's REST API, under /api, does everything the web UI does, so any task can be scripted with a token.

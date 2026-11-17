@@ -14,6 +14,7 @@ import pytest
 from api.openapi import _DERIVED_ERROR_CODES
 from api.services.agent_access import AGENT_TIER_ORDER
 from api.services.assistant.knowledge import generate
+from api.services.audit.registry import render_reference
 from api.services.grants import TIER_SCALE
 from api.services.permissions import Permission
 from api.services.sql_guard import SQLNotAllowed, assert_allowed
@@ -51,6 +52,12 @@ def test_every_data_grant_tier_is_documented():
 
 def test_every_agent_tier_is_documented():
     assert _first_column("reference/permissions.md", "Agent tiers") == set(AGENT_TIER_ORDER)
+
+
+def test_every_audit_action_is_documented():
+    """The actions table is the registry's own rendering, so it cannot drift from it."""
+    page = (DOCS_DIR / "reference/audit-events.md").read_text(encoding="utf-8")
+    assert render_reference() in page.split("## Actions\n", 1)[1]
 
 
 def _documented_error_codes() -> set[str]:

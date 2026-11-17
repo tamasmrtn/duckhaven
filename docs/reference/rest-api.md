@@ -198,6 +198,7 @@ The OpenAPI schema groups endpoints by tag:
 | `admin-service-accounts` | Service accounts and their tokens |
 | `admin-storage` | Storage backends |
 | `admin-maintenance` | Maintenance policy and scans |
+| `admin-audit` | The [access audit log](../access/audit-log.md); see [Review access changes](../access/review-access-changes.md) |
 
 The agents' own control channel is a WebSocket at `/agents/connect`, not part of this API.
 

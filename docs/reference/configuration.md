@@ -103,6 +103,14 @@ by default; local accounts always work. Secrets here must never be committed —
 | `LDAP_TLS_CA_CERT` | — | Path to a CA bundle validating the directory's TLS certificate. |
 | `LDAP_TIMEOUT_S` | `10` | Connection / receive timeout for directory operations, in seconds. |
 
+### Audit log
+
+Retention for the [access audit log](../access/audit-log.md).
+
+| Variable | Default | Description |
+|---|---|---|
+| `AUDIT_RETENTION_DAYS` | `365` | Days an audit event is kept. Once a day, one replica deletes the events older than this. `0` keeps every event. |
+
 ### High availability
 
 Only used by the opt-in [HA topology](../deployment/high-availability.md) (multiple API replicas). The single-node

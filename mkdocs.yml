@@ -217,6 +217,8 @@ nav:
           - Connect an IdP (SSO): access/connect-idp.md
           - Connect LDAP / AD: access/connect-ldap.md
           - Offboarding & break-glass: access/offboarding.md
+          - Access audit log: access/audit-log.md
+          - Review access changes: access/review-access-changes.md
           - Troubleshoot sign-in and access: access/troubleshooting.md
       - Compute:
           - Agents: compute/agents.md
@@ -249,6 +251,7 @@ nav:
       - SQL support: reference/sql-support.md
       - Dashboard files: reference/dashboard-spec.md
       - Permissions: reference/permissions.md
+      - Audit events: reference/audit-events.md
       - Agent configuration: reference/agent-configuration.md
       - CLI reference: reference/cli.md
       - REST API: reference/rest-api.md

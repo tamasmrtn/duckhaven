@@ -413,11 +413,20 @@ Notes that matter for changes:
   the last hour, for that hourly limit. See `services/dashboards/`.
 - **`agents.capabilities`** is the last advertised `AgentCapabilities` JSON;
   `result_host`/`result_port` tell the API where to fetch the result Parquet.
-- **`queries` is also the audit log** — there is no separate audit table.
+- **`queries` is query history**; access changes are in `audit_events` (below).
   `GET /workspaces/{workspace}/queries` reads rows straight from `queries`, excluding
   internal rows (`origin = "sample"`, used by the table-sample preview). It is
   workspace-scoped for members; an admin may pass `all_workspaces` (and the
-  `user_id`/`agent_id`/`since`/`until` filters) for the cross-workspace audit view.
+  `user_id`/`agent_id`/`since`/`until` filters) for the cross-workspace view.
+- **`audit_events` is the access audit log** (`services/audit/`). An event is added
+  to the changing request's own transaction by `record()`, immediately before the
+  commit, so it exists exactly when the change does; refusals use `record_now()`,
+  which writes in its own transaction. It has no foreign keys and snapshots names.
+  On Postgres a trigger refuses UPDATE, DELETE and TRUNCATE unless the transaction
+  sets `duckhaven.audit_purge` (only `services/audit/retention.py` does), and `txid`
+  defaults to the writing transaction's id. `registry.py` lists every action;
+  `tests/unit/test_audit_coverage.py` fails a new state-changing route until it is
+  audited or exempt.
 - **`sql_sessions` is the state-of-record for the [SQL session layer](../querying/sql-sessions.md)**
   (I9) — the agent's held connection is ephemeral socket state. A row pins one
   `agent_id` (every statement routes there), records the requesting `user_id` for

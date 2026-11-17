@@ -4,8 +4,8 @@ type: reference
 
 # Monitoring
 
-DuckHaven exports Prometheus metrics for alerting, records every query in History, and gives each agent a monitoring
-page.
+DuckHaven exports Prometheus metrics for alerting, records every query in History and every access change in the audit
+log, and gives each agent a monitoring page.
 
 This page lists the metrics and how to read them. Each [agent](../compute/agents.md)'s own charts are described in
 [Agent monitoring](../compute/agent-monitoring.md).
@@ -19,15 +19,18 @@ monitoring](../compute/agent-monitoring.md) for what each chart shows and exactl
 ## Query history and audit log
 
 Every query, with the person or [service account](../access/service-accounts.md) who ran it, its SQL, status, rows,
-duration, result size and any error, is recorded on the **History** page; there is no separate audit table. With
-`queries:admin`, the **All workspaces** view makes it the audit log for every workspace. How to filter and read it is in
+duration, result size and any error, is recorded on the **History** page. With `queries:admin`, the **All workspaces**
+view shows every workspace's queries. How to filter and read it is in
 [Run queries → Find an earlier run](../querying/run-queries.md#find-an-earlier-run).
+
+Changes to access, sign-ins and requests refused for lack of access are in the [access audit
+log](../access/audit-log.md) instead, which `audit:read` reads and which can be streamed to a SIEM as log lines.
 
 ## Prometheus metrics
 
 Each API replica exposes a Prometheus text-exposition endpoint at **`GET /api/metrics`**. It
-re-exports the same data the admin console shows — live agent utilization, the query audit
-log, and the maintenance scanner — plus standard HTTP, database-pool, and process telemetry,
+re-exports the same data the admin console shows — live agent utilization, query
+history, and the maintenance scanner — plus standard HTTP, database-pool, and process telemetry,
 so you can alert on saturation and failure rates instead of polling the REST API.
 
 The endpoint is **unauthenticated**, exactly like `/api/healthz` and `/api/readyz`: Prometheus

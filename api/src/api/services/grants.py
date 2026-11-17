@@ -702,9 +702,19 @@ def file_read_reason(
     return None
 
 
+def is_system_catalog(name: str | None) -> bool:
+    """Whether ``name`` is a built-in catalog. Case-insensitive, as DuckDB is."""
+    return name is not None and name.lower() in SYSTEM_CATALOGS
+
+
+def is_metadata_schema(name: str | None) -> bool:
+    """Whether ``name`` is a metadata namespace. Case-insensitive, as DuckDB is."""
+    return name is not None and name.lower() in METADATA_SCHEMAS
+
+
 def is_exempt_ref(catalog: str | None, schema: str | None) -> bool:
     """True for the built-in discovery surfaces (system catalog / info schema)."""
-    return (catalog in SYSTEM_CATALOGS) or (schema in METADATA_SCHEMAS)
+    return is_system_catalog(catalog) or is_metadata_schema(schema)
 
 
 async def assert_query_access(
@@ -771,7 +781,11 @@ async def assert_query_access(
     )
     for stmt in _parse_statements(sql):
         for ref in statement_refs(stmt):
-            if is_exempt_ref(ref.catalog, ref.schema):
+            # A catalog the workspace attaches is checked whatever it is called:
+            # one created under a built-in name before those names were
+            # reserved must not inherit the built-ins' exemption.
+            attached = ref.catalog is not None and ref.catalog.lower() in by_slug
+            if is_exempt_ref(ref.catalog, ref.schema) and not attached:
                 continue
             if ref.is_target:
                 need = "writer"

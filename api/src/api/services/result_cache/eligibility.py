@@ -33,7 +33,7 @@ from typing import Any
 
 import duckdb
 
-from api.services.grants import METADATA_SCHEMAS, SYSTEM_CATALOGS
+from api.services.grants import is_metadata_schema, is_system_catalog
 
 
 class Ineligible(Exception):  # noqa: N818 - it is a verdict, not an error
@@ -318,22 +318,22 @@ def resolve(
     not attach, or a two-part name whose first part is also a catalog name
     (`a.b` could be schema `a` in the current catalog or catalog `a`).
     """
-    if current_catalog in SYSTEM_CATALOGS:
+    if is_system_catalog(current_catalog):
         raise Ineligible("system_catalog")
     if current_catalog not in attached:
         raise Ineligible("unknown_catalog")
     resolved: set[TableRef] = set()
     for ref in analysis.refs:
         if ref.catalog:
-            if ref.catalog in SYSTEM_CATALOGS or ref.schema in METADATA_SCHEMAS:
+            if is_system_catalog(ref.catalog) or is_metadata_schema(ref.schema):
                 raise Ineligible("system_catalog")
             if ref.catalog not in attached:
                 raise Ineligible("unknown_catalog")
             resolved.add(TableRef(ref.catalog, ref.schema, ref.table))
         elif ref.schema:
-            if ref.schema in METADATA_SCHEMAS:
+            if is_metadata_schema(ref.schema):
                 raise Ineligible("system_catalog")
-            if ref.schema in attached or ref.schema in SYSTEM_CATALOGS:
+            if ref.schema in attached or is_system_catalog(ref.schema):
                 raise Ineligible("ambiguous_name")
             resolved.add(TableRef(current_catalog, ref.schema, ref.table))
         else:

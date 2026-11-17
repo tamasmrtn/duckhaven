@@ -827,3 +827,38 @@ async def test_scoped_catalog_ids_agrees_with_is_scoped(db_session, mixed_ws):
     one_by_one = {c.id for c in catalogs if await grant_service.is_scoped(db_session, ws.id, c)}
     assert batched == one_by_one == {scoped_cat.id}
     assert await grant_service.scoped_catalog_ids(db_session, ws.id, []) == set()
+
+
+async def test_a_catalog_under_a_built_in_name_is_still_checked(db_session, user):
+    """Reserving the built-in names stops new catalogs taking them; one created
+    before that must still be read through its grants, not the exemption the
+    built-ins get."""
+    ws, cat = await seed_workspace(
+        db_session, user_id=user.id, slug="legacy-ws", catalog_slug="duckhaven"
+    )
+    await db_session.execute(
+        update(WorkspaceCatalog)
+        .where(WorkspaceCatalog.workspace_id == ws.id, WorkspaceCatalog.catalog_id == cat.id)
+        .values(access_mode="scoped")
+    )
+    await db_session.commit()
+
+    for sql in (
+        "SELECT * FROM duckhaven.analytics.leads",
+        "SELECT * FROM DUCKHAVEN.analytics.leads",
+        "SELECT * FROM leads",
+    ):
+        with pytest.raises(grant_service.GrantDenied):
+            await _check(db_session, ws, user, cat, sql)
+
+    _grant(db_session, user, cat, "reader")
+    await db_session.commit()
+    await _check(db_session, ws, user, cat, "SELECT * FROM duckhaven.analytics.leads")
+
+
+def test_system_names_match_whatever_their_case():
+    """DuckDB folds unquoted identifiers, so `SYSTEM.main.x` is `system.main.x`."""
+    assert grant_service.is_exempt_ref("SYSTEM", None)
+    assert grant_service.is_exempt_ref(None, "INFORMATION_SCHEMA")
+    assert grant_service.is_system_catalog("DuckHaven")
+    assert not grant_service.is_system_catalog(None)

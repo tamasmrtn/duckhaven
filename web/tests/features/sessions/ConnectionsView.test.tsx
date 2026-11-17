@@ -99,6 +99,24 @@ describe("ConnectionsView", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("hides force-close from a member whose global permissions leave out queries:admin", async () => {
+    server.use(
+      http.get("/api/me", () =>
+        HttpResponse.json({
+          ...CURRENT_USER,
+          role: "operator",
+          permissions: ["agents:manage"],
+        }),
+      ),
+    );
+    renderWithProviders({ initialRoute: ROUTE });
+    await screen.findByRole("status", { name: "open" });
+
+    expect(
+      screen.queryByRole("button", { name: "Force close" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("says sessions are not enabled when the endpoint 404s", async () => {
     // The whole surface is gated on SQL_SESSIONS_ENABLED; a generic failure would
     // read as a bug rather than a deliberately-off feature.

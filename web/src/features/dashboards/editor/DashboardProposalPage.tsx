@@ -188,6 +188,7 @@ function Review({ ws, proposal }: { ws: string; proposal: DashboardProposal }) {
             )}
             {pending && !proposal.managed && (
               <Button
+                variant="brand"
                 size="sm"
                 className="h-7 gap-1.5 text-xs"
                 disabled={busy}

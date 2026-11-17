@@ -380,8 +380,12 @@ function Loaded({ ws, dashboard }: { ws: string; dashboard: Dashboard }) {
         // file lives, is for the people who edit it.
         badge={present ? undefined : <DashboardBadges dashboard={dashboard} />}
         actions={
-          <div className="flex items-center gap-3 text-2xs text-text-tertiary">
-            <RunStatus run={run} />
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-2xs text-text-tertiary">
+            {/* A line of its own on a phone: beside three buttons it was
+                squeezed to a word per line. */}
+            <span className="basis-full sm:basis-auto">
+              <RunStatus run={run} />
+            </span>
             {!present && !dashboard.managed && (
               <Button
                 asChild

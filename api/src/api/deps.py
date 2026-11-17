@@ -10,7 +10,8 @@ from api.models.agent import Agent
 from api.models.user import User
 from api.services import delegation
 from api.services.agent_access import ResolvedAgent, assert_agent_tier
-from api.services.auth import get_pat_credential, get_session_user
+from api.services.audit import set_actor
+from api.services.auth import get_pat_credential, get_session_credential
 from api.services.permissions import Permission
 from api.services.polaris import PolarisClient
 from api.services.rbac import has_permission
@@ -71,12 +72,25 @@ async def get_current_user(
             if cred.on_behalf_of_id is None
             else delegation.Delegation(actor_id=cred.user_id, delegator_id=cred.on_behalf_of_id),
         )
+        set_actor(
+            cred.user,
+            auth_method="pat",
+            credential_id=cred.id,
+            on_behalf_of=cred.on_behalf_of,
+            bind=db.bind,
+        )
         return cred.user
     delegation.bind(db, None)
+    return await _session_user(db, session)
+
+
+async def _session_user(db: AsyncSession, session: str | None) -> User:
+    """The active user the ``session`` cookie names, or 401."""
     if session:
-        user = await get_session_user(db, session)
-        if user is not None and user.is_active:
-            return user
+        cred = await get_session_credential(db, session)
+        if cred is not None and cred.user is not None and cred.user.is_active:
+            set_actor(cred.user, auth_method="session", credential_id=cred.id, bind=db.bind)
+            return cred.user
     raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
 
 
@@ -107,11 +121,7 @@ async def get_session_only_user(
                 ),
             },
         )
-    if session:
-        user = await get_session_user(db, session)
-        if user is not None and user.is_active:
-            return user
-    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
+    return await _session_user(db, session)
 
 
 def require_permission(

@@ -25,10 +25,12 @@ from typing import Any
 
 import httpx
 from starlette.datastructures import Headers
+from starlette.requests import HTTPConnection
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from api.config import settings
 from api.deps import _bearer
+from api.services.addresses import peer_address
 from api.services.sql_sessions.client_info import parse_user_agent
 
 #: Where :class:`PatAuthMiddleware` leaves the authenticated call for the tools.
@@ -156,7 +158,10 @@ class PatAuthMiddleware:
             # The agent's own client, for what a saved dashboard draft says it came from.
             loopback_headers[CLIENT_HEADER] = caller
         async with httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=api_app),
+            # The caller's own address, so what these calls record shows where it was.
+            transport=httpx.ASGITransport(
+                app=api_app, client=(peer_address(HTTPConnection(scope)) or "127.0.0.1", 0)
+            ),
             base_url=LOOPBACK_BASE_URL,
             headers=loopback_headers,
             timeout=settings.mcp_query_timeout_s + 30.0,

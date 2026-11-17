@@ -97,6 +97,12 @@ async def create_session(db: AsyncSession, user_id: uuid.UUID) -> str:
 
 
 async def get_session_user(db: AsyncSession, token: str) -> User | None:
+    cred = await get_session_credential(db, token)
+    return cred.user if cred is not None else None
+
+
+async def get_session_credential(db: AsyncSession, token: str) -> Credential | None:
+    """The unexpired session credential ``token`` names, with its user loaded."""
     now = datetime.now(tz=UTC)
     result = await db.execute(
         select(Credential)
@@ -111,10 +117,7 @@ async def get_session_user(db: AsyncSession, token: str) -> User | None:
             (Credential.expires_at == None) | (Credential.expires_at > now),  # noqa: E711
         )
     )
-    cred = result.scalar_one_or_none()
-    if cred is None:
-        return None
-    return cred.user
+    return result.scalar_one_or_none()
 
 
 async def get_pat_credential(db: AsyncSession, token: str) -> Credential | None:

@@ -364,8 +364,11 @@ async def connected_agent(db_session: AsyncSession) -> AsyncIterator[tuple[Agent
 def _fresh_login_limiter():
     """Sign-in attempts are counted per process; start every test from zero."""
     from api.services import login_limiter
+    from api.services.audit.record import reset_dedupe
 
     login_limiter.reset()
+    # Repeated denials are recorded once a minute per source; that is per process too.
+    reset_dedupe()
 
 
 @pytest.fixture(autouse=True)

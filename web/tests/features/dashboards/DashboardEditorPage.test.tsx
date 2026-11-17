@@ -94,7 +94,9 @@ describe("DashboardEditorPage", SLOW, () => {
     const preview = await previewed();
     expect(within(preview).getByText("Preview, viewing as you")).toBeVisible();
     expect(
-      await within(preview).findByRole("region", { name: "Revenue by country" }),
+      await within(preview).findByRole("region", {
+        name: "Revenue by country",
+      }),
     ).toBeVisible();
     expect(await screen.findByText(/No problems/)).toBeVisible();
   });
@@ -106,13 +108,29 @@ describe("DashboardEditorPage", SLOW, () => {
     type("version: 1\ntitle: [unclosed\n");
 
     const problems = await screen.findByRole("region", { name: "Problems" });
-    expect(await within(problems).findByText("1 error, 0 warnings")).toBeVisible();
+    expect(
+      await within(problems).findByText("1 error, 0 warnings"),
+    ).toBeVisible();
     expect(within(problems).getByText("Line 3")).toBeVisible();
     expect(
       await within(preview).findByText(/Showing the last file that loaded/),
     ).toBeVisible();
-    expect(within(preview).getByRole("region", { name: "Revenue by country" }))
-      .toBeVisible();
+    expect(
+      within(preview).getByRole("region", { name: "Revenue by country" }),
+    ).toBeVisible();
+  });
+
+  it("holds Publish back while the file has errors, and says why", async () => {
+    renderWithProviders({ initialRoute: `${ROUTE}/sales-overview/edit` });
+    await previewed();
+    expect(screen.getByRole("button", { name: "Publish" })).toBeEnabled();
+
+    type("version: 1\ntitle: [unclosed\n");
+
+    expect(
+      await screen.findByText("Unsaved changes. Fix the error to publish"),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: "Publish" })).toBeDisabled();
   });
 
   it("saves a draft against the version it was made from", async () => {
@@ -132,8 +150,9 @@ describe("DashboardEditorPage", SLOW, () => {
 
     await waitFor(() => expect(saves).toHaveLength(1));
     expect(saves[0]).toEqual({ source_text: edited, base_version: 3 });
-    expect(await screen.findByText(/Draft saved just now from the app/))
-      .toBeVisible();
+    expect(
+      await screen.findByText(/Draft saved just now from the app/),
+    ).toBeVisible();
     expect(save).toBeDisabled();
   });
 
@@ -195,13 +214,19 @@ describe("DashboardEditorPage", SLOW, () => {
     renderWithProviders({ initialRoute: `${ROUTE}/sales-overview/edit` });
     await screen.findByRole("textbox", { name: "Dashboard file" });
 
-    await userEvent.click(await screen.findByRole("button", { name: "Publish" }));
-    const dialog = await screen.findByRole("dialog", { name: "Publish dashboard" });
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Publish" }),
+    );
+    const dialog = await screen.findByRole("dialog", {
+      name: "Publish dashboard",
+    });
     await userEvent.type(
       within(dialog).getByLabelText("What changed (optional)"),
       "Describe the country filter",
     );
-    await userEvent.click(within(dialog).getByRole("button", { name: "Publish" }));
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: "Publish" }),
+    );
 
     await waitFor(() => expect(publishes).toHaveLength(1));
     expect(publishes[0]).toEqual({
@@ -209,14 +234,18 @@ describe("DashboardEditorPage", SLOW, () => {
       message: "Describe the country filter",
     });
     await waitFor(() =>
-      expect(toast.success).toHaveBeenCalledWith("Published", expect.anything()),
+      expect(toast.success).toHaveBeenCalledWith(
+        "Published",
+        expect.anything(),
+      ),
     );
     expect(screen.queryByText(/Editing the draft\./)).not.toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: "Revisions" }));
     const sheet = await screen.findByRole("dialog", { name: "Revisions" });
-    expect(await within(sheet).findByText("Describe the country filter"))
-      .toBeVisible();
+    expect(
+      await within(sheet).findByText("Describe the country filter"),
+    ).toBeVisible();
     expect(within(sheet).getByText(/Revision 3/)).toHaveTextContent(
       "what readers see",
     );
@@ -229,10 +258,18 @@ describe("DashboardEditorPage", SLOW, () => {
     await screen.findByRole("textbox", { name: "Dashboard file" });
     type(`${value()}# one more\n`);
 
-    await userEvent.click(await screen.findByRole("button", { name: "Publish" }));
-    const dialog = await screen.findByRole("dialog", { name: "Publish dashboard" });
-    expect(dialog).toHaveTextContent("Your unsaved changes are saved to the draft first.");
-    await userEvent.click(within(dialog).getByRole("button", { name: "Publish" }));
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Publish" }),
+    );
+    const dialog = await screen.findByRole("dialog", {
+      name: "Publish dashboard",
+    });
+    expect(dialog).toHaveTextContent(
+      "Your unsaved changes are saved to the draft first.",
+    );
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: "Publish" }),
+    );
 
     await waitFor(() => expect(publishes).toHaveLength(1));
     expect(saves).toHaveLength(1);
@@ -256,9 +293,15 @@ describe("DashboardEditorPage", SLOW, () => {
     renderWithProviders({ initialRoute: `${ROUTE}/sales-overview/edit` });
     await screen.findByRole("textbox", { name: "Dashboard file" });
 
-    await userEvent.click(await screen.findByRole("button", { name: "Publish" }));
-    const dialog = await screen.findByRole("dialog", { name: "Publish dashboard" });
-    await userEvent.click(within(dialog).getByRole("button", { name: "Publish" }));
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Publish" }),
+    );
+    const dialog = await screen.findByRole("dialog", {
+      name: "Publish dashboard",
+    });
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: "Publish" }),
+    );
 
     await waitFor(() =>
       expect(toast.error).toHaveBeenCalledWith(
@@ -278,13 +321,13 @@ describe("DashboardEditorPage", SLOW, () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Revisions" }));
     await userEvent.click(
-      await screen.findByRole("button", { name: "Open revision 1 in the editor" }),
+      await screen.findByRole("button", {
+        name: "Open revision 1 in the editor",
+      }),
     );
 
     // Revision 1 had no country filter.
-    await waitFor(() =>
-      expect(value()).not.toContain("country:"),
-    );
+    await waitFor(() => expect(value()).not.toContain("country:"));
     expect(screen.getByText("Unsaved changes")).toBeVisible();
     expect(toast.success).toHaveBeenCalledWith(
       "Revision 1 is in the editor",
@@ -296,15 +339,22 @@ describe("DashboardEditorPage", SLOW, () => {
     renderWithProviders({ initialRoute: `${ROUTE}/sales-overview/edit` });
     await screen.findByRole("textbox", { name: "Dashboard file" });
 
-    await userEvent.click(screen.getByRole("button", { name: "Discard draft" }));
-    const dialog = await screen.findByRole("dialog", { name: "Discard the draft?" });
-    await userEvent.click(within(dialog).getByRole("button", { name: "Discard" }));
+    await userEvent.click(
+      screen.getByRole("button", { name: "Discard draft" }),
+    );
+    const dialog = await screen.findByRole("dialog", {
+      name: "Discard the draft?",
+    });
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: "Discard" }),
+    );
 
     await waitFor(() =>
       expect(value()).toContain("refreshed from the orders table"),
     );
-    expect(screen.queryByRole("button", { name: "Discard draft" })).not
-      .toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Discard draft" }),
+    ).not.toBeInTheDocument();
     expect(screen.getByText("No changes since it was published")).toBeVisible();
   });
 
@@ -312,43 +362,64 @@ describe("DashboardEditorPage", SLOW, () => {
     renderWithProviders({ initialRoute: `${ROUTE}/sales-overview/edit` });
     await previewed();
     const before = value();
-    expect(before.indexOf("id: revenue")).toBeLessThan(before.indexOf("id: orders"));
+    expect(before.indexOf("id: revenue")).toBeLessThan(
+      before.indexOf("id: orders"),
+    );
 
     await userEvent.click(
       await screen.findByRole("button", { name: "Arrange Revenue" }),
     );
     await userEvent.click(screen.getByRole("menuitem", { name: "Move right" }));
     const moved = value();
-    expect(moved.indexOf("id: orders")).toBeLessThan(moved.indexOf("id: revenue"));
+    expect(moved.indexOf("id: orders")).toBeLessThan(
+      moved.indexOf("id: revenue"),
+    );
 
     // The controls wait for the preview to hold the file as it stands.
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Arrange Revenue" })).toBeEnabled(),
+      expect(
+        screen.getByRole("button", { name: "Arrange Revenue" }),
+      ).toBeEnabled(),
     );
-    await userEvent.click(screen.getByRole("button", { name: "Arrange Revenue" }));
+    await userEvent.click(
+      screen.getByRole("button", { name: "Arrange Revenue" }),
+    );
     const half = screen.getByRole("menuitemradio", { name: "Half (6)" });
     expect(half).not.toHaveAttribute("data-disabled");
     await userEvent.click(half);
     expect(value()).toMatch(/id: revenue[\s\S]*width: 6/);
 
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Move row 1 down" })).toBeEnabled(),
+      expect(
+        screen.getByRole("button", { name: "Move row 1 down" }),
+      ).toBeEnabled(),
     );
-    await userEvent.click(screen.getByRole("button", { name: "Move row 1 down" }));
+    await userEvent.click(
+      screen.getByRole("button", { name: "Move row 1 down" }),
+    );
     const rows = value();
-    expect(rows.indexOf("id: revenue_trend")).toBeLessThan(rows.indexOf("id: revenue\n"));
+    expect(rows.indexOf("id: revenue_trend")).toBeLessThan(
+      rows.indexOf("id: revenue\n"),
+    );
   });
 
   it("only reads a dashboard managed in git", async () => {
     renderWithProviders({ initialRoute: `${ROUTE}/finance-weekly/edit` });
 
-    expect(await screen.findByRole("textbox", { name: "Dashboard file" }))
-      .toHaveAttribute("readonly");
+    expect(
+      await screen.findByRole("textbox", { name: "Dashboard file" }),
+    ).toHaveAttribute("readonly");
     expect(screen.getByText(/so the editor only reads it/)).toBeVisible();
-    expect(screen.queryByRole("button", { name: "Save draft" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Publish" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Save draft" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Publish" }),
+    ).not.toBeInTheDocument();
     await previewed();
-    expect(screen.queryByRole("button", { name: /^Arrange/ })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /^Arrange/ }),
+    ).not.toBeInTheDocument();
   });
 
   it("says that editing needs the writer role", async () => {
@@ -379,14 +450,17 @@ describe("DashboardEditorPage", SLOW, () => {
     type(`${value()}# unsaved\n`);
 
     await userEvent.click(screen.getByRole("link", { name: "Done" }));
-    const dialog = await screen.findByRole("dialog", { name: "Leave without saving?" });
+    const dialog = await screen.findByRole("dialog", {
+      name: "Leave without saving?",
+    });
     await userEvent.click(within(dialog).getByRole("button", { name: "Stay" }));
     expect(router.state.location.pathname).toBe(`${ROUTE}/sales-overview/edit`);
 
     await userEvent.click(screen.getByRole("link", { name: "Done" }));
     await userEvent.click(
-      within(await screen.findByRole("dialog", { name: "Leave without saving?" }))
-        .getByRole("button", { name: "Leave" }),
+      within(
+        await screen.findByRole("dialog", { name: "Leave without saving?" }),
+      ).getByRole("button", { name: "Leave" }),
     );
     await waitFor(() =>
       expect(router.state.location.pathname).toBe(`${ROUTE}/sales-overview`),
@@ -443,14 +517,11 @@ describe("DashboardEditorPage", SLOW, () => {
       initialRoute: `${ROUTE}/churn-review/edit`,
     });
     await screen.findByRole("textbox", { name: "Dashboard file" });
-    expect(screen.getByText(/Nobody has published this dashboard/)).toBeVisible();
+    expect(
+      screen.getByText(/Nobody has published this dashboard/),
+    ).toBeVisible();
 
-    type(
-      value().replace(
-        "name: churn-review",
-        "name: churn-weekly",
-      ),
-    );
+    type(value().replace("name: churn-review", "name: churn-weekly"));
     await userEvent.click(screen.getByRole("button", { name: "Save draft" }));
 
     await waitFor(() =>

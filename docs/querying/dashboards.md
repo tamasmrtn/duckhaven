@@ -201,7 +201,8 @@ saves over MCP [is limited](../ai/mcp-server.md#who-saved-a-draft-and-the-limits
 - **Save draft**, or Ctrl+S (⌘S on a Mac), saves the file as a draft. Readers go on seeing the published version, and
   the workspace's owners see a note on the dashboard that a draft waits.
 - **Publish** saves the file and publishes it, with an optional message saying what changed. Only workspace owners
-  publish. Publishing checks every widget again, as you, and refuses a file with a problem.
+  publish. While the editor lists errors in the file, **Publish** is unavailable and the status beside it says how many
+  to fix. Publishing checks every widget again, as you, and refuses a file with a problem.
 - **Revisions** lists every published version with its message. Opening one loads its file into the editor, and
   publishing it makes it the newest revision.
 - **Discard draft** throws the draft away and goes back to the published version.

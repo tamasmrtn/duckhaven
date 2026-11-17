@@ -76,6 +76,16 @@ async def test_invalid_slug_rejected(auth_client, owner, db_session):
     assert resp.status_code == 422
 
 
+@pytest.mark.parametrize("name", ["duckhaven", "system", "temp", "memory"])
+async def test_reserved_slugs_rejected(auth_client, owner, db_session, fake_polaris, name):
+    """A catalog under a built-in name would skip the grant check, which exempts
+    the built-ins, so the names are refused at creation."""
+    await seed_workspace(db_session, user_id=owner.id, slug="rs", name="RS")
+    resp = await auth_client.post("/workspaces/rs/catalogs", json={"name": name})
+    assert resp.status_code == 422
+    assert "reserved" in resp.text
+
+
 async def test_attach_same_catalog_to_two_workspaces(auth_client, owner, db_session, fake_polaris):
     """A catalog created in one workspace can be attached to another (M:N)."""
     await seed_workspace(db_session, user_id=owner.id, slug="dev", name="Dev")
@@ -101,19 +111,19 @@ async def test_drop_blocked_while_attached_then_succeeds(
     auth_client, owner, db_session, fake_polaris
 ):
     await seed_workspace(db_session, user_id=owner.id, slug="dev", name="Dev")
-    created = await auth_client.post("/workspaces/dev/catalogs", json={"name": "temp"})
+    created = await auth_client.post("/workspaces/dev/catalogs", json={"name": "scratch"})
     catalog_id = created.json()["id"]
 
     # Still attached to 'dev' → drop is refused.
     blocked = await auth_client.delete(f"/catalogs/{catalog_id}")
     assert blocked.status_code == 409
 
-    detach = await auth_client.delete("/workspaces/dev/catalogs/temp")
+    detach = await auth_client.delete("/workspaces/dev/catalogs/scratch")
     assert detach.status_code == 204
 
     dropped = await auth_client.delete(f"/catalogs/{catalog_id}")
     assert dropped.status_code == 204
-    assert "temp" not in fake_polaris.catalogs
+    assert "scratch" not in fake_polaris.catalogs
 
 
 async def test_detach_default_promotes_another(auth_client, owner, db_session, fake_polaris):

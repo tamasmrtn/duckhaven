@@ -16,10 +16,13 @@ from api.schemas.auth import (
 from api.schemas.service_account import PatTokenOut, SelfPatCreateRequest, SelfPatOut
 from api.services import pats
 from api.services.addresses import peer_address
+from api.services.audit import record
+from api.services.audit.events import record_rate_limited, record_sign_in, record_sign_in_failed
 from api.services.auth import (
     authenticate_password,
     create_session,
     delete_session,
+    get_session_credential,
     hash_token,
     set_session_cookie,
 )
@@ -61,11 +64,17 @@ async def login(
     Returns the user with their resolved permissions, so the SPA can render the
     right navigation without a second request. Machine callers should use a
     service-account token on the `Authorization` header instead."""
-    attempt = check_attempt(peer_address(request), body.email)
+    try:
+        attempt = check_attempt(peer_address(request), body.email)
+    except HTTPException:
+        await record_rate_limited(db, body.email, method="password")
+        raise
     user = await authenticate_password(db, body.email, body.password)
     if user is None:
+        await record_sign_in_failed(db, body.email, method="password")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
     attempt.succeeded()
+    record_sign_in(db, user, method="password", provider=user.auth_provider)
     token = await create_session(db, user.id)
     set_session_cookie(response, token)
     return await _user_out_with_permissions(db, user)
@@ -82,6 +91,15 @@ async def logout(
     Succeeds whether or not a session was presented -- signing out of nothing is
     not an error."""
     if session:
+        cred = await get_session_credential(db, session)
+        if cred is not None and cred.user is not None:
+            record(
+                db,
+                "auth.sign_out",
+                target_id=cred.user.id,
+                target_name=cred.user.email,
+                actor=cred.user,
+            )
         await delete_session(db, session)
     response.delete_cookie("session")
 

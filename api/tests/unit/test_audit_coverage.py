@@ -70,14 +70,13 @@ AUDITED: dict[tuple[str, str], set[str]] = {
     ("DELETE", "/admin/service-accounts/{service_account_id}/pats/{pat_id}"): {"pat.revoke"},
     ("POST", "/me/pats"): {"pat.issue"},
     ("DELETE", "/me/pats/{pat_id}"): {"pat.revoke"},
-    ("POST", "/setup/admin"): {"setup.first_admin"},
+    ("POST", "/setup/admin"): {"setup.first_admin", "auth.sign_in", "auth.rate_limited"},
+    ("POST", "/auth/login"): {"auth.sign_in", "auth.sign_in_failed", "auth.rate_limited"},
+    ("POST", "/auth/logout"): {"auth.sign_out"},
 }
 
 # Routes not yet wired, each moved into AUDITED by the commit that wires it.
-PENDING: set[tuple[str, str]] = {
-    ("POST", "/auth/login"),
-    ("POST", "/auth/logout"),
-}
+PENDING: set[tuple[str, str]] = set()
 
 # Actions recorded somewhere other than one route's handler.
 RECORDED_ELSEWHERE: dict[str, str] = {

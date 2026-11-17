@@ -19,6 +19,7 @@ from api.schemas.auth import UserOut
 from api.schemas.setup import FirstAdminRequest, SetupStatus
 from api.services.addresses import peer_address
 from api.services.audit import record
+from api.services.audit.events import record_rate_limited, record_sign_in
 from api.services.auth import create_session, hash_password, set_session_cookie
 from api.services.login_limiter import check_attempt
 
@@ -63,7 +64,11 @@ async def create_first_admin(
     account exists yet. The token is consumed on success and the endpoint returns
     409 once a human account exists, so it cannot be replayed to mint a second
     admin."""
-    check_attempt(peer_address(request))
+    try:
+        check_attempt(peer_address(request))
+    except HTTPException:
+        await record_rate_limited(db, body.email, method="setup_token")
+        raise
     if await _human_user_count(db) > 0:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -114,6 +119,7 @@ async def create_first_admin(
     # Consume the token so it cannot be replayed.
     settings.setup_token_path.unlink(missing_ok=True)
 
+    record_sign_in(db, user, method="setup_token", provider=user.auth_provider)
     token = await create_session(db, user.id)
     set_session_cookie(response, token)
     return user

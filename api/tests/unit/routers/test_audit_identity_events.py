@@ -136,6 +136,8 @@ async def test_the_first_admin_is_recorded_as_acting_for_themselves(
         {"role": "admin"},
     )
     assert event.details == {"authorized_by": "setup_token"}
+    (sign_in,) = await audit_events(db_session, "auth.sign_in")
+    assert sign_in.details == {"method": "setup_token", "provider": "local"}
 
 
 async def test_an_identity_provider_creating_and_reroling_an_account_is_recorded(db_session):

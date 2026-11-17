@@ -14,6 +14,7 @@ requests cannot turn into a flood of writes.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -246,7 +247,16 @@ async def record_now(source: AsyncSession | Any, action: str, **fields: Any) -> 
         who = str(ctx.actor_id)
     else:
         who = (ctx.source_ip if ctx is not None else None) or ""
-    key = (who, action, str(fields.get("target_id") or ""), str(fields.get("target_name") or ""))
+    # The details are part of what happened: a different reason or route is a
+    # different event. Hashed, so a clipped statement does not sit in the cache.
+    details = json.dumps(fields.get("details"), sort_keys=True, default=str)
+    key = (
+        who,
+        action,
+        str(fields.get("target_id") or ""),
+        str(fields.get("target_name") or ""),
+        hashlib.blake2b(details.encode(), digest_size=16).hexdigest(),
+    )
     if _deduped(key):
         return
     bind = source.bind if isinstance(source, AsyncSession) else source

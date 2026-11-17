@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.models.catalog import Catalog
 from api.models.user import User
-from api.services.audit.record import record
+from api.services.audit.record import clip, record, record_now
 
 
 def grant_name(catalog_slug: str, schema: str | None, table: str | None) -> str:
@@ -145,6 +145,46 @@ def record_account_update(
             before={"is_active": account.is_active},
             after={"is_active": is_active},
         )
+
+
+def record_sign_in(db: AsyncSession, user: User, *, method: str, **details: Any) -> None:
+    """A session started; call before the commit that creates it."""
+    record(
+        db,
+        "auth.sign_in",
+        target_id=user.id,
+        target_name=user.email,
+        details={"method": method, **details},
+        actor=user,
+    )
+
+
+async def record_sign_in_failed(
+    db: AsyncSession, identifier: str | None, *, method: str, **details: Any
+) -> None:
+    """A sign-in refused; written on its own, since the request fails.
+
+    ``identifier`` is what was submitted, cut short, and never checked against
+    the accounts: whether it names one is not something to give away.
+    """
+    await record_now(
+        db,
+        "auth.sign_in_failed",
+        target_name=clip(identifier, 255),
+        outcome="failure",
+        details={"method": method, **details},
+    )
+
+
+async def record_rate_limited(db: AsyncSession, identifier: str | None, *, method: str) -> None:
+    await record_now(
+        db,
+        "auth.rate_limited",
+        target_name=clip(identifier, 255),
+        outcome="denied",
+        error_code="too_many_sign_in_attempts",
+        details={"method": method},
+    )
 
 
 async def record_catalog_grant(

@@ -103,7 +103,7 @@ session statement against its own policy. Beyond everything a query may run, a s
 - set the catalog and schema with `USE`, and set `timezone`, `search_path` and `schema`;
 - open and end transactions;
 - `COPY` to or from, and read files under, the session's own **staging prefix**, and nowhere else;
-- `ATTACH` a catalog the workspace binds.
+- `ATTACH` a catalog the workspace binds, under its own name (`ATTACH 'sales' AS sales`).
 
 It still refuses anything that could widen the sandbox: other `SET`s, `INSTALL` and `LOAD`, attaching anything else,
 files and URLs outside the staging prefix, and the [functions rejected

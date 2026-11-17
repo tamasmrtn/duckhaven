@@ -21,7 +21,8 @@ snapshot history.
 
 1. In the catalog tree, click **+** (*Create*) and choose **Create catalog**.
 2. In **New catalog**, fill in:
-    - **Name:** lowercase letters, digits and underscores, starting with a letter. It is the name you use in SQL
+    - **Name:** lowercase letters, digits and underscores, starting with a letter, and not a
+      [reserved name](../reference/sql-support.md#reserved-catalog-names). It is the name you use in SQL
       (`raw.staging.events`), and names the PostgreSQL schema that holds the catalog's metadata (`cat_raw`).
     - **Catalog kind:** *DuckLake*. The choice appears only when DuckLake is enabled.
     - **Storage backend:** *Bundled object storage*, or any registered S3 or ADLS Gen2 backend. The backend is

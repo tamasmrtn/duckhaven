@@ -137,6 +137,14 @@ describe('MainNav marking', () => {
     expect(current.querySelector('span[aria-hidden]')).toHaveClass('bg-[var(--nav-marker)]')
     expect(links.getByRole('link', { name: 'Catalog' })).not.toHaveClass('font-medium')
   })
+
+  it('spaces each group but the first from the one before it', async () => {
+    const { nav } = await renderNav()
+
+    const groups = within(nav).getAllByRole('group')
+    expect(groups[0]).not.toHaveClass('mt-2')
+    for (const group of groups.slice(1)) expect(group).toHaveClass('mt-2')
+  })
 })
 
 describe('MainNav modes', () => {

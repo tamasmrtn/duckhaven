@@ -12,6 +12,7 @@ from api.models.workspace import Workspace, WorkspaceMember
 from api.schemas.auth import CreateUserRequest, UpdateUserRequest, UserOut
 from api.schemas.page import Page
 from api.schemas.workspace import AdminUserWorkspace, SetMembershipRequest
+from api.services.audit.events import record_membership
 from api.services.auth import get_user_by_email, hash_password
 from api.services.paging import paginate
 from api.services.permissions import Permission
@@ -189,11 +190,23 @@ async def set_user_workspace_role(
     if workspace is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
 
+    target = await db.get(User, user_id)
     member = await db.get(WorkspaceMember, (workspace.id, user_id))
     if member is None:
         member = WorkspaceMember(workspace_id=workspace.id, user_id=user_id, role=body.role)
         db.add(member)
-    else:
+        record_membership(
+            db, "workspace_member.add", workspace=workspace, member=target, after=body.role
+        )
+    elif member.role != body.role:
+        record_membership(
+            db,
+            "workspace_member.role_change",
+            workspace=workspace,
+            member=target,
+            before=member.role,
+            after=body.role,
+        )
         member.role = body.role
     await db.commit()
     return AdminUserWorkspace(
@@ -209,14 +222,14 @@ async def remove_user_from_workspace(
     _: User = Depends(require_permission(Permission.USERS_MANAGE)),
 ) -> None:
     """Remove the user from a workspace (no-op if they aren't a member)."""
-    await _get_user_or_404(db, user_id)
+    target = await _get_user_or_404(db, user_id)
     workspace = await get_workspace(db, ws)
     if workspace is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
-    await db.execute(
-        delete(WorkspaceMember).where(
-            WorkspaceMember.workspace_id == workspace.id,
-            WorkspaceMember.user_id == user_id,
+    member = await db.get(WorkspaceMember, (workspace.id, user_id))
+    if member is not None:
+        record_membership(
+            db, "workspace_member.remove", workspace=workspace, member=target, before=member.role
         )
-    )
+        await db.delete(member)
     await db.commit()

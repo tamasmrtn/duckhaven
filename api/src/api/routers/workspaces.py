@@ -21,6 +21,8 @@ from api.schemas.workspace import (
 from api.services.agent_access import assert_can_set_default_agent
 from api.services.agent_dispatch import connected_agent_ids
 from api.services.agent_view import effective_status
+from api.services.audit import record
+from api.services.audit.events import record_membership
 from api.services.polaris import PolarisClient
 from api.services.runtimes import (
     AgentNotDispatchable,
@@ -150,6 +152,15 @@ async def create_workspace(
     await db.flush()
     member = WorkspaceMember(workspace_id=ws.id, user_id=user.id, role="owner")
     db.add(member)
+    record(db, "workspace.create", target_id=ws.id, target_name=ws.slug, workspace=ws)
+    record_membership(
+        db,
+        "workspace_member.add",
+        workspace=ws,
+        member=user,
+        after="owner",
+        details={"reason": "workspace_creator"},
+    )
     await db.commit()
     await db.refresh(ws)
     return await _workspace_out(db, ws)
@@ -269,12 +280,16 @@ async def add_member(
     await assert_workspace_member(db, workspace.id, user.id, min_role="owner")
     member = WorkspaceMember(workspace_id=workspace.id, user_id=body.user_id, role=body.role)
     db.add(member)
+    target = await db.get(User, body.user_id)
+    if target is not None:
+        record_membership(
+            db, "workspace_member.add", workspace=workspace, member=target, after=body.role
+        )
     await db.commit()
     await db.refresh(member)
 
     # Permission authority is the API boundary (D10); the catalog grant mirror
     # is a no-op (see services/workspace.mirror_member_grant).
-    target = await db.get(User, body.user_id)
     if target is not None:
         await mirror_member_grant(polaris, workspace.slug, target.email, body.role)
 

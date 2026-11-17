@@ -348,7 +348,8 @@ export function AttachCatalogDialog({
         <div className="space-y-3 py-2">
           {attachable.length === 0 ? (
             <p className="text-sm text-text-tertiary">
-              No other catalogs available to attach.
+              No other catalogs you can attach. You can attach the catalogs you
+              created; an admin can attach any catalog.
             </p>
           ) : (
             <Select value={catalogSlug} onValueChange={setCatalogSlug}>

@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
+from typing import Any
 
 import sqlglot
 from fastapi import HTTPException, status
@@ -281,28 +282,47 @@ async def enforce_leaf(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
 
 
+_REMOVED = (
+    CatalogGrant.id,
+    CatalogGrant.user_id,
+    CatalogGrant.schema_name,
+    CatalogGrant.table_name,
+    CatalogGrant.tier,
+)
+
+
 async def delete_table_grants(
     db: AsyncSession, catalog_id: uuid.UUID, schema: str, table: str
-) -> None:
-    """Remove grants for a dropped table (mirrors ``_delete_table_meta``)."""
-    await db.execute(
-        delete(CatalogGrant).where(
+) -> list[Any]:
+    """Remove grants for a dropped table (mirrors ``_delete_table_meta``).
+
+    Returns the removed grants, for the audit log."""
+    result = await db.execute(
+        delete(CatalogGrant)
+        .where(
             CatalogGrant.catalog_id == catalog_id,
             CatalogGrant.schema_name == schema,
             CatalogGrant.table_name == table,
         )
+        .returning(*_REMOVED)
     )
+    return list(result.all())
 
 
-async def delete_schema_grants(db: AsyncSession, catalog_id: uuid.UUID, schema: str) -> None:
+async def delete_schema_grants(db: AsyncSession, catalog_id: uuid.UUID, schema: str) -> list[Any]:
     """Remove a dropped schema's grants — the schema-level grant and every
-    table-level grant beneath it (catalog-level grants are untouched)."""
-    await db.execute(
-        delete(CatalogGrant).where(
+    table-level grant beneath it (catalog-level grants are untouched).
+
+    Returns the removed grants, for the audit log."""
+    result = await db.execute(
+        delete(CatalogGrant)
+        .where(
             CatalogGrant.catalog_id == catalog_id,
             CatalogGrant.schema_name == schema,
         )
+        .returning(*_REMOVED)
     )
+    return list(result.all())
 
 
 # --- SQL object-reference extraction ----------------------------------------

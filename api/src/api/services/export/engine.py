@@ -18,6 +18,7 @@ from api.models.query import Query
 from api.models.storage_backend import StorageBackend
 from api.models.user import User
 from api.models.workspace import Workspace
+from api.services.audit.events import record_catalog_created
 from api.services.export import (
     STATUS_COMPLETED,
     STATUS_COPYING,
@@ -76,10 +77,21 @@ async def _provision(db: AsyncSession, polaris: PolarisClient, export: CatalogEx
             created_by=user.id,
             kind=KIND_ICEBERG_POLARIS,
         )
-        await catalog_service.attach_catalog(
+        link = await catalog_service.attach_catalog(
             db, workspace=workspace, catalog=target, attached_by=user.id
         )
         export.target_catalog_id = target.id
+        await db.flush()
+        # The export runs in the background; the person who started it acted.
+        record_catalog_created(
+            db,
+            target,
+            workspace=workspace,
+            link=link,
+            backend=backend,
+            details={"export_id": str(export.id), "source_catalog": source.slug},
+            actor=user,
+        )
         await db.commit()
 
     # COPY FROM DATABASE needs the namespaces to exist; Polaris won't create them.

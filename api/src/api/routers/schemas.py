@@ -37,6 +37,7 @@ from api.schemas.lineage import LineageGraphOut
 from api.schemas.query import RowsPageOut
 from api.services import grants as grant_service
 from api.services import query as query_service
+from api.services.audit.events import record_catalog_grants_removed
 from api.services.catalog_backends import (
     CatalogBackend,
     CatalogBackendConflict,
@@ -458,7 +459,10 @@ async def drop_schema(
     for t in tables:
         await _delete_table_meta(db, cat.id, schema, t.name)
     # Drop dangling grants for the schema and every table that was under it.
-    await grant_service.delete_schema_grants(db, cat.id, schema)
+    removed = await grant_service.delete_schema_grants(db, cat.id, schema)
+    await record_catalog_grants_removed(
+        db, removed, catalog=cat, workspace=target.workspace, reason="object_dropped"
+    )
     await lineage_ingest.delete_schema_lineage(db, cat.id, schema)
     await semantic_impact.mark_bindings_broken(
         db,
@@ -695,7 +699,10 @@ async def drop_table(
     )
     await _backend(cat, polaris).delete_table(cat, schema, table, _write_ctx(target, user, db))
     await _delete_table_meta(db, cat.id, schema, table)
-    await grant_service.delete_table_grants(db, cat.id, schema, table)
+    removed = await grant_service.delete_table_grants(db, cat.id, schema, table)
+    await record_catalog_grants_removed(
+        db, removed, catalog=cat, workspace=target.workspace, reason="object_dropped"
+    )
     await lineage_ingest.delete_table_lineage(db, cat.id, schema, table)
     # Deliberately *not* deleted, unlike the grants and lineage above. Those
     # describe the table and stop meaning anything once it is gone; a semantic

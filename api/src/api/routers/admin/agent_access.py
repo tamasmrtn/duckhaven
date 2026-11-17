@@ -33,6 +33,7 @@ from api.schemas.agent import (
 )
 from api.schemas.agent import AgentGrantUpsert as GrantUpsert
 from api.services.agent_access import ResolvedAgent
+from api.services.audit import record
 
 router = APIRouter(prefix="/agents")
 
@@ -97,6 +98,35 @@ async def _payload(db: AsyncSession, agent: Agent) -> AgentAccessOut:
     )
 
 
+def _record_grant(
+    db: AsyncSession,
+    action: str,
+    *,
+    grant: AgentGrant,
+    agent: Agent,
+    user: User | None,
+    workspace: Workspace | None,
+    before: str | None = None,
+    after: str | None = None,
+) -> None:
+    """One agent grant created, changed or removed. Its principal is a user (the
+    subject) or a workspace (every member, so the event's workspace)."""
+    record(
+        db,
+        action,
+        target_id=grant.id,
+        target_name=agent.name,
+        workspace=workspace,
+        subject=user,
+        before=None if before is None else {"tier": before},
+        after=None if after is None else {"tier": after},
+        details={
+            "agent_id": str(agent.id),
+            "principal": "user" if user is not None else "workspace",
+        },
+    )
+
+
 @router.get("/{agent_id}/access", response_model=AgentAccessOut)
 async def get_agent_access(
     resolved: ResolvedAgent = Depends(require_agent_tier("admin")),
@@ -122,7 +152,17 @@ async def set_agent_access_mode(
     grant or global ``agents:manage``, in either mode.
     """
     agent = resolved.agent
+    previous = agent.access_mode
     await db.execute(update(Agent).where(Agent.id == agent.id).values(access_mode=body.access_mode))
+    if previous != body.access_mode:
+        record(
+            db,
+            "agent.access_mode_change",
+            target_id=agent.id,
+            target_name=agent.name,
+            before={"access_mode": previous},
+            after={"access_mode": body.access_mode},
+        )
     await db.commit()
     await db.refresh(agent)
     return await _payload(db, agent)
@@ -149,6 +189,7 @@ async def upsert_agent_grant(
 
     # Resolve the principal first so a typo'd id is a 422 rather than a dangling FK
     # that only fails at commit.
+    target_user = target_ws = None
     if body.user_id is not None:
         target_user = await db.get(User, body.user_id)
         if target_user is None:
@@ -169,6 +210,7 @@ async def upsert_agent_grant(
     existing = (
         await db.execute(select(AgentGrant).where(AgentGrant.agent_id == agent.id, *where))
     ).scalar_one_or_none()
+    previous = existing.tier if existing is not None else None
     if existing is not None:
         existing.tier = body.tier
         grant = existing
@@ -182,6 +224,18 @@ async def upsert_agent_grant(
         )
         db.add(grant)
         response.status_code = status.HTTP_201_CREATED
+    await db.flush()
+    if previous != body.tier:
+        _record_grant(
+            db,
+            "agent_grant.create" if previous is None else "agent_grant.tier_change",
+            grant=grant,
+            agent=agent,
+            user=target_user,
+            workspace=target_ws,
+            before=previous,
+            after=grant.tier,
+        )
     await db.commit()
     await db.refresh(grant)
 
@@ -216,5 +270,14 @@ async def delete_agent_grant(
     ).scalar_one_or_none()
     if grant is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Grant not found")
+    _record_grant(
+        db,
+        "agent_grant.delete",
+        grant=grant,
+        agent=resolved.agent,
+        user=await db.get(User, grant.user_id) if grant.user_id else None,
+        workspace=await db.get(Workspace, grant.workspace_id) if grant.workspace_id else None,
+        before=grant.tier,
+    )
     await db.delete(grant)
     await db.commit()

@@ -28,6 +28,8 @@ from api.schemas.grant import (
     GrantPrincipalOut,
     GrantUpsert,
 )
+from api.services.audit import record
+from api.services.audit.events import record_catalog_grant
 from api.services.workspace import assert_workspace_member, get_workspace, resolve_catalog
 
 router = APIRouter()
@@ -112,6 +114,12 @@ async def set_access_mode(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
     await assert_workspace_member(db, workspace.id, user.id, min_role="owner")
     cat = await resolve_catalog(db, workspace.id, catalog)
+    previous = await db.scalar(
+        select(WorkspaceCatalog.access_mode).where(
+            WorkspaceCatalog.workspace_id == workspace.id,
+            WorkspaceCatalog.catalog_id == cat.id,
+        )
+    )
     await db.execute(
         update(WorkspaceCatalog)
         .where(
@@ -120,6 +128,16 @@ async def set_access_mode(
         )
         .values(access_mode=body.access_mode)
     )
+    if previous != body.access_mode:
+        record(
+            db,
+            "catalog.access_mode_change",
+            target_id=cat.id,
+            target_name=cat.slug,
+            workspace=workspace,
+            before={"access_mode": previous},
+            after={"access_mode": body.access_mode},
+        )
     await db.commit()
     return await _payload(db, workspace.id, cat)
 
@@ -176,6 +194,7 @@ async def upsert_grant(
             )
         )
     ).scalar_one_or_none()
+    previous = existing.tier if existing is not None else None
     if existing is not None:
         existing.tier = body.tier
         grant = existing
@@ -190,6 +209,20 @@ async def upsert_grant(
         )
         db.add(grant)
         response.status_code = status.HTTP_201_CREATED
+    await db.flush()
+    if previous != body.tier:
+        await record_catalog_grant(
+            db,
+            "catalog_grant.create" if previous is None else "catalog_grant.tier_change",
+            grant_id=grant.id,
+            user_id=grant.user_id,
+            catalog=cat,
+            schema=grant.schema_name,
+            table=grant.table_name,
+            workspace=workspace,
+            before=previous,
+            after=grant.tier,
+        )
     await db.commit()
     await db.refresh(grant)
     name = (
@@ -228,5 +261,17 @@ async def delete_grant(
     ).scalar_one_or_none()
     if grant is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    await record_catalog_grant(
+        db,
+        "catalog_grant.delete",
+        grant_id=grant.id,
+        user_id=grant.user_id,
+        catalog=cat,
+        schema=grant.schema_name,
+        table=grant.table_name,
+        workspace=workspace,
+        before=grant.tier,
+        reason="revoked",
+    )
     await db.delete(grant)
     await db.commit()

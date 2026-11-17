@@ -16,25 +16,41 @@ from api.services.audit.registry import ACTIONS
 _MUTATING = {"POST", "PUT", "PATCH", "DELETE"}
 
 # (method, path) -> the actions the route records.
-AUDITED: dict[tuple[str, str], set[str]] = {}
+AUDITED: dict[tuple[str, str], set[str]] = {
+    ("PATCH", "/workspaces/{workspace}/catalogs/{catalog}/access-mode"): {
+        "catalog.access_mode_change"
+    },
+    ("PUT", "/workspaces/{workspace}/catalogs/{catalog}/grants"): {
+        "catalog_grant.create",
+        "catalog_grant.tier_change",
+    },
+    ("DELETE", "/workspaces/{workspace}/catalogs/{catalog}/grants/{grant_id}"): {
+        "catalog_grant.delete"
+    },
+    ("POST", "/workspaces/{workspace}/catalogs"): {
+        "catalog.create",
+        "catalog.attach",
+        "catalog_grant.create",
+    },
+    ("PUT", "/workspaces/{workspace}/catalogs/{catalog}"): {"catalog.attach"},
+    ("DELETE", "/workspaces/{workspace}/catalogs/{catalog}"): {"catalog.detach"},
+    ("DELETE", "/catalogs/{catalog_id}"): {"catalog.drop", "catalog_grant.delete"},
+    ("POST", "/catalogs/{catalog_id}/exports"): {"catalog.export"},
+    ("POST", "/catalogs/{catalog_id}/ducklake/rotate-role"): {"catalog.ducklake_role_rotate"},
+    ("POST", "/admin/catalogs/ducklake/reconcile-roles"): {"catalog.ducklake_roles_reconcile"},
+    ("DELETE", "/workspaces/{workspace}/catalogs/{catalog}/schemas/{schema}"): {
+        "catalog_grant.delete"
+    },
+    ("DELETE", "/workspaces/{workspace}/catalogs/{catalog}/schemas/{schema}/tables/{table}"): {
+        "catalog_grant.delete"
+    },
+    ("PATCH", "/admin/agents/{agent_id}/access-mode"): {"agent.access_mode_change"},
+    ("PUT", "/admin/agents/{agent_id}/grants"): {"agent_grant.create", "agent_grant.tier_change"},
+    ("DELETE", "/admin/agents/{agent_id}/grants/{grant_id}"): {"agent_grant.delete"},
+}
 
 # Routes not yet wired, each moved into AUDITED by the commit that wires it.
 PENDING: set[tuple[str, str]] = {
-    ("PATCH", "/workspaces/{workspace}/catalogs/{catalog}/access-mode"),
-    ("PUT", "/workspaces/{workspace}/catalogs/{catalog}/grants"),
-    ("DELETE", "/workspaces/{workspace}/catalogs/{catalog}/grants/{grant_id}"),
-    ("POST", "/workspaces/{workspace}/catalogs"),
-    ("PUT", "/workspaces/{workspace}/catalogs/{catalog}"),
-    ("DELETE", "/workspaces/{workspace}/catalogs/{catalog}"),
-    ("DELETE", "/catalogs/{catalog_id}"),
-    ("POST", "/catalogs/{catalog_id}/exports"),
-    ("POST", "/catalogs/{catalog_id}/ducklake/rotate-role"),
-    ("POST", "/admin/catalogs/ducklake/reconcile-roles"),
-    ("DELETE", "/workspaces/{workspace}/catalogs/{catalog}/schemas/{schema}"),
-    ("DELETE", "/workspaces/{workspace}/catalogs/{catalog}/schemas/{schema}/tables/{table}"),
-    ("PATCH", "/admin/agents/{agent_id}/access-mode"),
-    ("PUT", "/admin/agents/{agent_id}/grants"),
-    ("DELETE", "/admin/agents/{agent_id}/grants/{grant_id}"),
     ("POST", "/workspaces"),
     ("PATCH", "/workspaces/{workspace}"),
     ("DELETE", "/workspaces/{workspace}"),
@@ -60,7 +76,7 @@ PENDING: set[tuple[str, str]] = {
 RECORDED_ELSEWHERE: dict[str, str] = {}
 
 # Actions not yet recorded anywhere; emptied as PENDING is.
-PENDING_ACTIONS: set[str] = set(ACTIONS) - set(RECORDED_ELSEWHERE)
+PENDING_ACTIONS: set[str] = set(ACTIONS) - set(RECORDED_ELSEWHERE) - set().union(*AUDITED.values())
 
 _WORK = "work inside a workspace, governed by the access the audit log records"
 _TABLE = "/workspaces/{workspace}/catalogs/{catalog}/schemas/{schema}/tables/{table}"

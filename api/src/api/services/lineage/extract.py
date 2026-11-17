@@ -29,7 +29,7 @@ from dataclasses import dataclass
 import sqlglot
 from sqlglot import exp
 
-from api.services.grants import METADATA_SCHEMAS, SYSTEM_CATALOGS, target_tables
+from api.services.grants import is_metadata_schema, is_system_catalog, target_tables
 from api.services.lineage.keys import AssetRef
 
 
@@ -159,7 +159,7 @@ def resolve_ref(
     schema = ref.schema or DEFAULT_SCHEMA
     if slug is None:
         return None
-    if slug in SYSTEM_CATALOGS or schema in METADATA_SCHEMAS:
+    if is_system_catalog(slug) or is_metadata_schema(schema):
         return None  # discovery surfaces are not lineage assets
     catalog_id = catalog_ids.get(slug)
     if catalog_id is None:

@@ -130,6 +130,9 @@ def test_a_name_used_both_ways_is_required() -> None:
         ("SELECT * FROM information_schema.tables", {}, "system_catalog"),
         ("SELECT * FROM c1.info_schema.tables", {}, "system_catalog"),
         ("SELECT * FROM t", {"current_catalog": "duckhaven"}, "system_catalog"),
+        # DuckDB folds unquoted identifiers, so case does not make a name cacheable.
+        ("SELECT * FROM DUCKHAVEN.access.audit", {}, "system_catalog"),
+        ("SELECT * FROM c1.INFORMATION_SCHEMA.tables", {}, "system_catalog"),
         ("SELECT * FROM other.s.t", {}, "unknown_catalog"),
         ("SELECT * FROM t", {"current_catalog": "gone"}, "unknown_catalog"),
         # `c2.t` could be schema c2 in c1, or catalog c2: refuse rather than guess.

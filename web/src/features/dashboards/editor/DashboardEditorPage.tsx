@@ -308,11 +308,18 @@ function Editing({ ws, initial }: { ws: string; initial: Dashboard }) {
     }
   }
 
-  const status = dirty
+  const saveState = dirty
     ? "Unsaved changes"
     : !published || dashboard.has_draft
       ? `Draft saved ${savedWhen(dashboard)}`
       : "No changes since it was published";
+  // The server refuses to publish a file with errors, so the button waits for
+  // them to be fixed, and the status line says why it waits.
+  const problems = live.errors.length;
+  const status =
+    problems > 0
+      ? `${saveState}. Fix ${problems === 1 ? "the error" : `the ${problems} errors`} to publish`
+      : saveState;
 
   return (
     <div className="flex h-full flex-col">
@@ -365,7 +372,9 @@ function Editing({ ws, initial }: { ws: string; initial: Dashboard }) {
                 className="h-7 text-xs"
                 onClick={() => setPublishOpen(true)}
                 disabled={
-                  saving || (!dirty && published && !dashboard.has_draft)
+                  saving ||
+                  problems > 0 ||
+                  (!dirty && published && !dashboard.has_draft)
                 }
               >
                 Publish

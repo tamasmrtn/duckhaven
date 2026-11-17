@@ -383,3 +383,36 @@ async def _fresh_ducklake_engine():
     await dispose_engine()
     yield
     await dispose_engine()
+
+
+# --- System catalog store, env-gated ---
+
+
+@pytest_asyncio.fixture
+async def system_store(db_session):
+    """A clean system catalog store at SYSTEM_CATALOG_DATABASE_URL.
+
+    Yields a session factory for the control-plane schema the test runs in. The
+    store's schemas are dropped before and after, so each test starts empty.
+    """
+    from api.services.system_catalog import store
+
+    url = os.getenv("SYSTEM_CATALOG_DATABASE_URL")
+    if not url:
+        pytest.skip("SYSTEM_CATALOG_DATABASE_URL not set; skipping system catalog test")
+    original = (settings.system_catalog_enabled, settings.system_catalog_database_url)
+    settings.system_catalog_enabled, settings.system_catalog_database_url = True, url
+
+    async def drop_schemas() -> None:
+        async with store.get_engine().begin() as conn:
+            for schema in (store.ACCESS, store.QUERY, store.STATE):
+                await conn.execute(text(f"DROP SCHEMA IF EXISTS {schema} CASCADE"))
+
+    await store.dispose_engine()
+    store.mark_stale()
+    await drop_schemas()
+    yield async_sessionmaker(db_session.bind, expire_on_commit=False)
+    await drop_schemas()
+    await store.dispose_engine()
+    store.mark_stale()
+    settings.system_catalog_enabled, settings.system_catalog_database_url = original

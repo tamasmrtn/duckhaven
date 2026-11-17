@@ -350,10 +350,10 @@ function QueriesView() {
         title="History"
         badge={<HistoryViewSwitch ws={ws} view="queries" />}
         actions={
-          // Wraps rather than overflowing: on a narrow window the header used
-          // to push the workspace toggle off-screen.
-          <div className="ml-auto flex flex-wrap items-center justify-end gap-3">
-            <div className="flex items-center gap-3">
+          // Wraps rather than overflowing, down to one control per row: main
+          // clips its overflow, so anything past a phone's edge is out of reach.
+          <div className="ml-auto flex min-w-0 flex-wrap items-center justify-end gap-3">
+            <div className="flex flex-wrap items-center gap-3">
               <AgentFilterCombobox
                 value={search.agent ?? null}
                 onChange={(id) => setFilter({ agent: id ?? undefined })}
@@ -381,7 +381,7 @@ function QueriesView() {
               </button>
             </div>
             {isAdmin && (
-              <div className="flex items-center gap-3">
+              <div className="flex flex-wrap items-center gap-3">
                 {/* Defaults to the signed-in user, because that is the
                     default scope. Rendering null here showed "All users" while
                     the list was in fact scoped to one — the control and the

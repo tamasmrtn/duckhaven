@@ -549,7 +549,7 @@ export function DashboardEditorPage() {
           <Link
             to="/$ws/dashboards"
             params={{ ws }}
-            className="text-xs text-[var(--brand-slate-blue)] underline"
+            className="text-xs text-[var(--link)] underline"
           >
             Every dashboard
           </Link>

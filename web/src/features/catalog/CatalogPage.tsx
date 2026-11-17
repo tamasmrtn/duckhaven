@@ -330,7 +330,7 @@ function TableDetail({
                       <Link
                         to="/$ws/compute"
                         params={{ ws }}
-                        className="text-xs font-medium text-[var(--brand-slate-blue)] hover:underline"
+                        className="text-xs font-medium text-[var(--link)] hover:underline"
                       >
                         Manage compute
                       </Link>

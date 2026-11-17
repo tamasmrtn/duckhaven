@@ -6,6 +6,10 @@
   --brand-slate-blue: #7d66ff;
   --brand-maya-blue: #2eafff;
 
+  /* Link text. The brand slate blue is 3.9:1 on the surface, so text links
+     take a deeper shade of it; icons and focus rings keep the brand colour. */
+  --link: #5b45e0;
+
   /* Backgrounds */
   --bg-canvas: #ffffff;
   --bg-surface: #f8fafc;
@@ -29,7 +33,7 @@
   /* Semantic status */
   --status-queued: #94a3b8;
   --status-running: #ff6900;
-  --status-success: #16a34a;
+  --status-success: #15803d;
   --status-failed: #dc2626;
   --status-cancelled: #475569;
 
@@ -81,6 +85,8 @@
   --brand-slate-blue: #9c8aff;
   --brand-maya-blue: #5bc0ff;
 
+  --link: #9c8aff;
+
   --bg-canvas: #0b0f19;
   --bg-surface: #111827;
   --bg-elevated: #1f2937;
@@ -100,7 +106,7 @@
   --status-queued: #64748b;
   --status-running: #ff8a33;
   --status-success: #22c55e;
-  --status-failed: #ef4444;
+  --status-failed: #f87171;
   --status-cancelled: #94a3b8;
 
   --shadow-e1: 0 1px 0 rgb(0 0 0 / 0.4);

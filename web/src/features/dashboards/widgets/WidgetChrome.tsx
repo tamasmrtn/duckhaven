@@ -159,7 +159,7 @@ export function Definitions({
               <Link
                 to="/$ws/semantic/$model"
                 params={{ ws, model }}
-                className="text-[var(--brand-slate-blue)] underline"
+                className="text-[var(--link)] underline"
               >
                 {model}
               </Link>

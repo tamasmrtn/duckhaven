@@ -426,7 +426,7 @@ export function WorksheetPage() {
               <Link
                 to="/$ws/compute"
                 params={{ ws }}
-                className="font-medium text-[var(--brand-slate-blue)] hover:underline"
+                className="font-medium text-[var(--link)] hover:underline"
               >
                 {resolution.agentId === null &&
                 resolution.reason === "no-agents"

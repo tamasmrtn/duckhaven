@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import uuid
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from starlette.datastructures import MutableHeaders
@@ -47,8 +47,8 @@ class AuditContext:
     #: its own transaction (a denial, whose request rolls back) lands in the same
     #: database, including a test's.
     bind: Any = None
-    #: The SQL the request last had checked against grants, for a denial's record.
-    statement: str | None = None
+    #: The request's ASGI scope, which routing fills in with the matched route.
+    scope: Any = field(default=None, repr=False)
 
 
 _current: ContextVar[AuditContext | None] = ContextVar("duckhaven_audit_context", default=None)
@@ -86,11 +86,22 @@ def set_actor(
         ctx.bind = bind
 
 
-def note_statement(sql: str) -> None:
-    """Keep the SQL being checked, so a denial of it can say what was denied."""
+def current_route() -> str | None:
+    """The current request's method and route, as ``POST /workspaces/{workspace}/queries``.
+
+    The route as declared rather than the path requested, so repeats of one
+    refusal read the same. None outside a request.
+    """
     ctx = current()
-    if ctx is not None:
-        ctx.statement = sql
+    if ctx is None or ctx.scope is None:
+        return None
+    # FastAPI keeps a nested router's route unprefixed and the prefixed path in
+    # an internal context; read that when present and fall back to the route's
+    # own path, then the requested one, rather than fail.
+    effective = ctx.scope.get("fastapi", {}).get("effective_route_context")
+    route = ctx.scope.get("route")
+    path = getattr(effective, "path", None) or getattr(route, "path", None) or ctx.scope.get("path")
+    return f"{ctx.scope.get('method', 'WEBSOCKET')} {path}"
 
 
 def origin_client() -> tuple[str, int]:
@@ -119,6 +130,7 @@ class AuditContextMiddleware:
             request_id=uuid.uuid4().hex,
             source_ip=peer_address(conn),
             user_agent=user_agent[:_USER_AGENT_MAX] if user_agent else None,
+            scope=scope,
         )
 
         async def send_with_request_id(message: Message) -> None:

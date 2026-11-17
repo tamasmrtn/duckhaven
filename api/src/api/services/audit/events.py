@@ -16,6 +16,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.models.catalog import Catalog
 from api.models.user import User
+from api.models.workspace import Workspace
+from api.services.audit.context import current, current_route
 from api.services.audit.record import clip, record, record_now
 
 
@@ -184,6 +186,47 @@ async def record_rate_limited(db: AsyncSession, identifier: str | None, *, metho
         outcome="denied",
         error_code="too_many_sign_in_attempts",
         details={"method": method},
+    )
+
+
+async def record_grant_denied(
+    db: AsyncSession,
+    *,
+    workspace_id: uuid.UUID,
+    principal_id: uuid.UUID | None,
+    reason: str,
+    sql: str | None,
+) -> None:
+    """A statement refused by a data grant check; written on its own, as the request fails.
+
+    In a request the caller is the actor. A run outside one (a schedule firing)
+    is recorded as its principal's, the account the check was made for.
+    """
+    ctx = current()
+    actor = None
+    if (ctx is None or ctx.actor_id is None) and principal_id is not None:
+        actor = await db.get(User, principal_id)
+    await record_now(
+        db,
+        "authz.grant_denied",
+        target_name=current_route(),
+        workspace=await db.get(Workspace, workspace_id),
+        outcome="denied",
+        error_code="grant_denied",
+        details={"reason": clip(reason, 512), "statement": clip(sql)},
+        actor=actor,
+    )
+
+
+async def record_permission_denied(db: AsyncSession, permission: str) -> None:
+    """A request refused for lacking a global permission."""
+    await record_now(
+        db,
+        "authz.permission_denied",
+        target_name=current_route(),
+        outcome="denied",
+        error_code="forbidden",
+        details={"permission": permission},
     )
 
 

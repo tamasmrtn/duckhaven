@@ -23,6 +23,13 @@ if docker compose -f "$COMPOSE_FILE" exec -T postgres \
         "SELECT 1 FROM pg_database WHERE datname = 'ducklake'" | grep -q 1; then
     databases="$databases ducklake"
 fi
+# `duckhaven_system`, when it exists, is a copy DuckHaven rebuilds by itself, but
+# it alone keeps the query history of deleted workspaces.
+if docker compose -f "$COMPOSE_FILE" exec -T postgres \
+        psql -U duckhaven -d postgres -tAc \
+        "SELECT 1 FROM pg_database WHERE datname = 'duckhaven_system'" | grep -q 1; then
+    databases="$databases duckhaven_system"
+fi
 
 # DuckLake metadata and data can be restored to different moments; warn here.
 case " $databases " in

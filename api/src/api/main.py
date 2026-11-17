@@ -77,6 +77,7 @@ from api.services.polaris import (
     PolarisNotFoundError,
 )
 from api.services.rbac import seed_roles
+from api.services.system_catalog.store import dispose_engine as dispose_system_catalog_engine
 from api.telemetry import setup_telemetry
 from duckhaven_shared.telemetry import LOG_FORMAT, install_log_correlation
 
@@ -197,6 +198,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     audit_retention_task = asyncio.create_task(retention_loop(async_session_factory))
 
+    # Creates its store if it can, and keeps retrying if it cannot: an install
+    # without the database runs as before, and gets the copy once it exists.
+    system_catalog_task: asyncio.Task | None = None
+    if settings.system_catalog_enabled:
+        from api.services.system_catalog.publisher import publisher_loop
+
+        system_catalog_task = asyncio.create_task(publisher_loop(async_session_factory))
+
     compute_reaper_task: asyncio.Task | None = None
     if settings.elastic_compute_enabled:
         from api.services.compute.reaper import reaper_loop as compute_reaper_loop
@@ -218,6 +227,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             presence_task,
             result_cache_task,
             audit_retention_task,
+            system_catalog_task,
         ):
             if task is not None:
                 task.cancel()
@@ -228,6 +238,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await drain_admissions()
         await app.state.polaris_client.aclose()
         await dispose_ducklake_engine()
+        await dispose_system_catalog_engine()
 
 
 logger = logging.getLogger(__name__)

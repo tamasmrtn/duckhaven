@@ -373,7 +373,9 @@ function Loaded({ ws, dashboard }: { ws: string; dashboard: Dashboard }) {
       <PageHeader
         title={spec.title}
         description={spec.description ?? undefined}
-        badge={<DashboardBadges dashboard={dashboard} />}
+        // Present mode is for an audience: whether a draft waits, or where the
+        // file lives, is for the people who edit it.
+        badge={present ? undefined : <DashboardBadges dashboard={dashboard} />}
         actions={
           <div className="flex items-center gap-3 text-2xs text-text-tertiary">
             <RunStatus run={run} />
@@ -439,7 +441,11 @@ function Loaded({ ws, dashboard }: { ws: string; dashboard: Dashboard }) {
       />
       <div className="min-h-0 flex-1 overflow-auto">
         <div className="flex flex-col gap-4 p-4 md:p-6">
-          <Banners ws={ws} dashboard={dashboard} run={run} />
+          {present ? (
+            <RunBanners run={run} />
+          ) : (
+            <Banners ws={ws} dashboard={dashboard} run={run} />
+          )}
           {spec.rows.map((row, i) => (
             <Row key={i} row={row} run={run} context={context} />
           ))}

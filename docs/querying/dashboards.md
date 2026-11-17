@@ -122,6 +122,8 @@ while the data has not changed.
 
 **Present** shows the dashboard alone, over the whole screen, for a wall display or a meeting. Its address carries
 `?present=true`, so a display can open straight into it, and **Exit**, Escape or the browser's back button leaves it.
+It leaves out what only editors need: the status labels beside the title, and the notes about a waiting draft or a
+file managed in git.
 
 Present mode can refresh the dashboard every 5, 15 or 30 minutes, or every hour, kept in the address as `?refresh=15`.
 A refresh is a new view: widgets whose tables have not changed are answered from the cache without starting compute,

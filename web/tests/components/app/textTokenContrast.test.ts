@@ -59,6 +59,34 @@ describe("text token contrast", () => {
     }
   });
 
+  // Link text, and the good/bad colours a KPI's change is written in, sit at
+  // 12-13px on cards and on the orange-tinted notes. Each shipped below AA.
+  it.each([
+    ["--link", "light", 0],
+    ["--link", "dark", 1],
+    ["--status-success", "light", 0],
+    ["--status-success", "dark", 1],
+    ["--status-failed", "light", 0],
+    ["--status-failed", "dark", 1],
+  ])("keeps %s at 4.5:1 on every %s surface", (token, _theme, i) => {
+    const defined = values(token);
+    expect(defined).toHaveLength(2);
+    for (const surface of ["--bg-canvas", "--bg-surface", "--bg-elevated"]) {
+      const bg = values(surface)[i];
+      expect(
+        contrast(defined[i], bg),
+        `${token} ${defined[i]} on ${surface} ${bg}`,
+      ).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
+  it("keeps --link at 4.5:1 on the light note's orange tint", () => {
+    // The Banner is brand orange at 10% over the canvas: #fff0e6 in light mode.
+    expect(contrast(values("--link")[0], "#fff0e6")).toBeGreaterThanOrEqual(
+      4.5,
+    );
+  });
+
   it.each(["queued", "running", "success", "failed", "cancelled"])(
     "keeps the %s pill fill at 4.5:1 against its white label",
     (status) => {

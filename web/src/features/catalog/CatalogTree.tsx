@@ -195,7 +195,7 @@ function TableHoverCard({
           <Link
             to="/$ws/catalog/$catalog/$schema/$table"
             params={{ ws, catalog, schema: schemaName, table: table.name }}
-            className="text-[var(--brand-slate-blue)] hover:underline"
+            className="text-[var(--link)] hover:underline"
           >
             View details ↗
           </Link>
@@ -203,7 +203,7 @@ function TableHoverCard({
             to="/$ws/catalog/$catalog/$schema/$table"
             params={{ ws, catalog, schema: schemaName, table: table.name }}
             search={{ tab: "lineage" }}
-            className="text-[var(--brand-slate-blue)] hover:underline"
+            className="text-[var(--link)] hover:underline"
           >
             Lineage
           </Link>
@@ -211,7 +211,7 @@ function TableHoverCard({
             to="/$ws/catalog/$catalog/$schema/$table"
             params={{ ws, catalog, schema: schemaName, table: table.name }}
             search={{ tab: "permissions" }}
-            className="text-[var(--brand-slate-blue)] hover:underline"
+            className="text-[var(--link)] hover:underline"
           >
             Permissions
           </Link>

@@ -60,7 +60,7 @@ export function ToolCallCard({
           <Link
             to="/$ws/queries/$queryId"
             params={{ ws, queryId: call.query_id }}
-            className="ml-auto text-[var(--brand-slate-blue)] hover:underline"
+            className="ml-auto text-[var(--link)] hover:underline"
           >
             View result
           </Link>
@@ -77,7 +77,7 @@ export function ToolCallCard({
           <Link
             to="/$ws/semantic/$model"
             params={{ ws, model }}
-            className="text-[var(--brand-slate-blue)] hover:underline"
+            className="text-[var(--link)] hover:underline"
           >
             {model}
           </Link>

@@ -431,7 +431,7 @@ export function AgentPicker({
                   to="/$ws/compute"
                   params={{ ws }}
                   onClick={() => setOpen(false)}
-                  className="ml-auto font-medium text-[var(--brand-slate-blue)] hover:underline"
+                  className="ml-auto font-medium text-[var(--link)] hover:underline"
                 >
                   Manage compute ↗
                 </Link>

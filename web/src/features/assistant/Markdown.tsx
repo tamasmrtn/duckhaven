@@ -28,7 +28,7 @@ const COMPONENTS: Components = {
   li: ({ node: _n, ...props }) => <li className="my-0.5" {...props} />,
   a: ({ node: _n, ...props }) => (
     <a
-      className="text-[var(--brand-slate-blue)] underline"
+      className="text-[var(--link)] underline"
       target="_blank"
       rel="noreferrer"
       {...props}

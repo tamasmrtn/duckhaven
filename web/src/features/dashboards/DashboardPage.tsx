@@ -237,7 +237,7 @@ function Banners({
             <Link
               to="/$ws/dashboards/$dashboard/edit"
               params={{ ws, dashboard: dashboard.name }}
-              className="text-[var(--brand-slate-blue)] underline"
+              className="text-[var(--link)] underline"
             >
               Review and publish them
             </Link>
@@ -509,7 +509,7 @@ export function DashboardPage() {
           <Link
             to="/$ws/dashboards"
             params={{ ws }}
-            className="text-xs text-[var(--brand-slate-blue)] underline"
+            className="text-xs text-[var(--link)] underline"
           >
             Every dashboard
           </Link>

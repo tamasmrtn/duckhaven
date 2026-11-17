@@ -70,7 +70,7 @@ export function DashboardProposalPage() {
           <Link
             to="/$ws/dashboards"
             params={{ ws }}
-            className="text-xs text-[var(--brand-slate-blue)] underline"
+            className="text-xs text-[var(--link)] underline"
           >
             Every dashboard
           </Link>
@@ -152,7 +152,7 @@ function Review({ ws, proposal }: { ws: string; proposal: DashboardProposal }) {
             <Link
               to="/$ws/dashboards/$dashboard"
               params={{ ws, dashboard: proposal.dashboard }}
-              className="text-[var(--brand-slate-blue)] underline"
+              className="text-[var(--link)] underline"
             >
               {proposal.dashboard}
             </Link>

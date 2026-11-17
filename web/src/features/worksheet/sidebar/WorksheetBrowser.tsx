@@ -194,7 +194,7 @@ export function WorksheetBrowser({
         <Link
           to="/$ws/saved-queries"
           params={{ ws }}
-          className="text-2xs font-medium text-[var(--brand-slate-blue)] hover:underline"
+          className="text-2xs font-medium text-[var(--link)] hover:underline"
         >
           Manage saved queries ↗
         </Link>

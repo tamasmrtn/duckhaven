@@ -129,3 +129,38 @@ def test_the_copy_statement_is_a_deep_copy_of_current_state():
     statement = export_engine.copy_statement("lake", "berg")
     assert "AT (" not in statement
     assert "VERSION" not in statement
+
+
+async def test_provisioning_records_the_copy_as_its_starters(db_session, fake_polaris):
+    """The export runs in the background, but its new catalog, and the open
+    attachment it starts in, are the person's who started it."""
+    from audit_helpers import audit_events
+    from conftest import seed_workspace
+
+    from api.models.catalog_export import CatalogExport
+    from api.models.user import User
+
+    user = User(email="exporter@audit.local", name="Exporter", role="user")
+    db_session.add(user)
+    await db_session.flush()
+    ws, source = await seed_workspace(db_session, user_id=user.id, slug="lake")
+    await fake_polaris.create_catalog(
+        source.polaris_name, storage_type="S3", base_location="s3://warehouse/lake"
+    )
+    export = CatalogExport(
+        source_catalog_id=source.id,
+        target_name="berg",
+        target_storage_backend_id=source.storage_backend_id,
+        workspace_id=ws.id,
+        created_by=user.id,
+    )
+    db_session.add(export)
+    await db_session.commit()
+
+    await export_engine._provision(db_session, fake_polaris, export)
+
+    create, attach = await audit_events(db_session)
+    assert (create.action, attach.action) == ("catalog.create", "catalog.attach")
+    assert {create.actor_email, attach.actor_email} == {user.email}
+    assert (create.actor_type, attach.after) == ("user", {"access_mode": "open"})
+    assert create.details["source_catalog"] == "lake"

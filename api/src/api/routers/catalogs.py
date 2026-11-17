@@ -48,6 +48,13 @@ from api.schemas.catalog_migration import (
 )
 from api.schemas.page import Page
 from api.services import catalog as catalog_service
+from api.services.audit import record
+from api.services.audit.events import (
+    record_catalog_attached,
+    record_catalog_created,
+    record_catalog_grant,
+    record_catalog_grants_removed,
+)
 from api.services.catalog_backends import CatalogBackendError, capabilities_for
 from api.services.export import ACTIVE_STATUSES as EXPORT_ACTIVE
 from api.services.migration import service as migration_service
@@ -145,6 +152,11 @@ async def reconcile_ducklake_roles(
             logger.warning("Could not reconcile DuckLake role for %s: %s", catalog.slug, exc)
             continue
         reconciled += 1
+    record(
+        db,
+        "catalog.ducklake_roles_reconcile",
+        details={"catalogs": len(catalogs), "reconciled": reconciled},
+    )
     await db.commit()
     return {"catalogs": len(catalogs), "reconciled": reconciled}
 
@@ -187,6 +199,7 @@ async def rotate_ducklake_role(
 
     # `ensure` re-applies the stored password to the role.
     await DuckLakeCatalogBackend().ensure(catalog)
+    record(db, "catalog.ducklake_role_rotate", target_id=catalog.id, target_name=catalog.slug)
     await db.commit()
 
     # A session attaches every catalog in its workspace, not just the active one.
@@ -248,6 +261,19 @@ async def start_export(
         created_by=user.id,
     )
     db.add(export)
+    await db.flush()
+    record(
+        db,
+        "catalog.export",
+        target_id=catalog.id,
+        target_name=catalog.slug,
+        workspace=ws,
+        details={
+            "export_id": str(export.id),
+            "target_name": body.target_name,
+            "target_storage_backend_id": str(body.target_storage_backend_id),
+        },
+    )
     await db.commit()
     await db.refresh(export)
     return CatalogExportOut.model_validate(export, from_attributes=True)
@@ -483,21 +509,35 @@ async def create_workspace_catalog(
         attached_by=user.id,
         access_mode=body.access_mode,
     )
+    await db.flush()
+    record_catalog_created(db, catalog, workspace=workspace, link=link, backend=backend)
     if body.access_mode == "scoped":
         # Seed the creator a catalog-level writer grant. Unlike per-agent access,
         # a scoped catalog has no bypass at all -- `grants.access_tier` returns
         # None without a covering grant no matter the workspace role, and the role
         # only caps. Creating one scoped would otherwise produce a catalog that
         # nobody, including the owner who just made it, can see or use.
-        db.add(
-            CatalogGrant(
-                user_id=user.id,
-                catalog_id=catalog.id,
-                schema_name=None,
-                table_name=None,
-                tier="writer",
-                created_by=user.id,
-            )
+        seeded = CatalogGrant(
+            user_id=user.id,
+            catalog_id=catalog.id,
+            schema_name=None,
+            table_name=None,
+            tier="writer",
+            created_by=user.id,
+        )
+        db.add(seeded)
+        await db.flush()
+        await record_catalog_grant(
+            db,
+            "catalog_grant.create",
+            grant_id=seeded.id,
+            user_id=user.id,
+            catalog=catalog,
+            schema=None,
+            table=None,
+            workspace=workspace,
+            after="writer",
+            reason="creator_of_scoped_catalog",
         )
     await db.commit()
     await db.refresh(catalog, attribute_names=["storage_backend"])
@@ -593,6 +633,7 @@ async def attach_workspace_catalog(
         else:
             response.status_code = status.HTTP_201_CREATED
             response.headers["Location"] = f"/api/workspaces/{ws}/catalogs/{found.slug}"
+            record_catalog_attached(db, found, workspace=workspace, link=link)
 
     if link is not None and body.make_default != link.is_default:
         # A PUT replaces state, so the body decides -- including turning the
@@ -623,7 +664,17 @@ async def detach_workspace_catalog(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
     await assert_workspace_member(db, workspace.id, user.id, min_role="owner")
     cat = await resolve_catalog(db, workspace.id, catalog)
+    link = await _attachment(db, workspace.id, cat.id)
+    mode = link.access_mode if link is not None else None
     await catalog_service.detach_catalog(db, workspace=workspace, catalog=cat)
+    record(
+        db,
+        "catalog.detach",
+        target_id=cat.id,
+        target_name=cat.slug,
+        workspace=workspace,
+        before={"access_mode": mode},
+    )
     await db.commit()
 
 
@@ -643,7 +694,22 @@ async def drop_catalog(
         catalog.created_by != user.id
     ):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
+    # Read before the drop: the grants go with the catalog's row.
+    grants = (
+        await db.execute(
+            select(
+                CatalogGrant.id,
+                CatalogGrant.user_id,
+                CatalogGrant.schema_name,
+                CatalogGrant.table_name,
+                CatalogGrant.tier,
+            ).where(CatalogGrant.catalog_id == catalog.id)
+        )
+    ).all()
+    slug, kind = catalog.slug, catalog.kind
     await catalog_service.drop_catalog(db, polaris, catalog=catalog)
+    record(db, "catalog.drop", target_id=catalog_id, target_name=slug, details={"kind": kind})
+    await record_catalog_grants_removed(db, grants, catalog=catalog, reason="catalog_dropped")
     await db.commit()
 
 

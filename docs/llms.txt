@@ -96,10 +96,11 @@
 - [Docker Compose](https://tamasmrtn.github.io/duckhaven/deployment/install/): Install DuckHaven on one Linux host with Docker Compose, create the first admin, and keep the install private.
 - [Reverse proxy & TLS](https://tamasmrtn.github.io/duckhaven/deployment/reverse-proxy-tls/): Put DuckHaven behind a reverse proxy that terminates TLS, for any deployment reachable beyond a private network.
 - [Enable DuckLake](https://tamasmrtn.github.io/duckhaven/deployment/ducklake/): DuckLake is a second catalog kind, available by default.
+- [Enable the system catalog](https://tamasmrtn.github.io/duckhaven/deployment/system-catalog/): DuckHaven keeps a read-only copy of its access audit log, current access and query history in a second Postgres database, duckhaven_system, refreshed every 10 seconds.
 - [High availability](https://tamasmrtn.github.io/duckhaven/deployment/high-availability/): The highly-available topology runs Postgres as a Patroni cluster and several API replicas, so the control plane survives losing a database node or an API container.
 - [Azure with Terraform](https://tamasmrtn.github.io/duckhaven/deployment/azure-terraform/): The Terraform in deploy/terraform/ deploys DuckHaven to Azure as managed services, with elastic agents on Container Instances.
 - [Updating](https://tamasmrtn.github.io/duckhaven/deployment/updating/): Pull new images and restart the stack; database migrations run on their own when the API starts.
-- [Backup & restore](https://tamasmrtn.github.io/duckhaven/deployment/backup-restore/): Back up DuckHaven's three Postgres databases and its secret key, restore them, and upgrade Postgres to a new major version without losing data.
+- [Backup & restore](https://tamasmrtn.github.io/duckhaven/deployment/backup-restore/): Back up DuckHaven's Postgres databases and its secret key, restore them, and upgrade Postgres to a new major version without losing data.
 
 ## Operate
 

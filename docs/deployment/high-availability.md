@@ -248,6 +248,9 @@ same way as on the single-node stack; see
 - **No DuckLake.** The HA stack creates no `ducklake` database and sets no
   `DUCKLAKE_DATABASE_URL`, so DuckLake catalogs cannot be created on it. Set
   `DUCKLAKE_ENABLED=false` so the catalog dialog does not offer them.
+- **No system catalog.** The HA stack creates no `duckhaven_system` database either, so the API logs
+  `System catalog unavailable` once and keeps retrying. Set `SYSTEM_CATALOG_ENABLED=false`; the audit log and
+  History do not depend on it. See [Enable the system catalog database](system-catalog.md).
 - **Polaris** is run single-instance here. It is stateless on Postgres and can be
   replicated behind the load balancer the same way, but that is outside this
   guide's scope.

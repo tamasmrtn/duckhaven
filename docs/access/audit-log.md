@@ -77,6 +77,9 @@ The log lives in the `duckhaven` Postgres database, so [backups](../deployment/b
 in DuckHaven can change or delete an event except the purge: the table refuses `UPDATE`, `DELETE` and `TRUNCATE`
 outside it.
 
+A read-only copy, purged on the same schedule, is kept in the
+[system catalog database](../deployment/system-catalog.md), normally within 10 seconds of each event.
+
 !!! warning "Append-only protects against the application, not against a database administrator"
     Anyone who can connect to Postgres as the database owner can disable that protection. For evidence that survives
     a compromised database, stream the events to a system outside DuckHaven, as below.

@@ -235,6 +235,7 @@ nav:
           - Docker Compose: deployment/install.md
           - Reverse proxy & TLS: deployment/reverse-proxy-tls.md
           - Enable DuckLake: deployment/ducklake.md
+          - Enable the system catalog: deployment/system-catalog.md
           - High availability: deployment/high-availability.md
           - Azure with Terraform: deployment/azure-terraform.md
           - Updating: deployment/updating.md

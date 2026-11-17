@@ -61,6 +61,7 @@ the conventional `_total` suffix in the exposition (for example `duckhaven_queri
 | `duckhaven_db_pool_size` | gauge | `replica_id`, `pool` | Configured connection-pool size. `pool` is `main` or `ducklake`, the latter only once a DuckLake catalog has been browsed. |
 | `duckhaven_db_pool_checked_out` | gauge | (same) | Connections checked out. Saturating the `ducklake` pool reads as slow browsing, not slow queries. |
 | `duckhaven_db_pool_overflow` | gauge | (same) | Connections beyond the configured pool size. |
+| `duckhaven_system_catalog_publish_lag_seconds` | gauge | `table` | Seconds the [system catalog](../deployment/system-catalog.md)'s `table` is behind: the age of the oldest change still to be copied. Read from the database, so every replica reports the same value; use `max`. Absent while the database cannot be reached. |
 | `duckhaven_maintenance_last_scan_timestamp_seconds` | gauge | — | Unix time of the last completed maintenance scan cycle. |
 | `duckhaven_maintenance_open_recommendations` | gauge | `severity` | Open maintenance recommendations by severity. |
 | `duckhaven_maintenance_table_health_samples` | gauge | — | Total table-health samples recorded. |

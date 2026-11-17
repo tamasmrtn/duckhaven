@@ -96,13 +96,16 @@ once. The metrics are designed so a `sum` across replicas is always correct:
   scanner's Postgres advisory lock (the same leader election that runs the scan), so they form
   a single cluster-wide series. They may briefly disappear for one scan tick after a leader
   failover.
+- **System catalog lag** is read from its database at each scrape, so every replica reports
+  the same value. Take the `max`, never the `sum`.
 
 ### Cardinality policy
 
 Cardinality is the main operational risk, so labels are deliberately bounded:
 
 - **Permitted:** `replica_id`, `agent_id` + `agent_name`, `status`, `method`, `route`
-  (the matched route *template*, never the raw URL), `severity`, `profile`.
+  (the matched route *template*, never the raw URL), `severity`, `profile`, and `table` on
+  the system catalog lag, which is one of its three fixed tables.
 - **Never used as labels:** workspace id, user id, catalog/schema/table names, raw URL paths,
   SQL text, query id, agent host/IP — any of these would grow unbounded on a long-lived
   deployment.

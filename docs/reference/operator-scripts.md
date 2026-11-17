@@ -25,14 +25,16 @@ the repository on the host and run them from its root:
 |---|---|---|
 | [`pg-backup.sh`](#pg-backupsh) | Shell | Writes backup files |
 | [`enable-ducklake.sh`](#enable-ducklakesh) | Shell | Creates the `ducklake` database |
+| [`enable-system-catalog.sh`](#enable-system-catalogsh) | Shell | Creates the `duckhaven_system` database |
 | [`ducklake-check.py`](#ducklake-checkpy) | Python | No, read-only |
 | [`assistant-mine-feedback.py`](#assistant-mine-feedbackpy) | Python | Writes a candidate file; reads the database only |
 | [`wait-for-stack.sh`](#wait-for-stacksh) | Shell | No |
 
 ## `pg-backup.sh`
 
-Dumps the `duckhaven` database (application state), the `polaris` database (Iceberg metastore) and, when it exists, the
-`ducklake` database (DuckLake catalog metadata), each to a timestamped, gzipped file.
+Dumps the `duckhaven` database (application state), the `polaris` database (Iceberg metastore) and, when they exist,
+the `ducklake` database (DuckLake catalog metadata) and the `duckhaven_system` database (the
+[system catalog](../deployment/system-catalog.md)), each to a timestamped, gzipped file.
 
 ```bash
 DUCKHAVEN_BACKUP_DIR=/mnt/nas/duckhaven ./scripts/pg-backup.sh
@@ -65,6 +67,19 @@ existed. A new install creates it on first start, so this is for existing deploy
 ```
 
 It ends by printing the next steps; [DuckLake](../deployment/ducklake.md) walks through them.
+
+## `enable-system-catalog.sh`
+
+Creates the `duckhaven_system` database and its permissions on a deployment whose Postgres was initialized before the
+system catalog existed. A new install creates it on first start, so this is for existing deployments only. It is safe
+to run twice.
+
+```bash
+./scripts/enable-system-catalog.sh
+```
+
+The API finds the database within 10 seconds and fills it, without a restart; see
+[Enable the system catalog database](../deployment/system-catalog.md).
 
 ## `ducklake-check.py`
 
@@ -150,4 +165,5 @@ If a container does not become healthy in time, it prints the container's last 8
 
 - [Backup & restore](../deployment/backup-restore.md)
 - [DuckLake](../deployment/ducklake.md)
+- [Enable the system catalog database](../deployment/system-catalog.md)
 - [CLI reference](cli.md)

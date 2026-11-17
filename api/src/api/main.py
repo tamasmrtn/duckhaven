@@ -51,6 +51,7 @@ from api.routers import (
 )
 from api.routers.admin import agent_access as admin_agent_access
 from api.routers.admin import agents as admin_agents
+from api.routers.admin import audit as admin_audit
 from api.routers.admin import maintenance as admin_maintenance
 from api.routers.admin import service_accounts as admin_service_accounts
 from api.routers.admin import storage as admin_storage
@@ -364,6 +365,7 @@ api_app.include_router(
     admin_service_accounts.router, prefix="/admin", tags=["admin-service-accounts"]
 )
 api_app.include_router(admin_maintenance.router, prefix="/admin", tags=["admin-maintenance"])
+api_app.include_router(admin_audit.router, prefix="/admin", tags=["admin-audit"])
 
 # Security schemes and the 401/403/404 responses every guard implies, derived from
 # the routes above rather than hand-declared per endpoint.

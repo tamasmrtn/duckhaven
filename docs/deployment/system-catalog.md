@@ -1,0 +1,180 @@
+---
+type: how-to
+---
+
+# Enable the system catalog database
+
+DuckHaven keeps a read-only copy of its access audit log, current access and query history in a second Postgres
+database, `duckhaven_system`, refreshed every 10 seconds.
+
+The copy is kept apart from `duckhaven`, the database that holds users, password hashes and session tokens, so that it
+can be read through a login that reaches nothing else. The API creates that login, `dh_system_reader`, with a generated
+password; it can read the copied tables and nothing more. DuckHaven offers no SQL access to the copy: read the audit log
+in **Admin** → **Audit** or through the REST API, as in [Review access changes](../access/review-access-changes.md).
+
+A new install creates the database on first start. An install that predates it needs one command; see
+[On an existing install](#on-an-existing-install).
+
+## Before you begin
+
+- **Applies to:** the single-host Compose stack. The [HA stack](high-availability.md#limitations) does not create the
+  database.
+- **You need:** shell access to the control-plane host, in a checkout of the repository; see
+  [Operator scripts](../reference/operator-scripts.md#requirements).
+- **Enabled by:** `SYSTEM_CATALOG_ENABLED`, `true` by default; see the
+  [configuration reference](../reference/configuration.md#system-catalog).
+
+## What it holds
+
+| Table | Holds | Kept for |
+|---|---|---|
+| `access.audit` | Every event of the [access audit log](../access/audit-log.md), with the same fields | `AUDIT_RETENTION_DAYS`, as in the audit log |
+| `access.grants` | Current access, one row per role, membership, catalog attachment, catalog grant, agent access mode, agent grant and workspace default compute | Replaced whole after each access change, and at least every 5 minutes |
+| `query.history` | Finished queries (`done`, `failed`, `cancelled`) with who ran them, where, on which agent, and how long they took | `SYSTEM_CATALOG_QUERY_HISTORY_DAYS`, 365 days by default |
+
+`query.history` leaves out query results and profiles, and the queries DuckHaven runs for itself: table samples,
+metadata reads and maintenance. Each row carries the names it had when copied (emails, workspace slugs, agent names), so
+it still reads after the user or workspace is deleted. Deleting a workspace removes its queries from History, but not
+from the copy.
+
+The copy trails `duckhaven` by up to the publish interval. An audit event joins it once every transaction that was
+writing before it on the same Postgres server has finished, so a transaction that runs for minutes holds the audit copy
+back that long.
+
+## On a new install
+
+Nothing to do. `deploy/postgres-init/30-create-system-db.sh` creates the database on first boot, and the API creates
+its tables and the reader login when it starts.
+
+## On an existing install
+
+`/docker-entrypoint-initdb.d` only runs against an empty data directory, so an install that predates the system catalog
+never sees the init script. From the repository checkout, run the same work against the running stack:
+
+```bash
+scripts/enable-system-catalog.sh
+```
+
+```text
+CREATE DATABASE
+REVOKE
+REVOKE
+REVOKE
+REVOKE
+
+System catalog database is ready. The API fills it within a minute;
+no restart is needed.
+```
+
+It is safe to run twice. The API tries again every 10 seconds, so it finds the database without a restart, then
+copies the whole audit log and the last `SYSTEM_CATALOG_QUERY_HISTORY_DAYS` of History.
+
+The script also removes `CONNECT` on the `duckhaven` and `polaris` databases from `PUBLIC`, which Postgres grants by
+default. Without that, the reader login could open the database that holds users and session tokens.
+
+## Check that it worked
+
+Count the rows in each table:
+
+```bash
+docker compose exec postgres psql -U duckhaven -d duckhaven_system -c \
+  "SELECT (SELECT count(*) FROM access.audit) AS audit_events,
+          (SELECT count(*) FROM access.grants) AS grants,
+          (SELECT count(*) FROM query.history) AS queries;"
+```
+
+```text
+ audit_events | grants | queries
+--------------+--------+---------
+            2 |      4 |       3
+(1 row)
+```
+
+`grants` is never 0 once the API has filled it: every user has a global role.
+
+## Watch how far behind it is
+
+Each API replica exports `duckhaven_system_catalog_publish_lag_seconds`, the age of the oldest change still to be
+copied, by table:
+
+```bash
+curl -s http://localhost:8000/api/metrics | grep '^duckhaven_system_catalog'
+```
+
+```text
+duckhaven_system_catalog_publish_lag_seconds{table="access.audit"} 3.557579
+duckhaven_system_catalog_publish_lag_seconds{table="access.grants"} 3.557579
+duckhaven_system_catalog_publish_lag_seconds{table="query.history"} 3.557579
+```
+
+While copying keeps up, `access.audit` and `query.history` stay within the publish interval, and `access.grants`
+climbs to 5 minutes between refreshes. The value is read from the database at each scrape, so it keeps rising if every
+replica stops copying, and every replica reports the same value: alert on the `max`. The metric is absent while the
+database cannot be reached. Two alerts cover both cases:
+
+```yaml
+- alert: DuckHavenSystemCatalogBehind
+  expr: max by (table) (duckhaven_system_catalog_publish_lag_seconds) > 600
+  for: 10m
+  annotations:
+    summary: "The system catalog's {{ $labels.table }} is more than 10 minutes behind"
+- alert: DuckHavenSystemCatalogUnreachable
+  expr: absent(duckhaven_system_catalog_publish_lag_seconds)
+  for: 10m
+  annotations:
+    summary: "No API replica can read the system catalog database"
+```
+
+Add the second only where the system catalog is turned on; with it off, the metric is always absent.
+
+## Back it up
+
+[`scripts/pg-backup.sh`](../reference/operator-scripts.md#pg-backupsh) dumps `duckhaven_system` once it exists. Most of
+it can be rebuilt: a restore without it is refilled from `duckhaven` within minutes. What cannot be rebuilt is the query
+history of workspaces deleted since, which only the copy keeps.
+
+After a restore, including into a new Postgres major version, the API carries on copying without help.
+
+## Turning it off
+
+Set `SYSTEM_CATALOG_ENABLED=false` in `deploy/.env` and restart the API:
+
+```bash
+docker compose up -d api
+```
+
+The API stops copying. The audit log and History are unaffected, and the database keeps what it holds; turning it back
+on catches up from where copying stopped. To remove it, drop the database and the reader login:
+
+```bash
+docker compose exec postgres psql -U duckhaven -d duckhaven \
+  -c "DROP DATABASE duckhaven_system;" -c "DROP ROLE dh_system_reader;"
+```
+
+## If it goes wrong
+
+- **The API logs `System catalog unavailable (… database "duckhaven_system" does not exist)`.** The install predates
+  the system catalog. Run `scripts/enable-system-catalog.sh` as in [On an existing install](#on-an-existing-install).
+  The audit log and History work regardless.
+- **The API logs `System catalog unavailable (… permission denied to create role)`, or `… to alter role`.** The login
+  in `SYSTEM_CATALOG_DATABASE_URL` cannot create the reader login. The bundled stack's `duckhaven` login can; on a
+  Postgres you run yourself, give the login `CREATEROLE`, or on a managed service, use its admin role.
+- **On the HA stack, the API logs `System catalog unavailable (… Connect call failed …)`.** The HA stack creates no
+  `duckhaven_system` database. Set `SYSTEM_CATALOG_ENABLED=false`.
+- **The API logs `System catalog publish failed; retrying every 10.0s`.** Copying stopped on the error logged with it,
+  and `duckhaven_system_catalog_publish_lag_seconds` rises until it clears. The message is logged once; the API logs
+  `System catalog publishing recovered` when a later attempt succeeds.
+- **Only `access.audit` falls behind, and nothing is logged.** A long transaction on the Postgres server is holding it
+  back. Find it, oldest first:
+
+    ```bash
+    docker compose exec postgres psql -U duckhaven -d duckhaven -c \
+      "SELECT pid, datname, now() - xact_start AS running, left(query, 60) AS query
+       FROM pg_stat_activity WHERE backend_xid IS NOT NULL ORDER BY xact_start LIMIT 5;"
+    ```
+
+## Related
+
+- [Access audit log](../access/audit-log.md): what is recorded, and how long it is kept.
+- [Backup and restore](backup-restore.md): the other databases, and restoring them.
+- [Metric reference](../reference/metrics.md): every metric DuckHaven exports.

@@ -111,6 +111,20 @@ Retention for the [access audit log](../access/audit-log.md).
 |---|---|---|
 | `AUDIT_RETENTION_DAYS` | `365` | Days an audit event is kept. Once a day, one replica deletes the events older than this. `0` keeps every event. |
 
+### System catalog
+
+The read-only copy of the audit log, current access and query history in the `duckhaven_system` database; see
+[Enable the system catalog database](../deployment/system-catalog.md). The bundled Compose stack needs none of these
+set.
+
+| Variable | Default | Description |
+|---|---|---|
+| `SYSTEM_CATALOG_ENABLED` | `true` | Whether the API fills the copy. Without its database the API logs a warning once and retries every publish interval; the audit log and History are unaffected either way. |
+| `SYSTEM_CATALOG_DATABASE_URL` | `postgresql+asyncpg://duckhaven:…@postgres:5432/duckhaven_system` | How the **API** reaches the database, as the owner. The login needs `CREATEROLE`, to create the reader login `dh_system_reader`. It honours `DB_AUTH_MODE`. |
+| `SYSTEM_CATALOG_PUBLISH_INTERVAL_S` | `10` | Seconds between copies. One replica copies at a time; while more is waiting than one copy takes, the next starts at once. |
+| `SYSTEM_CATALOG_QUERY_HISTORY_DAYS` | `365` | Days a finished query is kept in the copy, counted from when it finished, including queries of deleted workspaces. `0` keeps every query. Audit events follow `AUDIT_RETENTION_DAYS`. |
+| `SYSTEM_CATALOG_READER_CONNECTION_LIMIT` | `20` | Connections the reader login may hold at once. |
+
 ### High availability
 
 Only used by the opt-in [HA topology](../deployment/high-availability.md) (multiple API replicas). The single-node

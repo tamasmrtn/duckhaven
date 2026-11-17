@@ -326,6 +326,11 @@ pages:
   title: Enable DuckLake
   section: Deploy
   summary: DuckLake is a second catalog kind, available by default.
+- path: deployment/system-catalog.md
+  title: Enable the system catalog
+  section: Deploy
+  summary: DuckHaven keeps a read-only copy of its access audit log, current access and query history
+    in a second Postgres database, duckhaven_system, refreshed every 10 seconds.
 - path: deployment/high-availability.md
   title: High availability
   section: Deploy
@@ -344,8 +349,8 @@ pages:
 - path: deployment/backup-restore.md
   title: Backup & restore
   section: Deploy
-  summary: Back up DuckHaven's three Postgres databases and its secret key, restore them, and upgrade
-    Postgres to a new major version without losing data.
+  summary: Back up DuckHaven's Postgres databases and its secret key, restore them, and upgrade Postgres
+    to a new major version without losing data.
 - path: operations/monitoring.md
   title: Monitoring
   section: Operate

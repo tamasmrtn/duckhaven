@@ -4,17 +4,19 @@ type: how-to
 
 # Backup and restore
 
-Back up DuckHaven's three Postgres databases and its secret key, restore them, and upgrade Postgres to a new major
-version without losing data.
+Back up DuckHaven's Postgres databases and its secret key, restore them, and upgrade Postgres to a new major version
+without losing data.
 
-DuckHaven's durable state is the `postgres_data` volume and the `api_data` volume. Postgres holds three databases, and
-a working install needs all of them:
+DuckHaven's durable state is the `postgres_data` volume and the `api_data` volume. Postgres holds four databases. A
+working install needs the first three; the fourth is refilled from `duckhaven` when lost, apart from the query history
+of deleted workspaces, which only it keeps:
 
 | Database | Holds |
 |---|---|
 | `duckhaven` | Users, workspaces, saved queries, history and audit log, agent registrations |
 | `polaris` | The Iceberg metastore |
 | `ducklake` | The only copy of every DuckLake table's schema, snapshots and file list |
+| `duckhaven_system` | The [system catalog](system-catalog.md): a read-only copy of the audit log, current access and query history |
 
 `api_data` holds the generated `SECRET_KEY`. Losing it invalidates every session and token, so back it up with the
 databases. Table data lives on your [storage backends](../data/storage-backends.md); back those up with their own
@@ -36,6 +38,7 @@ umask 077
 docker compose exec -T postgres pg_dump -U duckhaven duckhaven | gzip > duckhaven-$(date +%F).sql.gz
 docker compose exec -T postgres pg_dump -U duckhaven polaris | gzip > polaris-$(date +%F).sql.gz
 docker compose exec -T postgres pg_dump -U duckhaven ducklake | gzip > ducklake-$(date +%F).sql.gz
+docker compose exec -T postgres pg_dump -U duckhaven duckhaven_system | gzip > duckhaven_system-$(date +%F).sql.gz
 ```
 
 Copy the files off the host. A backup on the same disk as the data does not survive that disk. Encrypt the copy that
@@ -88,13 +91,14 @@ warning, and the mount options decide who can read the dumps: mount it owner-onl
         tar xzf /in/duckhaven-api-data-2026-03-05.tgz -C /data
     ```
 
-3. Start Postgres alone, and load the three dumps into the databases of the same names:
+3. Start Postgres alone, and load the dumps into the databases of the same names:
 
     ```bash
     docker compose up -d postgres
     gunzip -c duckhaven-2026-03-05.sql.gz | docker compose exec -T postgres psql -U duckhaven duckhaven
     gunzip -c polaris-2026-03-05.sql.gz | docker compose exec -T postgres psql -U duckhaven polaris
     gunzip -c ducklake-2026-03-05.sql.gz | docker compose exec -T postgres psql -U duckhaven ducklake
+    gunzip -c duckhaven_system-2026-03-05.sql.gz | docker compose exec -T postgres psql -U duckhaven duckhaven_system
     ```
 
 4. Start the rest of the stack: `docker compose up -d`.
@@ -102,6 +106,10 @@ warning, and the mount options decide who can read the dumps: mount it owner-onl
 Each DuckLake catalog's login role (`dl_⟨catalog⟩`) is a Postgres role, which `pg_dump` does not include. It is
 recreated when the catalog is next used, or for every catalog at once with the `reconcile-roles` call in
 [Enable DuckLake](ducklake.md).
+
+The system catalog's reader login, `dh_system_reader`, is left out the same way. On a fresh Postgres, loading the
+`duckhaven_system` dump prints `ERROR:  role "dh_system_reader" does not exist` for its grants; that is harmless, as the
+API creates the login and its grants when it starts.
 
 ### Restoring DuckLake catalogs
 
@@ -137,23 +145,25 @@ container restart in a loop. A major upgrade is a dump and restore.
 ### Base stack
 
 ```bash
-# 1. Dump all three databases from the running, old-version stack.
+# 1. Dump the databases from the running, old-version stack.
 docker compose exec -T postgres pg_dump -U duckhaven duckhaven | gzip > duckhaven-preupgrade.sql.gz
 docker compose exec -T postgres pg_dump -U duckhaven polaris | gzip > polaris-preupgrade.sql.gz
 docker compose exec -T postgres pg_dump -U duckhaven ducklake | gzip > ducklake-preupgrade.sql.gz
+docker compose exec -T postgres pg_dump -U duckhaven duckhaven_system | gzip > duckhaven_system-preupgrade.sql.gz
 
 # 2. Stop the stack and remove the old data volume. The new Postgres creates
-#    empty `polaris` and `ducklake` databases on first start.
+#    empty `polaris`, `ducklake` and `duckhaven_system` databases on first start.
 docker compose down
 docker volume rm deploy_postgres_data   # the name `docker volume ls` shows
 
 # 3. Start Postgres on the new image alone.
 docker compose up -d postgres
 
-# 4. Restore all three databases.
+# 4. Restore the databases.
 gunzip -c duckhaven-preupgrade.sql.gz | docker compose exec -T postgres psql -U duckhaven duckhaven
 gunzip -c polaris-preupgrade.sql.gz | docker compose exec -T postgres psql -U duckhaven polaris
 gunzip -c ducklake-preupgrade.sql.gz | docker compose exec -T postgres psql -U duckhaven ducklake
+gunzip -c duckhaven_system-preupgrade.sql.gz | docker compose exec -T postgres psql -U duckhaven duckhaven_system
 
 # 5. Start the rest. Migrations and the Polaris bootstrap find their work done.
 docker compose up -d
@@ -162,8 +172,8 @@ docker compose up -d
 ### HA stack
 
 The same steps, run against the Patroni cluster through `pg-haproxy`, which routes to the current leader. The HA
-stack does not create a `ducklake` database (see [High availability](high-availability.md#limitations)), so there are
-two databases to move:
+stack does not create a `ducklake` or `duckhaven_system` database (see
+[High availability](high-availability.md#limitations)), so there are two databases to move:
 
 ```bash
 # 1. Dump both databases from a Patroni node; the HAProxy image has no Postgres client.

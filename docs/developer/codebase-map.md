@@ -427,6 +427,16 @@ Notes that matter for changes:
   defaults to the writing transaction's id. `registry.py` lists every action;
   `tests/unit/test_audit_coverage.py` fails a new state-changing route until it is
   audited or exempt.
+- **The `duckhaven_system` database is a copy, never written by a request**
+  (`services/system_catalog/`). `store.ensure()` creates its `access`, `query` and
+  private `_state` schemas and the `dh_system_reader` login, whose password is a
+  `credentials` row of kind `system_reader`. `publisher.py` runs one tick at a time
+  across replicas (an advisory lock on the store) and copies `audit_events` below
+  the oldest running transaction id, keyed on `(txid, id)`; rows restored from
+  another cluster, whose `txid` is above this cluster's, take a second pass.
+  `queries` is copied on `(finished_at, id)` with a 15-minute re-read for late
+  commits, and the grants view is replaced whole. Cursors live in `_state.cursors`,
+  written in the same transaction as the rows they cover.
 - **`sql_sessions` is the state-of-record for the [SQL session layer](../querying/sql-sessions.md)**
   (I9) — the agent's held connection is ephemeral socket state. A row pins one
   `agent_id` (every statement routes there), records the requesting `user_id` for

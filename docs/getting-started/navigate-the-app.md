@@ -5,7 +5,8 @@ type: how-to
 # Find your way around the app
 
 The navigation on the left lists DuckHaven's pages in four groups, and ⌘K finds pages and objects by name. You can keep
-the navigation expanded, collapse it to icons, or have it open when you point at it; your account remembers which.
+the navigation expanded, collapse it to icons, or have it open when you point at it, and choose a light or dark theme;
+your account remembers both.
 
 ## Before you begin
 
@@ -59,6 +60,14 @@ To choose how it opens every time, open **Settings** → **Account** → **Navig
 Your account keeps the choice, so it applies in every browser you sign in from. With **Expand on hover**, ⌘B pins the
 navigation open; press it again to collapse it.
 
+## Choose light or dark
+
+Click the theme button in the top bar, left of the account menu, and choose **Light**, **Dark** or **System**. The same
+choice is in **Settings** → **Account** → **Theme**. **System**, the default, follows your operating system's light or
+dark mode and switches when it does.
+
+Your account keeps the theme, so it applies in every browser you sign in from.
+
 ## Use it on a phone
 
 In a window narrower than 768 px the navigation is hidden. Tap the menu button at the far left of the top bar, then
@@ -79,8 +88,8 @@ cursor.
 
 ### "Couldn't save your preference"
 
-DuckHaven could not reach the server, so the navigation went back to the choice your account holds. Choose again once
-the connection is back.
+DuckHaven could not reach the server, so the navigation or theme went back to the choice your account holds. Choose
+again once the connection is back.
 
 ## Related
 

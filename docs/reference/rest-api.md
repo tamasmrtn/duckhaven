@@ -208,6 +208,7 @@ the same object. Only the fields you send change.
 
 | Field | Values | Meaning |
 |---|---|---|
+| `theme` | `light`, `dark`, `system`, or `null` | The app's [colors](../getting-started/navigate-the-app.md#choose-light-or-dark). `system`, the default, follows your operating system; `null` sets it back to `system`. |
 | `sidebar` | `expanded`, `collapsed`, `hover`, or `null` | How the [main navigation](../getting-started/navigate-the-app.md) is laid out. `null` means you never chose, so you get the default, `expanded`. |
 
 ```bash

@@ -87,6 +87,16 @@ describe("DashboardPage", () => {
     expect(within(orders).getByText("240 rows")).toBeVisible();
   });
 
+  it("gives the run's status a line of its own on a phone", async () => {
+    renderWithProviders({ initialRoute: `${ROUTE}/sales-overview` });
+    const status = await screen.findByText(/answered in/);
+    // Beside the header's three buttons at 360px it was squeezed to a word
+    // per line; jsdom lays nothing out, so the classes that prevent it are
+    // what is checked.
+    expect(status.parentElement).toHaveClass("basis-full", "sm:basis-auto");
+    expect(status.parentElement!.parentElement).toHaveClass("flex-wrap");
+  });
+
   it("renders a text widget's markdown", async () => {
     renderWithProviders({ initialRoute: `${ROUTE}/sales-overview` });
 

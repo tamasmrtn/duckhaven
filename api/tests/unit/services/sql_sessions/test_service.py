@@ -582,3 +582,27 @@ async def test_another_agents_session_frame_changes_nothing(db_session, frame_ty
     await db_session.refresh(q)
     assert session.status == "open"
     assert q.status == "queued"
+
+
+def test_attach_names_map_each_catalog_to_its_slug():
+    from types import SimpleNamespace
+
+    from api.services.sql_sessions.service import attach_names
+
+    sales = SimpleNamespace(slug="sales", polaris_name="wh_sales")
+    lake = SimpleNamespace(slug="lake", polaris_name=None)
+    assert attach_names([sales, lake]) == {"sales": "sales", "wh_sales": "sales", "lake": "lake"}
+
+
+def test_attach_names_refuse_a_name_two_catalogs_answer_to():
+    """`b` is one catalog's Polaris name and another's slug: attaching it would
+    open the first catalog under the second's name."""
+    from types import SimpleNamespace
+
+    from api.services.sql_sessions.service import attach_names
+
+    a = SimpleNamespace(slug="a", polaris_name="b")
+    b = SimpleNamespace(slug="b", polaris_name="b_wh")
+    names = attach_names([a, b])
+    assert names["b"] is None
+    assert names["a"] == "a" and names["b_wh"] == "b"

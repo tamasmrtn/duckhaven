@@ -3,11 +3,13 @@ import {
   useContext,
   useEffect,
   useMemo,
-  useState,
   type ReactNode,
 } from "react";
+import { THEME_CACHE_KEY } from "@/queries/auth";
+import { THEMES, type Theme } from "@/types/auth";
+import { useAccountPreference } from "./useAccountPreference";
 
-type Theme = "light" | "dark" | "system";
+export const DEFAULT_THEME: Theme = "system";
 
 function applyTheme(theme: Theme) {
   const isDark =
@@ -24,17 +26,20 @@ interface ThemeContextValue {
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 
-// A single shared instance so every consumer (TopBar, Settings, …) stays in
-// sync with the same setTheme call instead of each re-reading localStorage
-// independently and drifting until remount.
+/**
+ * The theme, saved on the user's account so it follows them to every browser.
+ * A single shared instance, so the top bar and Settings never disagree.
+ */
 export function ThemeProvider({ children }: { children: ReactNode }) {
-  const [theme, setTheme] = useState<Theme>(() => {
-    return (localStorage.getItem("dh-theme") as Theme) ?? "system";
-  });
+  const [theme, setTheme] = useAccountPreference(
+    "theme",
+    THEMES,
+    DEFAULT_THEME,
+    THEME_CACHE_KEY,
+  );
 
   useEffect(() => {
     applyTheme(theme);
-    localStorage.setItem("dh-theme", theme);
   }, [theme]);
 
   useEffect(() => {
@@ -47,7 +52,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo<ThemeContextValue>(
     () => ({ theme, setTheme }),
-    [theme],
+    [theme, setTheme],
   );
 
   return (

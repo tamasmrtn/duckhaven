@@ -2,12 +2,16 @@
 export const NAV_MODES = ["expanded", "collapsed", "hover"] as const;
 export type NavMode = (typeof NAV_MODES)[number];
 
+/** The app's colors; "system" follows the operating system's light or dark mode. */
+export const THEMES = ["light", "dark", "system"] as const;
+export type Theme = (typeof THEMES)[number];
+
 export interface User {
   id: string;
   email: string;
   name: string;
   role: string;
-  theme: "light" | "dark" | "system";
+  theme: Theme;
   /** Null until the user chooses, which means the app's default. */
   sidebar?: NavMode | null;
   auth_provider: string;

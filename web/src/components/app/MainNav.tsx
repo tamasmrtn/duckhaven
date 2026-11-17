@@ -190,7 +190,15 @@ function NavGroups({
         );
         if (items.length === 0) return null;
         return (
-          <div key={group} role="group" aria-label={group}>
+          // Space above every group but the first, in both modes so a link
+          // keeps its place when expand-on-hover opens: a name sits nearer
+          // its own links than the group before.
+          <div
+            key={group}
+            role="group"
+            aria-label={group}
+            className={cn(index > 0 && "mt-2")}
+          >
             {/* A name when labels show, a divider when they don't. Not a
                 heading: four of them would come before every page's h1. */}
             <div aria-hidden className="flex h-6 items-center px-2">

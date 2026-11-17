@@ -48,6 +48,11 @@ import { UsersPage } from "@/features/admin/UsersPage";
 import { ServiceAccountsPage } from "@/features/admin/ServiceAccountsPage";
 import { CatalogAccessPage } from "@/features/admin/CatalogAccessPage";
 import { MaintenancePage } from "@/features/admin/MaintenancePage";
+import { AuditPage } from "@/features/admin/AuditPage";
+import {
+  type AuditSearch,
+  parseAuditSearch,
+} from "@/features/admin/auditFilters";
 import { LakehouseHealthPage } from "@/features/health/LakehouseHealthPage";
 import { SettingsPage } from "@/features/settings/SettingsPage";
 
@@ -363,6 +368,16 @@ const catalogAccessRoute = createRoute({
   component: CatalogAccessPage,
 });
 
+const auditRoute = createRoute({
+  getParentRoute: () => adminRoute,
+  path: "/audit",
+  component: AuditPage,
+  // Every filter, so a narrowed view can be bookmarked and shared; see
+  // features/admin/auditFilters.
+  validateSearch: (search: Record<string, unknown>): AuditSearch =>
+    parseAuditSearch(search),
+});
+
 export const routeTree = rootRoute.addChildren([
   indexRoute,
   loginRoute,
@@ -399,6 +414,7 @@ export const routeTree = rootRoute.addChildren([
       serviceAccountsRoute,
       adminMaintenanceRoute,
       catalogAccessRoute,
+      auditRoute,
     ]),
   ]),
 ]);

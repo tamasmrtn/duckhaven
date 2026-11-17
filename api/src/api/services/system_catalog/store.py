@@ -181,6 +181,11 @@ def get_engine() -> AsyncEngine:
     return _engine
 
 
+def has_engine() -> bool:
+    """Whether this process has opened the store (its publisher has started)."""
+    return _engine is not None
+
+
 async def dispose_engine() -> None:
     global _engine
     if _engine is not None:

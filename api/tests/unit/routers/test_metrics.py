@@ -711,3 +711,46 @@ async def test_a_refused_parked_run_is_counted_by_cap(db_session, monkeypatch):
         await compute_service.assert_parked_capacity(db_session, ws.id)
     assert count("workspace") == before + 1
     assert count("global") == (count("global"))  # untouched by a workspace refusal
+
+
+async def test_system_catalog_lag_is_reported_per_table(client: AsyncClient, monkeypatch):
+    from api.services.system_catalog import publisher, store
+
+    async def lag_seconds():
+        return {"access.audit": 12.0, "query.history": 3.0}
+
+    monkeypatch.setattr(store, "has_engine", lambda: True)
+    monkeypatch.setattr(publisher, "lag_seconds", lag_seconds)
+    await client.get("/metrics")
+
+    name = "duckhaven_system_catalog_publish_lag_seconds"
+    assert _value(name, {"table": "access.audit"}) == 12.0
+    assert _value(name, {"table": "query.history"}) == 3.0
+
+
+async def test_system_catalog_lag_is_absent_when_the_store_cannot_be_read(
+    client: AsyncClient, monkeypatch
+):
+    """Never a scrape error: the series goes missing, which an absent() alert sees."""
+    from api.services.system_catalog import publisher, store
+
+    async def unreachable():
+        raise OSError("connection refused")
+
+    monkeypatch.setattr(store, "has_engine", lambda: True)
+    monkeypatch.setattr(publisher, "lag_seconds", unreachable)
+    resp = await client.get("/metrics")
+
+    assert resp.status_code == 200
+    assert "duckhaven_system_catalog_publish_lag_seconds" not in resp.text
+
+
+async def test_system_catalog_lag_is_absent_until_this_replica_opens_the_store(
+    client: AsyncClient,
+):
+    from api.services.system_catalog import store
+
+    await store.dispose_engine()
+    resp = await client.get("/metrics")
+
+    assert "duckhaven_system_catalog_publish_lag_seconds" not in resp.text

@@ -12,7 +12,8 @@ from api.models.workspace import Workspace, WorkspaceMember
 from api.schemas.auth import CreateUserRequest, UpdateUserRequest, UserOut
 from api.schemas.page import Page
 from api.schemas.workspace import AdminUserWorkspace, SetMembershipRequest
-from api.services.audit.events import record_membership
+from api.services.audit import record
+from api.services.audit.events import record_account_update, record_membership
 from api.services.auth import get_user_by_email, hash_password
 from api.services.paging import paginate
 from api.services.permissions import Permission
@@ -90,6 +91,15 @@ async def create_user(
         auth_provider="local",
     )
     db.add(user)
+    await db.flush()
+    record(
+        db,
+        "user.create",
+        target_id=user.id,
+        target_name=user.email,
+        subject=user,
+        after={"role": user.role},
+    )
     await db.commit()
     await db.refresh(user)
     return user
@@ -118,6 +128,8 @@ async def update_user(
 
     if body.role is not None:
         await _assert_role_exists(db, body.role)
+    record_account_update(db, "user", user, role=body.role, is_active=body.is_active)
+    if body.role is not None:
         user.role = body.role
     if body.is_active is not None:
         user.is_active = body.is_active
@@ -134,10 +146,21 @@ async def revoke_sessions(
 ) -> None:
     """Force-log-out a user by deleting their active session credentials. Agent
     credentials are untouched (this filters on kind == "session")."""
-    if await db.get(User, user_id) is None:
+    target = await db.get(User, user_id)
+    if target is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
-    await db.execute(
-        delete(Credential).where(Credential.user_id == user_id, Credential.kind == "session")
+    result = await db.execute(
+        delete(Credential)
+        .where(Credential.user_id == user_id, Credential.kind == "session")
+        .returning(Credential.id)
+    )
+    record(
+        db,
+        "user.sessions_revoke",
+        target_id=target.id,
+        target_name=target.email,
+        subject=target,
+        details={"sessions_revoked": len(result.all())},
     )
     await db.commit()
 

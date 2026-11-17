@@ -13,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.models.user import User
+from api.services.audit import record
 from api.services.auth import get_user_by_email
 
 
@@ -100,12 +101,36 @@ async def provision_federated_user(
             external_subject=subject,
         )
         db.add(user)
+        await db.flush()
+        # The identity provider acted: it vouched for the account and its role.
+        record(
+            db,
+            "user.provision",
+            target_id=user.id,
+            target_name=email,
+            subject=user,
+            after={"role": role},
+            details={"provider": provider},
+            actor_type="idp",
+        )
         await db.commit()
         await db.refresh(user)
         return user
 
     if not user.is_active:
         raise ProvisioningRefused("Account disabled.")
+    if user.role != role:
+        record(
+            db,
+            "user.role_change",
+            target_id=user.id,
+            target_name=user.email,
+            subject=user,
+            before={"role": user.role},
+            after={"role": role},
+            details={"provider": provider},
+            actor_type="idp",
+        )
     user.name = name
     user.role = role
     user.external_subject = subject

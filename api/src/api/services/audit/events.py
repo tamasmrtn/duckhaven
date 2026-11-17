@@ -112,6 +112,41 @@ def record_membership(
     )
 
 
+def record_account_update(
+    db: AsyncSession,
+    prefix: str,
+    account: User,
+    *,
+    role: str | None,
+    is_active: bool | None,
+) -> None:
+    """An account's global role or active state changed; call before applying it.
+
+    ``prefix`` is ``user`` or ``service_account``. A value that is not changing
+    records nothing.
+    """
+    if role is not None and role != account.role:
+        record(
+            db,
+            f"{prefix}.role_change",
+            target_id=account.id,
+            target_name=account.email,
+            subject=account,
+            before={"role": account.role},
+            after={"role": role},
+        )
+    if is_active is not None and is_active != account.is_active:
+        record(
+            db,
+            f"{prefix}.{'reactivate' if is_active else 'deactivate'}",
+            target_id=account.id,
+            target_name=account.email,
+            subject=account,
+            before={"is_active": account.is_active},
+            after={"is_active": is_active},
+        )
+
+
 async def record_catalog_grant(
     db: AsyncSession,
     action: str,

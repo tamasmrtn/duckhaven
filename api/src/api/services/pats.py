@@ -14,7 +14,8 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.models.user import Credential
+from api.models.user import Credential, User
+from api.services.audit import record
 from api.services.auth import generate_pat, hash_token
 
 #: Live tokens one principal may hold at once.
@@ -68,6 +69,8 @@ async def issue(
         expires_at=expires_at,
     )
     db.add(cred)
+    await db.flush()
+    await _record(db, "pat.issue", cred, after={"expires_at": expires_at})
     await db.commit()
     # Deliberately no `refresh`: the session keeps its in-memory values
     # (`expire_on_commit=False`), and reloading would replace the timezone-aware
@@ -96,6 +99,25 @@ async def revoke(db: AsyncSession, user_id: uuid.UUID, pat_id: uuid.UUID) -> boo
     cred = result.scalar_one_or_none()
     if cred is None:
         return False
+    await _record(
+        db,
+        "pat.revoke",
+        cred,
+        before={"created_at": cred.created_at, "expires_at": cred.expires_at},
+    )
     await db.delete(cred)
     await db.commit()
     return True
+
+
+async def _record(db: AsyncSession, action: str, cred: Credential, **change: dict) -> None:
+    """A token issued or revoked. Its owner is the subject; its secret is never recorded."""
+    owner = await db.get(User, cred.user_id)
+    record(
+        db,
+        action,
+        target_id=cred.id,
+        target_name=owner.email if owner is not None else None,
+        subject=owner,
+        **change,
+    )

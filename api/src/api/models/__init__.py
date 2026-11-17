@@ -5,6 +5,7 @@ from api.models.assistant import (
     AssistantMessage,
     AssistantToolCall,
 )
+from api.models.audit import AuditEvent
 from api.models.catalog import Catalog, WorkspaceCatalog
 from api.models.catalog_export import CatalogExport
 from api.models.catalog_grant import CatalogGrant
@@ -53,6 +54,7 @@ __all__ = [
     "AssistantConversation",
     "AssistantMessage",
     "AssistantToolCall",
+    "AuditEvent",
     "Catalog",
     "CatalogExport",
     "CatalogGrant",

@@ -70,14 +70,17 @@ export function Row({
 }) {
   const { widths, rest } = rowLayout(row.widgets);
   return (
-    // Side by side from md up, each widget taking its share of 12 columns;
-    // stacked on a phone.
-    <div className="flex flex-col gap-4 md:flex-row">
+    // Side by side, each widget taking its share of 12 columns, for as long as
+    // every widget keeps 14rem; a widget that would be narrower wraps onto a
+    // line of its own. Its own row's width decides, not the window's: beside
+    // the navigation, the assistant or the editor, a 768px window leaves three
+    // tiles too narrow for their figures. On a phone every widget wraps.
+    <div className="flex flex-wrap gap-4">
       {row.widgets.map((spec, i) => (
         <div
           key={spec.id}
           // A column, so controls above the card leave it the rest of the height.
-          className="flex min-w-0 flex-col md:[flex:var(--share)_1_0%]"
+          className="flex min-w-[min(100%,14rem)] flex-col [flex:var(--share)_1_0%]"
           style={{ "--share": widths[i] } as CSSProperties}
         >
           {arrange?.(spec, i)}
@@ -93,7 +96,7 @@ export function Row({
       {rest > 0 && (
         <div
           aria-hidden
-          className="hidden md:block md:[flex:var(--share)_1_0%]"
+          className="min-w-0 [flex:var(--share)_1_0%]"
           style={{ "--share": rest } as CSSProperties}
         />
       )}

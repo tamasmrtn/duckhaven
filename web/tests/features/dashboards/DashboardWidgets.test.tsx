@@ -71,6 +71,28 @@ describe("dashboard widgets", () => {
     expect(within(trend).getByText("12 rows")).toBeVisible();
   });
 
+  // jsdom lays nothing out, so these pin the classes that keep a narrow
+  // dashboard readable: at 768px the arrow was squeezed to 0.7px and three
+  // tiles side by side wrapped their figures onto two lines.
+  it("never squeezes the arrow that says which way a change went", async () => {
+    renderWithProviders({ initialRoute: ROUTE });
+    const revenue = await widget("Revenue");
+
+    const arrow = within(revenue)
+      .getByTestId("kpi-delta")
+      .querySelector("svg");
+    expect(arrow).toHaveClass("shrink-0");
+  });
+
+  it("wraps a widget that would be narrower than 14rem onto its own line", async () => {
+    renderWithProviders({ initialRoute: ROUTE });
+    const revenue = await widget("Revenue");
+
+    const column = revenue.closest(".flex-col.min-w-\\[min\\(100\\%\\,14rem\\)\\]");
+    expect(column).not.toBeNull();
+    expect(column!.parentElement).toHaveClass("flex-wrap");
+  });
+
   it("says what a widget covers, and which filter it was not given and why", async () => {
     const runs = recordRuns();
     renderWithProviders({ initialRoute: `${ROUTE}?p.country=NL` });

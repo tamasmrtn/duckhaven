@@ -20,8 +20,10 @@ const DARK = {
   colors: {
     "editor.background": "#0B0F19",
     "editor.foreground": "#E2E8F0",
-    "editorLineNumber.foreground": "#334155",
-    "editorLineNumber.activeForeground": "#64748B",
+    // Line numbers are read: the problems list under the dashboard editor
+    // points at them. Each stays at 4.5:1 on the background.
+    "editorLineNumber.foreground": "#8B9BB0",
+    "editorLineNumber.activeForeground": "#E2E8F0",
     "editor.lineHighlightBackground": "#111827",
     "editorCursor.foreground": "#FFF100",
     "editor.selectionBackground": "#7D66FF33",
@@ -49,8 +51,8 @@ const LIGHT = {
   colors: {
     "editor.background": "#FFFFFF",
     "editor.foreground": "#0F172A",
-    "editorLineNumber.foreground": "#CBD5E1",
-    "editorLineNumber.activeForeground": "#64748B",
+    "editorLineNumber.foreground": "#64748B",
+    "editorLineNumber.activeForeground": "#0F172A",
     "editor.lineHighlightBackground": "#F1F5F9",
     "editorCursor.foreground": "#FF6900",
     "editor.selectionBackground": "#7D66FF26",

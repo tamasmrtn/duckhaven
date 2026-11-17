@@ -694,6 +694,9 @@ destructive actions).
 - Tab order matches visual order. Tree rows use ↑↓ for navigation, → / ←
   for expand/collapse, `Enter` for "open in active worksheet", `⌘Enter`
   for "open in new tab".
+- A form choice of exactly one option, such as **Theme** or **Navigation** in Settings, is a radio group with a
+  single tab stop on the chosen option. The arrow keys move to the next or previous option and choose it, wrapping
+  at either end.
 
 ---
 

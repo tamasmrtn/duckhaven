@@ -257,7 +257,9 @@ describe("SettingsPage — Workspace tab", () => {
     })
       .format(new Date())
       .replace(",", "");
-    expect(screen.getByText(new RegExp(`Today here is ${today}\\.`))).toBeVisible();
+    expect(
+      screen.getByText(new RegExp(`Today here is ${today}\\.`)),
+    ).toBeVisible();
   });
 
   it("sets the time zone by searching for a city", async () => {
@@ -320,7 +322,9 @@ describe("SettingsPage — Workspace tab", () => {
       await screen.findByRole("combobox", { name: "Time zone" }),
     );
     const suggested = screen.getByRole("group", { name: "Your browser" });
-    await user.click(within(suggested).getByRole("option", { name: /Kolkata/ }));
+    await user.click(
+      within(suggested).getByRole("option", { name: /Kolkata/ }),
+    );
 
     await waitFor(() => expect(sent).toEqual([{ timezone: "Asia/Kolkata" }]));
   });
@@ -423,6 +427,71 @@ describe("SettingsPage — Account tab", () => {
         .getByRole("button", { name: /change theme/i })
         .querySelector("svg.lucide-moon"),
     ).toBeInTheDocument();
+  });
+
+  describe("radio keys", () => {
+    async function openThemeGroup() {
+      const user = userEvent.setup();
+      renderWithProviders({ initialRoute: ROUTE });
+      await screen.findByLabelText("Name");
+      await user.click(screen.getByRole("tab", { name: /account/i }));
+      const group = await screen.findByRole("radiogroup", { name: "Theme" });
+      return { user, group };
+    }
+
+    it("puts only the chosen option in the tab order", async () => {
+      const { group } = await openThemeGroup();
+
+      const tabbable = within(group)
+        .getAllByRole("radio")
+        .filter((radio) => radio.tabIndex === 0);
+      expect(tabbable).toEqual([
+        within(group).getByRole("radio", { name: "System" }),
+      ]);
+    });
+
+    it("moves and chooses with the arrow keys, wrapping at the ends", async () => {
+      const { user, group } = await openThemeGroup();
+      const radio = (name: string) =>
+        within(group).getByRole("radio", { name });
+      radio("System").focus();
+
+      await user.keyboard("{ArrowRight}");
+      expect(radio("Light")).toHaveFocus();
+      expect(radio("Light")).toHaveAttribute("aria-checked", "true");
+
+      await user.keyboard("{ArrowLeft}");
+      expect(radio("System")).toHaveFocus();
+
+      await user.keyboard("{ArrowUp}");
+      expect(radio("Dark")).toHaveFocus();
+      expect(radio("Dark")).toHaveAttribute("aria-checked", "true");
+      expect(radio("Dark").tabIndex).toBe(0);
+
+      await user.keyboard("{ArrowDown}");
+      expect(radio("System")).toHaveAttribute("aria-checked", "true");
+    });
+
+    it("chooses a navigation layout with the arrow keys", async () => {
+      const user = userEvent.setup();
+      renderWithProviders({ initialRoute: ROUTE });
+      await screen.findByLabelText("Name");
+      await user.click(screen.getByRole("tab", { name: /account/i }));
+      const group = await screen.findByRole("radiogroup", {
+        name: "Navigation",
+      });
+      within(group).getByRole("radio", { name: "Expanded" }).focus();
+
+      await user.keyboard("{ArrowRight}");
+
+      expect(
+        within(group).getByRole("radio", { name: "Collapsed" }),
+      ).toHaveFocus();
+      expect(
+        screen.getByRole("navigation", { name: "Main navigation" }),
+      ).toHaveAttribute("data-mode", "collapsed");
+      await waitFor(() => expect(currentUser().sidebar).toBe("collapsed"));
+    });
   });
 
   describe("navigation layout", () => {

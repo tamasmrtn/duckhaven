@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState, type KeyboardEvent } from "react";
 import { useParams, useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
 import {
@@ -397,26 +397,12 @@ function AccountSettings() {
 
       <div className="space-y-2 border-t border-[var(--border-subtle)] pt-6">
         <p className="text-sm font-medium text-text-primary">Theme</p>
-        <div className="flex gap-2" role="radiogroup" aria-label="Theme">
-          {options.map(({ value, label, icon: Icon }) => (
-            <button
-              key={value}
-              type="button"
-              role="radio"
-              aria-checked={theme === value}
-              onClick={() => setTheme(value)}
-              className={cn(
-                "flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm",
-                theme === value
-                  ? "border-[var(--brand-slate-blue)] bg-accent text-text-primary"
-                  : "border-[var(--border-subtle)] text-text-secondary hover:bg-accent/50",
-              )}
-            >
-              <Icon className="size-4" />
-              {label}
-            </button>
-          ))}
-        </div>
+        <ChoiceGroup
+          label="Theme"
+          options={options}
+          value={theme}
+          onChange={setTheme}
+        />
       </div>
 
       <div className="space-y-2 border-t border-[var(--border-subtle)] pt-6">
@@ -425,31 +411,81 @@ function AccountSettings() {
           Saved to your account, so it follows you to every browser. ⌘B switches
           between expanded and collapsed.
         </p>
-        <div
-          className="flex flex-wrap gap-2"
-          role="radiogroup"
-          aria-label="Navigation"
-        >
-          {navOptions.map(({ value, label, icon: Icon }) => (
-            <button
-              key={value}
-              type="button"
-              role="radio"
-              aria-checked={navMode === value}
-              onClick={() => setNavMode(value)}
-              className={cn(
-                "flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm",
-                navMode === value
-                  ? "border-[var(--brand-slate-blue)] bg-accent text-text-primary"
-                  : "border-[var(--border-subtle)] text-text-secondary hover:bg-accent/50",
-              )}
-            >
-              <Icon className="size-4" />
-              {label}
-            </button>
-          ))}
-        </div>
+        <ChoiceGroup
+          label="Navigation"
+          options={navOptions}
+          value={navMode}
+          onChange={setNavMode}
+        />
       </div>
+    </div>
+  );
+}
+
+/**
+ * A row of options of which one is chosen, operated as a radio group: Tab
+ * reaches only the chosen option, and the arrow keys move to the next or
+ * previous one and choose it, wrapping at either end.
+ */
+function ChoiceGroup<T extends string>({
+  label,
+  options,
+  value,
+  onChange,
+}: {
+  label: string;
+  options: { value: T; label: string; icon: typeof Sun }[];
+  value: T;
+  onChange: (value: T) => void;
+}) {
+  const radios = useRef<(HTMLButtonElement | null)[]>([]);
+  // A value none of the options holds still leaves the group reachable.
+  const tabStop = Math.max(
+    options.findIndex((option) => option.value === value),
+    0,
+  );
+
+  function onKeyDown(e: KeyboardEvent<HTMLButtonElement>, index: number) {
+    const step =
+      e.key === "ArrowRight" || e.key === "ArrowDown"
+        ? 1
+        : e.key === "ArrowLeft" || e.key === "ArrowUp"
+          ? -1
+          : 0;
+    if (!step) return;
+    e.preventDefault();
+    const next = (index + step + options.length) % options.length;
+    onChange(options[next].value);
+    radios.current[next]?.focus();
+  }
+
+  return (
+    <div className="flex flex-wrap gap-2" role="radiogroup" aria-label={label}>
+      {options.map(
+        ({ value: optionValue, label: optionLabel, icon: Icon }, i) => (
+          <button
+            key={optionValue}
+            ref={(el) => {
+              radios.current[i] = el;
+            }}
+            type="button"
+            role="radio"
+            aria-checked={value === optionValue}
+            tabIndex={i === tabStop ? 0 : -1}
+            onClick={() => onChange(optionValue)}
+            onKeyDown={(e) => onKeyDown(e, i)}
+            className={cn(
+              "flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-sm",
+              value === optionValue
+                ? "border-[var(--brand-slate-blue)] bg-accent text-text-primary"
+                : "border-[var(--border-subtle)] text-text-secondary hover:bg-accent/50",
+            )}
+          >
+            <Icon className="size-4" />
+            {optionLabel}
+          </button>
+        ),
+      )}
     </div>
   );
 }

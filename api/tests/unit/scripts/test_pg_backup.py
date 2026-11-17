@@ -52,7 +52,13 @@ def test_dumps_and_their_directory_are_owner_only(tmp_path: Path) -> None:
     _run(tmp_path, backup_dir)
 
     dumps = sorted(backup_dir.iterdir())
-    assert [d.name.split("_", 1)[0] for d in dumps] == ["duckhaven", "ducklake", "polaris"]
+    # Each is ⟨database⟩_⟨date⟩_⟨time⟩.sql.gz; the stub reports every database as present.
+    assert [d.name.rsplit("_", 2)[0] for d in dumps] == [
+        "duckhaven",
+        "duckhaven_system",
+        "ducklake",
+        "polaris",
+    ]
     assert _mode(backup_dir) == 0o700
     for dump in dumps:
         assert _mode(dump) == 0o600
@@ -82,4 +88,4 @@ def test_a_directory_it_cannot_restrict_is_still_backed_up(tmp_path: Path) -> No
     result = _run(tmp_path, backup_dir)
 
     assert "could not restrict" in result.stderr
-    assert len(list(backup_dir.iterdir())) == 3
+    assert len(list(backup_dir.iterdir())) == 4

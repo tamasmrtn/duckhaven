@@ -14,7 +14,8 @@ services:
       # subdirectory under a single /var/lib/postgresql mount (unlike 16's
       # /var/lib/postgresql/data), to support `pg_upgrade --link`.
       - postgres_data:/var/lib/postgresql
-      # First init only; existing deployments use scripts/enable-ducklake.sh.
+      # First init only; existing deployments use scripts/enable-ducklake.sh
+      # and scripts/enable-system-catalog.sh.
       - ./postgres-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U duckhaven"]
@@ -283,6 +284,10 @@ services:
       # Applied to every DuckLake catalog on attach.
       DUCKLAKE_TARGET_FILE_SIZE_MB: ${DUCKLAKE_TARGET_FILE_SIZE_MB:-512}
       DUCKLAKE_DATA_INLINING_ROW_LIMIT: ${DUCKLAKE_DATA_INLINING_ROW_LIMIT:-10}
+      # System catalog: see docs/deployment/system-catalog.md. The API connects as
+      # the owner; agents use the read-only login it creates.
+      SYSTEM_CATALOG_ENABLED: ${SYSTEM_CATALOG_ENABLED:-true}
+      SYSTEM_CATALOG_DATABASE_URL: ${SYSTEM_CATALOG_DATABASE_URL:-postgresql+asyncpg://duckhaven:${POSTGRES_PASSWORD:-duckhaven}@postgres:5432/duckhaven_system}
       SQL_SESSIONS_ENABLED: ${SQL_SESSIONS_ENABLED:-false}
       SQL_SESSION_IDLE_TIMEOUT_S: ${SQL_SESSION_IDLE_TIMEOUT_S:-900}
       SQL_SESSION_MAX_LIFETIME_S: ${SQL_SESSION_MAX_LIFETIME_S:-14400}

@@ -92,6 +92,19 @@ class Settings(BaseSettings):
     ducklake_agent_database: str = "ducklake"
     ducklake_data_inlining_row_limit: int = 10
     ducklake_target_file_size_mb: int = 512
+    # The system catalog: a copy of the audit log, current access and query
+    # history in its own database. Without that database the copy is skipped and
+    # nothing else is affected.
+    system_catalog_enabled: bool = True
+    # Owner credentials; needs CREATEROLE to create the reader login.
+    system_catalog_database_url: str = (
+        "postgresql+asyncpg://duckhaven:duckhaven@localhost:5432/duckhaven_system"
+    )
+    system_catalog_publish_interval_s: float = Field(default=10.0, gt=0)
+    # Days a finished query is kept in the copy; 0 keeps every one.
+    system_catalog_query_history_days: int = Field(default=365, ge=0)
+    # Connections the reader login may hold at once, across every agent.
+    system_catalog_reader_connection_limit: int = Field(default=20, ge=1)
     # Bundled object store backing the object_store catalogs. Three tiers,
     # most-internal to most-external: `s3_endpoint_internal` is what Polaris uses
     # to reach the store inside the compose network (and what the agent's httpfs

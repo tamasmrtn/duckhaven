@@ -15,6 +15,7 @@ from starlette.responses import RedirectResponse
 
 from api.config import OidcProvider, settings
 from api.deps import get_db
+from api.services.audit.events import record_sign_in, record_sign_in_failed
 from api.services.auth import create_session, set_session_cookie
 from api.services.oidc import client_name, get_provider, oauth
 from api.services.provisioning import (
@@ -80,6 +81,9 @@ async def oidc_callback(provider: str, request: Request, db: AsyncSession = Depe
         # Bad state, expired code, signature/nonce failure, or IdP unreachable.
         # Never leak token contents or stack traces to the browser.
         logger.warning("OIDC callback failed for provider=%s", provider, exc_info=False)
+        await record_sign_in_failed(
+            db, None, method="oidc", provider=f"oidc:{prov.id}", reason="callback_failed"
+        )
         return RedirectResponse("/login?error=sso", status_code=status.HTTP_303_SEE_OTHER)
 
     claims = token.get("userinfo") or {}
@@ -96,6 +100,9 @@ async def oidc_callback(provider: str, request: Request, db: AsyncSession = Depe
             "OIDC callback missing identity claims for provider=%s (present: %s)",
             provider,
             sorted(claims),
+        )
+        await record_sign_in_failed(
+            db, email, method="oidc", provider=f"oidc:{prov.id}", reason="missing_identity_claims"
         )
         return RedirectResponse("/login?error=sso", status_code=status.HTTP_303_SEE_OTHER)
 
@@ -119,8 +126,12 @@ async def oidc_callback(provider: str, request: Request, db: AsyncSession = Depe
         )
     except ProvisioningRefused as exc:
         logger.warning("OIDC sign-in refused for provider=%s: %s", provider, exc.detail)
+        await record_sign_in_failed(
+            db, email, method="oidc", provider=f"oidc:{prov.id}", reason="refused"
+        )
         return RedirectResponse("/login?error=sso", status_code=status.HTTP_303_SEE_OTHER)
 
+    record_sign_in(db, user, method="oidc", provider=user.auth_provider)
     session_token = await create_session(db, user.id)
     response = RedirectResponse("/", status_code=status.HTTP_303_SEE_OTHER)
     set_session_cookie(response, session_token)

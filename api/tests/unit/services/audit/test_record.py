@@ -137,6 +137,13 @@ async def test_record_now_drops_a_repeat_within_the_minute(db_session, request_c
     assert await _count(db_session) == 2
 
 
+async def test_record_now_keeps_a_repeat_whose_details_differ(db_session, request_ctx):
+    for reason in ("callback_failed", "missing_identity_claims", "callback_failed"):
+        await record_now(db_session, "auth.sign_in_failed", details={"reason": reason})
+
+    assert await _count(db_session) == 2
+
+
 async def test_record_now_never_raises(request_ctx, caplog):
     class Broken:
         bind = None

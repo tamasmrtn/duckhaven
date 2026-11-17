@@ -135,7 +135,9 @@ function QueriesView() {
   const search = useSearch({ from: "/$ws/history" });
   const navigate = useNavigate();
   const { data: me } = useMe();
-  const isAdmin = me?.role === "admin";
+  // The same permission the server checks before it serves another member's
+  // runs or other workspaces' runs; a custom role can hold it too.
+  const isAdmin = me?.permissions?.includes("queries:admin") ?? false;
 
   // One clock for the whole view, fixed when it mounts. Two reasons: reading
   // the clock every render would hand the query a new `since` each time, which

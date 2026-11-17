@@ -70,7 +70,9 @@ export function ConnectionsView({ ws }: { ws: string }) {
 function SessionsTable({ ws, live = false }: { ws: string; live?: boolean }) {
   const navigate = useNavigate();
   const { data: me } = useMe();
-  const isAdmin = (me?.permissions?.length ?? 0) > 0;
+  // Closing another member's session needs this permission on the server; any
+  // other global permission would only show a button that fails.
+  const isAdmin = me?.permissions?.includes("queries:admin") ?? false;
   const {
     data: sessions = [],
     isLoading,

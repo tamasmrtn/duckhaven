@@ -365,7 +365,7 @@ describe("HistoryPage", () => {
   it("hides the cross-workspace toggle from non-admins", async () => {
     server.use(
       http.get("/api/me", () =>
-        HttpResponse.json({ ...CURRENT_USER, role: "user" }),
+        HttpResponse.json({ ...CURRENT_USER, role: "user", permissions: [] }),
       ),
       http.get("/api/workspaces/:ws/queries", () =>
         HttpResponse.json({
@@ -442,7 +442,7 @@ describe("HistoryPage", () => {
     const seen: string[] = [];
     server.use(
       http.get("/api/me", () =>
-        HttpResponse.json({ ...CURRENT_USER, role: "user" }),
+        HttpResponse.json({ ...CURRENT_USER, role: "user", permissions: [] }),
       ),
       http.get("/api/workspaces/:ws/queries", ({ request }) => {
         seen.push(new URL(request.url).search);
@@ -520,7 +520,7 @@ describe("HistoryPage", () => {
   it("hides the user filter picker from non-admins", async () => {
     server.use(
       http.get("/api/me", () =>
-        HttpResponse.json({ ...CURRENT_USER, role: "user" }),
+        HttpResponse.json({ ...CURRENT_USER, role: "user", permissions: [] }),
       ),
     );
     renderWithProviders({ initialRoute: "/acme-analytics/history?user=all" });
@@ -529,6 +529,25 @@ describe("HistoryPage", () => {
     expect(
       screen.queryByRole("combobox", { name: /filter by user/i }),
     ).not.toBeInTheDocument();
+  });
+
+  it("shows the admin filters to any role that grants queries:admin", async () => {
+    // The server checks the permission, not the role's name.
+    server.use(
+      http.get("/api/me", () =>
+        HttpResponse.json({
+          ...CURRENT_USER,
+          role: "auditor",
+          permissions: ["queries:admin"],
+        }),
+      ),
+    );
+    renderWithProviders({ initialRoute: "/acme-analytics/history?user=all" });
+
+    expect(
+      await screen.findByRole("combobox", { name: /filter by user/i }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("All workspaces")).toBeInTheDocument();
   });
 
   it("filters by user via the picker", async () => {

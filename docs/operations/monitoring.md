@@ -66,7 +66,7 @@ rejected at one of two layers, and each is observable:
 
 - **At the API** — `duckhaven_statement_policy_rejections_total{rule}` counts statements the
   capability-scoped policy refused, broken down by rule (`read_path`, `copy_path`,
-  `attach_target`, `set_name`, `install`, `command`, `unparseable`, …). A steady trickle is
+  `attach_target`, `attach_alias`, `set_name`, `install`, `command`, `unparseable`, …). A steady trickle is
   normal for an exploratory user; a sustained rate on `read_path`/`copy_path` from one
   principal is worth looking at.
 - **At the agent** — a statement blocked by DuckDB's own guards (a disabled filesystem, or a

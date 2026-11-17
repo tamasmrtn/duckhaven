@@ -21,7 +21,7 @@ workspace membership to query anything.
 | `service_accounts:manage` | Create and delete service accounts, and issue and revoke their tokens |
 | `agents:manage` | Create compute and mint bootstrap tokens, and act as `admin` on every agent |
 | `storage:manage` | Register, test and delete storage backends |
-| `catalogs:admin` | Drop any catalog, migrate its storage, export it, and rotate or reconcile DuckLake catalog roles; without it, only a catalog's creator can |
+| `catalogs:admin` | Attach any catalog to a workspace, drop it, migrate its storage, export it, and rotate or reconcile DuckLake catalog roles; without it, only a catalog's creator can |
 | `maintenance:manage` | Change the maintenance policy, start a scan, and apply a recommendation (applying also needs workspace `writer`) |
 | `queries:admin` | Read query history across workspaces and filter it by another user; list an agent's queries; filter and force-close other people's SQL sessions |
 
@@ -36,7 +36,7 @@ Each member of a workspace has one role, which decides what they can do in the w
 |---|---|
 | `reader` | Browse schemas and tables, run queries, keep worksheets, see the workspace's history, and read published dashboards |
 | `writer` | Everything `reader` allows, plus save and schedule queries, author draft semantic models, create dashboards and edit their drafts, apply dashboard files from git as drafts, import lineage, and apply maintenance recommendations |
-| `owner` | Everything `writer` allows, plus manage membership and workspace settings, attach, detach and create catalogs, set a catalog's access mode and grants, publish semantic models and change published ones, publish and delete dashboards, adopt dashboards into git and detach them from it, and purge imported lineage |
+| `owner` | Everything `writer` allows, plus manage membership and workspace settings, create and detach catalogs, attach the catalogs they created (any catalog with `catalogs:admin`), set a catalog's access mode and grants, publish semantic models and change published ones, publish and delete dashboards, adopt dashboards into git and detach them from it, and purge imported lineage |
 
 The role does not limit the SQL a member runs against an **open** catalog: any member, `reader` included, can write and
 run DDL there. In a [scoped catalog](../access/scoped-access.md) the role caps the member's grants, so there a `reader`

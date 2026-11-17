@@ -28,6 +28,10 @@ Choose the mode when you create the catalog — the **New catalog** dialog asks 
 existing one from its **Permissions** dialog (right-click the catalog in the tree), or from **Admin** → **Catalog
 access**, which lists every attached catalog with its mode.
 
+Attaching an existing catalog to another workspace keeps it restricted: the new attachment starts `scoped` when the
+catalog is scoped in any workspace or carries grants, and `open` otherwise. Its grants apply in every workspace that
+attaches it scoped.
+
 Create a catalog scoped when its data is sensitive from the start. A catalog created `open` is readable by every
 member at their workspace role from the moment it exists, so switching it later leaves a window. A catalog created
 scoped grants its creator `writer` on the whole catalog; without that, it would be invisible even to the person who

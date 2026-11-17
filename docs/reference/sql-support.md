@@ -43,7 +43,7 @@ Each row is checked by a unit test against both gates, so this table is what the
 | Read a staged file | `SELECT * FROM read_parquet('⟨staging prefix⟩/orders.parquet')` | Yes | Yes |
 | Read a file by URL | `SELECT * FROM read_parquet('s3://other-bucket/data.parquet')` | Yes | No |
 | Read a file on the agent's disk | `SELECT * FROM read_parquet('/data/orders.parquet')` | No | No |
-| Attach a catalog the workspace binds | `ATTACH 'sales' AS sales` | No | Yes |
+| Attach a catalog the workspace binds, under its own name | `ATTACH 'sales' AS sales` | No | Yes |
 
 Notes on the rows above:
 
@@ -56,6 +56,9 @@ Notes on the rows above:
   session are confined to the session's own staging prefix, in every spelling of a path: a function argument, a quoted
   name in `FROM` or a `SUMMARIZE` argument, absolute or relative. A name with a file extension, such as
   `'orders.parquet'`, counts as a path. See [Staging files](../querying/sql-sessions.md#staging-files).
+- **`ATTACH` in a session** names a catalog the workspace binds, by its name or its Polaris name, and attaches it under
+  its own name: `ATTACH 'sales' AS sales` or `ATTACH 'sales'`. Any other alias, such as `ATTACH 'sales' AS reports`, is
+  refused, so a catalog is always checked against its own grants.
 - **Reading files by path** on the query path works only over a network URL: `s3://`, `s3a://`, `s3n://`, `gs://`,
   `gcs://`, `r2://`, `http://`, `https://`, `az://`, `azure://`, `abfs://`, `abfss://` or `hf://`. Any other path names
   the agent's own disk and is refused with `sql_not_allowed` in every workspace, whatever the spelling, and so is a path
@@ -126,6 +129,21 @@ JOIN crm.public.customers c ON c.name = o.customer;
 
 A query attaches only the catalogs it names; see
 [which catalogs a query attaches](../querying/query-execution.md#which-catalogs-a-query-attaches).
+
+### Reserved catalog names
+
+A catalog's name is lowercase letters, digits and underscores, starting with a letter, up to 255 characters. These
+names are reserved, because DuckDB or DuckHaven already uses them, and a catalog cannot take them:
+
+| Name | Used by |
+|---|---|
+| `duckhaven` | DuckHaven's built-in catalog |
+| `system` | DuckDB's built-in catalog |
+| `temp` | DuckDB's temporary objects |
+| `memory` | DuckDB's default in-memory database |
+
+Names are compared without case, as DuckDB compares unquoted identifiers, so `SYSTEM.main.functions` is the built-in
+catalog too.
 
 ## Inspecting metadata (`information_schema`)
 

@@ -21,7 +21,8 @@ relevant to it.
 - **Work.** Worksheets, saved queries, schedules, assistant conversations, and the history of every run.
 
 A new workspace starts empty, with no catalogs. An owner then creates a catalog — on the bundled object store by
-default, or on an S3 or ADLS backend — or attaches an existing one; see [Manage catalogs](../data/manage-catalogs.md).
+default, or on an S3 or ADLS backend — or attaches an existing one they created. Attaching a catalog someone else
+created takes `catalogs:admin`; see [Manage catalogs](../data/manage-catalogs.md).
 
 !!! note "Shared catalogs"
     Every member of every workspace that attaches a catalog can reach it, at their role in that workspace. A catalog

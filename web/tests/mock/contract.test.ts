@@ -9,6 +9,7 @@ import { agentsApi } from "@/api/agents";
 import { semanticApi } from "@/api/semantic";
 import { worksheetsApi } from "@/api/worksheets";
 import { searchApi } from "@/api/search";
+import { auditApi } from "@/api/audit";
 
 // Each mocked endpoint must mirror the authoritative backend *Out schema. These
 // assert the realigned shapes; error paths use the built-in triggers + overrides.
@@ -556,5 +557,72 @@ describe("search contract", () => {
   it("returns the envelope, not a bare array, for a blank query", async () => {
     const res = await fetch("/api/workspaces/acme-analytics/search?q=");
     expect(await res.json()).toEqual({ items: [], has_more: false });
+  });
+});
+
+describe("audit contract", () => {
+  it("GET /admin/audit/events is a Page of AuditEventOut", async () => {
+    const page = await auditApi.listEvents();
+    expect(Object.keys(page).sort()).toEqual(["cursor", "has_more", "items"]);
+    expect(page.items.length).toBeGreaterThan(0);
+    for (const e of page.items) {
+      expect(Object.keys(e).sort()).toEqual([
+        "action",
+        "actor",
+        "after",
+        "before",
+        "category",
+        "details",
+        "error_code",
+        "event_time",
+        "event_version",
+        "id",
+        "label",
+        "outcome",
+        "request",
+        "self_change",
+        "subject",
+        "target",
+        "workspace",
+      ]);
+      expect(Object.keys(e.actor).sort()).toEqual([
+        "auth_method",
+        "credential_id",
+        "email",
+        "id",
+        "on_behalf_of_email",
+        "on_behalf_of_id",
+        "type",
+      ]);
+      expect(Object.keys(e.request).sort()).toEqual([
+        "id",
+        "source_ip",
+        "user_agent",
+      ]);
+      expect(Object.keys(e.workspace).sort()).toEqual(["id", "slug"]);
+      expect(Object.keys(e.target).sort()).toEqual(["id", "name", "type"]);
+      expect(Object.keys(e.subject).sort()).toEqual(["email", "id"]);
+    }
+    const times = page.items.map((e) => e.event_time);
+    expect(times).toEqual([...times].sort().reverse());
+  });
+
+  it("pages with the cursor, as the server does", async () => {
+    const first = await auditApi.listEvents({ limit: 3 });
+    expect(first.has_more).toBe(true);
+    const second = await auditApi.listEvents({
+      limit: 3,
+      cursor: first.cursor!,
+    });
+    const ids = [...first.items, ...second.items].map((e) => e.id);
+    expect(new Set(ids).size).toBe(6);
+  });
+
+  it("matches a delegated call by the person it acted for", async () => {
+    const page = await auditApi.listEvents({ actor_id: "u-2" });
+    expect(page.items.map((e) => e.action).sort()).toEqual([
+      "authz.grant_denied",
+      "pat.revoke",
+    ]);
   });
 });

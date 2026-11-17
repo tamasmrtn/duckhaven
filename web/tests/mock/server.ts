@@ -20,6 +20,7 @@ import { semanticHandlers } from '@/mock/handlers/semantic'
 import { worksheetHandlers } from '@/mock/handlers/worksheets'
 import { searchHandlers } from '@/mock/handlers/search'
 import { dashboardHandlers } from '@/mock/handlers/dashboards'
+import { auditHandlers } from '@/mock/handlers/audit'
 
 export const server = setupServer(
   ...authHandlers,
@@ -43,4 +44,5 @@ export const server = setupServer(
   ...searchHandlers,
   ...worksheetHandlers,
   ...dashboardHandlers,
+  ...auditHandlers,
 )

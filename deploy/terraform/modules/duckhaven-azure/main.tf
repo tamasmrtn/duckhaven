@@ -31,6 +31,12 @@ resource "azurerm_resource_group" "main" {
       condition     = !var.polaris_enabled || !local.postgres_managed_here || var.postgres_password_auth_enabled
       error_message = "polaris_enabled = true requires postgres_password_auth_enabled: Polaris' Quarkus datasource has no Microsoft Entra path."
     }
+
+    # Agents read the system catalog as a password login.
+    precondition {
+      condition     = !var.system_catalog_enabled || !local.postgres_managed_here || var.postgres_password_auth_enabled
+      error_message = "system_catalog_enabled = true requires postgres_password_auth_enabled: agents read the system catalog as a password login. Set system_catalog_enabled = false to run on Microsoft Entra authentication alone."
+    }
   }
 }
 

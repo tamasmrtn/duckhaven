@@ -114,6 +114,37 @@ resource "azurerm_container_app" "api" {
         value = "entra"
       }
 
+      # ── System catalog ──
+      # Passwordless like DATABASE_URL: the API owns the copy as its own identity. Agents
+      # read it at the same server as dh_system_reader, whose password the API keeps.
+      env {
+        name  = "SYSTEM_CATALOG_ENABLED"
+        value = tostring(var.system_catalog_enabled)
+      }
+
+      env {
+        name = "SYSTEM_CATALOG_DATABASE_URL"
+        value = join("", [
+          "postgresql+asyncpg://",
+          azurerm_user_assigned_identity.api.name,
+          "@",
+          local.postgres_fqdn,
+          ":5432/",
+          local.system_database_name,
+          "?ssl=require",
+        ])
+      }
+
+      env {
+        name  = "SYSTEM_CATALOG_AGENT_HOST"
+        value = local.postgres_fqdn
+      }
+
+      env {
+        name  = "SYSTEM_CATALOG_AGENT_DATABASE"
+        value = local.system_database_name
+      }
+
       # ── Sessions ──
       # Injected rather than left to the entrypoint's first-boot generation: /var/duckhaven
       # is ephemeral here, so a self-generated key would change on every replica
@@ -350,6 +381,7 @@ resource "azurerm_container_app" "api" {
   depends_on = [
     # Migrations run on start, so the database and its schema target must exist.
     azurerm_postgresql_flexible_server_database.duckhaven,
+    azurerm_postgresql_flexible_server_database.duckhaven_system,
     # The API cannot log in until db-bootstrap has created its Entra role. Terraform
     # can only guarantee the job exists, not that it has been run -- until it has,
     # replicas fail their startup probe. See the deployment README.

@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.deps import get_current_user, get_db, get_polaris_client
+from api.deps import get_current_user, get_db, get_polaris_client, require_permission
 from api.models.agent import Agent
 from api.models.user import User
 from api.models.workspace import Workspace, WorkspaceMember
@@ -23,6 +23,7 @@ from api.services.agent_dispatch import connected_agent_ids
 from api.services.agent_view import effective_status
 from api.services.audit import record
 from api.services.audit.events import record_membership
+from api.services.permissions import Permission
 from api.services.polaris import PolarisClient
 from api.services.runtimes import (
     AgentNotDispatchable,
@@ -138,10 +139,10 @@ async def list_workspaces(
 @router.post("", response_model=WorkspaceOut, status_code=status.HTTP_201_CREATED)
 async def create_workspace(
     body: WorkspaceCreate,
-    user: User = Depends(get_current_user),
+    user: User = Depends(require_permission(Permission.WORKSPACES_CREATE)),
     db: AsyncSession = Depends(get_db),
 ) -> WorkspaceOut:
-    """Create a workspace with its owner. A workspace starts with **no catalog** —
+    """Create a workspace with its creator as owner. A workspace starts with **no catalog** —
     the owner creates or attaches catalogs afterward (catalogs are decoupled,
     M:N). No storage backend or Polaris provisioning happens here."""
     existing = await db.execute(select(Workspace).where(Workspace.slug == body.slug))

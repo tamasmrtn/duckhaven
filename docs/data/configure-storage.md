@@ -96,7 +96,8 @@ result shows a sanitized reason (no secrets). A backend in use by any catalog ca
 
 ## Create a catalog on the backend
 
-When you create a [catalog](manage-catalogs.md), choose the backend under **Storage backend**. Every table in that
+When you create a [catalog](manage-catalogs.md), choose the backend under **Storage backend**, which needs
+`storage:manage`. Every table in that
 catalog lives under the backend's location. An admin can move a catalog to another backend later with a
 [storage migration](migrate-catalog-storage.md).
 

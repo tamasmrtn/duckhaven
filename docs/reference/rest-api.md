@@ -958,7 +958,8 @@ The provider name `execution` is reserved for lineage DuckHaven derives from SQL
 ## Catalog storage migrations
 
 Move a catalog to another [storage backend](../data/storage-backends.md). Every endpoint needs the catalog's creator,
-or an admin with `catalogs:admin`. See [Migrate a catalog's storage](../data/migrate-catalog-storage.md).
+or an admin with `catalogs:admin`; starting one also needs `storage:manage`. See
+[Migrate a catalog's storage](../data/migrate-catalog-storage.md).
 
 | Method and path | Purpose |
 |---|---|

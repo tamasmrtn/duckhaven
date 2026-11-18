@@ -9,7 +9,8 @@ read-only, from any workspace.
 
 !!! info "Availability"
     On the single-host Compose stack, on by default; see
-    [Enable the system catalog database](../deployment/system-catalog.md). The
+    [Enable the system catalog database](../deployment/system-catalog.md). On
+    [Azure with Terraform](../deployment/azure-terraform.md#system-catalog), on by default. The
     [HA stack](../deployment/high-availability.md#limitations) has none. Reading it takes both the `audit:read` and
     the `queries:admin` permission, which the `admin` role holds.
 

@@ -116,7 +116,7 @@ Retention for the [access audit log](../access/audit-log.md).
 The read-only copy of the audit log, current access and query history in the `duckhaven_system` database, which admins
 query in SQL as the [`duckhaven` catalog](../querying/system-catalog.md); see
 [Enable the system catalog database](../deployment/system-catalog.md). The bundled Compose stack needs none of these
-set.
+set, and [Azure with Terraform](../deployment/azure-terraform.md#system-catalog) sets them itself.
 
 | Variable | Default | Description |
 |---|---|---|

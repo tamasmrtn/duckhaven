@@ -297,11 +297,16 @@ async def test_rotating_a_ducklake_password_is_recorded_without_it(
     assert (event.before, event.after, event.details) == (None, None, None)
 
 
-async def test_starting_an_export_is_recorded(owner_client, db_session, owner, workspace):
+async def test_starting_an_export_is_recorded(client, db_session, owner, workspace):
+    """By an admin: naming the target backend takes `storage:manage`."""
     ws, cat, _ = workspace
     lake = await _ducklake_catalog(db_session, owner, ws)
+    admin = await _user(db_session, "admin@audit.local", role="admin")
+    db_session.add(WorkspaceMember(workspace_id=ws.id, user_id=admin.id, role="owner"))
+    await db_session.commit()
+    await client.post("/auth/login", json={"email": admin.email, "password": "pw"})
 
-    resp = await owner_client.post(
+    resp = await client.post(
         f"/catalogs/{lake.id}/exports?workspace=sales",
         json={"target_name": "berg", "target_storage_backend_id": str(cat.storage_backend_id)},
     )

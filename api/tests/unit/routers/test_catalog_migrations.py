@@ -17,7 +17,8 @@ from api.services.auth import hash_password
 
 @pytest.fixture
 async def owner(db_session) -> User:
-    u = User(email="mig@test.local", password_hash=hash_password("pw"), name="Mig", role="user")
+    """An admin: naming the target backend takes `storage:manage`."""
+    u = User(email="mig@test.local", password_hash=hash_password("pw"), name="Mig", role="admin")
     db_session.add(u)
     await db_session.commit()
     await db_session.refresh(u)

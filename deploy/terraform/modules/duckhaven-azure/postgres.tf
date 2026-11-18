@@ -97,6 +97,18 @@ resource "azurerm_postgresql_flexible_server_database" "polaris" {
   collation = "en_US.utf8"
 }
 
+# The system catalog's copy of the audit log, current access and query history. The
+# API creates its schemas and the reader login agents read it as; the db-bootstrap
+# job grants it what that takes.
+resource "azurerm_postgresql_flexible_server_database" "duckhaven_system" {
+  count = local.postgres_managed_here && var.system_catalog_enabled ? 1 : 0
+
+  name      = local.system_database_name
+  server_id = azurerm_postgresql_flexible_server.main[0].id
+  charset   = "UTF8"
+  collation = "en_US.utf8"
+}
+
 resource "azurerm_postgresql_flexible_server_active_directory_administrator" "ops" {
   count = local.postgres_managed_here && var.postgres_entra_admin != null ? 1 : 0
 
@@ -210,6 +222,17 @@ resource "azurerm_container_app_job" "db_bootstrap" {
         value = local.duckhaven_database_name
       }
 
+      # Lets the API create the system catalog's reader login, and closes every other
+      # database to it.
+      dynamic "env" {
+        for_each = var.system_catalog_enabled ? [local.system_database_name] : []
+
+        content {
+          name  = "DB_BOOTSTRAP_SYSTEM_DATABASE"
+          value = env.value
+        }
+      }
+
       env {
         name  = "AZURE_CLIENT_ID"
         value = azurerm_user_assigned_identity.db_bootstrap[0].client_id
@@ -229,6 +252,7 @@ resource "azurerm_container_app_job" "db_bootstrap" {
   depends_on = [
     azurerm_postgresql_flexible_server_active_directory_administrator.db_bootstrap,
     azurerm_postgresql_flexible_server_database.duckhaven,
+    azurerm_postgresql_flexible_server_database.duckhaven_system,
     azurerm_role_assignment.db_bootstrap_acr_pull,
   ]
 }

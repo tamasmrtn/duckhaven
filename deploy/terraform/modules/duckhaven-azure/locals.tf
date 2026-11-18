@@ -114,6 +114,7 @@ locals {
   )
   duckhaven_database_name = var.postgres_database_name
   polaris_database_name   = var.postgres_polaris_database_name
+  system_database_name    = var.postgres_system_database_name
 
   # The root principal the bootstrap creates and the API authenticates as. Not a
   # variable: it has to match api/src/api/config.py's polaris_client_id default, and

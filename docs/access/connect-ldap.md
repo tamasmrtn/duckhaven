@@ -54,7 +54,8 @@ DuckHaven reads the user's `memberOf` values and maps group DNs to
 LDAP_GROUP_ROLE_MAP={"cn=dh-admins,ou=groups,dc=example,dc=com": "admin"}
 ```
 
-Members of that group become `admin` on each sign-in; everyone else defaults to `user`.
+Members of that group become `admin` on each sign-in; everyone else defaults to `user`. The last active admin keeps
+`admin` until another account is one; see [Connect an IdP](connect-idp.md#map-groups-to-roles).
 
 ## Operational notes
 

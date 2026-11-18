@@ -96,6 +96,10 @@ On every sign-in, a user in a mapped group gets that role (`admin` wins when sev
 `user`. Change a person's group in the IdP and their role updates on their next login. Group mapping sets the **global
 role only**; workspace membership stays a DuckHaven operation.
 
+The directory cannot demote the last active admin, just as an admin cannot. That person keeps `admin` and signs in as
+usual, and the [audit log](audit-log.md) records a denied `user.role_change` with the reason `last_active_admin`. The
+demotion applies on their first sign-in after another account is an admin.
+
 ## How it works
 
 1. The browser hits `/api/auth/oidc/<id>/login`; DuckHaven redirects to that provider's IdP with `state`, `nonce`, and

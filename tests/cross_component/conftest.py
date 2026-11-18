@@ -451,6 +451,12 @@ def _elastic_api_env(db_url: str, setup_token_file: Path, api_port: int) -> dict
     # Not this stack's mechanism: a seeded static bootstrap token would let an
     # agent register outside the elastic rows these tests are about.
     env.pop("AGENT_BOOTSTRAP_TOKEN", None)
+    # Nor the system catalog. Its reader login is one per Postgres server, and an
+    # API sets its password from its own database, so this stack would reset the
+    # login under the main stack and fail every agent's attach there.
+    for key in [k for k in env if k.startswith("SYSTEM_CATALOG_")]:
+        del env[key]
+    env["SYSTEM_CATALOG_ENABLED"] = "false"
     return env
 
 

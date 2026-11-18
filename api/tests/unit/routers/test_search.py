@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import pytest
+from conftest import seed_owned_workspace
 from httpx import AsyncClient
 from sqlalchemy import select, update
+from sqlalchemy.ext.asyncio import async_object_session
 
 from api.models.catalog import Catalog, WorkspaceCatalog
 from api.models.catalog_grant import CatalogGrant
@@ -41,14 +43,16 @@ async def _login(client: AsyncClient, email: str) -> None:
 async def _make_workspace(
     auth_client: AsyncClient, backend: StorageBackend, slug: str = "alpha"
 ) -> str:
-    resp = await auth_client.post("/workspaces", json={"slug": slug, "name": slug.title()})
-    assert resp.status_code == 201, resp.text
+    # Seeded, since the test's owner may not create one through the API; the
+    # backend fixture's session is still open.
+    db = async_object_session(backend)
+    await seed_owned_workspace(db, user_id=backend.created_by, slug=slug, name=slug.title())
     cat = await auth_client.post(
         f"/workspaces/{slug}/catalogs",
         json={"name": slug.replace("-", "_"), "storage_backend_id": str(backend.id)},
     )
     assert cat.status_code == 201, cat.text
-    return resp.json()["slug"]
+    return slug
 
 
 @pytest.fixture
@@ -207,9 +211,8 @@ async def test_search_respects_scoped_catalog_grants(
     await db_session.commit()
     await db_session.refresh(sb)
 
-    resp = await auth_client.post("/workspaces", json={"slug": "alpha", "name": "Alpha"})
-    assert resp.status_code == 201, resp.text
-    slug = resp.json()["slug"]
+    slug = "alpha"
+    await seed_owned_workspace(db_session, user_id=owner.id, slug=slug, name="Alpha")
     cat_resp = await auth_client.post(
         f"/workspaces/{slug}/catalogs", json={"name": "alpha", "storage_backend_id": str(sb.id)}
     )

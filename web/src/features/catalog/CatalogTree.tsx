@@ -38,6 +38,7 @@ import {
 } from "@/components/ui/hover-card";
 import { useSchemas, useTable, useTables } from "@/queries/schemas";
 import { useCatalogObjectSearch } from "@/queries/search";
+import { useSystemCatalog } from "@/queries/systemCatalog";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { usePersistedSet } from "@/hooks/usePersistedSet";
 import { useRefreshCatalogStats } from "@/queries/schemas.mutations";
@@ -63,6 +64,7 @@ import { formatTableSize } from "@/features/catalog/tableSize";
 import { cn, formatRowCount } from "@/utils";
 import type { Catalog, CatalogTable } from "@/types/catalog";
 import type { SearchResult } from "@/types/search";
+import type { SystemCatalog, SystemTable } from "@/types/systemCatalog";
 import { SectionLabel } from "@/components/ui/section-label";
 
 // Which nodes are expanded, shared by every node in one tree and remembered per
@@ -702,6 +704,200 @@ function CatalogNode({
   );
 }
 
+// The `duckhaven` system catalog: the deployment's audit log, current access and
+// query history, read-only and readable only with `audit:read` and
+// `queries:admin`. It is not one of the workspace's catalogs, so it has no detail
+// pages or menu.
+interface SystemCatalogNodeProps {
+  system: SystemCatalog;
+  onTableClick?: (catalog: string, schema: string, table: string) => void;
+}
+
+function SystemCatalogNode({ system, onTableClick }: SystemCatalogNodeProps) {
+  const [open, toggleOpen] = useNodeOpen(nodeId.catalog(system.catalog));
+  const schemas = useMemo(() => {
+    const bySchema = new Map<string, SystemTable[]>();
+    for (const t of system.tables) {
+      bySchema.set(t.schema_name, [...(bySchema.get(t.schema_name) ?? []), t]);
+    }
+    return [...bySchema];
+  }, [system.tables]);
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={toggleOpen}
+        className="flex w-full items-center rounded text-sm font-semibold text-text-primary hover:bg-accent focus-visible:outline-2 focus-visible:outline-[var(--brand-slate-blue)]"
+        aria-expanded={open}
+        title="Built-in and read-only: this deployment's audit log, current access and query history"
+      >
+        <span className="shrink-0 p-1 text-text-secondary">
+          {open ? (
+            <ChevronDown className="size-3.5" />
+          ) : (
+            <ChevronRight className="size-3.5" />
+          )}
+        </span>
+        <span className="flex min-w-0 flex-1 items-center gap-1.5 py-1 pr-2">
+          <Book className="size-3.5 shrink-0 text-[var(--brand-slate-blue)]" />
+          <span className="truncate">{system.catalog}</span>
+          {system.available ? (
+            <span className="ml-auto flex shrink-0 items-center gap-0.5 whitespace-nowrap rounded bg-accent px-1 text-2xs font-normal text-text-tertiary">
+              <Lock className="size-2.5" />
+              system
+            </span>
+          ) : (
+            <span
+              className="ml-auto shrink-0 whitespace-nowrap rounded bg-accent px-1 text-2xs font-normal text-text-tertiary"
+              title="Its database cannot be reached, so a query on it fails"
+            >
+              unavailable
+            </span>
+          )}
+        </span>
+      </button>
+
+      {open && (
+        <div className="ml-3 border-l border-[var(--border-subtle)] pl-2">
+          {schemas.map(([schemaName, tables]) => (
+            <SystemSchemaNode
+              key={schemaName}
+              catalog={system.catalog}
+              schemaName={schemaName}
+              tables={tables}
+              onTableClick={onTableClick}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+interface SystemSchemaNodeProps {
+  catalog: string;
+  schemaName: string;
+  tables: SystemTable[];
+  onTableClick?: (catalog: string, schema: string, table: string) => void;
+}
+
+function SystemSchemaNode({
+  catalog,
+  schemaName,
+  tables,
+  onTableClick,
+}: SystemSchemaNodeProps) {
+  const [open, toggleOpen] = useNodeOpen(nodeId.schema(catalog, schemaName));
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={toggleOpen}
+        className="flex w-full items-center rounded text-sm font-medium text-text-primary hover:bg-accent focus-visible:outline-2 focus-visible:outline-[var(--brand-slate-blue)]"
+        aria-expanded={open}
+      >
+        <span className="shrink-0 p-1 text-text-secondary">
+          {open ? (
+            <ChevronDown className="size-3.5" />
+          ) : (
+            <ChevronRight className="size-3.5" />
+          )}
+        </span>
+        <span className="flex min-w-0 flex-1 items-center gap-1.5 py-1 pr-2">
+          <Layers className="size-3.5 shrink-0 text-[var(--brand-maya-blue)]" />
+          <span className="truncate">{schemaName}</span>
+        </span>
+      </button>
+
+      {open && (
+        <div className="ml-3 border-l border-[var(--border-subtle)] pl-2">
+          {tables.map((table) => (
+            <SystemTableNode
+              key={table.name}
+              catalog={catalog}
+              table={table}
+              onClick={onTableClick}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+interface SystemTableNodeProps {
+  catalog: string;
+  table: SystemTable;
+  // Without it, clicking the name shows the columns.
+  onClick?: (catalog: string, schema: string, table: string) => void;
+}
+
+function SystemTableNode({ catalog, table, onClick }: SystemTableNodeProps) {
+  const [open, toggleOpen] = useNodeOpen(
+    nodeId.table(catalog, table.schema_name, table.name),
+  );
+  const ref = `${catalog}.${table.schema_name}.${table.name}`;
+
+  return (
+    <div>
+      <div className="flex w-full items-center rounded text-text-secondary hover:bg-accent hover:text-text-primary">
+        <button
+          type="button"
+          onClick={toggleOpen}
+          className="shrink-0 rounded p-1 text-text-tertiary hover:text-text-primary focus-visible:outline-2 focus-visible:outline-[var(--brand-slate-blue)]"
+          aria-expanded={open}
+          aria-label={open ? "Hide columns" : "Show columns"}
+        >
+          {open ? (
+            <ChevronDown className="size-3" />
+          ) : (
+            <ChevronRight className="size-3" />
+          )}
+        </button>
+        <button
+          type="button"
+          onClick={() =>
+            onClick
+              ? onClick(catalog, table.schema_name, table.name)
+              : toggleOpen()
+          }
+          draggable
+          onDragStart={(e) => {
+            e.dataTransfer.setData("text/plain", ref);
+            e.dataTransfer.effectAllowed = "copy";
+          }}
+          title={`${table.description}: ${ref}`}
+          className="flex min-w-0 flex-1 items-center gap-1.5 rounded py-1 pr-1.5 text-sm cursor-grab focus-visible:outline-2 focus-visible:outline-[var(--brand-slate-blue)] active:cursor-grabbing"
+        >
+          <Table2 className="size-3.5 shrink-0 text-text-tertiary" />
+          <span className="truncate">{table.name}</span>
+        </button>
+      </div>
+
+      {open && (
+        <div className="ml-4 border-l border-[var(--border-subtle)] pl-2">
+          {table.columns.map((col) => (
+            <div
+              key={col.name}
+              className="flex items-center gap-1.5 px-1.5 py-0.5 text-xs"
+              title={`${col.name} ${col.type}`}
+            >
+              <span className="truncate font-mono text-text-secondary">
+                {col.name}
+              </span>
+              <span className="ml-auto shrink-0 font-mono text-2xs text-[var(--brand-maya-blue)]">
+                {col.type}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Search needs at least this much text; one letter matches almost everything.
 const MIN_SEARCH = 2;
 
@@ -827,6 +1023,9 @@ interface CatalogTreeProps {
   // (worksheet sidebar).
   onCatalogClick?: (catalog: string) => void;
   onSchemaClick?: (catalog: string, schema: string) => void;
+  // A table of the `duckhaven` system catalog, which has no detail pane; when
+  // omitted, clicking one shows its columns.
+  onSystemTableClick?: (catalog: string, schema: string, table: string) => void;
 }
 
 export function CatalogTree({
@@ -836,6 +1035,7 @@ export function CatalogTree({
   onMetaViewClick,
   onCatalogClick,
   onSchemaClick,
+  onSystemTableClick,
 }: CatalogTreeProps) {
   const [filter, setFilter] = useState("");
   const needle = useDebouncedValue(filter.trim(), 250);
@@ -850,6 +1050,7 @@ export function CatalogTree({
   const [createSchemaOpen, setCreateSchemaOpen] = useState(false);
   const [attachCatalogOpen, setAttachCatalogOpen] = useState(false);
   const { data: catalogs, isLoading } = useCatalogs(ws);
+  const { data: systemCatalog } = useSystemCatalog(ws);
   const refreshStats = useRefreshCatalogStats(ws);
 
   // Workspace-wide: the refresh endpoint is catalog-scoped, so probe every
@@ -983,12 +1184,13 @@ export function CatalogTree({
                 />
               ))}
             </div>
-          ) : catalogs?.length === 0 ? (
-            <p className="px-2 py-3 text-sm text-text-tertiary">
-              No catalogs attached.
-            </p>
           ) : (
             <div className="space-y-0.5">
+              {catalogs?.length === 0 && (
+                <p className="px-2 py-3 text-sm text-text-tertiary">
+                  No catalogs attached.
+                </p>
+              )}
               {catalogs?.map((c) => (
                 <CatalogNode
                   key={c.id}
@@ -1000,6 +1202,12 @@ export function CatalogTree({
                   onSchemaClick={onSchemaClick}
                 />
               ))}
+              {systemCatalog && (
+                <SystemCatalogNode
+                  system={systemCatalog}
+                  onTableClick={onSystemTableClick}
+                />
+              )}
             </div>
           )}
         </div>

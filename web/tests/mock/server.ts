@@ -21,6 +21,7 @@ import { worksheetHandlers } from '@/mock/handlers/worksheets'
 import { searchHandlers } from '@/mock/handlers/search'
 import { dashboardHandlers } from '@/mock/handlers/dashboards'
 import { auditHandlers } from '@/mock/handlers/audit'
+import { systemCatalogHandlers } from '@/mock/handlers/system-catalog'
 
 export const server = setupServer(
   ...authHandlers,
@@ -45,4 +46,5 @@ export const server = setupServer(
   ...worksheetHandlers,
   ...dashboardHandlers,
   ...auditHandlers,
+  ...systemCatalogHandlers,
 )

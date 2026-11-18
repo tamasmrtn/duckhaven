@@ -432,6 +432,7 @@ export function CatalogPage() {
   const search = useSearch({ strict: false });
   const tab = typeof search.tab === "string" ? search.tab : undefined;
   const navigate = useNavigate();
+  const openWorksheet = useOpenInWorksheet(ws);
   const { data: workspace } = useWorkspace(ws);
   useDocumentTitle(table ?? schema ?? catalog ?? "Catalog");
   // Below md the tree and the selected object's detail cannot share a row, so
@@ -511,6 +512,10 @@ export function CatalogPage() {
                   to: "/$ws/catalog/$catalog/$schema/$table",
                   params: { ws, catalog: c, schema: s, table: t },
                 })
+              }
+              // A system table has no detail pane: open a worksheet that reads it.
+              onSystemTableClick={(c, s, t) =>
+                void openWorksheet({ sql: selectTemplate(s, t, c), title: t })
               }
             />
           </div>

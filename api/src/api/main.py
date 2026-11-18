@@ -43,6 +43,7 @@ from api.routers import (
     semantic,
     setup,
     sql_sessions,
+    system_catalog,
     worksheets,
     workspaces,
 )
@@ -356,6 +357,7 @@ api_app.include_router(workspaces.router, tags=["workspaces"])
 api_app.include_router(search.router, tags=["search"])
 api_app.include_router(catalogs.router, tags=["catalog"])
 api_app.include_router(schemas.router, tags=["catalog"])
+api_app.include_router(system_catalog.router, tags=["catalog"])
 api_app.include_router(metadata.router, tags=["catalog"])
 api_app.include_router(grants.router, tags=["grants"])
 api_app.include_router(lineage.router, tags=["lineage"])

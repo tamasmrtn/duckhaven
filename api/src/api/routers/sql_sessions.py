@@ -72,6 +72,8 @@ from api.services.sql_classify import classify_parsed
 from api.services.sql_guard import is_read_only
 from api.services.sql_sessions import service as session_service
 from api.services.sql_sessions.client_info import parse_user_agent
+from api.services.system_catalog import attach as system_attach
+from api.services.system_catalog.authorize import reads_system_catalog
 from api.services.workspace import (
     assert_workspace_member,
     get_default_catalog,
@@ -645,6 +647,16 @@ async def run_statement(
             status_code=status.HTTP_403_FORBIDDEN,
             detail={"error": "grant_denied", "detail": str(exc)},
         ) from exc
+    # Before the statement's row exists, so a refusal leaves nothing behind.
+    system = None
+    if reads_system_catalog(body.sql, catalogs):
+        try:
+            system = await system_attach.descriptor(db, await db.get(Agent, session.agent_id))
+        except AgentNotDispatchable as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail={"error": exc.code, "detail": exc.detail},
+            ) from None
 
     cache = await session_cache.lookup(
         db,
@@ -729,7 +741,7 @@ async def run_statement(
     # the wait need not read back a row this request has just committed as queued.
     with query_service.completion_waiter(query.id) as done:
         if not await session_service.dispatch_exec_statement(
-            db, session, query, body.timeout_s, catalogs
+            db, session, query, body.timeout_s, catalogs, system=system
         ):
             query.status = "failed"
             query.error = "agent not connected"

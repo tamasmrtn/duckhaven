@@ -105,6 +105,10 @@ class Settings(BaseSettings):
     system_catalog_query_history_days: int = Field(default=365, ge=0)
     # Connections the reader login may hold at once, across every agent.
     system_catalog_reader_connection_limit: int = Field(default=20, ge=1)
+    # How agents reach the system catalog database, as the reader login.
+    system_catalog_agent_host: str = "postgres"
+    system_catalog_agent_port: int = 5432
+    system_catalog_agent_database: str = "duckhaven_system"
     # Bundled object store backing the object_store catalogs. Three tiers,
     # most-internal to most-external: `s3_endpoint_internal` is what Polaris uses
     # to reach the store inside the compose network (and what the agent's httpfs

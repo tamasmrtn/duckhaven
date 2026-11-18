@@ -32,8 +32,12 @@ from api.services import runtimes as runtime_service
 from api.services.agent_capabilities import agent_supports_feature
 from api.services.agent_dispatch import send_to_agent
 from api.services.catalog_refs import ON_DEMAND_ATTACH, dispatch_catalogs, statement_catalogs
+from api.services.rbac import principal_permissions
 from api.services.session_credentials import build_catalog_attach, build_polaris_block
+from api.services.system_catalog import attach as system_attach
+from api.services.system_catalog.authorize import may_read
 from duckhaven_shared.protocol import Frame, FrameType
+from duckhaven_shared.system_catalog import KIND_SYSTEM
 from duckhaven_shared.telemetry import inject_trace_context
 
 if TYPE_CHECKING:
@@ -154,10 +158,17 @@ async def dispatch_open_session(
     # An agent that attaches on demand opens with the active catalog alone; each
     # statement brings the others it names (see `dispatch_exec_statement`).
     active = [c for c in catalogs if c.slug == session.active_catalog]
+    fields = await dispatch_catalogs(agent, catalogs, active)
+    if "preload" in fields and await _may_attach_system_catalog(db, session, agent):
+        # Its extension must be loaded before the sandbox is locked, for a
+        # statement to attach it later. The catalog itself only ever comes with
+        # a statement that reads it.
+        kinds = fields["preload"]["catalog_kinds"]
+        fields["preload"]["catalog_kinds"] = sorted({*kinds, KIND_SYSTEM})
     payload: dict[str, object] = {
         "session_id": str(session.id),
         "active_catalog": session.active_catalog,
-        **(await dispatch_catalogs(agent, catalogs, active)),
+        **fields,
         "polaris": build_polaris_block(),
     }
     with _tracer.start_as_current_span(
@@ -181,13 +192,16 @@ async def dispatch_exec_statement(
     query: Query,
     timeout_s: float,
     catalogs: list[Catalog],
+    *,
+    system: dict[str, object] | None = None,
 ) -> bool:
     """Run one statement on the session's held connection. Completion comes back as
     an ordinary QUERY_DONE keyed by ``query.id`` (handled by query.handle_agent_frame).
 
     ``catalogs`` is the workspace's. For an agent that attaches on demand the
     frame carries the ones the statement names, every time: the agent skips those
-    the session already has, so nothing here tracks what it has attached."""
+    the session already has, so nothing here tracks what it has attached.
+    ``system`` is the system catalog's descriptor, for a statement that reads it."""
     payload: dict[str, object] = {
         "session_id": str(session.id),
         "query_id": str(query.id),
@@ -198,6 +212,8 @@ async def dispatch_exec_statement(
     if agent_supports_feature(agent.capabilities if agent else None, ON_DEMAND_ATTACH):
         named = statement_catalogs(query.sql, catalogs, session.active_catalog)
         payload["catalogs"] = await _catalog_descriptors(named)
+        if system is not None:
+            payload["catalogs"].append(system)
     with _tracer.start_as_current_span(
         "exec_statement",
         kind=trace.SpanKind.PRODUCER,
@@ -210,6 +226,17 @@ async def dispatch_exec_statement(
             type=FrameType.EXEC_STATEMENT, payload=payload, trace_context=inject_trace_context()
         )
         return await send_to_agent(db, session.agent_id, frame.model_dump_json())
+
+
+async def _may_attach_system_catalog(
+    db: AsyncSession, session: SqlSession, agent: Agent | None
+) -> bool:
+    """Whether a statement in ``session`` could attach the system catalog."""
+    return (
+        system_attach.is_available()
+        and system_attach.agent_can_attach(agent)
+        and may_read(await principal_permissions(db, session.user_id))
+    )
 
 
 async def dispatch_close_session(

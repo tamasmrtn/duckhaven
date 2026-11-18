@@ -4,8 +4,10 @@ import { schemasApi } from "@/api/schemas";
 import { useSchemas } from "@/queries/schemas";
 import { useCatalogs } from "@/queries/catalogs";
 import { useSqlMetadata } from "@/queries/sqlMetadata";
+import { useSystemCatalog } from "@/queries/systemCatalog";
 import type { CatalogTable } from "@/types/catalog";
 import type { CatalogEntry, CatalogSnapshot, SnapshotColumn } from "./types";
+import { systemCatalogEntry } from "./systemCatalog";
 import {
   type ColumnRef,
   type RowCountInfo,
@@ -26,15 +28,19 @@ export function useSqlCompletion(
   const schemasQuery = useSchemas(ws, catalog);
   const metadataQuery = useSqlMetadata(ws, agentId);
   const catalogsQuery = useCatalogs(ws);
+  // The `duckhaven` system catalog, for someone who may read it. Complete from
+  // the start, so it is never fetched like the others below.
+  const { data: system } = useSystemCatalog(ws);
+  const systemName = system?.catalog;
 
   // Every catalog attached to the workspace, including the active one (so a
   // fully-qualified self-reference like `activeCatalog.schema.table` still
   // resolves) — cheap, eager, already fetched for the worksheet's catalog
-  // switcher.
-  const catalogNames = useMemo(
-    () => (catalogsQuery.data ?? []).map((c) => c.slug),
-    [catalogsQuery.data],
-  );
+  // switcher — and the system catalog.
+  const catalogNames = useMemo(() => {
+    const names = (catalogsQuery.data ?? []).map((c) => c.slug);
+    return systemName ? [...names, systemName] : names;
+  }, [catalogsQuery.data, systemName]);
 
   const schemaNames = useMemo(
     () => (schemasQuery.data ?? []).map((s) => s.name),
@@ -87,6 +93,7 @@ export function useSqlCompletion(
 
   const ensureCrossCatalogSchemas = useCallback(
     (catalogName: string) => {
+      if (catalogName === systemName) return;
       if (requestedCrossSchemas.current.has(catalogName)) return;
       requestedCrossSchemas.current.add(catalogName);
       qc.ensureQueryData({
@@ -101,11 +108,12 @@ export function useSqlCompletion(
         })
         .catch(() => requestedCrossSchemas.current.delete(catalogName));
     },
-    [qc, ws],
+    [qc, ws, systemName],
   );
 
   const ensureCrossCatalogTables = useCallback(
     (catalogName: string, schema: string) => {
+      if (catalogName === systemName) return;
       const key = `${catalogName}.${schema}`;
       if (requestedCrossTables.current.has(key)) return;
       requestedCrossTables.current.add(key);
@@ -132,11 +140,12 @@ export function useSqlCompletion(
         })
         .catch(() => requestedCrossTables.current.delete(key));
     },
-    [qc, ws],
+    [qc, ws, systemName],
   );
 
   const ensureCrossCatalogColumns = useCallback(
     (catalogName: string, schema: string, table: string) => {
+      if (catalogName === systemName) return;
       const tableKey = `${schema}.${table}`;
       const key = `${catalogName}.${tableKey}`;
       if (requestedCrossColumns.current.has(key)) return;
@@ -168,7 +177,7 @@ export function useSqlCompletion(
         })
         .catch(() => requestedCrossColumns.current.delete(key));
     },
-    [qc, ws],
+    [qc, ws, systemName],
   );
 
   // The active catalog's own slug, aliased into `crossCatalog` so a
@@ -183,11 +192,13 @@ export function useSqlCompletion(
         columnsByTable: crossColumns[name] ?? {},
       };
     }
+    if (system) out[system.catalog] = systemCatalogEntry(system);
     if (catalog) {
       out[catalog] = { schemas: schemaNames, tablesBySchema, columnsByTable };
     }
     return out;
   }, [
+    system,
     crossSchemas,
     crossTables,
     crossColumns,

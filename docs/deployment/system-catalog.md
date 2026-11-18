@@ -7,10 +7,10 @@ type: how-to
 DuckHaven keeps a read-only copy of its access audit log, current access and query history in a second Postgres
 database, `duckhaven_system`, refreshed every 10 seconds.
 
-The copy is kept apart from `duckhaven`, the database that holds users, password hashes and session tokens, so that it
-can be read through a login that reaches nothing else. The API creates that login, `dh_system_reader`, with a generated
-password; it can read the copied tables and nothing more. DuckHaven offers no SQL access to the copy: read the audit log
-in **Admin** → **Audit** or through the REST API, as in [Review access changes](../access/review-access-changes.md).
+Admins query the copy in SQL as the `duckhaven` catalog; see [System catalog](../querying/system-catalog.md). It is
+kept apart from `duckhaven`, the database that holds users, password hashes and session tokens, so that agents can
+attach it through a login that reaches nothing else. The API creates that login, `dh_system_reader`, with a generated
+password; it can read the copied tables and nothing more.
 
 A new install creates the database on first start. An install that predates it needs one command; see
 [On an existing install](#on-an-existing-install).
@@ -18,7 +18,8 @@ A new install creates the database on first start. An install that predates it n
 ## Before you begin
 
 - **Applies to:** the single-host Compose stack. The [HA stack](high-availability.md#limitations) does not create the
-  database.
+  database. Agents that run on another host reach it at `SYSTEM_CATALOG_AGENT_HOST`; see the
+  [configuration reference](../reference/configuration.md#system-catalog).
 - **You need:** shell access to the control-plane host, in a checkout of the repository; see
   [Operator scripts](../reference/operator-scripts.md#requirements).
 - **Enabled by:** `SYSTEM_CATALOG_ENABLED`, `true` by default; see the
@@ -26,16 +27,10 @@ A new install creates the database on first start. An install that predates it n
 
 ## What it holds
 
-| Table | Holds | Kept for |
-|---|---|---|
-| `access.audit` | Every event of the [access audit log](../access/audit-log.md), with the same fields | `AUDIT_RETENTION_DAYS`, as in the audit log |
-| `access.grants` | Current access, one row per role, membership, catalog attachment, catalog grant, agent access mode, agent grant and workspace default compute | Replaced whole after each access change, and at least every 5 minutes |
-| `query.history` | Finished queries (`done`, `failed`, `cancelled`) with who ran them, where, on which agent, and how long they took | `SYSTEM_CATALOG_QUERY_HISTORY_DAYS`, 365 days by default |
-
-`query.history` leaves out query results and profiles, and the queries DuckHaven runs for itself: table samples,
-metadata reads and maintenance. Each row carries the names it had when copied (emails, workspace slugs, agent names), so
-it still reads after the user or workspace is deleted. Deleting a workspace removes its queries from History, but not
-from the copy.
+Three tables: `access.audit`, every event of the [access audit log](../access/audit-log.md); `access.grants`, current
+access; and `query.history`, finished queries. Their columns, and how long each keeps its rows, are in the
+[system catalog reference](../reference/system-catalog.md). Deleting a workspace removes its queries from History, but
+not from the copy.
 
 The copy trails `duckhaven` by up to the publish interval. An audit event joins it once every transaction that was
 writing before it on the same Postgres server has finished, so a transaction that runs for minutes holds the audit copy
@@ -164,6 +159,12 @@ docker compose exec postgres psql -U duckhaven -d duckhaven \
 - **The API logs `System catalog publish failed; retrying every 10.0s`.** Copying stopped on the error logged with it,
   and `duckhaven_system_catalog_publish_lag_seconds` rises until it clears. The message is logged once; the API logs
   `System catalog publishing recovered` when a later attempt succeeds.
+- **A query on `duckhaven.access.audit` fails with `422` and `"error": "system_catalog_unavailable"`.** The system
+  catalog is turned off, or the API replica that took the query cannot reach its database; the API log says which, as
+  in the entries above.
+- **A query on it fails with `IO Error: Unable to connect to Postgres at …`.** The agent cannot reach
+  `SYSTEM_CATALOG_AGENT_HOST` on `SYSTEM_CATALOG_AGENT_PORT`. On the bundled stack that is `postgres:5432`; for an
+  agent on another host, set them to an address it can reach and restart the API.
 - **Only `access.audit` falls behind, and nothing is logged.** A long transaction on the Postgres server is holding it
   back. Find it, oldest first:
 
@@ -175,6 +176,7 @@ docker compose exec postgres psql -U duckhaven -d duckhaven \
 
 ## Related
 
+- [System catalog](../querying/system-catalog.md): querying the copy in SQL.
 - [Access audit log](../access/audit-log.md): what is recorded, and how long it is kept.
 - [Backup and restore](backup-restore.md): the other databases, and restoring them.
 - [Metric reference](../reference/metrics.md): every metric DuckHaven exports.

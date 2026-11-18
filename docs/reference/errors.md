@@ -72,7 +72,7 @@ See [Troubleshoot sign-in and access](../access/troubleshooting.md) for sign-in 
 
 | Code | Status | Meaning and what to do |
 |---|---|---|
-| `grant_denied` | 403 | A [scoped catalog](../access/scoped-access.md) refused the query or result: `Not authorized (reader) on ⟨catalog⟩.⟨schema⟩.⟨table⟩`, a metadata listing, or a direct file read. The message says which. |
+| `grant_denied` | 403 | A [scoped catalog](../access/scoped-access.md) refused the query or result: `Not authorized (reader) on ⟨catalog⟩.⟨schema⟩.⟨table⟩`, a metadata listing, or a direct file read. Or the query uses the [system catalog](../querying/system-catalog.md#limits) without its permissions, or other than to read its tables. The message says which. |
 | `agent_forbidden` | 403 | `This action on agent '⟨name⟩' requires the '⟨tier⟩' tier.` Ask for a higher [agent tier](../access/agent-access.md). |
 
 Each message has an entry in [Troubleshoot sign-in and access](../access/troubleshooting.md).
@@ -91,6 +91,7 @@ Each message has an entry in [Troubleshoot sign-in and access](../access/trouble
 | `too_many_tables` | 422 | The [metadata report](rest-api.md#workspace-metadata) with columns matched more than 1,000 tables. Narrow it with `catalog`, `schema` or `table`. |
 | `invalid_cursor` | 422 | `Malformed cursor.` Send back the cursor exactly as you received it. |
 | `stale_cursor` | 422 | `The row this cursor points at no longer exists. Start again.` Page again from the start. |
+| `system_catalog_unavailable` | 422 | The query reads the [system catalog](../querying/system-catalog.md), and this deployment cannot serve it: it is turned off, or its database cannot be reached. See [Enable the system catalog database](../deployment/system-catalog.md#if-it-goes-wrong). |
 
 ## Compute and agents
 

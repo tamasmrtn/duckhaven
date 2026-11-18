@@ -54,6 +54,7 @@ from duckhaven_shared import runtimes
 from duckhaven_shared.concurrency import BUCKET_FRACTIONS
 from duckhaven_shared.protocol import Frame, FrameType
 from duckhaven_shared.schemas import AgentCapabilities
+from duckhaven_shared.system_catalog import SYSTEM_CATALOG_FEATURE
 from duckhaven_shared.telemetry import extract_trace_context, inject_trace_context
 
 logger = logging.getLogger(__name__)
@@ -135,6 +136,7 @@ _PROTOCOL_FEATURES = [
     "exact_hugeint",
     "use_schema",
     "batch_dispatch",
+    SYSTEM_CATALOG_FEATURE,
 ]
 
 

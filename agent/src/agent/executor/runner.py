@@ -31,6 +31,7 @@ from agent import runtime
 from agent.executor.plan import parse_profile
 from agent.executor.warm_connections import Prepared, WarmConnections
 from duckhaven_shared.sql import quote_ident as _quote_identifier
+from duckhaven_shared.system_catalog import KIND_SYSTEM
 
 logger = logging.getLogger(__name__)
 
@@ -155,7 +156,9 @@ _VENDED_BACKENDS = {"object_store", "s3", "adls_gen2"}
 _CATALOG_KIND_EXTENSIONS: dict[str, tuple[str, ...]] = {
     "iceberg_polaris": ("iceberg",),
     "ducklake": ("ducklake", "postgres"),
+    KIND_SYSTEM: ("postgres",),
 }
+KIND_ICEBERG = "iceberg_polaris"
 KIND_DUCKLAKE = "ducklake"
 
 
@@ -879,6 +882,34 @@ def _attach_ducklake(conn: duckdb.DuckDBPyConnection, cat: dict[str, Any]) -> No
     conn.execute(f'CREATE SCHEMA IF NOT EXISTS "{alias}"."{schema}"')
 
 
+# The system catalog's one Postgres login; a connection attaches it at most once.
+_SYSTEM_SECRET = "dh_sys"
+
+
+def _attach_system(conn: duckdb.DuckDBPyConnection, cat: dict[str, Any]) -> None:
+    """ATTACH the `duckhaven` system catalog read-only, as the reader login the
+    API vended.
+
+    The password goes in a secret, as DuckLake's does, so it is never in
+    statement text.
+    """
+    alias = cat["slug"].replace('"', '""')
+    meta = cat.get("meta") or {}
+    _create_secret(
+        conn,
+        f"CREATE OR REPLACE SECRET {_SYSTEM_SECRET}",
+        "TYPE POSTGRES",
+        {
+            "HOST": meta["host"],
+            "PORT": int(meta["port"]),
+            "DATABASE": meta["database"],
+            "USER": meta["user"],
+            "PASSWORD": meta["password"],
+        },
+    )
+    conn.execute(f"ATTACH '' AS \"{alias}\" (TYPE postgres, SECRET {_SYSTEM_SECRET}, READ_ONLY)")
+
+
 _SIZE_UNITS = {
     "kb": 1000,
     "mb": 1000**2,
@@ -1015,6 +1046,9 @@ def _attach_one(conn: duckdb.DuckDBPyConnection, cat: dict[str, Any], endpoint: 
     if cat.get("kind") == KIND_DUCKLAKE:
         _attach_ducklake(conn, cat)
         return
+    if cat.get("kind") == KIND_SYSTEM:
+        _attach_system(conn, cat)
+        return
     if store := cat.get("storage"):
         # A fallback for the moment the Iceberg extension is replacing a table's
         # vended-credential secret (it does on every bind of the table, so twice in
@@ -1059,7 +1093,7 @@ def attach_catalog(
     """
     if is_attached(conn, cat["slug"]):
         return False
-    if cat.get("kind") != KIND_DUCKLAKE:
+    if (cat.get("kind") or KIND_ICEBERG) == KIND_ICEBERG:
         exists = conn.execute(
             "SELECT count(*) FROM duckdb_secrets() WHERE name = ?", [_ICEBERG_SECRET]
         ).fetchone()
@@ -1109,7 +1143,7 @@ def _attach_catalogs(
     is logged and skipped rather than failing the whole query.
     """
     # A DuckLake-only workspace gets no Polaris block.
-    has_iceberg = any(c.get("kind", "iceberg_polaris") != KIND_DUCKLAKE for c in catalogs)
+    has_iceberg = any((c.get("kind") or KIND_ICEBERG) == KIND_ICEBERG for c in catalogs)
     endpoint = str(polaris.get("endpoint", "")).rstrip("/")
     # `trace_headers` carries the caller's span onto every DuckDB-issued Polaris
     # request, so Polaris's spans join this query's trace. It must be captured on
@@ -1138,12 +1172,13 @@ def _attach_catalogs(
                     f'"{cat["use_schema"]}" cannot be used: {exc}'
                 ) from exc
             continue
-        if slug == active_catalog:
+        # The system catalog is never where unqualified names resolve.
+        if slug == active_catalog and cat.get("kind") != KIND_SYSTEM:
             active = cat
     # `USE <catalog>.<schema>` sets both defaults; a bare `USE <catalog>` does
     # not reliably resolve an attached Iceberg catalog.
-    if active is None and catalogs:
-        active = catalogs[0]
+    if active is None:
+        active = next((c for c in catalogs if c.get("kind") != KIND_SYSTEM), None)
     if active is not None:
         # `use_schema` is a schema the caller chose: `USE`d, never created.
         use_schema = active.get("use_schema")
@@ -1364,7 +1399,8 @@ def open_and_attach(
         )
     ]
 
-    if catalogs and (polaris or KIND_DUCKLAKE in catalog_kinds):
+    # Only Iceberg needs Polaris.
+    if catalogs and (polaris or catalog_kinds & {KIND_DUCKLAKE, KIND_SYSTEM}):
         try:
             _attach_catalogs(
                 conn,

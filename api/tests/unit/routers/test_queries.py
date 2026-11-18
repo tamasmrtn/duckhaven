@@ -903,21 +903,34 @@ async def test_get_query_wait_holds_until_the_query_finishes(
     submit block for the rest of it, instead of falling back to a sleep grid."""
     import asyncio
 
+    import sqlalchemy as sa
+
     from api.models.query import Query
+    from api.services.query import _completion_waiters, signal_completion
 
     agent, _ = connected_agent
     resp = await authed_client.post(
         f"/workspaces/{workspace.slug}/queries",
         json={"sql": "SELECT 1", "agent_id": str(agent.id)},
     )
-    query_id = resp.json()["id"]
+    query_id = uuid.UUID(resp.json()["id"])
 
     async def finish():
-        await asyncio.sleep(0.1)
-        row = await db_session.get(Query, uuid.UUID(query_id))
+        # Finished as the QUERY_DONE handler finishes it: the terminal row
+        # committed, then handed to the request waiting on it. Every session here
+        # shares the in-memory database's one connection, so the waiting
+        # request's rollback between polls can undo this commit before it lands;
+        # being handed the row, it never needs to read it back.
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + 5
+        while query_id not in _completion_waiters and loop.time() < deadline:
+            await asyncio.sleep(0.01)
+        row = await db_session.get(Query, query_id)
         row.status = "done"
         row.duration_ms = 5
         await db_session.commit()
+        attrs = sa.inspect(Query).column_attrs
+        signal_completion(query_id, {a.key: getattr(row, a.key) for a in attrs})
 
     mover = asyncio.create_task(finish())
     resp = await authed_client.get(f"/queries/{query_id}", params={"wait_timeout_s": 5})

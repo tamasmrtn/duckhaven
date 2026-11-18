@@ -312,6 +312,10 @@ jobs:
       DUCKLAKE_AGENT_HOST: 127.0.0.1
       DUCKLAKE_AGENT_PORT: "5432"
       DUCKLAKE_AGENT_DATABASE: ducklake
+      SYSTEM_CATALOG_DATABASE_URL: postgresql+asyncpg://postgres:testpassword@localhost:5432/duckhaven_system
+      SYSTEM_CATALOG_AGENT_HOST: 127.0.0.1
+      SYSTEM_CATALOG_AGENT_PORT: "5432"
+      SYSTEM_CATALOG_AGENT_DATABASE: duckhaven_system
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v7
@@ -329,6 +333,16 @@ jobs:
         env:
           ADMIN_URL: postgresql://postgres:testpassword@localhost:5432/postgres
           DUCKLAKE_URL: postgresql://postgres:testpassword@localhost:5432/ducklake
+      # Likewise for the system catalog suite. Mirrors
+      # deploy/postgres-init/30-create-system-db.sh.
+      - name: Create the system catalog database
+        run: |
+          psql "$ADMIN_URL" -v ON_ERROR_STOP=1 -c "CREATE DATABASE duckhaven_system"
+          psql "$ADMIN_URL" -v ON_ERROR_STOP=1 -c "REVOKE ALL ON DATABASE duckhaven_system FROM PUBLIC"
+          psql "$SYSTEM_URL" -v ON_ERROR_STOP=1 -c "REVOKE ALL ON SCHEMA public FROM PUBLIC"
+        env:
+          ADMIN_URL: postgresql://postgres:testpassword@localhost:5432/postgres
+          SYSTEM_URL: postgresql://postgres:testpassword@localhost:5432/duckhaven_system
       - name: Start Polaris + object store (S3)
         run: make polaris-dev
       # Boots the real API + agent over the live control channel; the harness

@@ -103,6 +103,19 @@ def _api_env(db_url: str, setup_token_file: Path) -> dict[str, str]:
                 "DUCKLAKE_AGENT_DATABASE": os.getenv("DUCKLAKE_AGENT_DATABASE", "ducklake"),
             }
         )
+    # Likewise the system catalog, whose tests skip without its database.
+    if system_url := os.getenv("SYSTEM_CATALOG_DATABASE_URL"):
+        env.update(
+            {
+                "SYSTEM_CATALOG_ENABLED": "true",
+                "SYSTEM_CATALOG_DATABASE_URL": system_url,
+                "SYSTEM_CATALOG_AGENT_HOST": os.getenv("SYSTEM_CATALOG_AGENT_HOST", "127.0.0.1"),
+                "SYSTEM_CATALOG_AGENT_PORT": os.getenv("SYSTEM_CATALOG_AGENT_PORT", "5432"),
+                "SYSTEM_CATALOG_AGENT_DATABASE": os.getenv(
+                    "SYSTEM_CATALOG_AGENT_DATABASE", "duckhaven_system"
+                ),
+            }
+        )
     if endpoint := os.getenv("POLARIS_S3_ENDPOINT"):
         env["S3_ENDPOINT"] = endpoint
     if internal := os.getenv("POLARIS_S3_ENDPOINT_INTERNAL"):

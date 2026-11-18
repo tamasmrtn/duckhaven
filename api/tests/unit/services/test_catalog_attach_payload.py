@@ -14,6 +14,7 @@ from api.models.catalog import KIND_DUCKLAKE, KIND_ICEBERG_POLARIS, Catalog
 from api.models.storage_backend import StorageBackend
 from api.models.user import Credential
 from api.services.session_credentials import build_catalog_attach, reset_storage_cache
+from duckhaven_shared.schemas import CatalogAttach
 
 
 def _catalog(kind: str, slug: str = "raw") -> Catalog:
@@ -248,3 +249,13 @@ async def test_iceberg_carries_no_catalog_options():
     """They are DuckLake catalog options; Iceberg has no such concept."""
     entry = await build_catalog_attach(_catalog(KIND_ICEBERG_POLARIS))
     assert "options" not in entry
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", [KIND_ICEBERG_POLARIS, KIND_DUCKLAKE])
+async def test_every_descriptor_is_a_shared_catalog_attach(kind):
+    """`CatalogAttach` is the wire shape both sides agree on (I5): a descriptor
+    that stops matching it fails here, not on an agent."""
+    entry = await build_catalog_attach(_catalog(kind))
+    parsed = CatalogAttach.model_validate(entry)
+    assert (parsed.slug, parsed.kind) == ("raw", kind)

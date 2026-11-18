@@ -10,6 +10,7 @@ import { semanticApi } from "@/api/semantic";
 import { worksheetsApi } from "@/api/worksheets";
 import { searchApi } from "@/api/search";
 import { auditApi } from "@/api/audit";
+import { systemCatalogApi } from "@/api/systemCatalog";
 
 // Each mocked endpoint must mirror the authoritative backend *Out schema. These
 // assert the realigned shapes; error paths use the built-in triggers + overrides.
@@ -557,6 +558,33 @@ describe("search contract", () => {
   it("returns the envelope, not a bare array, for a blank query", async () => {
     const res = await fetch("/api/workspaces/acme-analytics/search?q=");
     expect(await res.json()).toEqual({ items: [], has_more: false });
+  });
+});
+
+describe("system catalog contract", () => {
+  it("GET /workspaces/{ws}/system-catalog is a SystemCatalogOut", async () => {
+    const system = await systemCatalogApi.get("acme-analytics");
+    expect(Object.keys(system).sort()).toEqual([
+      "available",
+      "catalog",
+      "tables",
+    ]);
+    expect(system.tables.map((t) => `${t.schema_name}.${t.name}`)).toEqual([
+      "access.audit",
+      "access.grants",
+      "query.history",
+    ]);
+    for (const t of system.tables) {
+      expect(Object.keys(t).sort()).toEqual([
+        "columns",
+        "description",
+        "name",
+        "schema_name",
+      ]);
+      for (const c of t.columns) {
+        expect(Object.keys(c).sort()).toEqual(["name", "type"]);
+      }
+    }
   });
 });
 

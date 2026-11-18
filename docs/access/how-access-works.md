@@ -132,6 +132,7 @@ Dana is a data analyst:
 |---|---|---|
 | Let someone manage agents, storage or users | Layer 1 (global role) | **Admin** → **Users** |
 | Give someone access to a workspace's data | Layer 2 (workspace role) | **Admin** → **Users** → **Manage workspaces**, or a workspace owner adds them |
+| Let someone create workspaces | Layer 1 (global role) | **Admin** → **Users**: `workspaces:create` comes with `admin` |
 | Restrict access to specific schemas or tables | Layer 3 (data grants) | Catalog tree → right-click → **Permissions**, on a `scoped` catalog |
 | Reserve an agent for one team, or let someone restart it | Layer 4 (agent access) | **Compute** → the agent → **Access** |
 

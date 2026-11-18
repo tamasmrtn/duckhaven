@@ -1,3 +1,5 @@
+import uuid
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -26,6 +28,12 @@ async def user_permissions(db: AsyncSession, user: User) -> set[str]:
         other = await db.get(User, principal)
         granted &= await _role_permissions(db, other.role) if other is not None else set()
     return granted
+
+
+async def principal_permissions(db: AsyncSession, user_id: uuid.UUID) -> set[str]:
+    """``user_permissions`` of the user with id ``user_id``; none for an unknown id."""
+    user = await db.get(User, user_id)
+    return set() if user is None else await user_permissions(db, user)
 
 
 async def has_permission(db: AsyncSession, user: User, permission: Permission) -> bool:

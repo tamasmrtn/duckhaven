@@ -790,9 +790,10 @@ async def assert_query_access(
     by grant are rejected outright (:func:`metadata_enumeration_reason`) — the
     latter for the whole workspace once *any* attachment is scoped, including
     sessions whose active catalog is open. Runs for
-    both interactive and scheduled dispatch — the shared chokepoint. It is a
-    **no-op** when no attached catalog is scoped, so open workspaces never even
-    parse the SQL and keep today's behavior byte-for-byte.
+    both interactive and scheduled dispatch — the shared chokepoint. Past the
+    ``duckhaven`` system catalog's own check, which costs an open workspace a
+    substring test, it is a **no-op** when no attached catalog is scoped, so open
+    workspaces never parse the SQL.
 
     In such a workspace, files and URLs are readable only under
     ``staging_prefixes``, which only a SQL session passes
@@ -809,8 +810,13 @@ async def assert_query_access(
     unresolvable/unattached catalog reference, an unparseable statement, or a
     missing principal — all fail-closed.
     """
-    # Import here to avoid a module-level cycle with the workspace service.
+    # Import here to avoid module-level cycles with these services.
+    from api.services.system_catalog.authorize import assert_may_read
     from api.services.workspace import DEFAULT_SCHEMA
+
+    # In every workspace, open ones included. Past it, the system catalog's
+    # names are skipped below as already authorized.
+    await assert_may_read(db, principal_id, sql, active_catalog, catalogs)
 
     scoped_ids = await scoped_catalog_ids(db, workspace_id, catalogs)
     if not scoped_ids:

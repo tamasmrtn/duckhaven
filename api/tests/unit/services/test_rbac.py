@@ -1,7 +1,9 @@
+import uuid
+
 from api.models.user import User
 from api.services.permissions import Permission
 from api.services.provisioning import resolve_role
-from api.services.rbac import has_permission, seed_roles, user_permissions
+from api.services.rbac import has_permission, principal_permissions, seed_roles, user_permissions
 
 
 async def _make_user(db_session, role: str) -> User:
@@ -30,6 +32,12 @@ async def test_seed_roles_is_idempotent(db_session):
     await seed_roles(db_session)
     admin = await _make_user(db_session, "admin")
     assert len(await user_permissions(db_session, admin)) == len(set(Permission))
+
+
+async def test_principal_permissions_reads_the_user_by_id(db_session):
+    admin = await _make_user(db_session, "admin")
+    assert await principal_permissions(db_session, admin.id) == {p.value for p in Permission}
+    assert await principal_permissions(db_session, uuid.uuid4()) == set()
 
 
 def test_resolve_role_admin_wins():

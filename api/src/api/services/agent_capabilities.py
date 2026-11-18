@@ -19,6 +19,8 @@ _BACKEND_EXTENSION: dict[str, str] = {
 _CATALOG_KIND_EXTENSIONS: dict[str, tuple[str, ...]] = {
     "iceberg_polaris": (),
     "ducklake": ("ducklake", "postgres_scanner"),
+    # The `duckhaven` system catalog, attached through the `postgres` extension.
+    "system": ("postgres_scanner",),
 }
 
 

@@ -328,6 +328,9 @@ async def _submit(
             status_code=status.HTTP_403_FORBIDDEN,
             detail={"error": "grant_denied", "detail": str(exc)},
         ) from exc
+    except AgentNotDispatchable as exc:
+        # What only the statement decides, such as reading the system catalog.
+        raise not_dispatchable(exc) from None
     except query_service.AgentUnavailable:
         # Presence is read with a TTL, so the agent can lose its socket between the
         # probe above and the send. Same answer as the probe, rather than a 500.

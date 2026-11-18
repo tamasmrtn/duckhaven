@@ -53,6 +53,8 @@ from api.services.agent_dispatch import (
 from api.services.catalog_refs import dispatch_catalogs, statement_catalogs
 from api.services.migration.service import workspace_has_active_migration
 from api.services.sql_guard import assert_allowed, is_read_only
+from api.services.system_catalog import attach as system_attach
+from api.services.system_catalog.authorize import reads_system_catalog
 from api.services.workspace import (
     get_default_catalog,
     resolve_workspace_catalogs,
@@ -175,7 +177,7 @@ async def dispatch_query(
         "timeout_s": timeout_s,
         "active_catalog": prepared.active_catalog,
     }
-    payload.update(await _catalog_fields(prepared, prepared.attach, active_schema))
+    payload.update(await _catalog_fields(prepared, prepared.attach, active_schema, prepared.system))
     if stats_for is not None:
         # Ask the agent to also compute true table stats for this table.
         payload["stats_for"] = stats_for
@@ -242,6 +244,8 @@ class _Prepared:
     catalogs: list[Catalog]
     attach: list[Catalog]
     active_catalog: str
+    # The `duckhaven` system catalog's descriptor, when the statement reads it.
+    system: dict[str, object] | None = None
 
 
 async def _prepare(
@@ -324,14 +328,23 @@ async def _prepare(
     # rest on demand. Internal probes name their table's catalog explicitly.
     probed = [t["catalog"] for t in (stats_for, health_for, maintain_for) if t and t.get("catalog")]
     attach = statement_catalogs(query.sql, catalogs, active_catalog, also=probed)
-    return _Prepared(agent, catalogs, attach, active_catalog)
+    system = None
+    if reads_system_catalog(query.sql, catalogs):
+        system = await system_attach.descriptor(db, agent)
+    return _Prepared(agent, catalogs, attach, active_catalog, system)
 
 
 async def _catalog_fields(
-    prepared: _Prepared, attach: list[Catalog], active_schema: str | None
+    prepared: _Prepared,
+    attach: list[Catalog],
+    active_schema: str | None,
+    system: dict[str, object] | None,
 ) -> dict[str, object]:
-    """A dispatch frame's catalog fields, attaching ``attach``."""
+    """A dispatch frame's catalog fields, attaching ``attach``, and the system
+    catalog last when ``system`` is its descriptor."""
     fields = await dispatch_catalogs(prepared.agent, prepared.catalogs, attach)
+    if system is not None:
+        fields["catalogs"].append(system)
     if active_schema is not None:
         # `USE`d in place of the active catalog's `default_schema`, which the agent
         # also creates on a DuckLake attach: a chosen schema must never be created.
@@ -465,7 +478,8 @@ async def _send_batch(
             for q, _ in part
         ],
     }
-    payload.update(await _catalog_fields(first, attach, active_schema))
+    system = next((p.system for _, p in part if p.system is not None), None)
+    payload.update(await _catalog_fields(first, attach, active_schema, system))
     _mark_sent([q for q, _ in part], timeout_s)
     # Committed before the frame goes, as dispatch_query commits.
     await db.commit()

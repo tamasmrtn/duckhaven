@@ -109,6 +109,48 @@ a table the query read, or one was revoked since it ran.
 **What to do.** Ask for a grant on the tables the query read, or run a query on tables you can read. See
 [Scoped access](scoped-access.md#opening-a-result-needs-the-same-grants-as-running-its-query).
 
+## "Reading the duckhaven system catalog needs the audit:read and queries:admin permissions."
+
+**What it means.** The query reads the [system catalog](../querying/system-catalog.md), and your account lacks one of
+the two permissions. A query the assistant runs for you needs them for you as well as for itself.
+
+**What to do.** Ask an admin for the `admin` role, which holds both.
+
+## "The duckhaven system catalog is read-only: only a SELECT may name it."
+
+**What it means.** The statement writes to it, creates a table or view from it (`CREATE TABLE … AS`,
+`INSERT … SELECT`), or `EXPLAIN`s a query on it.
+
+**What to do.** Read it with a `SELECT`. To keep a copy, download the result.
+
+## "The duckhaven system catalog cannot be the current catalog or on the search path. …"
+
+**What it means.** A `USE`, `SET search_path` or `SET schema` statement names it, or the query was sent with
+`duckhaven` as its catalog.
+
+**What to do.** Keep a workspace catalog current, and name the system tables in full, as in `duckhaven.access.audit`.
+
+## "Name the duckhaven system catalog's tables in full: …"
+
+**What it means.** The query names `duckhaven` other than in `duckhaven.access.audit`, `duckhaven.access.grants` or
+`duckhaven.query.history`: a two-part name such as `duckhaven.audit`, another schema such as `duckhaven.pg_catalog`,
+or an alias or column called `duckhaven`.
+
+**What to do.** Write the three-part name, and rename the alias or column.
+
+## "The statement names the duckhaven system catalog and could not be parsed."
+
+**What it means.** DuckHaven cannot tell what the statement does with it. Either it does not parse, or it is a `PIVOT`
+in DuckDB's short form (`PIVOT duckhaven.access.audit ON …`), which DuckDB rewrites before it can be checked.
+
+**What to do.** Fix the syntax, or write the pivot in the standard form:
+
+```sql
+SELECT *
+FROM duckhaven.access.audit
+PIVOT (count(*) FOR outcome IN ('success', 'denied'));
+```
+
 ## "This action on agent '⟨name⟩' requires the '⟨tier⟩' tier."
 
 **What it means.** Restarting, terminating or administering an agent needs a tier above `use` on it.

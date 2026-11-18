@@ -4,13 +4,14 @@ type: how-to
 
 # Review access changes
 
-Find who changed someone's access, and what they changed, by filtering the access audit log on the **Audit** page or
-through the REST API.
+Find who changed someone's access, and what they changed, by filtering the access audit log on the **Audit** page,
+through the REST API, or in SQL.
 
 ## Before you begin
 
 - **You need:** the `audit:read` permission, which the `admin` role holds. For the REST API, also a token for it: your
-  own from `dh auth login`, or a [service account](service-accounts.md)'s with the `admin` role.
+  own from `dh auth login`, or a [service account](service-accounts.md)'s with the `admin` role. For SQL, also
+  `queries:admin`, which the `admin` role holds too.
 - **Applies to:** every deployment. The log is always on; [Access audit log](audit-log.md) explains what it records.
 
 ## In the web app
@@ -151,6 +152,37 @@ curl -s -H "Authorization: Bearer $DH_TOKEN" \
 `target.name` is what was typed into the sign-in form, and `request.source_ip` where it came from. Sign-ins refused
 for too many attempts are `auth.rate_limited`.
 
+## In SQL
+
+On the single-host Compose stack, the log is also the table `duckhaven.access.audit`, which you can query from any
+workspace and join with current access in `duckhaven.access.grants`; see
+[System catalog](../querying/system-catalog.md). It trails the **Audit** page by up to 10 seconds.
+
+### List the changes to one person's access
+
+In a worksheet, run:
+
+```sql
+SELECT event_time, action, actor_email, before, after
+FROM duckhaven.access.audit
+WHERE subject_email = 'ana@example.com'
+ORDER BY event_time DESC;
+```
+
+Each row is a role, membership, grant or token change made to Ana's account, by anyone, newest first.
+
+### Check who can read a catalog
+
+```sql
+SELECT principal_email, kind, level, schema_name, table_name, granted_by_email, granted_at
+FROM duckhaven.access.grants
+WHERE catalog_slug = 'sales' AND kind = 'catalog_grant'
+ORDER BY principal_email;
+```
+
+Each row is one data grant on `sales`; empty `schema_name` and `table_name` mean the whole catalog. Every column is in
+the [system catalog reference](../reference/system-catalog.md).
+
 ## If it goes wrong
 
 ### Admin has no Audit tab
@@ -176,6 +208,16 @@ The event the cursor points at was deleted by the retention purge. Start again w
 - It is outside the time range. The **Audit** page shows the last 30 days until you choose another range; the REST
   API returns every event unless you send `since` or `until`.
 - It is older than `AUDIT_RETENTION_DAYS`, 365 days by default.
+
+### SQL refused with "Reading the duckhaven system catalog needs the audit:read and queries:admin permissions."
+
+Your account lacks one of the two. An admin can give you the `admin` role in **Admin** → **Users**.
+
+### SQL fails with `422` and `"error": "system_catalog_unavailable"`
+
+The deployment has no system catalog, as on the HA stack, or its database is unreachable. Use the **Audit** page or the
+REST API, which read the log itself; see
+[Enable the system catalog database](../deployment/system-catalog.md#if-it-goes-wrong).
 
 ### A refusal shows once, though it happened many times
 

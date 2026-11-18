@@ -98,6 +98,11 @@ pages:
   section: Querying
   summary: Use the Connections view of History to see which SQL sessions are holding agents, what
     a dbt or dlt run did, and why a session ended.
+- path: querying/system-catalog.md
+  title: System catalog
+  section: Querying
+  summary: The duckhaven catalog lets admins query DuckHaven's own access audit log, current access
+    and query history in SQL, read-only, from any workspace.
 - path: querying/troubleshooting.md
   title: Troubleshoot queries
   section: Querying
@@ -262,7 +267,7 @@ pages:
   title: Review access changes
   section: Access
   summary: Find who changed someone's access, and what they changed, by filtering the access audit
-    log on the Audit page or through the REST API.
+    log on the Audit page, through the REST API, or in SQL.
 - path: access/troubleshooting.md
   title: Troubleshoot sign-in and access
   section: Access
@@ -397,6 +402,11 @@ pages:
   section: Reference
   summary: Every action the access audit log records, the fields each event carries, and what each
     action puts in before, after and details.
+- path: reference/system-catalog.md
+  title: System catalog tables
+  section: Reference
+  summary: Every table and column of the duckhaven system catalog, which admins query in SQL. What
+    it is and who can read it is in System catalog.
 - path: reference/agent-configuration.md
   title: Agent configuration
   section: Reference

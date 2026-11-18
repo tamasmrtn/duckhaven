@@ -8,7 +8,6 @@ from sqlalchemy import select, update
 
 from api.models.catalog import Catalog, WorkspaceCatalog
 from api.models.catalog_grant import CatalogGrant
-from api.models.storage_backend import StorageBackend
 from api.models.user import User
 from api.models.workspace import Workspace, WorkspaceMember
 from api.services.auth import hash_password
@@ -43,13 +42,7 @@ async def _scoped_env(auth_client, owner, db_session, fake_polaris):
     resp = await auth_client.post("/workspaces", json={"slug": "alpha", "name": "Alpha"})
     assert resp.status_code == 201, resp.text
     slug = resp.json()["slug"]
-    sb = StorageBackend(kind="object_store", name="primary", root_uri="", created_by=owner.id)
-    db_session.add(sb)
-    await db_session.commit()
-    await db_session.refresh(sb)
-    cat_resp = await auth_client.post(
-        f"/workspaces/{slug}/catalogs", json={"name": "alpha", "storage_backend_id": str(sb.id)}
-    )
+    cat_resp = await auth_client.post(f"/workspaces/{slug}/catalogs", json={"name": "alpha"})
     assert cat_resp.status_code == 201, cat_resp.text
 
     for schema, table in [("marketing", "leads"), ("finance", "ledger")]:

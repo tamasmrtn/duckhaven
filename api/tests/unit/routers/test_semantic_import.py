@@ -11,7 +11,6 @@ from __future__ import annotations
 import pytest
 from httpx import AsyncClient
 
-from api.models.storage_backend import StorageBackend
 from api.models.user import User
 from api.services.auth import hash_password
 
@@ -101,13 +100,9 @@ async def auth_client(client: AsyncClient, owner: User) -> AsyncClient:
 async def ws(auth_client, owner, db_session):
     resp = await auth_client.post("/workspaces", json={"slug": "imp", "name": "Imp"})
     slug = resp.json()["slug"]
-    backend = StorageBackend(kind="object_store", name="p", root_uri="", created_by=owner.id)
-    db_session.add(backend)
-    await db_session.commit()
-    await db_session.refresh(backend)
     await auth_client.post(
         f"/workspaces/{slug}/catalogs",
-        json={"name": "warehouse", "storage_backend_id": str(backend.id)},
+        json={"name": "warehouse"},
     )
     await auth_client.post(
         f"/workspaces/{slug}/catalogs/warehouse/schemas", json={"name": "analytics"}

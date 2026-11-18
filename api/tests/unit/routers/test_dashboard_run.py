@@ -277,18 +277,13 @@ def sessions(db_engine):
 @pytest.fixture
 async def ws(as_owner, owner, db_session) -> str:
     """A workspace whose `sales` model is published, with `revenue` and `orders`."""
-    from api.models.storage_backend import StorageBackend
 
     slug = (await as_owner.post("/workspaces", json={"slug": "dash", "name": "Dash"})).json()[
         "slug"
     ]
-    backend = StorageBackend(kind="object_store", name="p", root_uri="", created_by=owner.id)
-    db_session.add(backend)
-    await db_session.commit()
-    await db_session.refresh(backend)
     await as_owner.post(
         f"/workspaces/{slug}/catalogs",
-        json={"name": "warehouse", "storage_backend_id": str(backend.id)},
+        json={"name": "warehouse"},
     )
     await as_owner.post(
         f"/workspaces/{slug}/catalogs/warehouse/schemas", json={"name": "analytics"}

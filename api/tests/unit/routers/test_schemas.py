@@ -73,7 +73,7 @@ async def _make_workspace(
     # the workspace slug, so the catalog-scoped paths below read cleanly.
     cat = await auth_client.post(
         f"/workspaces/{slug}/catalogs",
-        json={"name": slug.replace("-", "_"), "storage_backend_id": str(backend.id)},
+        json={"name": slug.replace("-", "_")},
     )
     assert cat.status_code == 201, cat.text
     return resp.json()["slug"]

@@ -45,7 +45,7 @@ async def _make_workspace(
     assert resp.status_code == 201, resp.text
     cat = await auth_client.post(
         f"/workspaces/{slug}/catalogs",
-        json={"name": slug.replace("-", "_"), "storage_backend_id": str(backend.id)},
+        json={"name": slug.replace("-", "_")},
     )
     assert cat.status_code == 201, cat.text
     return resp.json()["slug"]
@@ -202,17 +202,11 @@ async def test_search_respects_scoped_catalog_grants(
     match under a different, ungranted schema — mirrors
     test_schema_grants.py's test_lists_are_filtered_to_granted_nodes, applied
     to search instead of the plain list endpoints."""
-    sb = StorageBackend(kind="object_store", name="primary", root_uri="", created_by=owner.id)
-    db_session.add(sb)
-    await db_session.commit()
-    await db_session.refresh(sb)
 
     resp = await auth_client.post("/workspaces", json={"slug": "alpha", "name": "Alpha"})
     assert resp.status_code == 201, resp.text
     slug = resp.json()["slug"]
-    cat_resp = await auth_client.post(
-        f"/workspaces/{slug}/catalogs", json={"name": "alpha", "storage_backend_id": str(sb.id)}
-    )
+    cat_resp = await auth_client.post(f"/workspaces/{slug}/catalogs", json={"name": "alpha"})
     assert cat_resp.status_code == 201, cat_resp.text
 
     for schema, table in [("marketing", "leads"), ("finance", "ledger")]:
@@ -280,7 +274,7 @@ async def test_one_broken_catalog_does_not_abort_the_whole_search(
     # is stale/missing — list_schemas raises for it, but not for "alpha".
     broken = await auth_client.post(
         f"/workspaces/{slug}/catalogs",
-        json={"name": "broken_cat", "storage_backend_id": str(backend.id)},
+        json={"name": "broken_cat"},
     )
     assert broken.status_code == 201, broken.text
     fake_polaris.raise_on_list_schemas["broken_cat"] = PolarisNotFoundError("missing namespace")

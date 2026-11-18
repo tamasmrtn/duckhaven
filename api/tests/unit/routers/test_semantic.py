@@ -13,7 +13,6 @@ from datetime import UTC, datetime
 import pytest
 from httpx import AsyncClient
 
-from api.models.storage_backend import StorageBackend
 from api.models.user import User
 from api.models.workspace import WorkspaceMember
 from api.services.auth import hash_password
@@ -51,13 +50,9 @@ async def ws(auth_client, owner, db_session):
     """A workspace with one catalog holding an orders/customers star."""
     resp = await auth_client.post("/workspaces", json={"slug": "sem", "name": "Sem"})
     slug = resp.json()["slug"]
-    backend = StorageBackend(kind="object_store", name="p", root_uri="", created_by=owner.id)
-    db_session.add(backend)
-    await db_session.commit()
-    await db_session.refresh(backend)
     await auth_client.post(
         f"/workspaces/{slug}/catalogs",
-        json={"name": "warehouse", "storage_backend_id": str(backend.id)},
+        json={"name": "warehouse"},
     )
     await auth_client.post(
         f"/workspaces/{slug}/catalogs/warehouse/schemas", json={"name": "analytics"}

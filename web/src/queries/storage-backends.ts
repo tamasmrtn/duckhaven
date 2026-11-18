@@ -4,10 +4,13 @@ import {
   type CreateStorageBackend,
 } from "@/api/storage-backends";
 
-export function useStorageBackends() {
+export function useStorageBackends({
+  enabled = true,
+}: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: ["admin", "storage-backends"],
     queryFn: storageBackendsApi.list,
+    enabled,
   });
 }
 

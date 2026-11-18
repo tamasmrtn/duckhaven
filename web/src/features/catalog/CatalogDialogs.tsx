@@ -28,6 +28,7 @@ import {
   useCreateStorageBackend,
   useStorageBackends,
 } from "@/queries/storage-backends";
+import { useMe } from "@/queries/auth";
 import type { CatalogKind } from "@/types/catalog";
 import type { AccessMode } from "@/types/grant";
 import { cn } from "@/utils";
@@ -75,7 +76,13 @@ export function CreateCatalogDialog({
     useState<CatalogKind>("iceberg_polaris");
   const offerKindChoice = kinds.filter((k) => k.available).length > 1;
 
-  const { data: backends = [] } = useStorageBackends();
+  // Naming a backend takes storage:manage; without it the API provisions
+  // bundled storage, so there is nothing to choose.
+  const { data: me } = useMe();
+  const canChooseBackend = me?.permissions?.includes("storage:manage") ?? false;
+  const { data: backends = [] } = useStorageBackends({
+    enabled: canChooseBackend,
+  });
   const createBackend = useCreateStorageBackend();
   const [backendChoice, setBackendChoice] = useState<string>(BUNDLED);
   const [kind, setKind] = useState<ExternalKind>("s3");
@@ -202,68 +209,70 @@ export function CreateCatalogDialog({
             </div>
           )}
 
-          <div className="space-y-1.5">
-            <Label htmlFor="catalog-backend">Storage backend</Label>
-            <select
-              id="catalog-backend"
-              value={backendChoice}
-              onChange={(e) => setBackendChoice(e.target.value)}
-              className="h-9 w-full rounded-md border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-2 text-sm"
-            >
-              <option value={BUNDLED}>Bundled object storage</option>
-              {backends
-                .filter((b) => b.kind !== "object_store")
-                .map((b) => (
-                  <option key={b.id} value={b.id}>
-                    {b.name} ({KIND_LABELS[b.kind as ExternalKind]})
-                  </option>
-                ))}
-              <option value={NEW_BACKEND}>+ New external backend…</option>
-            </select>
-
-            {backendChoice === NEW_BACKEND && (
-              <div className="space-y-3 rounded-md border border-[var(--border-subtle)] p-3">
-                <div className="grid grid-cols-2 gap-2">
-                  {EXTERNAL_KINDS.map((k) => (
-                    <button
-                      key={k}
-                      type="button"
-                      onClick={() => setKind(k)}
-                      className={cn(
-                        "flex items-center gap-2 rounded-md border p-2 text-sm transition-colors",
-                        kind === k
-                          ? "border-[var(--brand-slate-blue)] bg-accent text-text-primary"
-                          : "border-[var(--border-subtle)] text-text-secondary hover:border-[var(--border-strong)]",
-                      )}
-                    >
-                      <StorageIcon kind={k} />
-                      {KIND_LABELS[k]}
-                    </button>
+          {canChooseBackend && (
+            <div className="space-y-1.5">
+              <Label htmlFor="catalog-backend">Storage backend</Label>
+              <select
+                id="catalog-backend"
+                value={backendChoice}
+                onChange={(e) => setBackendChoice(e.target.value)}
+                className="h-9 w-full rounded-md border border-[var(--border-subtle)] bg-[var(--bg-surface)] px-2 text-sm"
+              >
+                <option value={BUNDLED}>Bundled object storage</option>
+                {backends
+                  .filter((b) => b.kind !== "object_store")
+                  .map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.name} ({KIND_LABELS[b.kind as ExternalKind]})
+                    </option>
                   ))}
+                <option value={NEW_BACKEND}>+ New external backend…</option>
+              </select>
+
+              {backendChoice === NEW_BACKEND && (
+                <div className="space-y-3 rounded-md border border-[var(--border-subtle)] p-3">
+                  <div className="grid grid-cols-2 gap-2">
+                    {EXTERNAL_KINDS.map((k) => (
+                      <button
+                        key={k}
+                        type="button"
+                        onClick={() => setKind(k)}
+                        className={cn(
+                          "flex items-center gap-2 rounded-md border p-2 text-sm transition-colors",
+                          kind === k
+                            ? "border-[var(--brand-slate-blue)] bg-accent text-text-primary"
+                            : "border-[var(--border-subtle)] text-text-secondary hover:border-[var(--border-strong)]",
+                        )}
+                      >
+                        <StorageIcon kind={k} />
+                        {KIND_LABELS[k]}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="catalog-sb-name">Backend name</Label>
+                    <Input
+                      id="catalog-sb-name"
+                      value={backendName}
+                      onChange={(e) => setBackendName(e.target.value)}
+                      placeholder="primary-store"
+                      className="h-9"
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor="catalog-sb-uri">Root URI</Label>
+                    <Input
+                      id="catalog-sb-uri"
+                      value={rootUri}
+                      onChange={(e) => setRootUri(e.target.value)}
+                      placeholder={KIND_URI_PLACEHOLDER[kind]}
+                      className="h-9 font-mono text-xs"
+                    />
+                  </div>
                 </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="catalog-sb-name">Backend name</Label>
-                  <Input
-                    id="catalog-sb-name"
-                    value={backendName}
-                    onChange={(e) => setBackendName(e.target.value)}
-                    placeholder="primary-store"
-                    className="h-9"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label htmlFor="catalog-sb-uri">Root URI</Label>
-                  <Input
-                    id="catalog-sb-uri"
-                    value={rootUri}
-                    onChange={(e) => setRootUri(e.target.value)}
-                    placeholder={KIND_URI_PLACEHOLDER[kind]}
-                    className="h-9 font-mono text-xs"
-                  />
-                </div>
-              </div>
-            )}
-          </div>
+              )}
+            </div>
+          )}
 
           {/* Set here rather than only on the permissions panel: a catalog
               created open is readable by every workspace member from the moment

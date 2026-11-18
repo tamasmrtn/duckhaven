@@ -6,6 +6,7 @@ import { QueryClientProvider } from '@tanstack/react-query'
 import { server } from '@tests/mock/server'
 import { createTestQueryClient } from '@tests/utils'
 import { CreateCatalogDialog } from '@/features/catalog/CatalogDialogs'
+import { CURRENT_USER } from '@/mock/fixtures/users'
 
 function renderDialog() {
   const queryClient = createTestQueryClient()
@@ -153,5 +154,39 @@ describe('CreateCatalogDialog access mode', () => {
     expect(
       await screen.findByText(/you get full access to this catalog/i),
     ).toBeInTheDocument()
+  })
+
+  it('offers no backend choice without storage:manage, and never lists them', async () => {
+    const user = userEvent.setup()
+    let meServed = false
+    let listed = false
+    let body: Record<string, unknown> | undefined
+    server.use(
+      http.get('/api/me', () => {
+        meServed = true
+        return HttpResponse.json({ ...CURRENT_USER, role: 'user', permissions: [] })
+      }),
+      http.get('/api/admin/storage-backends', () => {
+        listed = true
+        return new HttpResponse(null, { status: 403 })
+      }),
+      http.post('/api/workspaces/:ws/catalogs', async ({ request }) => {
+        body = (await request.json()) as Record<string, unknown>
+        return HttpResponse.json(
+          { id: 'cat-new', slug: body.name, name: body.name },
+          { status: 201 },
+        )
+      }),
+    )
+    renderDialog()
+
+    await user.type(await screen.findByLabelText('Name'), 'staging')
+    await vi.waitFor(() => expect(meServed).toBe(true))
+    expect(screen.queryByLabelText('Storage backend')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /^create$/i }))
+
+    await vi.waitFor(() => expect(body).toBeDefined())
+    expect(body!.storage_backend_id).toBeUndefined()
+    expect(listed).toBe(false)
   })
 })

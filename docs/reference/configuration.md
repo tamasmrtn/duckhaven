@@ -113,9 +113,9 @@ Retention for the [access audit log](../access/audit-log.md).
 
 ### System catalog
 
-The read-only copy of the audit log, access, query history, lineage and each catalog's schemas, tables and columns in
-the `duckhaven_system` database, which people query in SQL as the [`duckhaven` catalog](../querying/system-catalog.md);
-see [Enable the system catalog database](../deployment/system-catalog.md). The bundled Compose stack needs none of these
+The read-only copy of DuckHaven's own records and of each catalog's schemas, tables and columns in the
+`duckhaven_system` database, which people query in SQL as the [`duckhaven` catalog](../querying/system-catalog.md); see
+[Enable the system catalog database](../deployment/system-catalog.md). The bundled Compose stack needs none of these
 set, and [Azure with Terraform](../deployment/azure-terraform.md#system-catalog) sets them itself.
 
 | Variable | Default | Description |
@@ -124,6 +124,7 @@ set, and [Azure with Terraform](../deployment/azure-terraform.md#system-catalog)
 | `SYSTEM_CATALOG_DATABASE_URL` | `postgresql+asyncpg://duckhaven:…@postgres:5432/duckhaven_system` | How the **API** reaches the database, as the owner. The login needs `CREATEROLE`, to create the reader login `dh_system_reader`. It honours `DB_AUTH_MODE`. |
 | `SYSTEM_CATALOG_PUBLISH_INTERVAL_S` | `10` | Seconds between copies. One replica copies at a time; while more is waiting than one copy takes, the next starts at once. |
 | `SYSTEM_CATALOG_QUERY_HISTORY_DAYS` | `365` | Days a finished query is kept in the copy, counted from when it finished, including queries of deleted workspaces. `0` keeps every query. Audit events follow `AUDIT_RETENTION_DAYS`. |
+| `SYSTEM_CATALOG_RETENTION_DAYS` | `365` | Days the copy keeps agent events and minutes, SQL sessions, table health samples and maintenance applies, after DuckHaven's own pages have dropped them and their agent or table is gone. `0` keeps every row. |
 | `SYSTEM_CATALOG_METADATA_REFRESH_S` | `900` | Seconds between whole reads of each catalog into `info_schema`, which picks up changes made outside DuckHaven. A change made through DuckHaven is read within a publish interval or two regardless. |
 | `SYSTEM_CATALOG_READER_CONNECTION_LIMIT` | `20` | Connections the reader login may hold at once. |
 | `SYSTEM_CATALOG_AGENT_HOST` / `SYSTEM_CATALOG_AGENT_PORT` | `postgres` / `5432` | How **agents** reach the database when a query reads the [system catalog](../querying/system-catalog.md). Set the host to an address reachable from the agent host when agents run elsewhere. |

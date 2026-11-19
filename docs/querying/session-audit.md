@@ -98,3 +98,4 @@ attribute: one session is one run of the tool.
 - [SQL sessions](sql-sessions.md) — what a session is and what it holds.
 - [SQL sessions API](../reference/sql-sessions-api.md#close-reasons) — the close reasons as the API reports them.
 - [Run queries](run-queries.md#find-an-earlier-run) — History.
+- [System catalog](system-catalog.md) — every session, in every workspace, in SQL as `duckhaven.query.sessions`.

@@ -137,7 +137,7 @@ names are reserved, because DuckDB or DuckHaven already uses them, and a catalog
 
 | Name | Used by |
 |---|---|
-| `duckhaven` | DuckHaven's [system catalog](../querying/system-catalog.md): the schemas, tables and columns you can see, the audit log, access, query history and lineage |
+| `duckhaven` | DuckHaven's [system catalog](../querying/system-catalog.md): the schemas, tables and columns you can see, and DuckHaven's own records of access, queries, compute and storage |
 | `system` | DuckDB's built-in catalog |
 | `temp` | DuckDB's temporary objects |
 | `memory` | DuckDB's default in-memory database |

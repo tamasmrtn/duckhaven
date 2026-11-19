@@ -108,7 +108,9 @@ timeline shows it as not running rather than up. The same sweep fails each query
 before the agent's connection closed, or one still running without a result past its timeout and a minute's grace. A
 query waiting in a connected agent's queue is left to wait. The minute rollup and the lifecycle trail are retained for
 `AGENT_METRICS_RETENTION_HOURS` (default one week); the trail always keeps each agent's most recent earlier event, so an
-agent that has been connected for longer than that still has a timeline.
+agent that has been connected for longer than that still has a timeline. Holders of `agents:manage` can query both for
+longer, a year by default, as `duckhaven.compute.agent_utilization` and `duckhaven.compute.agent_events` in the
+[system catalog](../querying/system-catalog.md).
 
 This is deliberately DuckHaven's own storage rather than the
 [Prometheus](../operations/monitoring.md#prometheus-metrics) or [tracing](../operations/tracing.md) pipelines below.

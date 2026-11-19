@@ -22,8 +22,9 @@ describe("system catalog completion", () => {
   it("holds every schema, table and column from the start", () => {
     const entry = systemCatalogEntry(systemCatalog);
 
-    expect(entry.schemas).toEqual(["access", "query"]);
+    expect(entry.schemas).toEqual(["info_schema", "access", "query"]);
     expect(entry.tablesBySchema).toEqual({
+      info_schema: ["catalogs", "schemata", "tables", "columns"],
       access: ["audit", "grants"],
       query: ["history"],
     });
@@ -35,6 +36,7 @@ describe("system catalog completion", () => {
 
   it("completes its schemas, tables and columns", () => {
     expect(complete("SELECT * FROM duckhaven.|").map((s) => s.label)).toEqual([
+      "info_schema",
       "access",
       "query",
     ]);

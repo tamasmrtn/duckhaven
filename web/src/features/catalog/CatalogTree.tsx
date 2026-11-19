@@ -706,14 +706,21 @@ function CatalogNode({
 
 // The `duckhaven` system catalog: the deployment's audit log, current access and
 // query history, read-only and readable only with `audit:read` and
-// `queries:admin`. It is not one of the workspace's catalogs, so it has no detail
-// pages or menu.
+// `queries:admin`. It is not one of the workspace's catalogs, so it has no menu,
+// and its detail panes are its own (`SystemCatalogDetail`).
 interface SystemCatalogNodeProps {
   system: SystemCatalog;
   onTableClick?: (catalog: string, schema: string, table: string) => void;
+  onCatalogClick?: (catalog: string) => void;
+  onSchemaClick?: (catalog: string, schema: string) => void;
 }
 
-function SystemCatalogNode({ system, onTableClick }: SystemCatalogNodeProps) {
+function SystemCatalogNode({
+  system,
+  onTableClick,
+  onCatalogClick,
+  onSchemaClick,
+}: SystemCatalogNodeProps) {
   const [open, toggleOpen] = useNodeOpen(nodeId.catalog(system.catalog));
   const schemas = useMemo(() => {
     const bySchema = new Map<string, SystemTable[]>();
@@ -725,21 +732,28 @@ function SystemCatalogNode({ system, onTableClick }: SystemCatalogNodeProps) {
 
   return (
     <div>
-      <button
-        type="button"
-        onClick={toggleOpen}
-        className="flex w-full items-center rounded text-sm font-semibold text-text-primary hover:bg-accent focus-visible:outline-2 focus-visible:outline-[var(--brand-slate-blue)]"
-        aria-expanded={open}
-        title="Built-in and read-only: this deployment's audit log, current access and query history"
-      >
-        <span className="shrink-0 p-1 text-text-secondary">
+      <div className="flex w-full items-center rounded text-sm font-semibold text-text-primary hover:bg-accent">
+        <button
+          type="button"
+          onClick={toggleOpen}
+          className="shrink-0 rounded p-1 text-text-secondary hover:text-text-primary focus-visible:outline-2 focus-visible:outline-[var(--brand-slate-blue)]"
+          aria-expanded={open}
+          aria-label={open ? "Collapse catalog" : "Expand catalog"}
+        >
           {open ? (
-            <ChevronDown className="size-3.5" />
+            <ChevronDown className="size-3.5 shrink-0" />
           ) : (
-            <ChevronRight className="size-3.5" />
+            <ChevronRight className="size-3.5 shrink-0" />
           )}
-        </span>
-        <span className="flex min-w-0 flex-1 items-center gap-1.5 py-1 pr-2">
+        </button>
+        <button
+          type="button"
+          onClick={() =>
+            onCatalogClick ? onCatalogClick(system.catalog) : toggleOpen()
+          }
+          title="Built-in and read-only: this deployment's audit log, current access and query history"
+          className="flex min-w-0 flex-1 items-center gap-1.5 rounded py-1 pr-2 focus-visible:outline-2 focus-visible:outline-[var(--brand-slate-blue)]"
+        >
           <Book className="size-3.5 shrink-0 text-[var(--brand-slate-blue)]" />
           <span className="truncate">{system.catalog}</span>
           {system.available ? (
@@ -755,8 +769,8 @@ function SystemCatalogNode({ system, onTableClick }: SystemCatalogNodeProps) {
               unavailable
             </span>
           )}
-        </span>
-      </button>
+        </button>
+      </div>
 
       {open && (
         <div className="ml-3 border-l border-[var(--border-subtle)] pl-2">
@@ -767,6 +781,7 @@ function SystemCatalogNode({ system, onTableClick }: SystemCatalogNodeProps) {
               schemaName={schemaName}
               tables={tables}
               onTableClick={onTableClick}
+              onSchemaClick={onSchemaClick}
             />
           ))}
         </div>
@@ -780,6 +795,7 @@ interface SystemSchemaNodeProps {
   schemaName: string;
   tables: SystemTable[];
   onTableClick?: (catalog: string, schema: string, table: string) => void;
+  onSchemaClick?: (catalog: string, schema: string) => void;
 }
 
 function SystemSchemaNode({
@@ -787,29 +803,37 @@ function SystemSchemaNode({
   schemaName,
   tables,
   onTableClick,
+  onSchemaClick,
 }: SystemSchemaNodeProps) {
   const [open, toggleOpen] = useNodeOpen(nodeId.schema(catalog, schemaName));
 
   return (
     <div>
-      <button
-        type="button"
-        onClick={toggleOpen}
-        className="flex w-full items-center rounded text-sm font-medium text-text-primary hover:bg-accent focus-visible:outline-2 focus-visible:outline-[var(--brand-slate-blue)]"
-        aria-expanded={open}
-      >
-        <span className="shrink-0 p-1 text-text-secondary">
+      <div className="flex w-full items-center rounded text-sm font-medium text-text-primary hover:bg-accent">
+        <button
+          type="button"
+          onClick={toggleOpen}
+          className="shrink-0 rounded p-1 text-text-secondary hover:text-text-primary focus-visible:outline-2 focus-visible:outline-[var(--brand-slate-blue)]"
+          aria-expanded={open}
+          aria-label={open ? "Collapse schema" : "Expand schema"}
+        >
           {open ? (
-            <ChevronDown className="size-3.5" />
+            <ChevronDown className="size-3.5 shrink-0" />
           ) : (
-            <ChevronRight className="size-3.5" />
+            <ChevronRight className="size-3.5 shrink-0" />
           )}
-        </span>
-        <span className="flex min-w-0 flex-1 items-center gap-1.5 py-1 pr-2">
+        </button>
+        <button
+          type="button"
+          onClick={() =>
+            onSchemaClick ? onSchemaClick(catalog, schemaName) : toggleOpen()
+          }
+          className="flex min-w-0 flex-1 items-center gap-1.5 rounded py-1 pr-2 focus-visible:outline-2 focus-visible:outline-[var(--brand-slate-blue)]"
+        >
           <Layers className="size-3.5 shrink-0 text-[var(--brand-maya-blue)]" />
           <span className="truncate">{schemaName}</span>
-        </span>
-      </button>
+        </button>
+      </div>
 
       {open && (
         <div className="ml-3 border-l border-[var(--border-subtle)] pl-2">
@@ -1023,8 +1047,8 @@ interface CatalogTreeProps {
   // (worksheet sidebar).
   onCatalogClick?: (catalog: string) => void;
   onSchemaClick?: (catalog: string, schema: string) => void;
-  // A table of the `duckhaven` system catalog, which has no detail pane; when
-  // omitted, clicking one shows its columns.
+  // A table of the `duckhaven` system catalog; when omitted, clicking one shows
+  // its columns.
   onSystemTableClick?: (catalog: string, schema: string, table: string) => void;
 }
 
@@ -1186,6 +1210,15 @@ export function CatalogTree({
             </div>
           ) : (
             <div className="space-y-0.5">
+              {/* First, ahead of the workspace's own catalogs, wherever they sort. */}
+              {systemCatalog && (
+                <SystemCatalogNode
+                  system={systemCatalog}
+                  onTableClick={onSystemTableClick}
+                  onCatalogClick={onCatalogClick}
+                  onSchemaClick={onSchemaClick}
+                />
+              )}
               {catalogs?.length === 0 && (
                 <p className="px-2 py-3 text-sm text-text-tertiary">
                   No catalogs attached.
@@ -1202,12 +1235,6 @@ export function CatalogTree({
                   onSchemaClick={onSchemaClick}
                 />
               ))}
-              {systemCatalog && (
-                <SystemCatalogNode
-                  system={systemCatalog}
-                  onTableClick={onSystemTableClick}
-                />
-              )}
             </div>
           )}
         </div>

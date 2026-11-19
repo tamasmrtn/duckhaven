@@ -22,3 +22,19 @@ export function useSystemCatalog(ws: string) {
     staleTime: 5 * 60_000,
   });
 }
+
+/** A system table's first rows, for its page. It runs on an agent, as any
+ * table's preview does. */
+export function useSystemTableSample(
+  ws: string,
+  schema: string,
+  table: string,
+) {
+  return useQuery({
+    queryKey: ["workspace", ws, "system-catalog", schema, table, "sample"],
+    queryFn: () => systemCatalogApi.sampleRows(ws, schema, table),
+    enabled: !!ws && !!schema && !!table,
+    // A refusal or a missing agent is not worth retrying: say so at once.
+    retry: false,
+  });
+}

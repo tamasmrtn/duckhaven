@@ -565,6 +565,17 @@ describe("CatalogTree", () => {
 });
 
 describe("CatalogTree system catalog", () => {
+  it("lists the duckhaven catalog first, ahead of the workspace's catalogs", async () => {
+    renderTree(vi.fn(), { expanded: [] });
+
+    const system = await screen.findByRole("button", { name: /duckhaven/ });
+    // `acme_analytics` sorts before it: only its place in the tree puts it first.
+    const own = await screen.findByRole("button", { name: /^acme_analytics/ });
+    expect(
+      system.compareDocumentPosition(own) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
   it("lists the duckhaven catalog's schemas, tables and columns for someone who may read it", async () => {
     const user = userEvent.setup();
     renderTree(vi.fn(), { expanded: [] });

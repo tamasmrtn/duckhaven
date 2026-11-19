@@ -43,7 +43,21 @@ AUDITED = (
     "access.audit,access.credentials,access.grants,access.table_access,access.users,"
     f"access.workspaces,{INFO},lineage.column_lineage,lineage.table_lineage"
 )
-ALL_TABLES = f"{AUDITED},query.history"
+ALL_TABLES = ",".join(
+    sorted(
+        [
+            *AUDITED.split(","),
+            "compute.agent_events",
+            "compute.agent_utilization",
+            "compute.agents",
+            "jobs.schedules",
+            "query.history",
+            "query.sessions",
+            "storage.maintenance_operations",
+            "storage.table_health",
+        ]
+    )
+)
 
 
 class MockWebSocket:

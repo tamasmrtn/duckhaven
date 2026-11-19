@@ -1,5 +1,5 @@
-"""Copies the audit log, current access, query history and lineage into the system
-catalog store.
+"""Copies the audit log, access, query history, lineage, compute, jobs and table
+health into the system catalog store.
 
 Every ``SYSTEM_CATALOG_PUBLISH_INTERVAL_S`` one replica, whichever takes the
 advisory lock, runs a tick: one transaction on the store that copies what changed
@@ -30,9 +30,17 @@ copy and the next one starts where the last committed one stopped.
   ``_acl`` tables the row filters consult, from the same read.
 - **lineage.table_lineage** and **lineage.column_lineage** are replaced whole every
   5 minutes.
+- **compute.agent_events**, **compute.agent_utilization**, **query.sessions** and
+  **storage.table_health** are copied like query.history, in order of the time each
+  row records, with the last 15 minutes re-read once a minute. A session the copy
+  still holds as live is re-read every tick until it ends. They outlive the
+  source's rows, for ``SYSTEM_CATALOG_RETENTION_DAYS``.
+- **storage.maintenance_operations** is read whole every tick: the source keeps
+  only each recommendation's latest run, and the copy keeps one row per run.
+- **compute.agents** and **jobs.schedules** are replaced whole every minute.
 
-A tick copies at most ``BATCH`` rows of each kind; while either is behind, the
-next tick starts at once instead of after the interval.
+A tick copies at most ``BATCH`` rows of each kind; while any is behind, the next
+tick starts at once instead of after the interval.
 """
 
 from __future__ import annotations
@@ -40,6 +48,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
+from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -50,13 +60,15 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession, async_sessionm
 from sqlalchemy.orm import aliased
 
 from api.config import settings
-from api.models.agent import Agent
+from api.models.agent import Agent, AgentLifecycleEvent, AgentMetricsMinute
 from api.models.agent_grant import AgentGrant
 from api.models.audit import AuditEvent
 from api.models.catalog import Catalog, WorkspaceCatalog
 from api.models.catalog_grant import CatalogGrant
 from api.models.lineage import LineageColumnEdge, LineageEdge
-from api.models.query import Query
+from api.models.maintenance import MaintenanceRecommendation, TableHealthSample
+from api.models.query import Query, SavedQuery, Schedule
+from api.models.sql_session import SqlSession
 from api.models.user import SERVICE_ACCOUNT_PROVIDER, Credential, User
 from api.models.workspace import Workspace, WorkspaceMember
 from api.services.query_history import HIDDEN_ORIGINS, profile_expr
@@ -71,6 +83,7 @@ _TICK_LOCK_KEY = 0x64687379
 BATCH = 5000
 GRANTS_REFRESH = timedelta(minutes=5)
 LINEAGE_REFRESH = timedelta(minutes=5)
+SNAPSHOT_REFRESH = timedelta(minutes=1)
 # Bumped when query.history gains columns, to copy every run again.
 HISTORY_VERSION = 2
 HISTORY_SWEEP_EVERY = timedelta(minutes=1)
@@ -104,12 +117,17 @@ async def publish_once(
         async with session_factory() as source:
             access_changed, audit_more = await _copy_audit(source, target, state, now)
             history_more = await _copy_history(source, target, state, now)
+            ops_more = await _copy_operations(source, target, state, now)
         if access_changed or _due(state, "grants", "synced_at", GRANTS_REFRESH, now):
             await _refresh_grants(session_factory, target, now)
             state["grants"] = {"synced_at": now.isoformat()}
         if _due(state, "lineage", "synced_at", LINEAGE_REFRESH, now):
             await _refresh_lineage(session_factory, target, now)
             state["lineage"] = {"synced_at": now.isoformat()}
+        if _due(state, "snapshots", "synced_at", SNAPSHOT_REFRESH, now):
+            async with session_factory() as source:
+                await _replace(target, await snapshot_rows(source, now))
+            state["snapshots"] = {"synced_at": now.isoformat()}
         if _due(state, "purge", "at", PURGE_EVERY, now):
             await _purge(target, now)
             state["purge"] = {"at": now.isoformat()}
@@ -121,7 +139,7 @@ async def publish_once(
                     set_={"value": stmt.excluded["value"], "updated_at": now},
                 )
             )
-    return audit_more or history_more
+    return audit_more or history_more or ops_more
 
 
 async def lag_seconds(now: datetime | None = None) -> dict[str, float]:
@@ -946,11 +964,361 @@ async def _refresh_lineage(
     await _replace(target, tables)
 
 
+# ── compute, sessions, table health and maintenance ───────────────────────────
+
+
+@dataclass(frozen=True)
+class _Feed:
+    """A source table copied in ``(time, key)`` order into ``table``, whose
+    ``columns`` hold that time and key."""
+
+    name: str
+    table: sa.Table
+    time: Any
+    key: Any
+    columns: tuple[str, str]
+    select: Callable[[], sa.Select]
+
+
+def _agent_events() -> sa.Select:
+    event = AgentLifecycleEvent
+    return sa.select(
+        event.id.label("event_id"),
+        event.agent_id,
+        Agent.name.label("agent_name"),
+        event.event,
+        event.reason,
+        event.at.label("event_time"),
+    ).join(Agent, Agent.id == event.agent_id)
+
+
+def _agent_minutes() -> sa.Select:
+    minute = AgentMetricsMinute
+    return sa.select(
+        minute.agent_id,
+        minute.minute,
+        Agent.name.label("agent_name"),
+        minute.cpu_avg.label("cpu_avg_percent"),
+        minute.cpu_max.label("cpu_max_percent"),
+        minute.mem_avg.label("memory_avg_percent"),
+        minute.mem_max.label("memory_max_percent"),
+        minute.running_max.label("running_queries_max"),
+        minute.queued_max.label("queued_queries_max"),
+        minute.session_max.label("sessions_max"),
+        minute.sample_count,
+        minute.covered_s.label("covered_seconds"),
+        minute.oom_kills,
+    ).join(Agent, Agent.id == minute.agent_id)
+
+
+def _sessions() -> sa.Select:
+    session = SqlSession
+    return (
+        sa.select(
+            session.id.label("session_id"),
+            session.workspace_id,
+            Workspace.slug.label("workspace_slug"),
+            session.user_id,
+            User.email.label("user_email"),
+            session.agent_id,
+            Agent.name.label("agent_name"),
+            session.runtime_id,
+            session.status,
+            session.close_reason,
+            session.error,
+            session.client_name,
+            session.client_version,
+            session.active_catalog,
+            session.use_cache,
+            session.created_at,
+            session.opened_at,
+            session.last_active_at,
+            session.closed_at,
+        )
+        .select_from(session)
+        .join(Workspace, Workspace.id == session.workspace_id)
+        .outerjoin(User, User.id == session.user_id)
+        .outerjoin(Agent, Agent.id == session.agent_id)
+    )
+
+
+def _table_health() -> sa.Select:
+    sample = TableHealthSample
+    return (
+        sa.select(
+            sample.id.label("sample_id"),
+            sample.scanned_at,
+            sample.catalog_id,
+            Catalog.slug.label("catalog_name"),
+            sample.workspace_id,
+            Workspace.slug.label("workspace_slug"),
+            sample.schema_name,
+            sample.table_name,
+            sample.score,
+            sample.snapshot_count,
+            sample.snapshot_id,
+            sample.oldest_snapshot_age_days,
+            sample.data_file_count,
+            sample.manifest_count,
+            sample.total_data_bytes,
+            sample.avg_file_bytes,
+            sample.metadata_bytes,
+            sample.orphan_bytes,
+            sample.orphan_file_count,
+            sample.small_file_ratio,
+            sample.factors,
+        )
+        .select_from(sample)
+        .join(Catalog, Catalog.id == sample.catalog_id)
+        .outerjoin(Workspace, Workspace.id == sample.workspace_id)
+    )
+
+
+_FEEDS = (
+    _Feed(
+        "agent_events",
+        store.AGENT_EVENTS,
+        AgentLifecycleEvent.at,
+        AgentLifecycleEvent.id,
+        ("event_time", "event_id"),
+        _agent_events,
+    ),
+    _Feed(
+        "agent_utilization",
+        store.AGENT_UTILIZATION,
+        AgentMetricsMinute.minute,
+        AgentMetricsMinute.agent_id,
+        ("minute", "agent_id"),
+        _agent_minutes,
+    ),
+    _Feed(
+        "sessions",
+        store.SESSIONS,
+        SqlSession.created_at,
+        SqlSession.id,
+        ("created_at", "session_id"),
+        _sessions,
+    ),
+    _Feed(
+        "table_health",
+        store.TABLE_HEALTH,
+        TableHealthSample.scanned_at,
+        TableHealthSample.id,
+        ("scanned_at", "sample_id"),
+        _table_health,
+    ),
+)
+_SESSION_ENDED = ("closed", "expired", "failed")
+
+
+async def _copy_operations(
+    source: AsyncSession, target: AsyncConnection, state: dict, now: datetime
+) -> bool:
+    """Copy each feed, the sessions still live, and maintenance runs; return more waiting."""
+    days = settings.system_catalog_retention_days
+    floor = now - timedelta(days=days) if days else None
+    more = False
+    for feed in _FEEDS:
+        more = await _copy_feed(source, target, state, feed, floor, now) or more
+    if live := list(
+        await target.scalars(
+            sa.select(store.SESSIONS.c.session_id).where(
+                store.SESSIONS.c.status.notin_(_SESSION_ENDED)
+            )
+        )
+    ):
+        sessions = await source.execute(_sessions().where(SqlSession.id.in_(live)))
+        await _upsert(target, store.SESSIONS, list(sessions))
+    await _upsert(target, store.MAINTENANCE_OPERATIONS, await maintenance_rows(source, floor))
+    return more
+
+
+async def _copy_feed(
+    source: AsyncSession,
+    target: AsyncConnection,
+    state: dict,
+    feed: _Feed,
+    floor: datetime | None,
+    now: datetime,
+) -> bool:
+    cursor = state.get(feed.name, {})
+    after = _run_position(cursor.get("after"))
+    order = (feed.time, feed.key)
+    base = feed.select() if floor is None else feed.select().where(feed.time >= floor)
+    new = list(
+        await source.execute(
+            (base if after is None else base.where(_after(*order, after)))
+            .order_by(*order)
+            .limit(BATCH)
+        )
+    )
+    late: list[Row] = []
+    swept_at = cursor.get("swept_at")
+    if after and _older_than(swept_at, now, HISTORY_SWEEP_EVERY):
+        late = list(
+            await source.execute(
+                base.where(feed.time >= after[0] - HISTORY_LATE_WINDOW, ~_after(*order, after))
+            )
+        )
+        swept_at = now.isoformat()
+    await _upsert(target, feed.table, [*new, *late])
+    if new:
+        last = new[-1]._mapping
+        position = [last[feed.columns[0]].isoformat(), str(last[feed.columns[1]])]
+    else:
+        position = cursor.get("after")
+    state[feed.name] = {"after": position, "swept_at": swept_at}
+    return len(new) == BATCH
+
+
+async def maintenance_rows(source: AsyncSession, floor: datetime | None) -> list[Row]:
+    """Each recommendation's latest maintenance run, started at or after ``floor``."""
+    rec = MaintenanceRecommendation
+    stmt = (
+        sa.select(
+            rec.applied_query_id.label("query_id"),
+            rec.id.label("recommendation_id"),
+            rec.kind,
+            rec.catalog_id,
+            Catalog.slug.label("catalog_name"),
+            rec.workspace_id,
+            Workspace.slug.label("workspace_slug"),
+            rec.schema_name,
+            rec.table_name,
+            rec.apply_status.label("status"),
+            rec.apply_error.label("error"),
+            rec.apply_result.label("result"),
+            rec.applied_at.label("started_at"),
+            Query.finished_at,
+            rec.applied_by.label("applied_by_id"),
+            User.email.label("applied_by_email"),
+        )
+        .select_from(rec)
+        .join(Catalog, Catalog.id == rec.catalog_id)
+        .outerjoin(Workspace, Workspace.id == rec.workspace_id)
+        .outerjoin(Query, Query.id == rec.applied_query_id)
+        .outerjoin(User, User.id == rec.applied_by)
+        .where(rec.applied_query_id.is_not(None))
+    )
+    if floor is not None:
+        stmt = stmt.where(rec.applied_at >= floor)
+    return list(await source.execute(stmt))
+
+
+async def snapshot_rows(source: AsyncSession, now: datetime) -> dict[sa.Table, list[dict]]:
+    """Every agent and every schedule, as they are now."""
+    agents = (await source.scalars(sa.select(Agent))).all()
+    last_run, creator = aliased(Query), aliased(User)
+    schedules = await source.execute(
+        sa.select(
+            Schedule,
+            Workspace.slug,
+            Workspace.timezone,
+            SavedQuery.name,
+            Agent.name,
+            creator.email,
+            last_run.status,
+        )
+        .select_from(Schedule)
+        .join(Workspace, Workspace.id == Schedule.workspace_id)
+        .outerjoin(SavedQuery, SavedQuery.id == Schedule.saved_query_id)
+        .outerjoin(Agent, Agent.id == Schedule.agent_id)
+        .outerjoin(creator, creator.id == Schedule.created_by)
+        .outerjoin(last_run, last_run.id == Schedule.last_run_query_id)
+    )
+    return {
+        store.AGENTS: [_agent_row(agent, now) for agent in agents],
+        store.SCHEDULES: [
+            {
+                "schedule_id": schedule.id,
+                "workspace_id": schedule.workspace_id,
+                "workspace_slug": workspace_slug,
+                "job_type": schedule.job_type,
+                "saved_query_id": schedule.saved_query_id,
+                "saved_query_name": saved_query_name,
+                "agent_id": schedule.agent_id,
+                "agent_name": agent_name,
+                "cron": schedule.cron,
+                "timezone": timezone,
+                "enabled": schedule.enabled,
+                "next_run_at": schedule.next_run_at,
+                "last_run_at": schedule.last_run_at,
+                "last_run_query_id": schedule.last_run_query_id,
+                "last_run_status": last_run_status,
+                "created_by_id": schedule.created_by,
+                "created_by_email": created_by_email,
+                "created_at": schedule.created_at,
+                "snapshot_time": now,
+            }
+            for (
+                schedule,
+                workspace_slug,
+                timezone,
+                saved_query_name,
+                agent_name,
+                created_by_email,
+                last_run_status,
+            ) in schedules
+        ],
+    }
+
+
+def _agent_row(agent: Agent, now: datetime) -> dict[str, Any]:
+    # What the agent reported when it registered; empty until it has.
+    reported = agent.capabilities or {}
+    return {
+        "agent_id": agent.id,
+        "name": agent.name,
+        "kind": "static" if agent.provider is None else "elastic",
+        "provider": agent.provider,
+        "status": agent.status,
+        "lifecycle": agent.lifecycle,
+        "access_mode": agent.access_mode,
+        "runtime_id": reported.get("runtime_id") or agent.requested_runtime_id,
+        "duckdb_version": reported.get("duckdb_version"),
+        "agent_version": reported.get("agent_version"),
+        "cores": reported.get("cores"),
+        "memory_limit_gb": reported.get("memory_limit_gb"),
+        "requested_cpu": agent.requested_cpu,
+        "requested_memory_gb": agent.requested_memory_gb,
+        "idle_timeout_s": agent.idle_timeout_s,
+        "max_timeout_s": agent.requested_max_timeout_s,
+        "created_at": agent.created_at,
+        "provisioned_at": agent.provisioned_at,
+        "terminated_at": agent.terminated_at,
+        "last_ping_at": agent.last_ping_at,
+        "last_active_at": agent.last_active_at,
+        "snapshot_time": now,
+    }
+
+
+async def _upsert(target: AsyncConnection, table: sa.Table, rows: list[Row]) -> None:
+    """Insert or update ``rows`` by ``table``'s primary key, writing only what changed."""
+    key = [c.name for c in table.primary_key]
+    # One statement cannot update the same row twice.
+    unique = {tuple(r._mapping[k] for k in key): dict(r._mapping) for r in rows}
+    if not unique:
+        return
+    stmt = pg_insert(table)
+    columns = [c.name for c in table.columns if c.name not in key]
+    await target.execute(
+        stmt.on_conflict_do_update(
+            index_elements=key,
+            set_={c: stmt.excluded[c] for c in columns},
+            where=sa.tuple_(*(table.c[c] for c in columns)).is_distinct_from(
+                sa.tuple_(*(stmt.excluded[c] for c in columns))
+            ),
+        ),
+        list(unique.values()),
+    )
+
+
 # ── Retention ─────────────────────────────────────────────────────────────────
 
 
 async def _purge(target: AsyncConnection, now: datetime) -> None:
-    """Delete what the copy keeps no longer: audit events as the source does."""
+    """Delete what the copy keeps no longer: audit events as the source does, the
+    rest by their own retention settings."""
     if days := settings.audit_retention_days:
         await target.execute(
             sa.delete(store.AUDIT).where(store.AUDIT.c.event_time < now - timedelta(days=days))
@@ -959,6 +1327,12 @@ async def _purge(target: AsyncConnection, now: datetime) -> None:
         for table in (store.HISTORY, store.TABLE_ACCESS):
             await target.execute(
                 sa.delete(table).where(table.c.finished_at < now - timedelta(days=days))
+            )
+    if days := settings.system_catalog_retention_days:
+        kept = [(feed.table, feed.columns[0]) for feed in _FEEDS]
+        for table, column in [*kept, (store.MAINTENANCE_OPERATIONS, "started_at")]:
+            await target.execute(
+                sa.delete(table).where(table.c[column] < now - timedelta(days=days))
             )
 
 

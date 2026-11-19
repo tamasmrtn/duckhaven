@@ -74,8 +74,15 @@ async def test_an_admin_gets_its_tables_with_the_types_duckdb_reports(client, ad
         ("access", "credentials"),
         ("access", "table_access"),
         ("query", "history"),
+        ("query", "sessions"),
         ("lineage", "table_lineage"),
         ("lineage", "column_lineage"),
+        ("jobs", "schedules"),
+        ("compute", "agents"),
+        ("compute", "agent_events"),
+        ("compute", "agent_utilization"),
+        ("storage", "table_health"),
+        ("storage", "maintenance_operations"),
     ]
     # As an agent's DESCRIBE showed them, JSONB read as text included.
     audit = _columns(body, "access", "audit")
@@ -85,6 +92,7 @@ async def test_an_admin_gets_its_tables_with_the_types_duckdb_reports(client, ad
     assert audit["self_change"] == "BOOLEAN"
     assert audit["before"] == "VARCHAR"
     assert _columns(body, "query", "history")["row_count"] == "BIGINT"
+    assert _columns(body, "compute", "agent_utilization")["cpu_avg_percent"] == "DOUBLE"
     assert list(_columns(body, "access", "grants")) == [c.name for c in store.GRANTS.columns]
 
 
@@ -113,8 +121,15 @@ async def test_each_table_says_what_reading_it_takes(client, admin, workspace):
         ("access", "credentials"): "audit:read",
         ("access", "table_access"): "audit:read",
         ("query", "history"): "queries:admin",
+        ("query", "sessions"): "queries:admin",
         ("lineage", "table_lineage"): "audit:read",
         ("lineage", "column_lineage"): "audit:read",
+        ("jobs", "schedules"): "queries:admin",
+        ("compute", "agents"): "agents:manage",
+        ("compute", "agent_events"): "agents:manage",
+        ("compute", "agent_utilization"): "agents:manage",
+        ("storage", "table_health"): "maintenance:manage",
+        ("storage", "maintenance_operations"): "maintenance:manage",
     }
 
 

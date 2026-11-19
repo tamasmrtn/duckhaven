@@ -1,9 +1,10 @@
 """The system catalog's own database: its tables, and the login agents read it with.
 
-DuckHaven keeps a copy of the audit log, access, query history, lineage and
-catalog metadata in a database of their own (``duckhaven_system``), so an agent can
-be handed a login that reaches those tables and nothing else. Agents never connect to ``duckhaven``,
-which holds users, password hashes and session tokens.
+DuckHaven keeps a copy of the audit log, access, query history, lineage, catalog
+metadata, compute, jobs and table health in a database of their own
+(``duckhaven_system``), so an agent can be handed a login that reaches those
+tables and nothing else. Agents never connect to ``duckhaven``, which holds users,
+password hashes and session tokens.
 
 ``ensure()`` creates the schemas, the tables and the reader login, and re-applies
 the login's password, limits, grants and row filters. It is idempotent and
@@ -55,6 +56,7 @@ from duckhaven_shared.system_catalog import (
 logger = logging.getLogger(__name__)
 
 ACCESS, QUERY, INFO, LINEAGE = "access", "query", "info_schema", "lineage"
+COMPUTE, JOBS, STORAGE = "compute", "jobs", "storage"
 # Private: copy cursors, and what the row filters consult.
 STATE, ACL = "_state", "_acl"
 READER_ROLE = "dh_system_reader"
@@ -249,6 +251,180 @@ HISTORY = sa.Table(
     sa.Index("history_user_idx", "user_id", "finished_at"),
     sa.Index("history_workspace_idx", "workspace_id", "finished_at"),
     schema=QUERY,
+)
+
+SESSIONS = sa.Table(
+    "sessions",
+    METADATA,
+    sa.Column("session_id", _UUID, primary_key=True),
+    sa.Column("workspace_id", _UUID, nullable=False),
+    sa.Column("workspace_slug", sa.Text),
+    sa.Column("user_id", _UUID),
+    sa.Column("user_email", sa.Text),
+    sa.Column("agent_id", _UUID),
+    sa.Column("agent_name", sa.Text),
+    sa.Column("runtime_id", sa.Text),
+    sa.Column("status", sa.Text, nullable=False),
+    sa.Column("close_reason", sa.Text),
+    sa.Column("error", sa.Text),
+    sa.Column("client_name", sa.Text),
+    sa.Column("client_version", sa.Text),
+    sa.Column("active_catalog", sa.Text),
+    sa.Column("use_cache", sa.Boolean, nullable=False),
+    sa.Column("created_at", _TS, nullable=False),
+    sa.Column("opened_at", _TS),
+    sa.Column("last_active_at", _TS, nullable=False),
+    sa.Column("closed_at", _TS),
+    sa.Index("sessions_created_at_idx", "created_at"),
+    schema=QUERY,
+)
+
+
+# ── jobs: scheduled work, replaced every minute ───────────────────────────────
+
+SCHEDULES = sa.Table(
+    "schedules",
+    METADATA,
+    sa.Column("schedule_id", _UUID, primary_key=True),
+    sa.Column("workspace_id", _UUID, nullable=False),
+    sa.Column("workspace_slug", sa.Text),
+    sa.Column("job_type", sa.Text, nullable=False),
+    sa.Column("saved_query_id", _UUID),
+    sa.Column("saved_query_name", sa.Text),
+    sa.Column("agent_id", _UUID),
+    sa.Column("agent_name", sa.Text),
+    sa.Column("cron", sa.Text, nullable=False),
+    sa.Column("timezone", sa.Text),
+    sa.Column("enabled", sa.Boolean, nullable=False),
+    sa.Column("next_run_at", _TS),
+    sa.Column("last_run_at", _TS),
+    sa.Column("last_run_query_id", _UUID),
+    sa.Column("last_run_status", sa.Text),
+    sa.Column("created_by_id", _UUID),
+    sa.Column("created_by_email", sa.Text),
+    sa.Column("created_at", _TS),
+    sa.Column("snapshot_time", _TS, nullable=False),
+    schema=JOBS,
+)
+
+
+# ── compute: agents now, and what each did, kept past the source's own week ───
+
+AGENTS = sa.Table(
+    "agents",
+    METADATA,
+    sa.Column("agent_id", _UUID, primary_key=True),
+    sa.Column("name", sa.Text, nullable=False),
+    sa.Column("kind", sa.Text, nullable=False),
+    sa.Column("provider", sa.Text),
+    sa.Column("status", sa.Text, nullable=False),
+    sa.Column("lifecycle", sa.Text),
+    sa.Column("access_mode", sa.Text, nullable=False),
+    sa.Column("runtime_id", sa.Text),
+    sa.Column("duckdb_version", sa.Text),
+    sa.Column("agent_version", sa.Text),
+    sa.Column("cores", sa.Integer),
+    sa.Column("memory_limit_gb", sa.Float),
+    sa.Column("requested_cpu", sa.Float),
+    sa.Column("requested_memory_gb", sa.Float),
+    sa.Column("idle_timeout_s", sa.Float),
+    sa.Column("max_timeout_s", sa.Float),
+    sa.Column("created_at", _TS),
+    sa.Column("provisioned_at", _TS),
+    sa.Column("terminated_at", _TS),
+    sa.Column("last_ping_at", _TS),
+    sa.Column("last_active_at", _TS),
+    sa.Column("snapshot_time", _TS, nullable=False),
+    schema=COMPUTE,
+)
+
+AGENT_EVENTS = sa.Table(
+    "agent_events",
+    METADATA,
+    sa.Column("event_id", _UUID, primary_key=True),
+    sa.Column("agent_id", _UUID, nullable=False),
+    sa.Column("agent_name", sa.Text),
+    sa.Column("event", sa.Text, nullable=False),
+    sa.Column("reason", sa.Text),
+    sa.Column("event_time", _TS, nullable=False),
+    sa.Index("agent_events_time_idx", "event_time"),
+    sa.Index("agent_events_agent_idx", "agent_id", "event_time"),
+    schema=COMPUTE,
+)
+
+AGENT_UTILIZATION = sa.Table(
+    "agent_utilization",
+    METADATA,
+    sa.Column("agent_id", _UUID, primary_key=True),
+    sa.Column("minute", _TS, primary_key=True),
+    sa.Column("agent_name", sa.Text),
+    sa.Column("cpu_avg_percent", sa.Float, nullable=False),
+    sa.Column("cpu_max_percent", sa.Float, nullable=False),
+    sa.Column("memory_avg_percent", sa.Float, nullable=False),
+    sa.Column("memory_max_percent", sa.Float, nullable=False),
+    sa.Column("running_queries_max", sa.Integer, nullable=False),
+    sa.Column("queued_queries_max", sa.Integer, nullable=False),
+    sa.Column("sessions_max", sa.Integer, nullable=False),
+    sa.Column("sample_count", sa.Integer, nullable=False),
+    sa.Column("covered_seconds", sa.Float),
+    sa.Column("oom_kills", sa.Integer),
+    sa.Index("agent_utilization_minute_idx", "minute"),
+    schema=COMPUTE,
+)
+
+
+# ── storage: table health over time, and the maintenance run on it ────────────
+
+TABLE_HEALTH = sa.Table(
+    "table_health",
+    METADATA,
+    sa.Column("sample_id", _UUID, primary_key=True),
+    sa.Column("scanned_at", _TS, nullable=False),
+    sa.Column("catalog_id", _UUID, nullable=False),
+    sa.Column("catalog_name", sa.Text),
+    sa.Column("workspace_id", _UUID),
+    sa.Column("workspace_slug", sa.Text),
+    sa.Column("schema_name", sa.Text, nullable=False),
+    sa.Column("table_name", sa.Text, nullable=False),
+    sa.Column("score", sa.Integer),
+    sa.Column("snapshot_count", sa.Integer),
+    sa.Column("snapshot_id", sa.BigInteger),
+    sa.Column("oldest_snapshot_age_days", sa.Float),
+    sa.Column("data_file_count", sa.Integer),
+    sa.Column("manifest_count", sa.Integer),
+    sa.Column("total_data_bytes", sa.BigInteger),
+    sa.Column("avg_file_bytes", sa.BigInteger),
+    sa.Column("metadata_bytes", sa.BigInteger),
+    sa.Column("orphan_bytes", sa.BigInteger),
+    sa.Column("orphan_file_count", sa.Integer),
+    sa.Column("small_file_ratio", sa.Float),
+    sa.Column("factors", postgresql.JSONB),
+    sa.Index("table_health_scanned_at_idx", "scanned_at"),
+    sa.Index("table_health_table_idx", "catalog_id", "schema_name", "table_name", "scanned_at"),
+    schema=STORAGE,
+)
+
+MAINTENANCE_OPERATIONS = sa.Table(
+    "maintenance_operations",
+    METADATA,
+    sa.Column("query_id", _UUID, primary_key=True),
+    sa.Column("recommendation_id", _UUID),
+    sa.Column("kind", sa.Text, nullable=False),
+    sa.Column("catalog_id", _UUID, nullable=False),
+    sa.Column("catalog_name", sa.Text),
+    sa.Column("workspace_id", _UUID),
+    sa.Column("workspace_slug", sa.Text),
+    sa.Column("schema_name", sa.Text, nullable=False),
+    sa.Column("table_name", sa.Text, nullable=False),
+    sa.Column("status", sa.Text),
+    sa.Column("error", sa.Text),
+    sa.Column("result", postgresql.JSONB),
+    sa.Column("started_at", _TS),
+    sa.Column("finished_at", _TS),
+    sa.Column("applied_by_id", _UUID),
+    sa.Column("applied_by_email", sa.Text),
+    sa.Index("maintenance_operations_started_at_idx", "started_at"),
+    schema=STORAGE,
 )
 
 
@@ -484,10 +660,33 @@ TABLES: tuple[SystemTable, ...] = (
         TABLE_ACCESS, "Each table a finished query read or wrote", Permission.AUDIT_READ.value
     ),
     SystemTable(HISTORY, "Finished queries", Permission.QUERIES_ADMIN.value),
+    SystemTable(SESSIONS, "SQL sessions, open and ended", Permission.QUERIES_ADMIN.value),
     SystemTable(
         TABLE_LINEAGE, "Which tables feed which, and how often", Permission.AUDIT_READ.value
     ),
     SystemTable(COLUMN_LINEAGE, "Which columns feed which", Permission.AUDIT_READ.value),
+    SystemTable(SCHEDULES, "Scheduled jobs, and how each last ran", Permission.QUERIES_ADMIN.value),
+    SystemTable(AGENTS, "Every agent, and its state now", Permission.AGENTS_MANAGE.value),
+    SystemTable(
+        AGENT_EVENTS,
+        "Each time an agent started, connected, disconnected or stopped",
+        Permission.AGENTS_MANAGE.value,
+    ),
+    SystemTable(
+        AGENT_UTILIZATION,
+        "Each agent's CPU, memory and queue, minute by minute",
+        Permission.AGENTS_MANAGE.value,
+    ),
+    SystemTable(
+        TABLE_HEALTH,
+        "Each table's health at each maintenance scan",
+        Permission.MAINTENANCE_MANAGE.value,
+    ),
+    SystemTable(
+        MAINTENANCE_OPERATIONS,
+        "Each maintenance run on a table, and its outcome",
+        Permission.MAINTENANCE_MANAGE.value,
+    ),
 )
 # The schemas queries may read, in the order of their first table.
 SCHEMAS: tuple[str, ...] = tuple(dict.fromkeys(t.schema for t in TABLES))
@@ -500,6 +699,7 @@ _DUCKDB_TYPES: dict[type, str] = {
     sa.DateTime: "TIMESTAMP WITH TIME ZONE",
     sa.Integer: "INTEGER",
     sa.BigInteger: "BIGINT",
+    sa.Float: "DOUBLE",
     sa.Boolean: "BOOLEAN",
     sa.Text: "VARCHAR",
     postgresql.JSONB: "VARCHAR",

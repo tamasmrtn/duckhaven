@@ -30,9 +30,21 @@ describe("system catalog completion", () => {
       "jobs",
       "compute",
       "storage",
+      "ai",
     ]);
     expect(entry.tablesBySchema).toEqual({
-      info_schema: ["catalogs", "schemata", "tables", "columns"],
+      info_schema: [
+        "catalogs",
+        "schemata",
+        "tables",
+        "columns",
+        "routines",
+        "semantic_models",
+        "semantic_datasets",
+        "semantic_dimensions",
+        "semantic_metrics",
+        "semantic_relationships",
+      ],
       access: [
         "audit",
         "grants",
@@ -45,7 +57,8 @@ describe("system catalog completion", () => {
       lineage: ["table_lineage", "column_lineage"],
       jobs: ["schedules"],
       compute: ["agents", "agent_events", "agent_utilization"],
-      storage: ["table_health", "maintenance_operations"],
+      storage: ["table_health", "maintenance_operations", "backends"],
+      ai: ["assistant_usage", "tool_calls"],
     });
     expect(entry.columnsByTable["access.audit"]).toContainEqual({
       name: "event_time",
@@ -62,6 +75,7 @@ describe("system catalog completion", () => {
       "jobs",
       "compute",
       "storage",
+      "ai",
     ]);
     expect(
       complete("SELECT * FROM duckhaven.access.|").map((s) => s.label),

@@ -68,7 +68,24 @@ async def ready(api_client, workspace, healthy_agent) -> str:
         await asyncio.sleep(1.0)
 
 
-@pytest.mark.parametrize("table", ["access.audit", "access.grants", "query.history"])
+@pytest.mark.parametrize(
+    "table",
+    [
+        "info_schema.catalogs",
+        "info_schema.schemata",
+        "info_schema.tables",
+        "info_schema.columns",
+        "access.audit",
+        "access.grants",
+        "access.users",
+        "access.workspaces",
+        "access.credentials",
+        "access.table_access",
+        "query.history",
+        "lineage.table_lineage",
+        "lineage.column_lineage",
+    ],
+)
 async def test_an_admin_reads_each_table(api_client, workspace, ready, table) -> None:
     rows = await _rows(
         api_client, workspace, ready, f"SELECT count(*) AS n FROM duckhaven.{table};"
@@ -237,3 +254,42 @@ async def test_a_scoped_catalog_shows_a_member_only_what_a_grant_covers(
         f"WHERE catalog_name = '{catalog}';"
     )
     assert await _rows(client, workspace, ready, columns) == [{"table_name": "xc_granted"}]
+
+
+async def test_a_query_s_table_access_is_recorded(api_client, workspace, catalog, ready) -> None:
+    created = await _submit(
+        api_client,
+        workspace,
+        ready,
+        f"CREATE TABLE {catalog}.analytics.xc_access AS SELECT 1 AS id;",
+    )
+    assert created.status_code == 202, created.text
+    assert (await _finished(api_client, created.json()["id"]))["status"] == "done"
+    # Unqualified: resolved where the query ran.
+    read = await api_client.post(
+        f"/api/workspaces/{workspace}/queries",
+        json={
+            "sql": "SELECT count(*) FROM xc_access;",
+            "agent_id": ready,
+            "catalog": catalog,
+            "schema": "analytics",
+            "use_cache": False,
+        },
+    )
+    assert read.status_code == 202, read.text
+    query_id = read.json()["id"]
+    assert (await _finished(api_client, query_id))["status"] == "done"
+
+    sql = (
+        "SELECT catalog_name, schema_name, table_name, access FROM duckhaven.access.table_access "
+        f"WHERE query_id = '{query_id}';"
+    )
+    expected = [
+        {
+            "catalog_name": catalog,
+            "schema_name": "analytics",
+            "table_name": "xc_access",
+            "access": "read",
+        }
+    ]
+    await _until(api_client, workspace, ready, sql, expected)

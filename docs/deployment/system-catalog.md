@@ -7,10 +7,11 @@ type: how-to
 DuckHaven keeps a read-only copy of its access audit log, current access and query history in a second Postgres
 database, `duckhaven_system`, refreshed every 10 seconds.
 
-Admins query the copy in SQL as the `duckhaven` catalog; see [System catalog](../querying/system-catalog.md). It is
-kept apart from `duckhaven`, the database that holds users, password hashes and session tokens, so that agents can
-attach it through a login that reaches nothing else. The API creates that login, `dh_system_reader`, with a generated
-password; it can read the copied tables and nothing more.
+People query the copy in SQL as the `duckhaven` catalog, each table with the permission it needs; see
+[System catalog](../querying/system-catalog.md). It is kept apart from `duckhaven`, the database that holds users,
+password hashes and session tokens, so that agents can attach it through a login that reaches nothing else. The API
+creates that login, `dh_system_reader`, with a generated password; it can read the copied tables and nothing more.
+Row-level security on each table returns rows only to a query that may read that table.
 
 A new install creates the database on first start. An install that predates it needs one command; see
 [On an existing install](#on-an-existing-install).
@@ -163,6 +164,8 @@ docker compose exec postgres psql -U duckhaven -d duckhaven \
 - **A query on `duckhaven.access.audit` fails with `422` and `"error": "system_catalog_unavailable"`.** The system
   catalog is turned off, or the API replica that took the query cannot reach its database; the API log says which, as
   in the entries above.
+- **A query on it fails with `422` and `"error": "agent_incompatible"`, saying the agent is too old.** The agent's
+  image predates the release the API runs. Update the agent; see [Update DuckHaven](updating.md#agents).
 - **A query on it fails with `IO Error: Unable to connect to Postgres at …`.** The agent cannot reach
   `SYSTEM_CATALOG_AGENT_HOST` on `SYSTEM_CATALOG_AGENT_PORT`. On the bundled stack that is `postgres:5432`; for an
   agent on another host, set them to an address it can reach and restart the API.

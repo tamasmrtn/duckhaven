@@ -32,7 +32,7 @@
 - [Connect dbt](https://tamasmrtn.github.io/duckhaven/querying/connect-dbt/): Run a dbt project on DuckHaven with the dbt-duckhaven adapter, so models build in your catalogs on DuckHaven's agents.
 - [Load data with dlt](https://tamasmrtn.github.io/duckhaven/querying/load-data-with-dlt/): Load data from any dlt source into DuckHaven tables with the dlt-duckhaven destination.
 - [Read the session audit trail](https://tamasmrtn.github.io/duckhaven/querying/session-audit/): Use the Connections view of History to see which SQL sessions are holding agents, what a dbt or dlt run did, and why a session ended.
-- [System catalog](https://tamasmrtn.github.io/duckhaven/querying/system-catalog/): The duckhaven catalog lets admins query DuckHaven's own access audit log, current access and query history in SQL, read-only, from any workspace.
+- [System catalog](https://tamasmrtn.github.io/duckhaven/querying/system-catalog/): The duckhaven catalog lets you query DuckHaven's own access audit log, current access and query history in SQL, read-only, from any workspace.
 - [Troubleshoot queries](https://tamasmrtn.github.io/duckhaven/querying/troubleshooting/): Find the message you see in the results pane, in History, or in a tool's error, then follow what to do.
 
 ## Data & storage
@@ -118,7 +118,7 @@
 - [Dashboard files](https://tamasmrtn.github.io/duckhaven/reference/dashboard-spec/): A dashboard is one YAML file, <name>.dashboard.yml, that lists parameters and rows of widgets.
 - [Permissions](https://tamasmrtn.github.io/duckhaven/reference/permissions/): Every global permission, workspace role, data-grant tier and agent tier in DuckHaven, and what each one allows.
 - [Audit events](https://tamasmrtn.github.io/duckhaven/reference/audit-events/): Every action the access audit log records, the fields each event carries, and what each action puts in before, after and details.
-- [System catalog tables](https://tamasmrtn.github.io/duckhaven/reference/system-catalog/): Every table and column of the duckhaven system catalog, which admins query in SQL. What it is and who can read it is in System catalog.
+- [System catalog tables](https://tamasmrtn.github.io/duckhaven/reference/system-catalog/): Every table and column of the duckhaven system catalog, which you query in SQL with the permission each table needs.
 - [Agent configuration](https://tamasmrtn.github.io/duckhaven/reference/agent-configuration/): Every environment variable an agent reads; an agent needs only CONTROL_PLANE_URL and BOOTSTRAP_TOKEN.
 - [CLI reference](https://tamasmrtn.github.io/duckhaven/reference/cli/): Every dh command, its summary and its flags.
 - [REST API](https://tamasmrtn.github.io/duckhaven/reference/rest-api/): DuckHaven's REST API, under /api, does everything the web UI does, so any task can be scripted with a token.

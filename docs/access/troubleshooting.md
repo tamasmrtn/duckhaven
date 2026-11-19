@@ -109,12 +109,15 @@ a table the query read, or one was revoked since it ran.
 **What to do.** Ask for a grant on the tables the query read, or run a query on tables you can read. See
 [Scoped access](scoped-access.md#opening-a-result-needs-the-same-grants-as-running-its-query).
 
-## "Reading the duckhaven system catalog needs the audit:read and queries:admin permissions."
+## "Reading duckhaven.access.audit needs the audit:read permission."
 
-**What it means.** The query reads the [system catalog](../querying/system-catalog.md), and your account lacks one of
-the two permissions. A query the assistant runs for you needs them for you as well as for itself.
+**What it means.** The query reads a table of the [system catalog](../querying/system-catalog.md#who-can-read-it), and
+your account lacks the permission that table needs. The message names each such table, as in
+`Reading duckhaven.query.history needs the queries:admin permission.` A query the assistant runs for you needs the
+permission for you as well as for itself.
 
-**What to do.** Ask an admin for the `admin` role, which holds both.
+**What to do.** Ask an admin for a role that holds the permission the message names. The `admin` role holds them all;
+see [Permissions](../reference/permissions.md).
 
 ## "The duckhaven system catalog is read-only: only a SELECT may name it."
 

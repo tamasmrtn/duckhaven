@@ -4,15 +4,15 @@ type: concept
 
 # System catalog
 
-The `duckhaven` catalog lets admins query DuckHaven's own access audit log, current access and query history in SQL,
-read-only, from any workspace.
+The `duckhaven` catalog lets you query DuckHaven's own access audit log, current access and query history in SQL,
+read-only, from any workspace. Each table needs a permission of its own.
 
 !!! info "Availability"
     On the single-host Compose stack, on by default; see
     [Enable the system catalog database](../deployment/system-catalog.md). On
     [Azure with Terraform](../deployment/azure-terraform.md#system-catalog), on by default. The
-    [HA stack](../deployment/high-availability.md#limitations) has none. Reading it takes both the `audit:read` and
-    the `queries:admin` permission, which the `admin` role holds.
+    [HA stack](../deployment/high-availability.md#limitations) has none. Each table needs the permission listed in
+    [Who can read it](#who-can-read-it); the `admin` role holds them all.
 
 Name its tables in full, in a worksheet or any other query:
 
@@ -26,11 +26,11 @@ LIMIT 20;
 
 ## What it holds
 
-| Table | Holds |
-|---|---|
-| `duckhaven.access.audit` | Every event of the [access audit log](../access/audit-log.md) |
-| `duckhaven.access.grants` | Current access: one row per role, membership, catalog attachment, catalog grant, agent access mode, agent grant and workspace default compute |
-| `duckhaven.query.history` | Finished queries, with who ran them, where, on which agent and for how long |
+| Table | Holds | Needs |
+|---|---|---|
+| `duckhaven.access.audit` | Every event of the [access audit log](../access/audit-log.md) | `audit:read` |
+| `duckhaven.access.grants` | Current access: one row per role, membership, catalog attachment, catalog grant, agent access mode, agent grant and workspace default compute | `audit:read` |
+| `duckhaven.query.history` | Finished queries, with who ran them, where, on which agent and for how long | `queries:admin` |
 
 Every column, and how long each table keeps its rows, is in the
 [system catalog reference](../reference/system-catalog.md).
@@ -43,8 +43,8 @@ access change and at least every 5 minutes. For the events of the last few secon
 [Review access changes](../access/review-access-changes.md).
 
 The catalog is not one of the workspace's catalogs. A query that names one of its tables attaches it for that query,
-read-only, through a login that can read these three tables and nothing else. It joins with the workspace's own
-catalogs like any other:
+read-only, through a login that can read its tables and nothing else. It joins with the workspace's own catalogs like
+any other:
 
 ```sql
 SELECT h.finished_at, h.user_email, h.status, h.sql
@@ -73,15 +73,16 @@ each later statement is checked again.
 
 ### Find it in the catalog tree
 
-For someone who may read it, the catalog tree lists `duckhaven` first, ahead of the workspace's catalogs, badged
-*system*, with its tables and their columns. On the **Catalog** page, click it, one of its schemas or one of its tables
+For someone who may read any of its tables, the catalog tree lists `duckhaven` first, ahead of the workspace's
+catalogs, badged *system*, with the tables they may read and their columns. It is absent for someone who may read none
+of them. On the **Catalog** page, click it, one of its schemas or one of its tables
 to open its page, as for any catalog:
 
-- **The catalog's page** counts its schemas and tables. Under **Details** it says what the catalog holds, who can read
-  it and how fresh it is.
-- **A schema's page** lists its tables and what each holds.
-- **A table's page** lists its columns and previews its first 20 rows. The preview is a query like any other, so it
-  needs an agent connected. **Query this table** opens a worksheet holding
+- **The catalog's page** counts its schemas and tables. Under **Details** it says what the catalog holds and how fresh
+  it is, and lists each table you may read with the permission it needs.
+- **A schema's page** lists its tables, what each holds and the permission each needs.
+- **A table's page** says the permission it needs, lists its columns and previews its first 20 rows. The preview is a
+  query like any other, so it needs an agent connected. **Query this table** opens a worksheet holding
   `SELECT * FROM "duckhaven"."access"."audit" LIMIT 100;` for it.
 
 These pages are read-only. They have no way to alter, drop or grant anything, and no **History**, **Health**,
@@ -95,17 +96,27 @@ box does not find its tables.
 
 ### Who can read it
 
-A query that reads it needs both `audit:read` and `queries:admin`. A query made for someone else, by the
-[assistant](../ai/assistant.md) say, needs them for each person it runs for. Without them the query is refused with
-`403` and `"error": "grant_denied"`, and the message
-`Reading the duckhaven system catalog needs the audit:read and queries:admin permissions.`
+Each table needs one permission, and a query needs it for every table it reads:
+
+| Tables | Permission |
+|---|---|
+| `duckhaven.access.audit`, `duckhaven.access.grants` | `audit:read` |
+| `duckhaven.query.history` | `queries:admin` |
+
+The `admin` role holds both; the [permissions reference](../reference/permissions.md) lists what else each allows. A
+query made for someone else, by the [assistant](../ai/assistant.md) say, needs the permission for each person it runs
+for. Without it the query is refused with `403` and `"error": "grant_denied"`, and a message that names each table it
+may not read, such as `Reading duckhaven.query.history needs the queries:admin permission.`
+
+The system catalog's database applies the same rule itself: whatever a statement names, it returns rows only from the
+tables everyone the query runs for may read.
 
 The same check applies to opening a result. A colleague cannot open an admin's query on the system catalog from
 History, and the [result cache](result-cache.md) never serves one.
 
 ## Limits
 
-Only a `SELECT` that names its three tables in full may use it, so that its rows cannot be copied into a catalog other
+Only a `SELECT` that names its tables in full may use it, so that its rows cannot be copied into a catalog other
 people can read, and so that no later statement can read it without being checked. These are refused with `403` and
 `"error": "grant_denied"`, even for an admin:
 

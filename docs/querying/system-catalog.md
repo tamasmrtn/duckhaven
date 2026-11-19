@@ -73,10 +73,22 @@ each later statement is checked again.
 
 ### Find it in the catalog tree
 
-For someone who may read it, the catalog tree lists `duckhaven` after the workspace's catalogs, badged *system*, with
-its tables and their columns. On the **Catalog** page, click a table to open a worksheet holding
-`SELECT * FROM "duckhaven"."access"."audit" LIMIT 100;` for it. Beside the editor the tree only browses: drag a table
-into your SQL to insert its full name. The editor also completes its schemas, tables and columns after `duckhaven.`.
+For someone who may read it, the catalog tree lists `duckhaven` first, ahead of the workspace's catalogs, badged
+*system*, with its tables and their columns. On the **Catalog** page, click it, one of its schemas or one of its tables
+to open its page, as for any catalog:
+
+- **The catalog's page** counts its schemas and tables. Under **Details** it says what the catalog holds, who can read
+  it and how fresh it is.
+- **A schema's page** lists its tables and what each holds.
+- **A table's page** lists its columns and previews its first 20 rows. The preview is a query like any other, so it
+  needs an agent connected. **Query this table** opens a worksheet holding
+  `SELECT * FROM "duckhaven"."access"."audit" LIMIT 100;` for it.
+
+These pages are read-only. They have no way to alter, drop or grant anything, and no **History**, **Health**,
+**Lineage**, **Semantics** or **Permissions** tab.
+
+Beside the editor the tree only browses: drag a table into your SQL to insert its full name. The editor also completes
+its schemas, tables and columns after `duckhaven.`.
 
 The badge reads *unavailable* while the API cannot reach its database, and a query on it then fails. The tree's search
 box does not find its tables.

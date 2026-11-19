@@ -17,6 +17,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { Plus } from "lucide-react";
+import { useMe } from "@/queries/auth";
 import { useWorkspaces } from "@/queries/workspaces";
 import { StorageIcon } from "./StorageIcon";
 import type { WorkspaceMemberRole } from "@/types/workspace";
@@ -41,6 +42,8 @@ export function WorkspaceSwitcher({
 }: WorkspaceSwitcherProps) {
   const navigate = useNavigate();
   const { data: workspaces = [] } = useWorkspaces();
+  const { data: me } = useMe();
+  const canCreate = me?.permissions?.includes("workspaces:create") ?? false;
 
   function handleSelect(slug: string) {
     onClose();
@@ -99,20 +102,24 @@ export function WorkspaceSwitcher({
                 </CommandItem>
               ))}
             </CommandGroup>
-            <Separator />
-            <CommandGroup>
-              <CommandItem
-                value="__create"
-                onSelect={() => {
-                  onClose();
-                  void navigate({ to: "/welcome" });
-                }}
-                className="gap-2 text-text-secondary"
-              >
-                <Plus className="size-4" />
-                Create workspace…
-              </CommandItem>
-            </CommandGroup>
+            {canCreate && (
+              <>
+                <Separator />
+                <CommandGroup>
+                  <CommandItem
+                    value="__create"
+                    onSelect={() => {
+                      onClose();
+                      void navigate({ to: "/welcome" });
+                    }}
+                    className="gap-2 text-text-secondary"
+                  >
+                    <Plus className="size-4" />
+                    Create workspace…
+                  </CommandItem>
+                </CommandGroup>
+              </>
+            )}
           </CommandList>
         </Command>
       </DialogContent>

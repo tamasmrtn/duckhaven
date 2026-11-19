@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from conftest import seed_workspace
+from conftest import seed_owned_workspace, seed_workspace
 from fake_polaris import FakePolaris
 from httpx import AsyncClient
 
@@ -272,9 +272,8 @@ async def _login(client: AsyncClient, email: str) -> None:
 async def test_owner_cannot_attach_a_catalog_they_did_not_create(
     client, owner, db_session, fake_polaris
 ):
-    """Anyone can create a workspace and own it, so owning the target workspace
-    cannot be what lets a catalog in: that would open every catalog, scoped or
-    not, to every signed-in user."""
+    """Owning the target workspace cannot be what lets a catalog in: every
+    workspace owner could then reach every catalog, scoped or not."""
     await seed_workspace(db_session, user_id=owner.id, slug="fin", name="Fin")
     await _login(client, owner.email)
     created = await client.post(
@@ -282,10 +281,9 @@ async def test_owner_cannot_attach_a_catalog_they_did_not_create(
     )
     assert created.status_code == 201, created.text
 
-    await _user(db_session, "outsider@test.local")
-    await _login(client, "outsider@test.local")
-    mine = await client.post("/workspaces", json={"slug": "mine", "name": "Mine"})
-    assert mine.status_code == 201, mine.text
+    outsider = await _user(db_session, "outsider@test.local")
+    await seed_owned_workspace(db_session, user_id=outsider.id, slug="mine", name="Mine")
+    await _login(client, outsider.email)
 
     attach = await client.put("/workspaces/mine/catalogs/finance", json={})
     assert attach.status_code == 403

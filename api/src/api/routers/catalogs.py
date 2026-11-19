@@ -587,9 +587,9 @@ async def attach_workspace_catalog(
     binds an existing catalog rather than creating one.
 
     Workspace owner only. A new attachment also needs the catalog's creator or
-    `catalogs:admin`: anyone may create a workspace, so owning one cannot be
-    what lets a catalog into it. It starts in the mode the catalog is already
-    restricted by (see :func:`_inherited_access_mode`).
+    `catalogs:admin`: owning a workspace cannot be what lets a catalog into it,
+    or every owner would reach every catalog. It starts in the mode the catalog
+    is already restricted by (see :func:`_inherited_access_mode`).
     """
     workspace = await get_workspace(db, ws)
     if workspace is None:

@@ -17,6 +17,7 @@ export const CURRENT_USER: User = {
     "catalogs:admin",
     "queries:admin",
     "audit:read",
+    "workspaces:create",
   ],
   created_at: "2026-01-01T00:00:00Z",
 };

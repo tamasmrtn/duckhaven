@@ -1,4 +1,5 @@
 import pytest
+from conftest import seed_owned_workspace
 from httpx import AsyncClient
 from sqlalchemy import select
 
@@ -458,7 +459,7 @@ async def test_an_open_agent_needs_only_use_to_become_the_default(
     owner = await _plain_user(db_session, "dc-open-owner@test.local")
 
     await _login(auth_client, owner.email)
-    await auth_client.post("/workspaces", json={"slug": "dc-open", "name": "Ws"})
+    await seed_owned_workspace(db_session, user_id=owner.id, slug="dc-open", name="Ws")
     resp = await auth_client.patch("/workspaces/dc-open", json={"default_agent_id": str(agent.id)})
     assert resp.status_code == 200, resp.text
 
@@ -471,7 +472,7 @@ async def test_a_restricted_agent_needs_operate_to_become_the_default(
     agent = await _agent(db_session, "locked", access_mode="restricted")
     owner = await _plain_user(db_session, "dc-restricted-owner@test.local")
     await _login(auth_client, owner.email)
-    await auth_client.post("/workspaces", json={"slug": "dc-restricted", "name": "Ws"})
+    await seed_owned_workspace(db_session, user_id=owner.id, slug="dc-restricted", name="Ws")
 
     # No grant at all: the agent is invisible, so it answers 404 like a missing one.
     resp = await auth_client.patch(
@@ -527,7 +528,7 @@ async def test_resaving_an_unchanged_default_is_not_revalidated(
     db_session.add(AgentGrant(agent_id=agent.id, user_id=owner.id, tier="operate"))
     await db_session.commit()
     await _login(auth_client, owner.email)
-    await auth_client.post("/workspaces", json={"slug": "dc-lost", "name": "Ws"})
+    await seed_owned_workspace(db_session, user_id=owner.id, slug="dc-lost", name="Ws")
     first = await auth_client.patch("/workspaces/dc-lost", json={"default_agent_id": str(agent.id)})
     assert first.status_code == 200, first.text
 
@@ -567,3 +568,58 @@ async def test_a_time_zone_that_is_not_an_iana_name_is_refused(auth_client: Asyn
 
     assert resp.status_code == 422, resp.text
     assert (await auth_client.get("/workspaces/tz-bad")).json()["timezone"] == "UTC"
+
+
+async def test_creating_a_workspace_needs_workspaces_create(client: AsyncClient, db_session):
+    from audit_helpers import audit_events
+
+    from api.models.workspace import Workspace
+
+    member = await _plain_user(db_session, "no-create@test.local")
+    await _login(client, member.email)
+
+    resp = await client.post("/workspaces", json={"slug": "mine", "name": "Mine"})
+
+    assert resp.status_code == 403
+    assert (await db_session.execute(select(Workspace))).scalars().all() == []
+    (denied,) = await audit_events(db_session, category="authz")
+    assert (denied.action, denied.target_name, denied.details) == (
+        "authz.permission_denied",
+        "POST /workspaces",
+        {"permission": "workspaces:create"},
+    )
+
+
+async def test_a_token_needs_the_permission_too(client: AsyncClient, db_session):
+    from .test_delegated_requests import _bearer, _token
+
+    account = User(email="bot@service-account.local", name="Bot", role="user")
+    db_session.add(account)
+    await db_session.commit()
+
+    resp = await client.post(
+        "/workspaces",
+        json={"slug": "bots", "name": "Bots"},
+        headers=_bearer(await _token(db_session, account)),
+    )
+    assert resp.status_code == 403
+
+
+async def test_acting_for_someone_needs_both_to_hold_it(client: AsyncClient, db_session):
+    """The assistant's token: an admin account acting for a person creates only
+    what the person could."""
+    from .test_delegated_requests import _bearer, _token
+
+    account = User(email="assistant@service-account.local", name="Assistant", role="admin")
+    db_session.add(account)
+    await db_session.commit()
+    person = await _plain_user(db_session, "asker@test.local")
+
+    as_person = _bearer(await _token(db_session, account, on_behalf_of=person))
+    refused = await client.post("/workspaces", json={"slug": "a", "name": "A"}, headers=as_person)
+    assert refused.status_code == 403
+
+    person.role = "admin"
+    await db_session.commit()
+    created = await client.post("/workspaces", json={"slug": "a", "name": "A"}, headers=as_person)
+    assert created.status_code == 201, created.text

@@ -82,7 +82,7 @@ right-click menu.
   catalog is never pulled out from under a peer. Drop everywhere (detach), then drop.
 
 Creating, attaching and detaching a catalog require workspace `owner`. Attaching an existing catalog also requires its
-creator or `catalogs:admin`, because anyone can create a workspace and own it. A global drop is allowed for the
+creator or `catalogs:admin`, so that owning a workspace does not reach every catalog. A global drop is allowed for the
 catalog's creator or `catalogs:admin`.
 
 ### Querying across catalogs

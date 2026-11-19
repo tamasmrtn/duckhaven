@@ -367,6 +367,202 @@
       ]
     },
     {
+      "schema_name": "access",
+      "name": "users",
+      "description": "Every user and service account",
+      "permission": "audit:read",
+      "columns": [
+        {
+          "name": "user_id",
+          "type": "UUID"
+        },
+        {
+          "name": "email",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "name",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "principal_type",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "auth_provider",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "global_role",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "is_active",
+          "type": "BOOLEAN"
+        },
+        {
+          "name": "created_at",
+          "type": "TIMESTAMP WITH TIME ZONE"
+        },
+        {
+          "name": "snapshot_time",
+          "type": "TIMESTAMP WITH TIME ZONE"
+        }
+      ]
+    },
+    {
+      "schema_name": "access",
+      "name": "workspaces",
+      "description": "Every workspace",
+      "permission": "audit:read",
+      "columns": [
+        {
+          "name": "workspace_id",
+          "type": "UUID"
+        },
+        {
+          "name": "workspace_slug",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "name",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "description",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "timezone",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "default_agent_id",
+          "type": "UUID"
+        },
+        {
+          "name": "default_agent_name",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "result_cache_enabled",
+          "type": "BOOLEAN"
+        },
+        {
+          "name": "created_at",
+          "type": "TIMESTAMP WITH TIME ZONE"
+        },
+        {
+          "name": "snapshot_time",
+          "type": "TIMESTAMP WITH TIME ZONE"
+        }
+      ]
+    },
+    {
+      "schema_name": "access",
+      "name": "credentials",
+      "description": "Personal access tokens: who holds each, and until when",
+      "permission": "audit:read",
+      "columns": [
+        {
+          "name": "credential_id",
+          "type": "UUID"
+        },
+        {
+          "name": "kind",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "principal_type",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "principal_id",
+          "type": "UUID"
+        },
+        {
+          "name": "principal_email",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "principal_active",
+          "type": "BOOLEAN"
+        },
+        {
+          "name": "created_at",
+          "type": "TIMESTAMP WITH TIME ZONE"
+        },
+        {
+          "name": "expires_at",
+          "type": "TIMESTAMP WITH TIME ZONE"
+        },
+        {
+          "name": "snapshot_time",
+          "type": "TIMESTAMP WITH TIME ZONE"
+        }
+      ]
+    },
+    {
+      "schema_name": "access",
+      "name": "table_access",
+      "description": "Each table a finished query read or wrote",
+      "permission": "audit:read",
+      "columns": [
+        {
+          "name": "query_id",
+          "type": "UUID"
+        },
+        {
+          "name": "catalog_name",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "schema_name",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "table_name",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "access",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "catalog_id",
+          "type": "UUID"
+        },
+        {
+          "name": "finished_at",
+          "type": "TIMESTAMP WITH TIME ZONE"
+        },
+        {
+          "name": "workspace_id",
+          "type": "UUID"
+        },
+        {
+          "name": "workspace_slug",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "user_id",
+          "type": "UUID"
+        },
+        {
+          "name": "user_email",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "on_behalf_of_id",
+          "type": "UUID"
+        },
+        {
+          "name": "on_behalf_of_email",
+          "type": "VARCHAR"
+        }
+      ]
+    },
+    {
       "schema_name": "query",
       "name": "history",
       "description": "Finished queries",
@@ -479,6 +675,210 @@
         {
           "name": "tags",
           "type": "VARCHAR"
+        },
+        {
+          "name": "active_catalog",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "active_schema",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "cache_status",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "result_source_query_id",
+          "type": "UUID"
+        },
+        {
+          "name": "cpu_time_ms",
+          "type": "BIGINT"
+        },
+        {
+          "name": "bytes_read",
+          "type": "BIGINT"
+        },
+        {
+          "name": "peak_memory_bytes",
+          "type": "BIGINT"
+        },
+        {
+          "name": "spill_bytes",
+          "type": "BIGINT"
+        }
+      ]
+    },
+    {
+      "schema_name": "lineage",
+      "name": "table_lineage",
+      "description": "Which tables feed which, and how often",
+      "permission": "audit:read",
+      "columns": [
+        {
+          "name": "edge_id",
+          "type": "UUID"
+        },
+        {
+          "name": "provider",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "operation",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "confidence",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "column_lineage",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "source_catalog_id",
+          "type": "UUID"
+        },
+        {
+          "name": "source_catalog_name",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "source_system",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "source_schema",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "source_table",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "target_catalog_id",
+          "type": "UUID"
+        },
+        {
+          "name": "target_catalog_name",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "target_system",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "target_schema",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "target_table",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "workspace_id",
+          "type": "UUID"
+        },
+        {
+          "name": "workspace_slug",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "last_query_id",
+          "type": "UUID"
+        },
+        {
+          "name": "first_seen_at",
+          "type": "TIMESTAMP WITH TIME ZONE"
+        },
+        {
+          "name": "last_seen_at",
+          "type": "TIMESTAMP WITH TIME ZONE"
+        },
+        {
+          "name": "observation_count",
+          "type": "INTEGER"
+        },
+        {
+          "name": "snapshot_time",
+          "type": "TIMESTAMP WITH TIME ZONE"
+        }
+      ]
+    },
+    {
+      "schema_name": "lineage",
+      "name": "column_lineage",
+      "description": "Which columns feed which",
+      "permission": "audit:read",
+      "columns": [
+        {
+          "name": "id",
+          "type": "UUID"
+        },
+        {
+          "name": "edge_id",
+          "type": "UUID"
+        },
+        {
+          "name": "source_catalog_id",
+          "type": "UUID"
+        },
+        {
+          "name": "source_catalog_name",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "source_system",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "source_schema",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "source_table",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "source_column",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "target_catalog_id",
+          "type": "UUID"
+        },
+        {
+          "name": "target_catalog_name",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "target_system",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "target_schema",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "target_table",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "target_column",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "first_seen_at",
+          "type": "TIMESTAMP WITH TIME ZONE"
+        },
+        {
+          "name": "last_seen_at",
+          "type": "TIMESTAMP WITH TIME ZONE"
+        },
+        {
+          "name": "snapshot_time",
+          "type": "TIMESTAMP WITH TIME ZONE"
         }
       ]
     }

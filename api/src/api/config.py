@@ -103,6 +103,9 @@ class Settings(BaseSettings):
     system_catalog_publish_interval_s: float = Field(default=10.0, gt=0)
     # Days a finished query is kept in the copy; 0 keeps every one.
     system_catalog_query_history_days: int = Field(default=365, ge=0)
+    # Seconds between whole reads of a catalog into info_schema. A statement or
+    # REST call that changes one has it re-read within the publish interval.
+    system_catalog_metadata_refresh_s: float = Field(default=900.0, gt=0)
     # Connections the reader login may hold at once, across every agent.
     system_catalog_reader_connection_limit: int = Field(default=20, ge=1)
     # How agents reach the system catalog database, as the reader login.

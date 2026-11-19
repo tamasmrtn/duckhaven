@@ -3,6 +3,170 @@
   "available": true,
   "tables": [
     {
+      "schema_name": "info_schema",
+      "name": "catalogs",
+      "description": "The catalogs attached to this workspace",
+      "permission": null,
+      "columns": [
+        {
+          "name": "workspace_id",
+          "type": "UUID"
+        },
+        {
+          "name": "catalog_id",
+          "type": "UUID"
+        },
+        {
+          "name": "catalog_name",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "catalog_kind",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "access_mode",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "is_default",
+          "type": "BOOLEAN"
+        },
+        {
+          "name": "created_at",
+          "type": "TIMESTAMP WITH TIME ZONE"
+        },
+        {
+          "name": "attached_at",
+          "type": "TIMESTAMP WITH TIME ZONE"
+        }
+      ]
+    },
+    {
+      "schema_name": "info_schema",
+      "name": "schemata",
+      "description": "The schemas you can see in this workspace's catalogs",
+      "permission": null,
+      "columns": [
+        {
+          "name": "catalog_id",
+          "type": "UUID"
+        },
+        {
+          "name": "catalog_name",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "schema_name",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "refreshed_at",
+          "type": "TIMESTAMP WITH TIME ZONE"
+        }
+      ]
+    },
+    {
+      "schema_name": "info_schema",
+      "name": "tables",
+      "description": "The tables you can see, with their size and last write",
+      "permission": null,
+      "columns": [
+        {
+          "name": "catalog_id",
+          "type": "UUID"
+        },
+        {
+          "name": "catalog_name",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "schema_name",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "table_name",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "table_type",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "table_format",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "column_count",
+          "type": "INTEGER"
+        },
+        {
+          "name": "row_count",
+          "type": "BIGINT"
+        },
+        {
+          "name": "bytes",
+          "type": "BIGINT"
+        },
+        {
+          "name": "table_owner",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "last_altered",
+          "type": "TIMESTAMP WITH TIME ZONE"
+        },
+        {
+          "name": "refreshed_at",
+          "type": "TIMESTAMP WITH TIME ZONE"
+        }
+      ]
+    },
+    {
+      "schema_name": "info_schema",
+      "name": "columns",
+      "description": "The columns of the tables you can see, with the type a query sees",
+      "permission": null,
+      "columns": [
+        {
+          "name": "catalog_id",
+          "type": "UUID"
+        },
+        {
+          "name": "catalog_name",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "schema_name",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "table_name",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "column_name",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "ordinal_position",
+          "type": "INTEGER"
+        },
+        {
+          "name": "data_type",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "source_type",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "is_nullable",
+          "type": "VARCHAR"
+        }
+      ]
+    },
+    {
       "schema_name": "access",
       "name": "audit",
       "description": "Every event of the access audit log",

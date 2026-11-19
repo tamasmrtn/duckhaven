@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import pytest
+import sqlalchemy as sa
 from audit_helpers import audit_events
 from conftest import seed_workspace
 
+from api.models.catalog import WorkspaceCatalog
 from api.models.query import Query
 from api.models.rbac import Role, RolePermission
 from api.models.user import User
+from api.models.workspace import WorkspaceMember
 from api.services import delegation
 from api.services import grants as grant_service
 from api.services.permissions import Permission
@@ -195,16 +198,19 @@ async def test_a_refusal_names_each_table_it_may_not_read(db_session, workspace,
 async def test_what_each_principal_may_read(db_session, admin, member):
     auditor = await _auditor(db_session)
 
+    info = {("info_schema", t) for t in ("catalogs", "schemata", "tables", "columns")}
     assert await authorize.readable_by(db_session, admin.id) == authorize.TABLES
     assert await authorize.readable_by(db_session, auditor.id) == {
         ("access", "audit"),
         ("access", "grants"),
+        *info,
     }
-    assert await authorize.readable_by(db_session, member.id) == frozenset()
+    assert await authorize.readable_by(db_session, member.id) == info
     with delegation.acting_for(db_session, admin.id, auditor.id):
         assert await authorize.readable_by(db_session, admin.id) == {
             ("access", "audit"),
             ("access", "grants"),
+            *info,
         }
 
 
@@ -250,6 +256,43 @@ async def test_a_workspace_catalog_of_that_name_is_read_as_one(db_session, admin
 
     await grant_service.assert_query_access(db_session, ws.id, member.id, sql, "duckhaven", [cat])
     assert not reads_system_catalog("SELECT * FROM duckhaven.access.audit;", [cat])
+
+
+async def _scoped(db_session, workspace) -> None:
+    """Make the workspace's catalog scoped, so engine listings are refused in it."""
+    ws, cat = workspace
+    await db_session.execute(
+        sa.update(WorkspaceCatalog)
+        .where(WorkspaceCatalog.workspace_id == ws.id, WorkspaceCatalog.catalog_id == cat.id)
+        .values(access_mode="scoped")
+    )
+    await db_session.commit()
+
+
+async def test_info_schema_is_read_in_a_workspace_with_a_scoped_catalog(
+    db_session, workspace, member
+):
+    """Its rows are filtered to what the member can see, unlike DuckDB's own listing."""
+    await _scoped(db_session, workspace)
+    ws, cat = workspace
+    db_session.add(WorkspaceMember(workspace_id=ws.id, user_id=member.id, role="reader"))
+    await db_session.commit()
+
+    await _check(db_session, workspace, member, "SELECT * FROM duckhaven.info_schema.tables;")
+    with pytest.raises(grant_service.GrantDenied, match="cannot be queried"):
+        await _check(db_session, workspace, member, "SELECT * FROM information_schema.tables;")
+
+
+async def test_a_workspace_catalog_of_that_name_does_not_list_its_metadata(
+    db_session, admin, member
+):
+    ws, cat = await seed_workspace(db_session, user_id=admin.id, catalog_slug="duckhaven")
+    await _scoped(db_session, (ws, cat))
+
+    with pytest.raises(grant_service.GrantDenied, match="cannot be queried"):
+        await grant_service.assert_query_access(
+            db_session, ws.id, admin.id, "SELECT * FROM duckhaven.info_schema.tables;", None, [cat]
+        )
 
 
 def test_a_repeated_statement_is_parsed_once():

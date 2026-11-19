@@ -21,7 +21,9 @@ copy and the next one starts where the last committed one stopped.
   updated in place.
 - **access.grants** is replaced whole, after a tick copies an access or identity
   event and at least every 5 minutes, which covers what changes access without an
-  event (deleting an agent takes its grants with it).
+  event (deleting an agent takes its grants with it). So are
+  ``info_schema.catalogs`` and the ``_acl`` tables the row filters consult, from
+  the same read.
 
 A tick copies at most ``BATCH`` rows of each kind; while either is behind, the
 next tick starts at once instead of after the interval.
@@ -573,17 +575,72 @@ async def grant_rows(source: AsyncSession, now: datetime) -> list[dict[str, Any]
     return rows
 
 
+async def visibility_rows(source: AsyncSession) -> dict[sa.Table, list[dict[str, Any]]]:
+    """What decides who sees what in info_schema: each workspace's catalog
+    attachments, its members, and every catalog grant."""
+    attachments = (
+        await source.execute(
+            sa.select(
+                WorkspaceCatalog.workspace_id,
+                WorkspaceCatalog.catalog_id,
+                WorkspaceCatalog.access_mode,
+                WorkspaceCatalog.is_default,
+                WorkspaceCatalog.attached_at,
+                Catalog.slug,
+                Catalog.kind,
+                Catalog.created_at,
+            ).join(Catalog, Catalog.id == WorkspaceCatalog.catalog_id)
+        )
+    ).all()
+    members = await source.execute(sa.select(WorkspaceMember.workspace_id, WorkspaceMember.user_id))
+    scopes = await source.execute(
+        sa.select(
+            CatalogGrant.user_id,
+            CatalogGrant.catalog_id,
+            CatalogGrant.schema_name,
+            CatalogGrant.table_name,
+        )
+    )
+    return {
+        store.INFO_CATALOGS: [
+            {
+                "workspace_id": r.workspace_id,
+                "catalog_id": r.catalog_id,
+                "catalog_name": r.slug,
+                "catalog_kind": r.kind,
+                "access_mode": r.access_mode,
+                "is_default": r.is_default,
+                "created_at": r.created_at,
+                "attached_at": r.attached_at,
+            }
+            for r in attachments
+        ],
+        store.ACL_ATTACHMENTS: [
+            {
+                "workspace_id": r.workspace_id,
+                "catalog_id": r.catalog_id,
+                "access_mode": r.access_mode,
+            }
+            for r in attachments
+        ],
+        store.ACL_MEMBERS: [dict(r._mapping) for r in members],
+        store.ACL_SCOPES: [dict(r._mapping) for r in scopes],
+    }
+
+
 async def _refresh_grants(
     session_factory: async_sessionmaker[AsyncSession], target: AsyncConnection, now: datetime
 ) -> None:
-    """Replace access.grants with a snapshot read in one consistent view."""
+    """Replace access.grants, and what info_schema's row filters consult, with a
+    snapshot read in one consistent view."""
     async with session_factory() as snapshot:
         await snapshot.connection(execution_options={"isolation_level": "REPEATABLE READ"})
-        rows = await grant_rows(snapshot, now)
-    # Not TRUNCATE: that would block readers until the tick commits.
-    await target.execute(sa.delete(store.GRANTS))
-    if rows:
-        await target.execute(sa.insert(store.GRANTS), rows)
+        tables = {store.GRANTS: await grant_rows(snapshot, now), **await visibility_rows(snapshot)}
+    for table, rows in tables.items():
+        # Not TRUNCATE: that would block readers until the tick commits.
+        await target.execute(sa.delete(table))
+        if rows:
+            await target.execute(sa.insert(table), rows)
 
 
 # ── Retention ─────────────────────────────────────────────────────────────────

@@ -52,6 +52,7 @@ from api.services.migration.service import active_migration
 from api.services.polaris import PolarisClient
 from api.services.semantic import impact as semantic_impact
 from api.services.sql_guard import SQLNotAllowed
+from api.services.system_catalog.metadata import mark_changed
 from api.services.workspace import (
     assert_workspace_member,
     get_workspace,
@@ -362,6 +363,7 @@ async def create_schema(
         sc = await _backend(cat, polaris).create_schema(cat, body.name, ctx)
     except CatalogBackendConflict as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+    await mark_changed(cat.id)
     return CatalogSchemaOut(
         name=sc.name,
         catalog=cat.slug,
@@ -471,6 +473,7 @@ async def drop_schema(
         detail=f"Schema '{schema}' was dropped.",
     )
     await db.commit()
+    await mark_changed(cat.id)
 
 
 async def list_tables(
@@ -676,6 +679,7 @@ async def create_table(
         )
     )
     await db.commit()
+    await mark_changed(cat.id, schema, body.name)
     meta = await _load_table_meta(db, cat.id, schema)
     return _table_to_out(t, cat, target.workspace.id, meta.get(body.name))
 
@@ -718,6 +722,7 @@ async def drop_table(
         detail=f"{schema}.{table} was dropped.",
     )
     await db.commit()
+    await mark_changed(cat.id, schema, table)
 
 
 # Rows previewed in the table-detail view.

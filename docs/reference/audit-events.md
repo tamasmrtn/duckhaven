@@ -48,7 +48,7 @@ so an event about a deleted user, workspace or catalog still reads in full.
 |---|---|---|
 | `user.create`, `service_account.create`, `setup.first_admin` | `role` after | `authorized_by: setup_token` for the first admin |
 | `user.provision` | `role` after | `provider`, the account's sign-in provider |
-| `user.role_change`, `service_account.role_change` | `role` | `provider` when an identity provider changed it at sign-in |
+| `user.role_change`, `service_account.role_change` | `role` | `provider` when an identity provider changed it at sign-in; `reason: last_active_admin` on a `denied` sign-in change that would have demoted the last active admin |
 | `user.deactivate`, `user.reactivate`, `service_account.deactivate`, `service_account.reactivate` | `is_active` | – |
 | `user.sessions_revoke` | – | `sessions_revoked`, the number of sessions ended |
 | `service_account.delete` | `role` and `is_active` before | `memberships_removed`, `grants_removed` |

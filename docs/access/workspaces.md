@@ -20,6 +20,10 @@ relevant to it.
   [How access works](how-access-works.md).
 - **Work.** Worksheets, saved queries, schedules, assistant conversations, and the history of every run.
 
+Creating a workspace takes the `workspaces:create` permission, which the `admin` role holds, and makes its creator the
+first `owner`. Everyone else works in the workspaces they are added to; see
+[Manage users & access](manage-users.md#give-someone-access-to-a-workspace).
+
 A new workspace starts empty, with no catalogs. An owner then creates a catalog — on the bundled object store by
 default, or with `storage:manage` on an S3 or ADLS backend — or attaches an existing one they created. Attaching a
 catalog someone else created takes `catalogs:admin`; see [Manage catalogs](../data/manage-catalogs.md).

@@ -26,7 +26,8 @@ first time they sign in; skip to [giving them a workspace](#give-someone-access-
    administer DuckHaven, `admin` for those who do.
 3. Click **Create user**, and send them the password through a channel you trust.
 
-The new account appears in the list, but it can reach no data until it has a workspace.
+The new account appears in the list, but it can reach no data until it has a workspace. Only an `admin` can create
+one, so add a `user` to an existing workspace.
 
 ## Give someone access to a workspace
 
@@ -71,6 +72,18 @@ in the identity provider.
 
 DuckHaven never lets the last active admin be deactivated or demoted, so it cannot lock itself out. Make another
 account an admin first.
+
+### Someone is still an admin after leaving the admin group
+
+They are the last active admin. Their sign-in keeps `admin` rather than take the role their directory groups map to,
+and the [audit log](audit-log.md) records a denied `user.role_change`. Make another account an admin; their next
+sign-in demotes them.
+
+### Someone sees "You're not in a workspace yet"
+
+They belong to no workspace and cannot create one, since that takes `workspaces:create`, which only the `admin` role
+holds. Add them to a workspace as in [Give someone access to a workspace](#give-someone-access-to-a-workspace); the
+message names the email they sign in with. They see the workspace when they reload the page.
 
 ### Someone sees the workspace but not a catalog's tables
 

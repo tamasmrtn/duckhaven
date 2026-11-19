@@ -6,10 +6,11 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
-from conftest import seed_workspace
+from conftest import seed_owned_workspace, seed_workspace
 from fake_polaris import FakePolaris
 from httpx import AsyncClient
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import async_object_session
 
 from api.models.agent import Agent
 from api.models.catalog import Catalog
@@ -67,8 +68,10 @@ async def auth_client(client: AsyncClient, owner: User) -> AsyncClient:
 async def _make_workspace(
     auth_client: AsyncClient, backend: StorageBackend, slug: str = "alpha"
 ) -> str:
-    resp = await auth_client.post("/workspaces", json={"slug": slug, "name": slug.title()})
-    assert resp.status_code == 201, resp.text
+    # Seeded, since the test's owner may not create one through the API; the
+    # backend fixture's session is still open.
+    db = async_object_session(backend)
+    await seed_owned_workspace(db, user_id=backend.created_by, slug=slug, name=slug.title())
     # Workspaces no longer auto-create a catalog; attach one whose slug matches
     # the workspace slug, so the catalog-scoped paths below read cleanly.
     cat = await auth_client.post(
@@ -76,7 +79,7 @@ async def _make_workspace(
         json={"name": slug.replace("-", "_")},
     )
     assert cat.status_code == 201, cat.text
-    return resp.json()["slug"]
+    return slug
 
 
 # --- list/create schema ---

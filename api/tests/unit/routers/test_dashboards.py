@@ -11,6 +11,7 @@ import copy
 
 import pytest
 import sqlalchemy as sa
+from conftest import seed_owned_workspace
 from httpx import AsyncClient
 
 from api.models.dashboard import Dashboard, DashboardAlias
@@ -107,9 +108,7 @@ async def ws(as_owner, owner, db_session) -> str:
 
     from .test_semantic import CUSTOMER_COLUMNS, ORDER_COLUMNS
 
-    slug = (await as_owner.post("/workspaces", json={"slug": "dash", "name": "Dash"})).json()[
-        "slug"
-    ]
+    slug = (await seed_owned_workspace(db_session, user_id=owner.id, slug="dash", name="Dash")).slug
     await as_owner.post(
         f"/workspaces/{slug}/catalogs",
         json={"name": "warehouse"},

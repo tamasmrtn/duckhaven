@@ -17,8 +17,9 @@ A new install creates the database on first start. An install that predates it n
 
 ## Before you begin
 
-- **Applies to:** the single-host Compose stack. The [HA stack](high-availability.md#limitations) does not create the
-  database. Agents that run on another host reach it at `SYSTEM_CATALOG_AGENT_HOST`; see the
+- **Applies to:** the single-host Compose stack. [Azure with Terraform](azure-terraform.md#system-catalog) creates
+  the database itself. The [HA stack](high-availability.md#limitations) does not create the database. Agents that run
+  on another host reach it at `SYSTEM_CATALOG_AGENT_HOST`; see the
   [configuration reference](../reference/configuration.md#system-catalog).
 - **You need:** shell access to the control-plane host, in a checkout of the repository; see
   [Operator scripts](../reference/operator-scripts.md#requirements).

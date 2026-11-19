@@ -53,7 +53,7 @@ Every account has one global role, `admin` or `user`. It is about operating Duck
 users, maintenance — not about reading data: a new admin sees no tables until they join a workspace. `admin` holds every
 [global permission](../reference/permissions.md#global-permissions); `user` holds none. For people who sign in through
 an identity provider, the role follows their group membership, for example `dh-admins → admin`, so promoting or
-demoting someone is a change in the directory.
+demoting someone is a change in the directory. The one exception is the last active admin, whom nothing demotes.
 
 ## Layer 2 — Workspace role: your access to a workspace's data
 
@@ -132,6 +132,7 @@ Dana is a data analyst:
 |---|---|---|
 | Let someone manage agents, storage or users | Layer 1 (global role) | **Admin** → **Users** |
 | Give someone access to a workspace's data | Layer 2 (workspace role) | **Admin** → **Users** → **Manage workspaces**, or a workspace owner adds them |
+| Let someone create workspaces | Layer 1 (global role) | **Admin** → **Users**: `workspaces:create` comes with `admin` |
 | Restrict access to specific schemas or tables | Layer 3 (data grants) | Catalog tree → right-click → **Permissions**, on a `scoped` catalog |
 | Reserve an agent for one team, or let someone restart it | Layer 4 (agent access) | **Compute** → the agent → **Access** |
 

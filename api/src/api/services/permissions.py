@@ -18,6 +18,7 @@ class Permission(StrEnum):
     CATALOGS_ADMIN = "catalogs:admin"
     QUERIES_ADMIN = "queries:admin"
     AUDIT_READ = "audit:read"
+    WORKSPACES_CREATE = "workspaces:create"
 
 
 # Canonical definition of the built-in (system) roles. The database tables are

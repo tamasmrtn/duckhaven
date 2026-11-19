@@ -11,6 +11,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 import pytest
+from conftest import seed_owned_workspace
 from httpx import AsyncClient
 
 from api.models.user import User
@@ -48,8 +49,7 @@ async def auth_client(client: AsyncClient, owner: User) -> AsyncClient:
 @pytest.fixture
 async def ws(auth_client, owner, db_session):
     """A workspace with one catalog holding an orders/customers star."""
-    resp = await auth_client.post("/workspaces", json={"slug": "sem", "name": "Sem"})
-    slug = resp.json()["slug"]
+    slug = (await seed_owned_workspace(db_session, user_id=owner.id, slug="sem", name="Sem")).slug
     await auth_client.post(
         f"/workspaces/{slug}/catalogs",
         json={"name": "warehouse"},

@@ -153,6 +153,27 @@ HISTORY = sa.Table(
     schema=QUERY,
 )
 
+# The tables a query may read, in the order the catalog tree lists them.
+READABLE = (AUDIT, GRANTS, HISTORY)
+
+# Each column type as an agent's DuckDB reports it through the `postgres` extension,
+# which reads JSONB as text.
+_DUCKDB_TYPES: dict[type, str] = {
+    postgresql.UUID: "UUID",
+    sa.DateTime: "TIMESTAMP WITH TIME ZONE",
+    sa.Integer: "INTEGER",
+    sa.BigInteger: "BIGINT",
+    sa.Boolean: "BOOLEAN",
+    sa.Text: "VARCHAR",
+    postgresql.JSONB: "VARCHAR",
+}
+
+
+def duckdb_type(column: sa.Column) -> str:
+    """``column``'s type as a query on the system catalog sees it."""
+    return _DUCKDB_TYPES[type(column.type)]
+
+
 # Where each copy has got to. Private: the reader is granted nothing here.
 CURSORS = sa.Table(
     "cursors",

@@ -169,3 +169,24 @@ async def test_an_identity_provider_creating_and_reroling_an_account_is_recorded
     )
     assert (change.before, change.after) == ({"role": "user"}, {"role": "admin"})
     assert change.details == {"provider": "oidc:corp"}
+
+
+async def test_a_held_demotion_of_the_last_admin_is_recorded_as_denied(db_session):
+    async def sign_in(role: str) -> User:
+        return await provision_federated_user(
+            db_session,
+            email="last@audit.local",
+            name="Last",
+            subject="sub-1",
+            provider="oidc:corp",
+            role=role,
+            email_verified=True,
+        )
+
+    await sign_in("admin")
+    await sign_in("user")
+
+    [held] = await audit_events(db_session, "user.role_change")
+    assert (held.outcome, held.actor_type, held.error_code) == ("denied", "idp", None)
+    assert (held.before, held.after) == ({"role": "admin"}, {"role": "user"})
+    assert held.details == {"provider": "oidc:corp", "reason": "last_active_admin"}

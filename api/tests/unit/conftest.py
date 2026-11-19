@@ -66,6 +66,18 @@ async def seed_workspace(
     return ws, catalog
 
 
+async def seed_owned_workspace(db, *, user_id, slug: str, name: str) -> Workspace:
+    """A workspace with no catalog and ``user_id`` as its owner: what
+    ``POST /workspaces`` leaves behind, for a creator who may not call it."""
+    ws = Workspace(slug=slug, name=name)
+    db.add(ws)
+    await db.flush()
+    db.add(WorkspaceMember(workspace_id=ws.id, user_id=user_id, role="owner"))
+    await db.commit()
+    await db.refresh(ws)
+    return ws
+
+
 # Disable secure cookies in tests (plain HTTP transport)
 settings.cookie_secure = False
 # The result cache is on by default in production. Off here so tests that run the

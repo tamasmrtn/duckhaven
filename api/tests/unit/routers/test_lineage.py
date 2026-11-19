@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 import sqlalchemy as sa
+from conftest import seed_owned_workspace
 from httpx import AsyncClient
 
 from api.models.lineage import LineageColumnEdge, LineageEdge
@@ -37,8 +38,7 @@ async def auth_client(client: AsyncClient, owner: User) -> AsyncClient:
 @pytest.fixture
 async def ws(auth_client, owner, db_session):
     """A workspace attaching two catalogs, `warehouse` and `raw`."""
-    resp = await auth_client.post("/workspaces", json={"slug": "lin", "name": "Lin"})
-    slug = resp.json()["slug"]
+    slug = (await seed_owned_workspace(db_session, user_id=owner.id, slug="lin", name="Lin")).slug
     for name in ("warehouse", "raw"):
         await auth_client.post(
             f"/workspaces/{slug}/catalogs",

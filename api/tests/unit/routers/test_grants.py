@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from conftest import seed_owned_workspace
 from httpx import AsyncClient
 from sqlalchemy import select
 
@@ -31,8 +32,9 @@ async def auth_client(client: AsyncClient, owner: User) -> AsyncClient:
 async def _make(auth_client, owner, db_session):
     """Owner-created workspace + catalog + one extra member. Returns
     (slug, catalog_slug, workspace, catalog, member)."""
-    resp = await auth_client.post("/workspaces", json={"slug": "alpha", "name": "Alpha"})
-    slug = resp.json()["slug"]
+    slug = (
+        await seed_owned_workspace(db_session, user_id=owner.id, slug="alpha", name="Alpha")
+    ).slug
     cat_resp = await auth_client.post(f"/workspaces/{slug}/catalogs", json={"name": "alpha"})
     catalog_slug = cat_resp.json()["slug"]
 

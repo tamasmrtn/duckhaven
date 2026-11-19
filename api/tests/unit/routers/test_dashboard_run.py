@@ -20,6 +20,7 @@ import duckdb
 import httpx
 import pytest
 import sqlalchemy as sa
+from conftest import seed_owned_workspace
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from api.config import settings
@@ -278,9 +279,7 @@ def sessions(db_engine):
 async def ws(as_owner, owner, db_session) -> str:
     """A workspace whose `sales` model is published, with `revenue` and `orders`."""
 
-    slug = (await as_owner.post("/workspaces", json={"slug": "dash", "name": "Dash"})).json()[
-        "slug"
-    ]
+    slug = (await seed_owned_workspace(db_session, user_id=owner.id, slug="dash", name="Dash")).slug
     await as_owner.post(
         f"/workspaces/{slug}/catalogs",
         json={"name": "warehouse"},

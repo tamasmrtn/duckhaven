@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from conftest import seed_owned_workspace
 from httpx import AsyncClient
 from sqlalchemy import select, update
 
@@ -39,9 +40,9 @@ async def _scoped_env(auth_client, owner, db_session, fake_polaris):
     """Owner-created ws with marketing.leads + finance.ledger, then flipped to
     scoped. Returns (slug, workspace, catalog, member) — member is a reader with
     no grants yet."""
-    resp = await auth_client.post("/workspaces", json={"slug": "alpha", "name": "Alpha"})
-    assert resp.status_code == 201, resp.text
-    slug = resp.json()["slug"]
+    slug = (
+        await seed_owned_workspace(db_session, user_id=owner.id, slug="alpha", name="Alpha")
+    ).slug
     cat_resp = await auth_client.post(f"/workspaces/{slug}/catalogs", json={"name": "alpha"})
     assert cat_resp.status_code == 201, cat_resp.text
 

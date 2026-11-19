@@ -26,7 +26,8 @@ async def _login(client: AsyncClient, email: str) -> None:
 
 @pytest.fixture
 async def owner(db_session) -> User:
-    return await _user(db_session, "owner@audit.local")
+    """An admin: creating the workspace these events are about takes `workspaces:create`."""
+    return await _user(db_session, "owner@audit.local", role="admin")
 
 
 async def test_creating_a_workspace_records_it_and_its_owner(client, db_session, owner):

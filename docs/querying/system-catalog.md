@@ -9,7 +9,8 @@ read-only, from any workspace.
 
 !!! info "Availability"
     On the single-host Compose stack, on by default; see
-    [Enable the system catalog database](../deployment/system-catalog.md). The
+    [Enable the system catalog database](../deployment/system-catalog.md). On
+    [Azure with Terraform](../deployment/azure-terraform.md#system-catalog), on by default. The
     [HA stack](../deployment/high-availability.md#limitations) has none. Reading it takes both the `audit:read` and
     the `queries:admin` permission, which the `admin` role holds.
 
@@ -41,9 +42,9 @@ the copy once every transaction that was writing before it has finished, and `ac
 access change and at least every 5 minutes. For the events of the last few seconds, use **Admin** → **Audit**; see
 [Review access changes](../access/review-access-changes.md).
 
-The catalog is not one of the workspace's catalogs and is not in the catalog tree. A query that names one of its tables
-attaches it for that query, read-only, through a login that can read these three tables and nothing else. It joins
-with the workspace's own catalogs like any other:
+The catalog is not one of the workspace's catalogs. A query that names one of its tables attaches it for that query,
+read-only, through a login that can read these three tables and nothing else. It joins with the workspace's own
+catalogs like any other:
 
 ```sql
 SELECT h.finished_at, h.user_email, h.status, h.sql
@@ -69,6 +70,16 @@ ORDER BY event_time DESC;
 
 In a [SQL session](sql-sessions.md), the first statement that names it attaches it for the rest of the session, and
 each later statement is checked again.
+
+### Find it in the catalog tree
+
+For someone who may read it, the catalog tree lists `duckhaven` after the workspace's catalogs, badged *system*, with
+its tables and their columns. On the **Catalog** page, click a table to open a worksheet holding
+`SELECT * FROM "duckhaven"."access"."audit" LIMIT 100;` for it. Beside the editor the tree only browses: drag a table
+into your SQL to insert its full name. The editor also completes its schemas, tables and columns after `duckhaven.`.
+
+The badge reads *unavailable* while the API cannot reach its database, and a query on it then fails. The tree's search
+box does not find its tables.
 
 ### Who can read it
 

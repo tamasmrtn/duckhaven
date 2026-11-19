@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 
 import pytest
+from conftest import seed_owned_workspace
 from httpx import AsyncClient
 from sqlalchemy import select, update
 
@@ -40,7 +41,7 @@ async def auth_client(client: AsyncClient, owner: User) -> AsyncClient:
 @pytest.fixture
 async def alpha(auth_client, db_session, owner, fake_polaris) -> str:
     """Workspace `alpha`, catalog `alpha`, with marketing.leads and finance.ledger."""
-    assert (await auth_client.post("/workspaces", json={"slug": "alpha", "name": "A"})).is_success
+    await seed_owned_workspace(db_session, user_id=owner.id, slug="alpha", name="A")
     created = await auth_client.post("/workspaces/alpha/catalogs", json={"name": "alpha"})
     assert created.status_code == 201, created.text
     for schema, table in [("marketing", "leads"), ("finance", "ledger")]:

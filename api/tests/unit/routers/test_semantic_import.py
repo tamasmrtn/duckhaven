@@ -9,6 +9,7 @@ earlier version of itself, and the API refuses to edit what an import owns.
 from __future__ import annotations
 
 import pytest
+from conftest import seed_owned_workspace
 from httpx import AsyncClient
 
 from api.models.user import User
@@ -98,8 +99,7 @@ async def auth_client(client: AsyncClient, owner: User) -> AsyncClient:
 
 @pytest.fixture
 async def ws(auth_client, owner, db_session):
-    resp = await auth_client.post("/workspaces", json={"slug": "imp", "name": "Imp"})
-    slug = resp.json()["slug"]
+    slug = (await seed_owned_workspace(db_session, user_id=owner.id, slug="imp", name="Imp")).slug
     await auth_client.post(
         f"/workspaces/{slug}/catalogs",
         json={"name": "warehouse"},

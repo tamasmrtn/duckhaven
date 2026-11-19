@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { server } from '@tests/mock/server'
 import { http, HttpResponse } from 'msw'
 import { renderWithProviders } from '@tests/utils'
+import { CURRENT_USER } from '@/mock/fixtures/users'
 
 describe('WelcomePage', () => {
   it('opens the create-workspace dialog by default', async () => {
@@ -42,5 +43,21 @@ describe('WelcomePage', () => {
     await waitFor(() =>
       expect(router.state.location.pathname).toBe('/reports/worksheets'),
     )
+  })
+
+  it('tells someone without workspaces:create to ask an admin', async () => {
+    server.use(
+      http.get('/api/me', () =>
+        HttpResponse.json({ ...CURRENT_USER, role: 'user', permissions: [] }),
+      ),
+    )
+    renderWithProviders({ initialRoute: '/welcome' })
+
+    expect(
+      await screen.findByRole('heading', { name: /not in a workspace yet/i }),
+    ).toBeInTheDocument()
+    expect(screen.getByText(CURRENT_USER.email)).toBeInTheDocument()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /get started/i })).not.toBeInTheDocument()
   })
 })

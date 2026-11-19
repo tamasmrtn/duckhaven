@@ -4,7 +4,7 @@ type: how-to
 
 # Enable the system catalog database
 
-DuckHaven keeps a read-only copy of its audit log, current access, query history and catalog metadata in a second
+DuckHaven keeps a read-only copy of its audit log, access, query history, lineage and catalog metadata in a second
 Postgres database, `duckhaven_system`, refreshed every 10 seconds.
 
 People query the copy in SQL as the `duckhaven` catalog, each table with the permission it needs; see
@@ -30,15 +30,19 @@ A new install creates the database on first start. An install that predates it n
 
 ## What it holds
 
-Four schemas: `info_schema`, the schemas, tables and columns of every catalog; `access.audit`, every event of the
-[access audit log](../access/audit-log.md); `access.grants`, current access; and `query.history`, finished queries.
-Their columns, and how long each keeps its rows, are in the
-[system catalog reference](../reference/system-catalog.md). Deleting a workspace removes its queries from History, but
-not from the copy.
+Four schemas: `info_schema`, the schemas, tables and columns of every catalog; `access`, the
+[access audit log](../access/audit-log.md), current access, users, workspaces, tokens and which tables each query read
+and wrote; `query.history`, finished queries; and `lineage`, the lineage graph. Their tables, columns, and how long each
+keeps its rows, are in the [system catalog reference](../reference/system-catalog.md). Deleting a workspace removes its
+queries from History, but not from the copy.
 
 The copy trails `duckhaven` by up to the publish interval. An audit event joins it once every transaction that was
 writing before it on the same Postgres server has finished, so a transaction that runs for minutes holds the audit copy
 back that long.
+
+When an upgrade adds columns to `query.history`, the API copies the queries it already holds again, oldest first and
+5,000 each publish interval, so that they gain them. New queries are copied as usual meanwhile; on an older row the new
+columns stay empty until the copy reaches it.
 
 `info_schema` is read from each catalog's own metadata. One replica at a time re-reads a table within a publish interval
 or two of a statement or API call that changes it, and reads each catalog whole every

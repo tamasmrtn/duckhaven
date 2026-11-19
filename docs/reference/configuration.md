@@ -113,9 +113,9 @@ Retention for the [access audit log](../access/audit-log.md).
 
 ### System catalog
 
-The read-only copy of the audit log, current access, query history and each catalog's schemas, tables and columns in the
-`duckhaven_system` database, which people query in SQL as the [`duckhaven` catalog](../querying/system-catalog.md); see
-[Enable the system catalog database](../deployment/system-catalog.md). The bundled Compose stack needs none of these
+The read-only copy of the audit log, access, query history, lineage and each catalog's schemas, tables and columns in
+the `duckhaven_system` database, which people query in SQL as the [`duckhaven` catalog](../querying/system-catalog.md);
+see [Enable the system catalog database](../deployment/system-catalog.md). The bundled Compose stack needs none of these
 set, and [Azure with Terraform](../deployment/azure-terraform.md#system-catalog) sets them itself.
 
 | Variable | Default | Description |

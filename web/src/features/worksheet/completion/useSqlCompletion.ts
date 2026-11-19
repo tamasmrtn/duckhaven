@@ -28,9 +28,10 @@ export function useSqlCompletion(
   const schemasQuery = useSchemas(ws, catalog);
   const metadataQuery = useSqlMetadata(ws, agentId);
   const catalogsQuery = useCatalogs(ws);
-  // The `duckhaven` system catalog, for someone who may read it. Complete from
-  // the start, so it is never fetched like the others below.
-  const { data: system } = useSystemCatalog(ws);
+  // The `duckhaven` system catalog's tables the caller may read, if any. Complete
+  // from the start, so it is never fetched like the others below.
+  const { data: listed } = useSystemCatalog(ws);
+  const system = listed?.tables.length ? listed : undefined;
   const systemName = system?.catalog;
 
   // Every catalog attached to the workspace, including the active one (so a

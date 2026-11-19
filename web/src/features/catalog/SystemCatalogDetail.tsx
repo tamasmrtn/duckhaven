@@ -1,9 +1,10 @@
 // The detail panes of the `duckhaven` system catalog, its schemas and its tables.
 // It is not one of the workspace's catalogs: its tables are fixed and come with
-// their columns, it is read-only, and reading it takes the `audit:read` and
-// `queries:admin` permissions rather than a grant. So these panes keep the
-// layout of the catalog, schema and table panes but leave out what cannot
-// apply to it: sizes, history, health, lineage, grants and every write.
+// their columns, it is read-only, and each table takes a permission of its own
+// rather than a grant (the server lists only those the caller may read). So
+// these panes keep the layout of the catalog, schema and table panes but leave
+// out what cannot apply to it: sizes, history, health, lineage, grants and every
+// write.
 import { Link } from "@tanstack/react-router";
 import { ExternalLink, Lock } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -19,6 +20,13 @@ import { useSystemTableSample } from "@/queries/systemCatalog";
 import type { SystemCatalog, SystemTable } from "@/types/systemCatalog";
 
 const UNREACHABLE = "Its database cannot be reached, so a query on it fails";
+
+/** What reading a table takes, as its pages say it. */
+function access(table: SystemTable): string {
+  return table.permission
+    ? `Needs ${table.permission}`
+    : "Every member, showing only what they can see";
+}
 
 function schemasOf(system: SystemCatalog): [string, SystemTable[]][] {
   const bySchema = new Map<string, SystemTable[]>();
@@ -103,7 +111,7 @@ export function SystemCatalogDetail({ system }: { system: SystemCatalog }) {
               />
               <MetaRow
                 label="Access"
-                value="Read-only. Reading it takes the audit:read and queries:admin permissions."
+                value="Read-only. Each table needs its own permission; these are the ones you may read."
               />
               <MetaRow
                 label="Freshness"
@@ -116,32 +124,34 @@ export function SystemCatalogDetail({ system }: { system: SystemCatalog }) {
             </div>
 
             <div>
-              <SectionLabel className="mb-2">Tables per schema</SectionLabel>
-              <table className="w-full max-w-xl">
+              <SectionLabel className="mb-2">Tables</SectionLabel>
+              <table className="w-full max-w-2xl">
                 <thead>
                   <tr className="border-b border-[var(--border-subtle)] text-left">
                     <th className="py-1 pr-3 text-xs font-medium text-text-secondary">
-                      Schema
+                      Table
                     </th>
                     <th className="py-1 text-xs font-medium text-text-secondary">
-                      Tables
+                      Reading it
                     </th>
                   </tr>
                 </thead>
                 <tbody>
-                  {schemas.map(([name, tables]) => (
-                    <tr
-                      key={name}
-                      className="border-b border-[var(--border-subtle)]"
-                    >
-                      <td className="py-1.5 pr-3 font-mono text-xs text-text-primary">
-                        {name}
-                      </td>
-                      <td className="py-1.5 font-mono text-xs text-text-secondary">
-                        {tables.map((t) => t.name).join(", ")}
-                      </td>
-                    </tr>
-                  ))}
+                  {schemas.flatMap(([, tables]) =>
+                    tables.map((t) => (
+                      <tr
+                        key={`${t.schema_name}.${t.name}`}
+                        className="border-b border-[var(--border-subtle)]"
+                      >
+                        <td className="py-1.5 pr-3 font-mono text-xs text-text-primary">
+                          {t.schema_name}.{t.name}
+                        </td>
+                        <td className="py-1.5 text-xs text-text-secondary">
+                          {access(t)}
+                        </td>
+                      </tr>
+                    )),
+                  )}
                 </tbody>
               </table>
             </div>
@@ -199,8 +209,11 @@ export function SystemSchemaDetail({
                 <th className="py-1 pr-3 text-xs font-medium text-text-secondary">
                   Holds
                 </th>
-                <th className="py-1 text-xs font-medium text-text-secondary">
+                <th className="py-1 pr-3 text-xs font-medium text-text-secondary">
                   Columns
+                </th>
+                <th className="py-1 text-xs font-medium text-text-secondary">
+                  Reading it
                 </th>
               </tr>
             </thead>
@@ -216,8 +229,11 @@ export function SystemSchemaDetail({
                   <td className="py-1.5 pr-3 text-xs text-text-secondary">
                     {t.description}
                   </td>
-                  <td className="py-1.5 text-xs text-text-secondary font-tabular">
+                  <td className="py-1.5 pr-3 text-xs text-text-secondary font-tabular">
                     {t.columns.length}
+                  </td>
+                  <td className="py-1.5 text-xs text-text-secondary">
+                    {access(t)}
                   </td>
                 </tr>
               ))}
@@ -254,7 +270,11 @@ export function SystemTableDetail({
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
-      <Header system={system} kind="System table" note={found.description}>
+      <Header
+        system={system}
+        kind="System table"
+        note={`${found.description} · ${access(found)}`}
+      >
         <Button
           variant="outline"
           size="sm"

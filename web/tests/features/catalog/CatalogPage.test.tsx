@@ -285,7 +285,13 @@ describe("CatalogPage", () => {
       expect(
         screen.getByText("Every workspace, not only this one"),
       ).toBeInTheDocument();
-      expect(screen.getByText("audit, grants")).toBeInTheDocument();
+      // Each table with what reading it takes.
+      expect(screen.getByText("access.audit").closest("tr")).toHaveTextContent(
+        "Needs audit:read",
+      );
+      expect(screen.getByText("query.history").closest("tr")).toHaveTextContent(
+        "Needs queries:admin",
+      );
     });
 
     it("opens a schema's page when its name is clicked", async () => {
@@ -326,7 +332,7 @@ describe("CatalogPage", () => {
 
       expect(
         await screen.findByText(
-          "System table · read-only · Every event of the access audit log",
+          "System table · read-only · Every event of the access audit log · Needs audit:read",
         ),
       ).toBeInTheDocument();
       expect(screen.getByText("subject_email")).toBeInTheDocument();

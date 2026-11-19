@@ -721,7 +721,67 @@ async def drop_table(
 
 
 # Rows previewed in the table-detail view.
-_SAMPLE_LIMIT = 20
+SAMPLE_LIMIT = 20
+
+
+async def preview_rows(
+    db: AsyncSession,
+    *,
+    workspace: Workspace,
+    user: User,
+    sql: str,
+    active_catalog: str | None = None,
+    stats_for: dict[str, str] | None = None,
+) -> RowsPageOut:
+    """The first rows of ``sql``, for a table's preview.
+
+    Runs on an agent like any other query, so it needs one connected and returns
+    503 when none is available."""
+    agent = await query_service.pick_agent_for(db, workspace, principal_id=user.id)
+    if agent is None:
+        raise await query_service.no_agent_error(
+            db,
+            workspace,
+            principal_id=user.id,
+            fallback="No compatible agent is connected to preview this table.",
+        )
+
+    try:
+        query = await query_service.run_sync_query(
+            db,
+            workspace=workspace,
+            agent=agent,
+            user_id=user.id,
+            sql=sql,
+            origin="sample",
+            active_catalog=active_catalog,
+            stats_for=stats_for,
+        )
+    except SQLNotAllowed as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={"error": "sql_not_allowed", "detail": str(exc)},
+        ) from exc
+    if query.status != "done" or query.result_path is None:
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail="Table preview did not complete in time.",
+        )
+
+    token = await query_service.agent_session_token(db, agent.id)
+    upstream = await query_service.proxy_rows(agent, query, token=token)
+    if upstream.status_code != 200:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail="Failed to fetch preview rows."
+        )
+    rows, columns = query_service.decode_parquet_page(upstream.content, SAMPLE_LIMIT, 0)
+    return RowsPageOut(
+        rows=rows,
+        columns=columns,
+        cursor=None,
+        total=query.row_count or len(rows),
+        column_schema=query.result_schema,
+    )
 
 
 async def sample_table(
@@ -742,54 +802,17 @@ async def sample_table(
     )
     await _backend(cat, polaris).get_table(cat, schema, table)
 
-    agent = await query_service.pick_agent_for(db, workspace, principal_id=user.id)
-    if agent is None:
-        raise await query_service.no_agent_error(
-            db,
-            workspace,
-            principal_id=user.id,
-            fallback="No compatible agent is connected to preview this table.",
-        )
-
     sql = (
         f"SELECT * FROM {quote_ident(cat.slug)}.{quote_ident(schema)}.{quote_ident(table)}"
-        f" LIMIT {_SAMPLE_LIMIT}"
+        f" LIMIT {SAMPLE_LIMIT}"
     )
-    try:
-        query = await query_service.run_sync_query(
-            db,
-            workspace=workspace,
-            agent=agent,
-            user_id=user.id,
-            sql=sql,
-            origin="sample",
-            active_catalog=cat.slug,
-            stats_for={"catalog": cat.slug, "schema": schema, "table": table},
-        )
-    except SQLNotAllowed as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail={"error": "sql_not_allowed", "detail": str(exc)},
-        ) from exc
-    if query.status != "done" or query.result_path is None:
-        raise HTTPException(
-            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-            detail="Table preview did not complete in time.",
-        )
-
-    token = await query_service.agent_session_token(db, agent.id)
-    upstream = await query_service.proxy_rows(agent, query, token=token)
-    if upstream.status_code != 200:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY, detail="Failed to fetch preview rows."
-        )
-    rows, columns = query_service.decode_parquet_page(upstream.content, _SAMPLE_LIMIT, 0)
-    return RowsPageOut(
-        rows=rows,
-        columns=columns,
-        cursor=None,
-        total=query.row_count or len(rows),
-        column_schema=query.result_schema,
+    return await preview_rows(
+        db,
+        workspace=workspace,
+        user=user,
+        sql=sql,
+        active_catalog=cat.slug,
+        stats_for={"catalog": cat.slug, "schema": schema, "table": table},
     )
 
 

@@ -82,8 +82,15 @@ async def ready(api_client, workspace, healthy_agent) -> str:
         "access.credentials",
         "access.table_access",
         "query.history",
+        "query.sessions",
         "lineage.table_lineage",
         "lineage.column_lineage",
+        "jobs.schedules",
+        "compute.agents",
+        "compute.agent_events",
+        "compute.agent_utilization",
+        "storage.table_health",
+        "storage.maintenance_operations",
     ],
 )
 async def test_an_admin_reads_each_table(api_client, workspace, ready, table) -> None:
@@ -293,3 +300,11 @@ async def test_a_query_s_table_access_is_recorded(api_client, workspace, catalog
         }
     ]
     await _until(api_client, workspace, ready, sql, expected)
+
+
+async def test_the_agent_s_connection_reaches_compute(api_client, workspace, ready) -> None:
+    sql = (
+        "SELECT count(*) > 0 AS connected FROM duckhaven.compute.agent_events "
+        f"WHERE agent_id = '{ready}' AND event = 'connected';"
+    )
+    await _until(api_client, workspace, ready, sql, [{"connected": True}])

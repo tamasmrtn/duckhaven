@@ -22,11 +22,24 @@ describe("system catalog completion", () => {
   it("holds every schema, table and column from the start", () => {
     const entry = systemCatalogEntry(systemCatalog);
 
-    expect(entry.schemas).toEqual(["info_schema", "access", "query"]);
+    expect(entry.schemas).toEqual([
+      "info_schema",
+      "access",
+      "query",
+      "lineage",
+    ]);
     expect(entry.tablesBySchema).toEqual({
       info_schema: ["catalogs", "schemata", "tables", "columns"],
-      access: ["audit", "grants"],
+      access: [
+        "audit",
+        "grants",
+        "users",
+        "workspaces",
+        "credentials",
+        "table_access",
+      ],
       query: ["history"],
+      lineage: ["table_lineage", "column_lineage"],
     });
     expect(entry.columnsByTable["access.audit"]).toContainEqual({
       name: "event_time",
@@ -39,10 +52,18 @@ describe("system catalog completion", () => {
       "info_schema",
       "access",
       "query",
+      "lineage",
     ]);
     expect(
       complete("SELECT * FROM duckhaven.access.|").map((s) => s.label),
-    ).toEqual(["audit", "grants"]);
+    ).toEqual([
+      "audit",
+      "grants",
+      "users",
+      "workspaces",
+      "credentials",
+      "table_access",
+    ]);
     expect(
       complete("SELECT duckhaven.query.history.| FROM t").map((s) => s.label),
     ).toContain("duration_ms");

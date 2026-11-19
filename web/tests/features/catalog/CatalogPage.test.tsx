@@ -257,22 +257,136 @@ describe("CatalogPage", () => {
     expect(WORKSHEETS.at(-1)?.sql).toMatch(/^ALTER TABLE .*"events"/);
   });
 
-  it("opens a worksheet that reads a system table when it is clicked", async () => {
-    const user = userEvent.setup();
-    localStorage.setItem(
-      "dh-tree-expanded-acme-analytics",
-      JSON.stringify(["c:duckhaven", "s:duckhaven.access"]),
-    );
-    renderWithProviders({ initialRoute: "/acme-analytics/catalog" });
+  describe("the duckhaven system catalog", () => {
+    const SAMPLE =
+      "/api/workspaces/:ws/system-catalog/schemas/:schema/tables/:table/sample";
 
-    await user.click(await screen.findByRole("button", { name: "audit" }));
+    function expand(nodes: string[]) {
+      localStorage.setItem(
+        "dh-tree-expanded-acme-analytics",
+        JSON.stringify(nodes),
+      );
+    }
 
-    expect(
-      await screen.findByRole("tab", { name: /^audit(?!\.sql)/ }),
-    ).toBeInTheDocument();
-    expect(WORKSHEETS.at(-1)?.sql).toBe(
-      'SELECT * FROM "duckhaven"."access"."audit" LIMIT 100;',
-    );
+    it("opens its page when its name is clicked", async () => {
+      const user = userEvent.setup();
+      expand([]);
+      renderWithProviders({ initialRoute: CATALOG_ROUTE });
+
+      await user.click(
+        await screen.findByRole("button", { name: /duckhaven/ }),
+      );
+
+      expect(
+        await screen.findByText("System catalog · read-only"),
+      ).toBeInTheDocument();
+      expect(screen.getByText("Schemas")).toBeInTheDocument();
+      await user.click(screen.getByRole("tab", { name: "Details" }));
+      expect(
+        screen.getByText("Every workspace, not only this one"),
+      ).toBeInTheDocument();
+      expect(screen.getByText("audit, grants")).toBeInTheDocument();
+    });
+
+    it("opens a schema's page when its name is clicked", async () => {
+      const user = userEvent.setup();
+      expand(["c:duckhaven"]);
+      renderWithProviders({ initialRoute: CATALOG_ROUTE });
+
+      await user.click(await screen.findByRole("button", { name: "access" }));
+
+      expect(
+        await screen.findByText("System schema · read-only"),
+      ).toBeInTheDocument();
+      await user.click(screen.getByRole("tab", { name: "Details" }));
+      expect(
+        screen.getByText("Every event of the access audit log"),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByText("Current access, one row per grant of any kind"),
+      ).toBeInTheDocument();
+    });
+
+    it("opens a table's page, with its columns and a preview, when it is clicked", async () => {
+      server.use(
+        http.get(SAMPLE, () =>
+          HttpResponse.json({
+            rows: [{ action: "catalog_grant.create" }],
+            columns: ["action"],
+            cursor: null,
+            total: 1,
+          }),
+        ),
+      );
+      const user = userEvent.setup();
+      expand(["c:duckhaven", "s:duckhaven.access"]);
+      renderWithProviders({ initialRoute: CATALOG_ROUTE });
+
+      await user.click(await screen.findByRole("button", { name: "audit" }));
+
+      expect(
+        await screen.findByText(
+          "System table · read-only · Every event of the access audit log",
+        ),
+      ).toBeInTheDocument();
+      expect(screen.getByText("subject_email")).toBeInTheDocument();
+      expect(
+        await screen.findByText("catalog_grant.create"),
+      ).toBeInTheDocument();
+      // Read-only: nothing to alter or drop.
+      expect(screen.queryByRole("button", { name: /alter table/i })).toBeNull();
+      expect(screen.queryByRole("button", { name: /^drop$/i })).toBeNull();
+
+      await user.click(
+        screen.getByRole("button", { name: /query this table/i }),
+      );
+      expect(
+        await screen.findByRole("tab", { name: /^audit(?!\.sql)/ }),
+      ).toBeInTheDocument();
+      expect(WORKSHEETS.at(-1)?.sql).toBe(
+        'SELECT * FROM "duckhaven"."access"."audit" LIMIT 100;',
+      );
+    });
+
+    it("says why a table cannot be previewed, opened from a link", async () => {
+      // Never one of the workspace's catalogs, so never asked of their routes.
+      const askedAsAWorkspaceCatalog = vi.fn();
+      server.use(
+        http.get(SAMPLE, () =>
+          HttpResponse.json(
+            {
+              error: "system_catalog_unavailable",
+              message:
+                "The duckhaven system catalog is not available on this deployment.",
+              details: null,
+            },
+            { status: 422 },
+          ),
+        ),
+        http.all("/api/workspaces/:ws/catalogs/duckhaven/*", ({ request }) => {
+          askedAsAWorkspaceCatalog(request.url);
+          return HttpResponse.json({}, { status: 404 });
+        }),
+      );
+      renderWithProviders({
+        initialRoute: "/acme-analytics/catalog/duckhaven/access/audit",
+      });
+
+      const alert = await screen.findByRole("alert");
+      expect(alert).toHaveTextContent(
+        "The duckhaven system catalog is not available on this deployment.",
+      );
+      expect(screen.getByText("Can't preview this table")).toBeInTheDocument();
+      expect(askedAsAWorkspaceCatalog).not.toHaveBeenCalled();
+    });
+
+    it("says a table it does not have is not found", async () => {
+      renderWithProviders({
+        initialRoute: "/acme-analytics/catalog/duckhaven/access/nope",
+      });
+
+      expect(await screen.findByText("Table not found.")).toBeInTheDocument();
+    });
   });
 
   it("lists snapshot history under the History tab", async () => {

@@ -54,7 +54,13 @@ function SchemaStatsRow({
   );
 }
 
-function Stat({ label, value }: { label: string; value: string | number }) {
+export function Stat({
+  label,
+  value,
+}: {
+  label: string;
+  value: string | number;
+}) {
   return (
     <div className="rounded-md border border-[var(--border-subtle)] px-4 py-3">
       <p className="text-2xl font-semibold text-text-primary font-tabular">
@@ -65,7 +71,13 @@ function Stat({ label, value }: { label: string; value: string | number }) {
   );
 }
 
-function MetaRow({ label, value }: { label: string; value: React.ReactNode }) {
+export function MetaRow({
+  label,
+  value,
+}: {
+  label: string;
+  value: React.ReactNode;
+}) {
   return (
     <div className="flex items-start gap-3 py-1.5 text-sm">
       <span className="w-40 shrink-0 text-text-tertiary">{label}</span>

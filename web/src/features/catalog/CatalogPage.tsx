@@ -20,9 +20,16 @@ import { useDeleteTable } from "@/queries/schemas.mutations";
 import { ResultsTable } from "@/features/worksheet/ResultsTable";
 import { StorageIcon } from "@/components/app/StorageIcon";
 import { useWorkspace } from "@/queries/workspaces";
+import { useSystemCatalog } from "@/queries/systemCatalog";
+import { useMe } from "@/queries/auth";
 import { CatalogTree } from "@/features/catalog/CatalogTree";
 import { CatalogDetail } from "@/features/catalog/CatalogDetail";
 import { SchemaDetail } from "@/features/catalog/SchemaDetail";
+import {
+  SystemCatalogDetail,
+  SystemSchemaDetail,
+  SystemTableDetail,
+} from "@/features/catalog/SystemCatalogDetail";
 import { ConfirmDropDialog } from "@/features/catalog/ConfirmDropDialog";
 import { SnapshotHistoryPanel } from "@/features/catalog/SnapshotHistoryPanel";
 import { detailTabsListClass } from "@/features/catalog/detailTabs";
@@ -432,8 +439,13 @@ export function CatalogPage() {
   const search = useSearch({ strict: false });
   const tab = typeof search.tab === "string" ? search.tab : undefined;
   const navigate = useNavigate();
-  const openWorksheet = useOpenInWorksheet(ws);
   const { data: workspace } = useWorkspace(ws);
+  // Known before any pane is chosen: a pane for one of the workspace's catalogs
+  // would ask for a `duckhaven` catalog the workspace does not have. Whether it
+  // is asked for at all waits on who you are.
+  const { isLoading: meLoading } = useMe();
+  const { data: system, isLoading: systemLoading } = useSystemCatalog(ws);
+  const isSystem = Boolean(catalog) && catalog === system?.catalog;
   useDocumentTitle(table ?? schema ?? catalog ?? "Catalog");
   // Below md the tree and the selected object's detail cannot share a row, so
   // it is one or the other: the tree until something is picked, then the
@@ -513,9 +525,11 @@ export function CatalogPage() {
                   params: { ws, catalog: c, schema: s, table: t },
                 })
               }
-              // A system table has no detail pane: open a worksheet that reads it.
               onSystemTableClick={(c, s, t) =>
-                void openWorksheet({ sql: selectTemplate(s, t, c), title: t })
+                navigate({
+                  to: "/$ws/catalog/$catalog/$schema/$table",
+                  params: { ws, catalog: c, schema: s, table: t },
+                })
               }
             />
           </div>
@@ -523,7 +537,23 @@ export function CatalogPage() {
 
         {showDetail && (
           <div className="min-w-0 flex-1 overflow-hidden">
-            {catalog && schema && table ? (
+            {catalog && (meLoading || systemLoading) ? (
+              <div className="flex h-full flex-col gap-4 p-6">
+                <Skeleton className="h-8 w-64 animate-shimmer rounded" />
+                <Skeleton className="h-24 w-full animate-shimmer rounded" />
+              </div>
+            ) : isSystem && system && schema && table ? (
+              <SystemTableDetail
+                ws={ws}
+                system={system}
+                schema={schema}
+                table={table}
+              />
+            ) : isSystem && system && schema ? (
+              <SystemSchemaDetail system={system} schema={schema} />
+            ) : isSystem && system ? (
+              <SystemCatalogDetail system={system} />
+            ) : catalog && schema && table ? (
               <TableDetail
                 ws={ws}
                 catalog={catalog}

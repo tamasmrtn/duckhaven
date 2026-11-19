@@ -75,6 +75,24 @@ Open a worksheet in a workspace you gave it, open the assistant panel, and ask "
 It answers with the tables both its grants and yours show. Its queries appear in History under the **Assistant**
 account, with the client `duckhaven-assistant` and your name beneath.
 
+## Watch what it costs
+
+The tokens each answer used, and each tool it called, are in the
+[system catalog](../querying/system-catalog.md) for anyone with `queries:admin`, across every workspace. What was asked
+and answered is not. To see who used the most in the last 30 days, run in a worksheet:
+
+```sql
+SELECT workspace_slug, user_email, sum(input_tokens + output_tokens) AS tokens
+FROM duckhaven.ai.assistant_usage
+WHERE created_at > now() - INTERVAL 30 DAY
+GROUP BY ALL
+ORDER BY tokens DESC;
+```
+
+You see one row per person and workspace, the heaviest first. `duckhaven.ai.tool_calls` holds each call's tool and
+outcome, as listed in [How governance works](assistant.md#how-governance-works). Every column is in the
+[system catalog reference](../reference/system-catalog.md#aiassistant_usage).
+
 ## If it goes wrong
 
 ### "Assistant is turned off"

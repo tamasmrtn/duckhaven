@@ -222,6 +222,22 @@ record that an agreed definition was bypassed.
     approval workflow beyond publish. Metrics from two different datasets cannot
     be combined in one query.
 
+## Reading definitions in SQL
+
+Every member can read the workspace's models, at any status, in SQL: `duckhaven.info_schema.semantic_models`, with
+`semantic_datasets`, `semantic_dimensions`, `semantic_metrics` and `semantic_relationships` for what each defines. A
+model shows only to someone who can see every table its datasets are on, as on the **Semantic models** page, and a
+change shows within about a minute. To find every metric that does not match its table:
+
+```sql
+SELECT model_slug, dataset_name, name, status
+FROM duckhaven.info_schema.semantic_metrics
+WHERE validation_state = 'broken'
+ORDER BY model_slug, name;
+```
+
+Every column is in the [system catalog reference](../reference/system-catalog.md#info_schemasemantic_models).
+
 ## Related
 
 - [AI assistant](../ai/assistant.md) — how the assistant uses these definitions

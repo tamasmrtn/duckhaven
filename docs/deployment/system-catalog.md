@@ -30,21 +30,25 @@ A new install creates the database on first start. An install that predates it n
 
 ## What it holds
 
-Seven schemas:
+Eight schemas:
 
-- `info_schema`: the schemas, tables and columns of every catalog.
+- `info_schema`: the schemas, tables, columns and DuckLake macros of every catalog, and every workspace's semantic
+  models.
 - `access`: the [access audit log](../access/audit-log.md), current access, users, workspaces, tokens, and which tables
   each query read and wrote.
 - `query`: finished queries and SQL sessions.
 - `lineage`: the lineage graph.
 - `jobs`: schedules.
 - `compute`: agents, their state changes and their minute-by-minute utilization.
-- `storage`: table health at each maintenance scan, and each maintenance apply.
+- `storage`: table health at each maintenance scan, each maintenance apply, and the storage backends, without their
+  configuration.
+- `ai`: the tokens each assistant answer used, and each tool it called, without what was asked or answered.
 
 Their tables, columns, and how long each keeps its rows, are in the
 [system catalog reference](../reference/system-catalog.md). The copy keeps what DuckHaven's own pages let go: deleting a
 workspace removes its queries from History but not from the copy, and agent utilization, which the monitoring page
-keeps for a week, stays for `SYSTEM_CATALOG_RETENTION_DAYS`.
+keeps for a week, stays for `SYSTEM_CATALOG_RETENTION_DAYS`, as do the assistant's usage and tool calls after their
+conversation is deleted.
 
 The copy trails `duckhaven` by up to the publish interval. An audit event joins it once every transaction that was
 writing before it on the same Postgres server has finished, so a transaction that runs for minutes holds the audit copy
@@ -57,9 +61,9 @@ columns stay empty until the copy reaches it.
 `info_schema` is read from each catalog's own metadata. One replica at a time re-reads a table within a publish interval
 or two of a statement or API call that changes it, and reads each catalog whole every
 `SYSTEM_CATALOG_METADATA_REFRESH_S`, 15 minutes by default, two catalogs per publish interval. A whole read of an
-Iceberg catalog costs Polaris one request per schema and one per table, eight at a time; of a DuckLake catalog, three
-queries. When the API first starts with the system catalog, a deployment of 100 catalogs takes about 10 minutes to have
-every one listed.
+Iceberg catalog costs Polaris one request per schema and one per table, eight at a time; of a DuckLake catalog, four
+queries, and a fifth when it has macros. When the API first starts with the system catalog, a deployment of 100 catalogs
+takes about 10 minutes to have every one listed.
 
 ## On a new install
 

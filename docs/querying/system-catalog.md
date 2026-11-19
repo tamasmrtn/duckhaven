@@ -4,8 +4,8 @@ type: concept
 
 # System catalog
 
-The `duckhaven` catalog lets you query, read-only in SQL, the schemas, tables and columns you can see, and DuckHaven's
-own records of access, queries, compute and storage. Every member can read its `info_schema`, which shows each person
+The `duckhaven` catalog lets you query, read-only in SQL, what you can see in your catalogs and DuckHaven's own records
+of access, queries, compute, storage and the assistant. Every member can read its `info_schema`, which shows each person
 only what they can see; each other table needs a permission of its own.
 
 !!! info "Availability"
@@ -32,6 +32,8 @@ ORDER BY schema_name, table_name;
 | `duckhaven.info_schema.schemata` | The schemas you can see in those catalogs | Nothing: every member |
 | `duckhaven.info_schema.tables` | The tables you can see, with their format, row count, size, owner and last write | Nothing: every member |
 | `duckhaven.info_schema.columns` | The columns of those tables, with the type a query sees | Nothing: every member |
+| `duckhaven.info_schema.routines` | The macros of the DuckLake schemas you can see, with their parameters and definition | Nothing: every member |
+| `duckhaven.info_schema.semantic_models`, `.semantic_datasets`, `.semantic_dimensions`, `.semantic_metrics`, `.semantic_relationships` | The workspace's [semantic models](../metadata/semantic-layer.md) whose tables you can all see, and what each defines | Nothing: every member |
 | `duckhaven.access.audit` | Every event of the [access audit log](../access/audit-log.md) | `audit:read` |
 | `duckhaven.access.grants` | Current access: one row per role, membership, catalog attachment, catalog grant, agent access mode, agent grant and workspace default compute | `audit:read` |
 | `duckhaven.access.users` | Every user and service account, with its global role | `audit:read` |
@@ -48,6 +50,9 @@ ORDER BY schema_name, table_name;
 | `duckhaven.compute.agent_utilization` | Each agent's CPU, memory and queue, minute by minute, for a year by default | `agents:manage` |
 | `duckhaven.storage.table_health` | Each table's health at each maintenance scan | `maintenance:manage` |
 | `duckhaven.storage.maintenance_operations` | Each maintenance apply, and how it ended | `maintenance:manage` |
+| `duckhaven.storage.backends` | Every storage backend, and how many catalogs use it; never its configuration | `storage:manage` |
+| `duckhaven.ai.assistant_usage` | The tokens each [assistant](../ai/assistant.md) answer used, and for whom | `queries:admin` |
+| `duckhaven.ai.tool_calls` | Each tool the assistant called, and whether it was allowed, refused or failed | `queries:admin` |
 
 Every column, and how long each table keeps its rows, is in the
 [system catalog reference](../reference/system-catalog.md).
@@ -132,14 +137,22 @@ ORDER BY table_name, ordinal_position;
 It is read from each catalog's own metadata, so it trails changes:
 
 - **A change made through DuckHaven** shows within about two publish intervals, 20 seconds by default. That covers a
-  statement that creates, alters, writes to or drops a table or schema, and a schema or table created or dropped on the
-  **Catalog** page.
+  statement that creates, alters, writes to or drops a table, schema or macro, and a schema or table created or dropped
+  on the **Catalog** page.
 - **Any other change**, such as another engine writing to the same Iceberg catalog, shows when the catalog is next read
   whole, every 15 minutes by default (`SYSTEM_CATALOG_METADATA_REFRESH_S`).
 - **A newly attached catalog** is in `info_schema.catalogs` within the publish interval, and its schemas and tables
   after its first read, which comes within a few minutes.
 
-`refreshed_at` on each row says when it was read. Views and macros are not listed.
+`refreshed_at` on each row says when it was read. Views are not listed.
+
+Two kinds of row follow rules of their own:
+
+- **A macro** shows when you can see its whole schema: for a grant on the schema or the catalog, not for one on a table
+  in it. Only a DuckLake catalog stores macros.
+- **A semantic model** shows whole or not at all: when you can see every table its datasets are on, as on the **Semantic
+  models** page. Its datasets, dimensions, metrics and relationships show with it. A change to a model shows within
+  about a minute. Dimensions' sample values are left out: they are rows of the table.
 
 ### Find it in the catalog tree
 
@@ -172,14 +185,15 @@ table it reads:
 
 | Tables | Permission |
 |---|---|
-| `duckhaven.info_schema.catalogs`, `.schemata`, `.tables`, `.columns` | None |
+| Every table in `duckhaven.info_schema` | None |
 | Every table in `duckhaven.access` and `duckhaven.lineage` | `audit:read` |
-| Every table in `duckhaven.query` and `duckhaven.jobs` | `queries:admin` |
+| Every table in `duckhaven.query`, `duckhaven.jobs` and `duckhaven.ai` | `queries:admin` |
 | Every table in `duckhaven.compute` | `agents:manage` |
-| Every table in `duckhaven.storage` | `maintenance:manage` |
+| `duckhaven.storage.table_health`, `duckhaven.storage.maintenance_operations` | `maintenance:manage` |
+| `duckhaven.storage.backends` | `storage:manage` |
 
-The `admin` role holds both; the [permissions reference](../reference/permissions.md) lists what else each allows. A
-query made for someone else, by the [assistant](../ai/assistant.md) say, needs the permission for each person it runs
+The `admin` role holds every one; the [permissions reference](../reference/permissions.md) lists what else each allows.
+A query made for someone else, by the [assistant](../ai/assistant.md) say, needs the permission for each person it runs
 for. Without it the query is refused with `403` and `"error": "grant_denied"`, and a message that names each table it
 may not read, such as `Reading duckhaven.query.history needs the queries:admin permission.`
 

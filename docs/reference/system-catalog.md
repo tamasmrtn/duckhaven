@@ -14,6 +14,12 @@ with the permission each table needs. What the catalog is, and how a query reads
 | [`duckhaven.info_schema.schemata`](#info_schemaschemata) | The schemas you can see | Nothing | Replaced as each catalog is read again |
 | [`duckhaven.info_schema.tables`](#info_schematables) | The tables you can see | Nothing | Replaced as each catalog is read again |
 | [`duckhaven.info_schema.columns`](#info_schemacolumns) | The columns of the tables you can see | Nothing | Replaced as each catalog is read again |
+| [`duckhaven.info_schema.routines`](#info_schemaroutines) | The macros of the DuckLake schemas you can see | Nothing | Replaced as each catalog is read again |
+| [`duckhaven.info_schema.semantic_models`](#info_schemasemantic_models) | The workspace's [semantic models](../metadata/semantic-layer.md) whose tables you can see | Nothing | Replaced whole every minute |
+| [`duckhaven.info_schema.semantic_datasets`](#info_schemasemantic_datasets) | The datasets of those models | Nothing | Replaced whole every minute |
+| [`duckhaven.info_schema.semantic_dimensions`](#info_schemasemantic_dimensions) | Their dimensions | Nothing | Replaced whole every minute |
+| [`duckhaven.info_schema.semantic_metrics`](#info_schemasemantic_metrics) | Their metrics | Nothing | Replaced whole every minute |
+| [`duckhaven.info_schema.semantic_relationships`](#info_schemasemantic_relationships) | Their relationships | Nothing | Replaced whole every minute |
 | [`duckhaven.access.audit`](#accessaudit) | Every event of the [access audit log](../access/audit-log.md) | `audit:read` | `AUDIT_RETENTION_DAYS`, as in the audit log |
 | [`duckhaven.access.grants`](#accessgrants) | Current access, one row per grant of any kind | `audit:read` | Replaced whole after each access change, and at least every 5 minutes |
 | [`duckhaven.access.users`](#accessusers) | Every user and service account | `audit:read` | Replaced with `access.grants` |
@@ -30,6 +36,9 @@ with the permission each table needs. What the catalog is, and how a query reads
 | [`duckhaven.compute.agent_utilization`](#computeagent_utilization) | Each agent's CPU, memory and queue, minute by minute | `agents:manage` | `SYSTEM_CATALOG_RETENTION_DAYS`, 365 days by default |
 | [`duckhaven.storage.table_health`](#storagetable_health) | Each table's [health](../data/maintenance.md#health-score) at each maintenance scan | `maintenance:manage` | `SYSTEM_CATALOG_RETENTION_DAYS`, 365 days by default |
 | [`duckhaven.storage.maintenance_operations`](#storagemaintenance_operations) | Each [maintenance apply](../data/maintenance.md#applying-maintenance), and how it ended | `maintenance:manage` | `SYSTEM_CATALOG_RETENTION_DAYS`, 365 days by default |
+| [`duckhaven.storage.backends`](#storagebackends) | Every [storage backend](../data/storage-backends.md), never its configuration | `storage:manage` | Replaced whole every minute |
+| [`duckhaven.ai.assistant_usage`](#aiassistant_usage) | The tokens each [assistant](../ai/assistant.md) answer used | `queries:admin` | `SYSTEM_CATALOG_RETENTION_DAYS`, 365 days by default |
+| [`duckhaven.ai.tool_calls`](#aitool_calls) | Each tool the assistant called, never its arguments | `queries:admin` | `SYSTEM_CATALOG_RETENTION_DAYS`, 365 days by default |
 
 - **Columns are only added.** A column is never renamed, retyped or removed. Name the columns you read rather than
   `SELECT *` in anything that must keep working.
@@ -38,11 +47,11 @@ with the permission each table needs. What the catalog is, and how a query reads
 - **`info_schema` rows are filtered.** Each query sees the rows of its own workspace's catalogs that everyone it runs
   for can see; see [What info_schema shows](../querying/system-catalog.md#what-info_schema-shows), which also says how
   soon a change appears.
-- **The copy keeps what the source drops.** Agent events and minutes, table health samples and maintenance applies
-  stay in the copy for their own retention, after DuckHaven's own pages have let them go, and after the agent, table or
-  workspace is deleted.
-- **JSON columns are text.** `before`, `after`, `details`, `tags`, `factors` and `result` hold JSON; read a field with
-  `->>`, as in `after ->> 'tier'`.
+- **The copy keeps what the source drops.** Agent events and minutes, table health samples, maintenance applies,
+  assistant answers and tool calls stay in the copy for their own retention, after DuckHaven's own pages have let them
+  go, and after the agent, table, conversation or workspace is deleted.
+- **JSON columns are text.** `before`, `after`, `details`, `tags`, `factors`, `result`, `primary_key`, `synonyms`,
+  `time_grains` and `join_columns` hold JSON; read a field with `->>`, as in `after ->> 'tier'`.
 
 ## info_schema.catalogs
 
@@ -98,6 +107,110 @@ One row per top-level column of each table you can see. A nested column's fields
 | `data_type` | `VARCHAR` | Its type as `DESCRIBE` shows it to a query, such as `BIGINT` or `STRUCT(x INTEGER, y VARCHAR)` |
 | `source_type` | `VARCHAR` | Its type as the catalog stores it, such as Iceberg's `long` or DuckLake's `int64` |
 | `is_nullable` | `VARCHAR` | `YES` or `NO` |
+
+## info_schema.routines
+
+One row per macro, per parameter list, in each DuckLake schema you can see whole: through the open catalog, or a grant
+on the schema or its catalog. A grant on one table does not show its schema's macros. An Iceberg catalog has none.
+
+| Column | Type | Meaning |
+|---|---|---|
+| `catalog_id`, `catalog_name` | `UUID`, `VARCHAR` | Its catalog |
+| `schema_name`, `routine_name` | `VARCHAR` | Its schema and name |
+| `overload` | `INTEGER` | Which of its parameter lists, from 0; a macro defined with several has a row for each |
+| `routine_type` | `VARCHAR` | `macro`, which returns a value, or `table_macro`, which returns a table |
+| `parameters` | `VARCHAR` | Its parameters, comma-separated, each with its type when it was given one, such as `n INTEGER`. Defaults are not shown |
+| `definition` | `VARCHAR` | Its body, as DuckLake stores it |
+| `refreshed_at` | `TIMESTAMP WITH TIME ZONE` | When it was last read from the catalog |
+
+## info_schema.semantic_models
+
+One row per [semantic model](../metadata/semantic-layer.md) of the workspace the query runs in, at any status, that
+everyone the query runs for can see whole: every table its datasets are on. The other `semantic_` tables show the parts
+of the models this one shows, and each names its model by `model_id`, `workspace_id` and `model_slug`.
+
+| Column | Type | Meaning |
+|---|---|---|
+| `model_id`, `workspace_id` | `UUID` | The model, and its workspace |
+| `model_slug`, `name` | `VARCHAR` | Its slug, as the API and the CLI name it, and its display name |
+| `description` | `VARCHAR` | What it covers |
+| `status` | `VARCHAR` | `draft`, `published` or `deprecated` |
+| `provider` | `VARCHAR` | `native` for a model made in DuckHaven, or the importer that made it, such as `dbt` |
+| `owner_id`, `owner_email` | `UUID`, `VARCHAR` | Its owner |
+| `created_at`, `updated_at` | `TIMESTAMP WITH TIME ZONE` | When it was created and last changed |
+| `refreshed_at` | `TIMESTAMP WITH TIME ZONE` | When it was copied |
+
+## info_schema.semantic_datasets
+
+One row per dataset: the table a model builds on.
+
+| Column | Type | Meaning |
+|---|---|---|
+| `dataset_id` | `UUID` | The dataset |
+| `name`, `description` | `VARCHAR` | Its name in the model, and what it holds |
+| `catalog_id`, `catalog_name` | `UUID`, `VARCHAR` | Its table's catalog |
+| `schema_name`, `table_name` | `VARCHAR` | Its table |
+| `primary_key` | `VARCHAR`, JSON | The columns that identify a row, as a list |
+| `synonyms` | `VARCHAR`, JSON | Other names for it, as a list |
+| `validation_state` | `VARCHAR` | `ok`, `broken` when its table does not match it, or `unchecked` |
+| `refreshed_at` | `TIMESTAMP WITH TIME ZONE` | When it was copied |
+
+## info_schema.semantic_dimensions
+
+One row per dimension: a column, or an expression, to group or filter by. The values a dimension was sampled to have
+are not copied.
+
+| Column | Type | Meaning |
+|---|---|---|
+| `dimension_id` | `UUID` | The dimension |
+| `dataset_id`, `dataset_name` | `UUID`, `VARCHAR` | Its dataset |
+| `name`, `display_name`, `description` | `VARCHAR` | Its name, its label and what it means |
+| `kind` | `VARCHAR` | `categorical` or `time` |
+| `expr` | `VARCHAR` | Its SQL expression |
+| `data_type` | `VARCHAR` | Its type, when known |
+| `time_grains` | `VARCHAR`, JSON | For a time dimension, the grains it may be grouped by: `day`, `week`, `month`, `quarter`, `year` |
+| `is_default_time` | `BOOLEAN` | Whether it is its dataset's default time dimension |
+| `synonyms` | `VARCHAR`, JSON | Other names for it, as a list |
+| `validation_state` | `VARCHAR` | `ok`, `broken` or `unchecked` |
+| `refreshed_at` | `TIMESTAMP WITH TIME ZONE` | When it was copied |
+
+## info_schema.semantic_metrics
+
+One row per metric. See [Define metrics](../metadata/define-metrics.md) for what each field does.
+
+| Column | Type | Meaning |
+|---|---|---|
+| `metric_id` | `UUID` | The metric |
+| `dataset_id`, `dataset_name` | `UUID`, `VARCHAR` | Its dataset |
+| `name`, `display_name`, `description` | `VARCHAR` | Its name, its label and what it means |
+| `agg` | `VARCHAR` | `sum`, `count`, `count_distinct`, `avg`, `min` or `max` |
+| `expr`, `filter` | `VARCHAR` | The SQL expression it aggregates, and the condition rows must meet |
+| `time_dimension_id` | `UUID` | The time dimension it is measured over, as `dimension_id` in `semantic_dimensions` |
+| `format` | `VARCHAR` | `number`, `percent`, `currency`, `duration` or `bytes` |
+| `unit`, `currency` | `VARCHAR` | Its unit, and for money its currency code |
+| `polarity` | `VARCHAR` | `up_good`, `down_good` or `neutral` |
+| `caveat` | `VARCHAR` | What to keep in mind reading it |
+| `synonyms` | `VARCHAR`, JSON | Other names for it, as a list |
+| `status` | `VARCHAR` | `draft`, `published` or `deprecated` |
+| `owner_id`, `owner_email` | `UUID`, `VARCHAR` | Its owner |
+| `validation_state` | `VARCHAR` | `ok`, `broken` or `unchecked` |
+| `created_at`, `updated_at` | `TIMESTAMP WITH TIME ZONE` | When it was created and last changed |
+| `refreshed_at` | `TIMESTAMP WITH TIME ZONE` | When it was copied |
+
+## info_schema.semantic_relationships
+
+One row per declared join between two datasets of a model.
+
+| Column | Type | Meaning |
+|---|---|---|
+| `relationship_id` | `UUID` | The relationship |
+| `name` | `VARCHAR` | Its name |
+| `left_dataset_id`, `left_dataset_name` | `UUID`, `VARCHAR` | The dataset it joins from |
+| `right_dataset_id`, `right_dataset_name` | `UUID`, `VARCHAR` | The dataset it joins to |
+| `join_columns` | `VARCHAR`, JSON | The columns joined, as a list of `{"left": …, "right": …}` |
+| `cardinality` | `VARCHAR` | `many_to_one` or `one_to_one` |
+| `validation_state` | `VARCHAR` | `ok`, `broken` or `unchecked` |
+| `refreshed_at` | `TIMESTAMP WITH TIME ZONE` | When it was copied |
 
 ## access.audit
 
@@ -448,6 +561,55 @@ within the publish interval of the apply starting and is updated when it ends.
 | `result` | `VARCHAR`, JSON | The table before and after, as the agent measured it, for a run that succeeded |
 | `started_at`, `finished_at` | `TIMESTAMP WITH TIME ZONE` | When it started and ended |
 | `applied_by_id`, `applied_by_email` | `UUID`, `VARCHAR` | Who applied it |
+
+## storage.backends
+
+One row per [storage backend](../data/storage-backends.md). Its configuration, the role ARN, external id or tenant id it
+was registered with, is never copied.
+
+| Column | Type | Meaning |
+|---|---|---|
+| `backend_id` | `UUID` | The backend |
+| `name` | `VARCHAR` | Its name |
+| `kind` | `VARCHAR` | `object_store`, `s3` or `adls_gen2` |
+| `root_uri` | `VARCHAR` | Where its data lives |
+| `catalog_count` | `INTEGER` | The catalogs on it |
+| `created_by_id`, `created_by_email` | `UUID`, `VARCHAR` | Who registered it |
+| `created_at` | `TIMESTAMP WITH TIME ZONE` | When it was registered |
+| `snapshot_time` | `TIMESTAMP WITH TIME ZONE` | When it was copied |
+
+## ai.assistant_usage
+
+One row per answer of the [assistant](../ai/assistant.md): what it cost, and for whom. What was asked and answered is
+never copied.
+
+| Column | Type | Meaning |
+|---|---|---|
+| `message_id` | `UUID` | The answer |
+| `conversation_id` | `UUID` | Its conversation |
+| `workspace_id`, `workspace_slug` | `UUID`, `VARCHAR` | The workspace it was asked in |
+| `user_id`, `user_email` | `UUID`, `VARCHAR` | Who asked |
+| `service_account_id`, `service_account_email` | `UUID`, `VARCHAR` | The service account the assistant acted as |
+| `turn` | `INTEGER` | Its place in the conversation, from 0 |
+| `input_tokens`, `output_tokens` | `INTEGER` | The tokens the model read and wrote for it |
+| `created_at` | `TIMESTAMP WITH TIME ZONE` | When it was saved |
+
+## ai.tool_calls
+
+One row per tool the assistant called. Its arguments, the SQL it ran, what it returned and the tables it read are never
+copied; `query_id` leads to the query in `query.history`, for those who may read that.
+
+| Column | Type | Meaning |
+|---|---|---|
+| `call_id` | `UUID` | The call |
+| `conversation_id` | `UUID` | Its conversation |
+| `workspace_id`, `workspace_slug` | `UUID`, `VARCHAR` | The workspace |
+| `user_id`, `user_email` | `UUID`, `VARCHAR` | Who the assistant was answering |
+| `tool` | `VARCHAR` | The tool, such as `run_sql` |
+| `status` | `VARCHAR` | `ok`; `denied`, refused on policy; `error`, failed for another reason; or `approval_required`, a write waiting for a person. See [How governance works](../ai/assistant.md#how-governance-works) |
+| `query_id` | `UUID` | The query it ran, as `id` in `query.history`; empty for a tool that ran none |
+| `latency_ms` | `INTEGER` | How long it took |
+| `created_at` | `TIMESTAMP WITH TIME ZONE` | When it was saved |
 
 ## Related
 

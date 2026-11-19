@@ -398,6 +398,30 @@ Send a PUT request.
 --param/-p
 ```
 
+## `dh audit`
+
+The access audit log: access changes, sign-ins, refusals.
+
+### `dh audit list`
+
+Audit events, newest first. Needs the audit:read permission.
+
+```text
+--since
+--until
+--category
+--action
+--actor
+--subject
+--in-workspace
+--target-type
+--target-id
+--outcome
+--self-change
+--limit
+--all
+```
+
 ## `dh auth`
 
 Sign in, and inspect the credential in use.
@@ -837,7 +861,7 @@ One run's status, timings and error.
 
 ### `dh query list`
 
-The query log, newest first. Doubles as the audit trail.
+The query log, newest first.
 
 ```text
 --status
@@ -1017,7 +1041,7 @@ Schemas in the catalog.
 
 ## `dh search`
 
-Find catalogs, schemas, tables and saved queries by name.
+Find catalogs, schemas, tables, saved queries, dashboards and semantic models by name.
 
 ```text
 <query>

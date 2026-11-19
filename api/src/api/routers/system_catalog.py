@@ -4,6 +4,9 @@ autocomplete.
 The catalog is never one of the workspace's catalogs, so the catalog and schema
 routes cannot list it. Its tables are fixed, so they are listed from their
 definitions rather than read through an agent; only a preview reads one.
+
+Each table takes its own permission (``store.TABLES``), so each caller is shown
+only the tables they may read.
 """
 
 from __future__ import annotations
@@ -14,17 +17,17 @@ from fastapi import APIRouter, Depends, HTTPException, Path, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.config import settings
-from api.deps import get_db, require_permission
+from api.deps import get_current_user, get_db
 from api.models.user import User
 from api.models.workspace import Workspace
 from api.routers.schemas import SAMPLE_LIMIT, preview_rows
 from api.schemas.query import RowsPageOut
 from api.schemas.system_catalog import SystemCatalogOut, SystemColumnOut, SystemTableOut
-from api.services.permissions import Permission
+from api.services.audit.events import record_permission_denied
 from api.services.query_submit import not_dispatchable
 from api.services.runtimes import AgentNotDispatchable
 from api.services.system_catalog import attach, store
-from api.services.system_catalog.authorize import shadowed
+from api.services.system_catalog.authorize import readable_by, shadowed
 from api.services.workspace import (
     assert_workspace_member,
     get_workspace,
@@ -34,12 +37,6 @@ from duckhaven_shared.sql import quote_ident
 from duckhaven_shared.system_catalog import SYSTEM_CATALOG_ALIAS
 
 router = APIRouter()
-
-_DESCRIPTIONS = {
-    "audit": "Every event of the access audit log",
-    "grants": "Current access, one row per grant of any kind",
-    "history": "Finished queries",
-}
 
 
 async def _readable_in(db: AsyncSession, ws: str, user: User) -> Workspace:
@@ -55,37 +52,36 @@ async def _readable_in(db: AsyncSession, ws: str, user: User) -> Workspace:
     return workspace
 
 
-@router.get(
-    "/workspaces/{workspace}/system-catalog",
-    response_model=SystemCatalogOut,
-    # Both, as a query on it needs; each refusal is recorded like any other.
-    dependencies=[Depends(require_permission(Permission.AUDIT_READ))],
-)
+@router.get("/workspaces/{workspace}/system-catalog", response_model=SystemCatalogOut)
 async def get_system_catalog(
     ws: Annotated[str, Path(alias="workspace")],
-    user: User = Depends(require_permission(Permission.QUERIES_ADMIN)),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> SystemCatalogOut:
-    """The ``duckhaven`` system catalog's tables and their columns.
+    """The ``duckhaven`` system catalog's tables the caller may read, with their columns.
 
-    Needs `audit:read` and `queries:admin`, as reading it does. 404 where this
-    workspace cannot read it: the system catalog is turned off, or the workspace
-    has a catalog of its own named `duckhaven`. `available` is false while its
-    database cannot be reached, when a query on it fails."""
+    Each table names the permission reading it takes, or none for a table every
+    member reads. 404 where this workspace cannot read it: the system catalog is
+    turned off, or the workspace has a catalog of its own named `duckhaven`.
+    `available` is false while its database cannot be reached, when a query on it
+    fails."""
     await _readable_in(db, ws, user)
+    readable = await readable_by(db, user.id)
     return SystemCatalogOut(
         catalog=SYSTEM_CATALOG_ALIAS,
         available=attach.is_available(),
         tables=[
             SystemTableOut(
-                schema_name=table.schema,
-                name=table.name,
-                description=_DESCRIPTIONS[table.name],
+                schema_name=t.schema,
+                name=t.name,
+                description=t.description,
+                permission=t.permission,
                 columns=[
-                    SystemColumnOut(name=c.name, type=store.duckdb_type(c)) for c in table.columns
+                    SystemColumnOut(name=c.name, type=store.duckdb_type(c)) for c in t.table.columns
                 ],
             )
-            for table in store.READABLE
+            for t in store.TABLES
+            if (t.schema, t.name) in readable
         ],
     )
 
@@ -93,13 +89,12 @@ async def get_system_catalog(
 @router.get(
     "/workspaces/{workspace}/system-catalog/schemas/{schema}/tables/{table}/sample",
     response_model=RowsPageOut,
-    dependencies=[Depends(require_permission(Permission.AUDIT_READ))],
 )
 async def sample_system_table(
     ws: Annotated[str, Path(alias="workspace")],
     schema: str,
     table: str,
-    user: User = Depends(require_permission(Permission.QUERIES_ADMIN)),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> RowsPageOut:
     """The first rows of a system catalog table, for its page.
@@ -107,10 +102,15 @@ async def sample_system_table(
     Runs on an agent as a query of its own that the access checks see like any
     other, so it needs one connected (503 when none is) and one that can attach
     the system catalog (422 otherwise, or while its database cannot be reached).
-    404 for a table it does not have."""
+    404 for a table it does not have, 403 for one the caller may not read."""
     workspace = await _readable_in(db, ws, user)
-    if not any((t.schema, t.name) == (schema, table) for t in store.READABLE):
+    found = next((t for t in store.TABLES if (t.schema, t.name) == (schema, table)), None)
+    if found is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND)
+    if (schema, table) not in await readable_by(db, user.id):
+        if found.permission is not None:
+            await record_permission_denied(db, found.permission)
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN)
     sql = (
         f"SELECT * FROM {quote_ident(SYSTEM_CATALOG_ALIAS)}.{quote_ident(schema)}"
         f".{quote_ident(table)} LIMIT {SAMPLE_LIMIT}"

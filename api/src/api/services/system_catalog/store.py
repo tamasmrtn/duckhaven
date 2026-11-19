@@ -6,19 +6,29 @@ that reaches those tables and nothing else. Agents never connect to ``duckhaven`
 which holds users, password hashes and session tokens.
 
 ``ensure()`` creates the schemas, the tables and the reader login, and re-applies
-the login's password, limits and grants. It is idempotent and serialized by an
-advisory lock, since replicas start together. Until it has succeeded the copy is
-skipped; the publisher retries it each interval, so creating the database later
-needs no restart.
+the login's password, limits, grants and row filters. It is idempotent and
+serialized by an advisory lock, since replicas start together. Until it has
+succeeded the copy is skipped; the publisher retries it each interval, so creating
+the database later needs no restart.
 
 The tables are a contract: columns are only ever added, never renamed, retyped or
-removed.
+removed. A column added to a table an existing store already has is added there by
+``ensure()``, so it must be nullable.
+
+**Row filters.** One login reads every table, so Postgres itself decides which
+rows each query sees, with row-level security on every table. The agent attaches
+with settings in its connection string (see ``duckhaven_shared.system_catalog``):
+the workspace the query runs in, everyone it runs for, and the tables they may
+read. A table's policy shows its rows only when it is among those tables, and a
+table that every member reads (``permission`` None) narrows them further, to what
+that member can see. Without the settings a query reads no row of any table.
 """
 
 from __future__ import annotations
 
 import logging
 import secrets
+from dataclasses import dataclass
 
 import sqlalchemy as sa
 from sqlalchemy import text
@@ -35,10 +45,18 @@ from api.config import settings
 from api.db.entra import attach_entra_auth
 from api.db.session import engine_kwargs
 from api.models.user import Credential
+from api.services.permissions import Permission
+from duckhaven_shared.system_catalog import (
+    SETTING_PRINCIPALS,
+    SETTING_READABLE,
+    SETTING_WORKSPACE,
+)
 
 logger = logging.getLogger(__name__)
 
-ACCESS, QUERY, STATE = "access", "query", "_state"
+ACCESS, QUERY = "access", "query"
+# Private: copy cursors, and what the row filters consult.
+STATE, ACL = "_state", "_acl"
 READER_ROLE = "dh_system_reader"
 # The reader's password, in the control-plane database like the DuckLake logins'.
 READER_CREDENTIAL_KIND = "system_reader"
@@ -153,8 +171,44 @@ HISTORY = sa.Table(
     schema=QUERY,
 )
 
+
+@dataclass(frozen=True)
+class SystemTable:
+    """A table queries may read, and what reading it takes."""
+
+    table: sa.Table
+    description: str
+    # The permission reading it takes, held by everyone a query runs for. None for
+    # a table every member of the workspace reads, which then needs `row_filter`.
+    permission: str | None
+    # A further SQL condition on its rows, for a table every member reads: the
+    # rows of what this member can see. Its names resolve against the table.
+    row_filter: str | None = None
+
+    @property
+    def schema(self) -> str:
+        return str(self.table.schema)
+
+    @property
+    def name(self) -> str:
+        return self.table.name
+
+    @property
+    def qualified(self) -> str:
+        return f"{self.schema}.{self.name}"
+
+
 # The tables a query may read, in the order the catalog tree lists them.
-READABLE = (AUDIT, GRANTS, HISTORY)
+TABLES: tuple[SystemTable, ...] = (
+    SystemTable(AUDIT, "Every event of the access audit log", Permission.AUDIT_READ.value),
+    SystemTable(
+        GRANTS, "Current access, one row per grant of any kind", Permission.AUDIT_READ.value
+    ),
+    SystemTable(HISTORY, "Finished queries", Permission.QUERIES_ADMIN.value),
+)
+# The schemas queries may read, in the order of their first table.
+SCHEMAS: tuple[str, ...] = tuple(dict.fromkeys(t.schema for t in TABLES))
+ALL_SCHEMAS: tuple[str, ...] = (*SCHEMAS, STATE, ACL)
 
 # Each column type as an agent's DuckDB reports it through the `postgres` extension,
 # which reads JSONB as text.
@@ -252,13 +306,15 @@ async def ensure(session_factory: async_sessionmaker[AsyncSession]) -> bool:
         async with get_engine().begin() as conn:
             # Replicas start together; the second waits, then finds it all done.
             await conn.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": _ENSURE_LOCK_KEY})
-            for schema in (ACCESS, QUERY, STATE):
+            for schema in ALL_SCHEMAS:
                 await conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {schema}"))
             await conn.run_sync(METADATA.create_all)
+            await _add_missing_columns(conn)
             # Read under the lock, so two replicas never mint two passwords.
             async with session_factory() as db:
                 password = await reader_password(db)
             await _apply_reader_login(conn, password)
+            await _apply_row_filters(conn)
     except Exception as exc:  # noqa: BLE001 - any failure leaves the store unavailable
         _available = False
         reason = f"{type(exc).__name__}: {exc}".splitlines()[0]
@@ -313,7 +369,81 @@ async def _apply_reader_login(conn: AsyncConnection, password: str) -> None:
             f"current_database(), '{READER_ROLE}'); END $do$"
         )
     )
-    await conn.execute(text(f"GRANT USAGE ON SCHEMA {ACCESS}, {QUERY} TO {READER_ROLE}"))
-    await conn.execute(
-        text(f"GRANT SELECT ON ALL TABLES IN SCHEMA {ACCESS}, {QUERY} TO {READER_ROLE}")
-    )
+    # `_acl` for the functions and tables the row filters consult, which run as
+    # the reader; `_state` not at all.
+    readable = ", ".join((*SCHEMAS, ACL))
+    await conn.execute(text(f"GRANT USAGE ON SCHEMA {readable} TO {READER_ROLE}"))
+    await conn.execute(text(f"GRANT SELECT ON ALL TABLES IN SCHEMA {readable} TO {READER_ROLE}"))
+
+
+async def _add_missing_columns(conn: AsyncConnection) -> None:
+    """Add the columns and indexes a table has gained since the store was created.
+
+    ``create_all`` creates only missing tables. The tables only ever gain nullable
+    columns, so adding one is all an existing store needs.
+    """
+    for table in METADATA.sorted_tables:
+        existing = set(
+            await conn.scalars(
+                text(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_schema = :schema AND table_name = :table"
+                ),
+                {"schema": table.schema, "table": table.name},
+            )
+        )
+        for column in table.columns:
+            if column.name not in existing:
+                kind = column.type.compile(dialect=conn.dialect)
+                await conn.execute(
+                    text(
+                        f"ALTER TABLE {table.schema}.{table.name} "
+                        f'ADD COLUMN IF NOT EXISTS "{column.name}" {kind}'
+                    )
+                )
+        for index in table.indexes:
+            await conn.run_sync(lambda sync, index=index: index.create(sync, checkfirst=True))
+
+
+def _setting(name: str) -> str:
+    return f"nullif(current_setting('{name}', true), '')"
+
+
+# What a query runs for, read from its connection's settings. Unset reads as
+# nothing: no workspace, no one, no table.
+_ROW_FILTER_FUNCTIONS = {
+    "readable() RETURNS text[]": (
+        f"SELECT coalesce(string_to_array({_setting(SETTING_READABLE)}, ','), '{{}}')"
+    ),
+    "workspace() RETURNS uuid": f"SELECT {_setting(SETTING_WORKSPACE)}::uuid",
+    "principals() RETURNS uuid[]": (
+        f"SELECT coalesce(string_to_array({_setting(SETTING_PRINCIPALS)}, ',')::uuid[], '{{}}')"
+    ),
+}
+
+
+def row_filter(table: SystemTable) -> str:
+    """The condition a row of ``table`` must meet for a query to see it."""
+    # A sub-select, so Postgres decides it once per query rather than per row.
+    readable = f"(SELECT '{table.qualified}' = ANY ({ACL}.readable()))"
+    return f"{readable} AND ({table.row_filter})" if table.row_filter else readable
+
+
+async def _apply_row_filters(conn: AsyncConnection) -> None:
+    """(Re)create each table's row-level security policy, and what it calls."""
+    for signature, body in _ROW_FILTER_FUNCTIONS.items():
+        await conn.execute(
+            text(
+                f"CREATE OR REPLACE FUNCTION {ACL}.{signature} "
+                f"LANGUAGE sql STABLE AS $fn$ {body} $fn$"
+            )
+        )
+    for table in TABLES:
+        await conn.execute(text(f"ALTER TABLE {table.qualified} ENABLE ROW LEVEL SECURITY"))
+        await conn.execute(text(f"DROP POLICY IF EXISTS readable ON {table.qualified}"))
+        await conn.execute(
+            text(
+                f"CREATE POLICY readable ON {table.qualified} FOR SELECT "
+                f"USING ({row_filter(table)})"
+            )
+        )

@@ -11,21 +11,30 @@ import duckdb
 import httpx
 import pytest
 import pytest_asyncio
+from audit_helpers import audit_events
 from conftest import seed_workspace
 from httpx import AsyncClient
 
 from api.config import settings
 from api.models.agent import Agent
 from api.models.query import Query
+from api.models.rbac import Role, RolePermission
 from api.models.user import Credential, User
 from api.models.workspace import WorkspaceMember
 from api.services import query as query_service
 from api.services.agent_registry import registry
 from api.services.auth import hash_password
+from api.services.permissions import Permission
 from api.services.system_catalog import store
 from duckhaven_shared.protocol import Frame, FrameType
 
-FEATURES = ["statement_ack", "on_demand_attach", "batch_dispatch", "system_catalog"]
+FEATURES = [
+    "statement_ack",
+    "on_demand_attach",
+    "batch_dispatch",
+    "system_catalog",
+    "system_catalog_row_filter",
+]
 AUDIT_SQL = 'SELECT * FROM "duckhaven"."access"."audit" LIMIT 20'
 
 
@@ -177,6 +186,9 @@ async def test_it_runs_as_a_query_that_attaches_the_system_catalog(
     assert frame.payload["sql"] == 'SELECT * FROM "duckhaven"."query"."history" LIMIT 20'
     assert frame.payload["catalogs"][-1]["slug"] == "duckhaven"
     assert frame.payload["catalogs"][-1]["kind"] == "system"
+    assert frame.payload["catalogs"][-1]["meta"]["settings"]["duckhaven.workspace"] == str(
+        workspace.id
+    )
 
 
 async def test_it_is_refused_while_its_database_cannot_be_reached(
@@ -215,7 +227,9 @@ async def test_a_table_it_does_not_have_is_not_found(
     assert sock.frames(FrameType.DISPATCH_QUERY) == []
 
 
-async def test_a_member_without_the_permissions_is_refused(client, db_session, workspace):
+async def test_a_member_without_the_permission_is_refused_and_recorded(
+    client, db_session, workspace
+):
     member = await _user(db_session, "member@syspreview.local", "user")
     db_session.add(WorkspaceMember(workspace_id=workspace.id, user_id=member.id, role="writer"))
     await db_session.commit()
@@ -223,6 +237,24 @@ async def test_a_member_without_the_permissions_is_refused(client, db_session, w
     resp = await (await _login(client, member)).get(_url(workspace))
 
     assert resp.status_code == 403
+    (event,) = await audit_events(db_session, "authz.permission_denied")
+    assert event.details["permission"] == "audit:read"
+
+
+async def test_each_table_takes_its_own_permission(client, db_session, workspace, monkeypatch):
+    role = Role(name="auditor")
+    db_session.add(role)
+    await db_session.flush()
+    db_session.add(RolePermission(role_id=role.id, permission=Permission.AUDIT_READ.value))
+    auditor = await _user(db_session, "auditor@syspreview.local", "auditor")
+    db_session.add(WorkspaceMember(workspace_id=workspace.id, user_id=auditor.id, role="reader"))
+    await db_session.commit()
+    _agent_row, sock = await _agent(db_session, monkeypatch)
+
+    resp = await (await _login(client, auditor)).get(_url(workspace, "query", "history"))
+
+    assert resp.status_code == 403
+    assert sock.frames(FrameType.DISPATCH_QUERY) == []
 
 
 async def test_it_is_absent_when_turned_off(client, admin, workspace, monkeypatch):

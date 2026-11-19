@@ -16,7 +16,6 @@ from api.services.query import assert_result_access
 from api.services.system_catalog import authorize
 from api.services.system_catalog.authorize import (
     FULL_NAMES,
-    NEEDS_PERMISSIONS,
     NOT_CURRENT,
     READ_ONLY,
     UNPARSEABLE,
@@ -71,7 +70,7 @@ async def _check(db_session, workspace, principal: User | None, sql: str, active
         "SELECT 1; SELECT * FROM duckhaven/* the catalog */.access.audit;",
     ],
 )
-async def test_an_admin_reads_its_three_tables(db_session, workspace, admin, sql):
+async def test_an_admin_reads_its_tables(db_session, workspace, admin, sql):
     await _check(db_session, workspace, admin, sql)
     assert reads_system_catalog(sql, [workspace[1]])
 
@@ -147,38 +146,77 @@ async def test_it_is_never_the_current_catalog(db_session, workspace, admin):
         await _check(db_session, workspace, admin, "SELECT 1;", active="DuckHaven")
 
 
-async def test_a_member_without_the_permissions_is_refused_and_recorded(
+async def test_a_member_without_the_permission_is_refused_and_recorded(
     db_session, workspace, member
 ):
     sql = "SELECT * FROM duckhaven.access.audit;"
-    with pytest.raises(grant_service.GrantDenied, match="audit:read and queries:admin"):
+    with pytest.raises(grant_service.GrantDenied, match="needs the audit:read permission"):
         await _check(db_session, workspace, member, sql)
 
     (event,) = await audit_events(db_session, "authz.grant_denied")
-    assert (event.actor_email, event.details["reason"]) == (member.email, NEEDS_PERMISSIONS)
+    assert (event.actor_email, event.details["reason"]) == (
+        member.email,
+        "Reading duckhaven.access.audit needs the audit:read permission.",
+    )
 
 
-async def test_one_of_the_two_permissions_is_not_enough(db_session, workspace):
-    """One reader login reads every table, so the catalog is all or nothing."""
+async def _auditor(db_session) -> User:
+    """Holds audit:read only."""
     role = Role(name="auditor")
     db_session.add(role)
     await db_session.flush()
     db_session.add(RolePermission(role_id=role.id, permission=Permission.AUDIT_READ.value))
-    auditor = await _user(db_session, "auditor@sys.local", "auditor")
+    return await _user(db_session, "auditor@sys.local", "auditor")
 
-    with pytest.raises(grant_service.GrantDenied, match="audit:read and queries:admin"):
-        await _check(db_session, workspace, auditor, "SELECT * FROM duckhaven.access.audit;")
+
+async def test_each_table_takes_its_own_permission(db_session, workspace):
+    auditor = await _auditor(db_session)
+
+    await _check(db_session, workspace, auditor, "SELECT * FROM duckhaven.access.audit;")
+    await _check(db_session, workspace, auditor, "SELECT * FROM duckhaven.access.grants;")
+    with pytest.raises(grant_service.GrantDenied, match="needs the queries:admin permission"):
+        await _check(db_session, workspace, auditor, "SELECT * FROM duckhaven.query.history;")
+
+
+async def test_a_refusal_names_each_table_it_may_not_read(db_session, workspace, member):
+    sql = (
+        "SELECT * FROM duckhaven.query.history h "
+        "JOIN duckhaven.access.audit a ON a.actor_id = h.user_id;"
+    )
+    with pytest.raises(grant_service.GrantDenied) as exc:
+        await _check(db_session, workspace, member, sql)
+
+    assert str(exc.value) == (
+        "Reading duckhaven.access.audit needs the audit:read permission; "
+        "duckhaven.query.history needs the queries:admin permission."
+    )
+
+
+async def test_what_each_principal_may_read(db_session, admin, member):
+    auditor = await _auditor(db_session)
+
+    assert await authorize.readable_by(db_session, admin.id) == authorize.TABLES
+    assert await authorize.readable_by(db_session, auditor.id) == {
+        ("access", "audit"),
+        ("access", "grants"),
+    }
+    assert await authorize.readable_by(db_session, member.id) == frozenset()
+    with delegation.acting_for(db_session, admin.id, auditor.id):
+        assert await authorize.readable_by(db_session, admin.id) == {
+            ("access", "audit"),
+            ("access", "grants"),
+        }
 
 
 async def test_an_unknown_principal_is_refused(db_session, workspace):
-    with pytest.raises(grant_service.GrantDenied, match="audit:read and queries:admin"):
+    with pytest.raises(grant_service.GrantDenied, match="needs the audit:read permission"):
         await _check(db_session, workspace, None, "SELECT * FROM duckhaven.access.audit;")
 
 
 async def test_acting_for_someone_needs_their_permissions_too(db_session, workspace, admin, member):
     sql = "SELECT * FROM duckhaven.query.history;"
     with delegation.acting_for(db_session, admin.id, member.id):
-        with pytest.raises(grant_service.GrantDenied, match="audit:read and queries:admin"):
+        with pytest.raises(grant_service.GrantDenied, match="needs the queries:admin permission"):
             await _check(db_session, workspace, admin, sql)
 
     other = await _user(db_session, "other-admin@sys.local", "admin")
@@ -201,7 +239,7 @@ async def test_a_colleague_cannot_open_an_admins_result(db_session, workspace, a
     await db_session.commit()
 
     await assert_result_access(db_session, query, admin.id)
-    with pytest.raises(grant_service.GrantDenied, match="audit:read and queries:admin"):
+    with pytest.raises(grant_service.GrantDenied, match="needs the audit:read permission"):
         await assert_result_access(db_session, query, member.id)
 
 

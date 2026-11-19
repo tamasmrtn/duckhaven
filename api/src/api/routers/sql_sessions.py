@@ -651,7 +651,12 @@ async def run_statement(
     system = None
     if reads_system_catalog(body.sql, catalogs):
         try:
-            system = await system_attach.descriptor(db, await db.get(Agent, session.agent_id))
+            system = await system_attach.descriptor(
+                db,
+                await db.get(Agent, session.agent_id),
+                workspace_id=session.workspace_id,
+                principal_id=session.user_id,
+            )
         except AgentNotDispatchable as exc:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,

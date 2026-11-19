@@ -330,7 +330,16 @@ async def _prepare(
     attach = statement_catalogs(query.sql, catalogs, active_catalog, also=probed)
     system = None
     if reads_system_catalog(query.sql, catalogs):
-        system = await system_attach.descriptor(db, agent)
+        runs_as = principal_id if principal_id is not None else query.user_id
+        if runs_as is None:
+            raise grant_service.GrantDenied(
+                "A query on the duckhaven system catalog must run as someone."
+            )
+        # For everyone the access check above held it for.
+        with delegation.acting_for(db, query.user_id, query.on_behalf_of_id):
+            system = await system_attach.descriptor(
+                db, agent, workspace_id=workspace.id, principal_id=runs_as
+            )
     return _Prepared(agent, catalogs, attach, active_catalog, system)
 
 

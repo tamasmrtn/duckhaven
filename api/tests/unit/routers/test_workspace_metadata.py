@@ -13,7 +13,6 @@ from api.config import settings
 from api.models.catalog import Catalog, WorkspaceCatalog
 from api.models.catalog_grant import CatalogGrant
 from api.models.query import Query
-from api.models.storage_backend import StorageBackend
 from api.models.user import User
 from api.models.workspace import Workspace, WorkspaceMember
 from api.routers import metadata as metadata_router
@@ -42,14 +41,8 @@ async def auth_client(client: AsyncClient, owner: User) -> AsyncClient:
 @pytest.fixture
 async def alpha(auth_client, db_session, owner, fake_polaris) -> str:
     """Workspace `alpha`, catalog `alpha`, with marketing.leads and finance.ledger."""
-    sb = StorageBackend(kind="object_store", name="primary", root_uri="", created_by=owner.id)
-    db_session.add(sb)
-    await db_session.commit()
-    await db_session.refresh(sb)
     await seed_owned_workspace(db_session, user_id=owner.id, slug="alpha", name="A")
-    created = await auth_client.post(
-        "/workspaces/alpha/catalogs", json={"name": "alpha", "storage_backend_id": str(sb.id)}
-    )
+    created = await auth_client.post("/workspaces/alpha/catalogs", json={"name": "alpha"})
     assert created.status_code == 201, created.text
     for schema, table in [("marketing", "leads"), ("finance", "ledger")]:
         await auth_client.post("/workspaces/alpha/catalogs/alpha/schemas", json={"name": schema})

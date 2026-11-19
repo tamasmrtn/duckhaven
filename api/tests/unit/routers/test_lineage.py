@@ -11,7 +11,6 @@ from conftest import seed_owned_workspace
 from httpx import AsyncClient
 
 from api.models.lineage import LineageColumnEdge, LineageEdge
-from api.models.storage_backend import StorageBackend
 from api.models.user import User
 from api.models.workspace import Workspace, WorkspaceMember
 from api.services.auth import hash_password
@@ -40,14 +39,10 @@ async def auth_client(client: AsyncClient, owner: User) -> AsyncClient:
 async def ws(auth_client, owner, db_session):
     """A workspace attaching two catalogs, `warehouse` and `raw`."""
     slug = (await seed_owned_workspace(db_session, user_id=owner.id, slug="lin", name="Lin")).slug
-    backend = StorageBackend(kind="object_store", name="p", root_uri="", created_by=owner.id)
-    db_session.add(backend)
-    await db_session.commit()
-    await db_session.refresh(backend)
     for name in ("warehouse", "raw"):
         await auth_client.post(
             f"/workspaces/{slug}/catalogs",
-            json={"name": name, "storage_backend_id": str(backend.id)},
+            json={"name": name},
         )
     return slug
 

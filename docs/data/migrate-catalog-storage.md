@@ -12,8 +12,8 @@ until the move finishes.
 
 ## Before you begin
 
-- **You need:** the `storage:manage` permission to open **Admin → Migrations**, and to be the catalog's creator or hold
-  `catalogs:admin`. The `admin` role has all three.
+- **You need:** the `storage:manage` permission, to open **Admin → Migrations** and to name the target backend, and to
+  be the catalog's creator or hold `catalogs:admin`. The `admin` role has all three.
 - **Applies to:** Iceberg and DuckLake catalogs. The target backend must be registered and pass **Test access**; see
   [Configure storage](configure-storage.md).
 - **Plan for:** a write freeze on the catalog while it copies, which grows with the catalog's size.

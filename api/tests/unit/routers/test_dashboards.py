@@ -105,18 +105,13 @@ async def as_owner(client: AsyncClient, owner: User) -> AsyncClient:
 @pytest.fixture
 async def ws(as_owner, owner, db_session) -> str:
     """A workspace whose `sales` model and its metric are published, as dashboards need."""
-    from api.models.storage_backend import StorageBackend
 
     from .test_semantic import CUSTOMER_COLUMNS, ORDER_COLUMNS
 
     slug = (await seed_owned_workspace(db_session, user_id=owner.id, slug="dash", name="Dash")).slug
-    backend = StorageBackend(kind="object_store", name="p", root_uri="", created_by=owner.id)
-    db_session.add(backend)
-    await db_session.commit()
-    await db_session.refresh(backend)
     await as_owner.post(
         f"/workspaces/{slug}/catalogs",
-        json={"name": "warehouse", "storage_backend_id": str(backend.id)},
+        json={"name": "warehouse"},
     )
     await as_owner.post(
         f"/workspaces/{slug}/catalogs/warehouse/schemas", json={"name": "analytics"}

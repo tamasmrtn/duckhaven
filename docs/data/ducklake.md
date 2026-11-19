@@ -151,8 +151,9 @@ The DuckDB-only limitation can be undone. An export creates a new [Iceberg catal
 copies the whole DuckLake catalog into it, in one `COPY FROM DATABASE` statement. The result is an ordinary Iceberg
 catalog: Spark, Trino, Flink and PyIceberg can open it, and DuckHaven treats it like any other.
 
-Start an export with the [command line](../reference/cli.md), `dh` 0.3.0 or later, as the catalog's creator or with
-`catalogs:admin`, and the `owner` role in the workspace the new catalog joins:
+Start an export with the [command line](../reference/cli.md), `dh` 0.3.0 or later. It needs the catalog's creator or
+`catalogs:admin`, the `owner` role in the workspace the new catalog joins, and `storage:manage` to name its storage
+backend:
 
 ```bash
 dh catalog export create ⟨catalog id⟩ --target-name ⟨new catalog name⟩ --storage-backend ⟨backend id⟩

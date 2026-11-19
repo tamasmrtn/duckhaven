@@ -54,6 +54,7 @@ from api.services.audit.events import (
     record_catalog_created,
     record_catalog_grant,
     record_catalog_grants_removed,
+    record_permission_denied,
 )
 from api.services.catalog_backends import CatalogBackendError, capabilities_for
 from api.services.export import ACTIVE_STATUSES as EXPORT_ACTIVE
@@ -80,6 +81,19 @@ async def _administers(db: AsyncSession, user: User, catalog: Catalog) -> bool:
     return catalog.created_by == user.id or await has_permission(
         db, user, Permission.CATALOGS_ADMIN
     )
+
+
+async def _assert_may_choose_backend(db: AsyncSession, user: User, detail: str) -> None:
+    """Naming a storage backend takes `storage:manage`, as registering one does.
+
+    A catalog on a backend gets its bucket and credentials. Every member of a
+    workspace attaching one of its catalogs can read the backend's id, so the id
+    alone must not be enough. Checked before the id is looked up, so a refusal
+    does not say whether it exists.
+    """
+    if not await has_permission(db, user, Permission.STORAGE_MANAGE):
+        await record_permission_denied(db, Permission.STORAGE_MANAGE.value)
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=detail)
 
 
 async def _catalog_for_admin(db: AsyncSession, user: User, catalog_id: uuid.UUID) -> Catalog:
@@ -229,8 +243,8 @@ async def start_export(
 ) -> CatalogExportOut:
     """Copy this DuckLake catalog's current state (not its history) into a new Iceberg one.
 
-    Requires the catalog's creator or `catalogs:admin`, plus `owner` on the
-    target workspace.
+    Requires the catalog's creator or `catalogs:admin`, `owner` on the target
+    workspace, and `storage:manage` for the target backend.
     """
     catalog = await _catalog_for_admin(db, user, catalog_id)
     if not capabilities_for(catalog.kind).supports_iceberg_export:
@@ -240,6 +254,9 @@ async def start_export(
         )
     ws = await get_workspace(db, workspace)
     await assert_workspace_member(db, ws.id, user.id, min_role="owner")
+    await _assert_may_choose_backend(
+        db, user, "Exporting to a storage backend needs the storage:manage permission."
+    )
 
     existing = await db.scalar(
         select(CatalogExport.id).where(
@@ -493,6 +510,12 @@ async def create_workspace_catalog(
         db.add(backend)
         await db.flush()
     else:
+        await _assert_may_choose_backend(
+            db,
+            user,
+            "Choosing a storage backend needs the storage:manage permission. "
+            "Leave storage_backend_id out to use bundled object storage.",
+        )
         backend = await db.get(StorageBackend, body.storage_backend_id)
         if backend is None:
             raise HTTPException(
@@ -727,8 +750,12 @@ async def start_catalog_migration(
 ) -> CatalogMigrationOut:
     """Begin migrating a catalog's Iceberg data to a new storage backend. The
     catalog goes read-only (writes rejected) until the background runner finishes
-    and atomically cuts over. Allowed for the catalog's creator or an admin."""
+    and atomically cuts over. Allowed for the catalog's creator or an admin, with
+    `storage:manage` for the target backend."""
     catalog = await _catalog_for_admin(db, user, catalog_id)
+    await _assert_may_choose_backend(
+        db, user, "Migrating to a storage backend needs the storage:manage permission."
+    )
     target = await db.get(StorageBackend, body.target_storage_backend_id)
     if target is None:
         raise HTTPException(

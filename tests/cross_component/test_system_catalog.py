@@ -75,6 +75,12 @@ async def ready(api_client, workspace, healthy_agent) -> str:
         "info_schema.schemata",
         "info_schema.tables",
         "info_schema.columns",
+        "info_schema.routines",
+        "info_schema.semantic_models",
+        "info_schema.semantic_datasets",
+        "info_schema.semantic_dimensions",
+        "info_schema.semantic_metrics",
+        "info_schema.semantic_relationships",
         "access.audit",
         "access.grants",
         "access.users",
@@ -91,6 +97,9 @@ async def ready(api_client, workspace, healthy_agent) -> str:
         "compute.agent_utilization",
         "storage.table_health",
         "storage.maintenance_operations",
+        "storage.backends",
+        "ai.assistant_usage",
+        "ai.tool_calls",
     ],
 )
 async def test_an_admin_reads_each_table(api_client, workspace, ready, table) -> None:

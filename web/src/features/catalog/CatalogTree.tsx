@@ -1186,6 +1186,13 @@ export function CatalogTree({
             </div>
           ) : (
             <div className="space-y-0.5">
+              {/* First, ahead of the workspace's own catalogs, wherever they sort. */}
+              {systemCatalog && (
+                <SystemCatalogNode
+                  system={systemCatalog}
+                  onTableClick={onSystemTableClick}
+                />
+              )}
               {catalogs?.length === 0 && (
                 <p className="px-2 py-3 text-sm text-text-tertiary">
                   No catalogs attached.
@@ -1202,12 +1209,6 @@ export function CatalogTree({
                   onSchemaClick={onSchemaClick}
                 />
               ))}
-              {systemCatalog && (
-                <SystemCatalogNode
-                  system={systemCatalog}
-                  onTableClick={onSystemTableClick}
-                />
-              )}
             </div>
           )}
         </div>

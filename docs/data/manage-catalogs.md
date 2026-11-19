@@ -33,9 +33,9 @@ its columns and types, owner, row count and size, last-write provenance, and Ice
 delete files are present). You can preview sample rows without writing a query. Owner and last write are known only for
 tables written through DuckHaven, and are left out of the hover card otherwise.
 
-If you hold `audit:read` and `queries:admin`, the tree ends with the read-only
-[`duckhaven` system catalog](../querying/system-catalog.md#find-it-in-the-catalog-tree), badged *system*. Its tables
-have no detail view: clicking one opens a worksheet that reads it.
+The tree starts with the read-only
+[`duckhaven` system catalog](../querying/system-catalog.md#find-it-in-the-catalog-tree), badged *system*, which lists in
+SQL the schemas, tables and columns you can see, with the other tables you may read.
 
 On a narrow screen (under 768 px) the browser shows the tree until you pick an object, then only that object's
 detail, with a back button in the header that returns to the tree.

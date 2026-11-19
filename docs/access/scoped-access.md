@@ -103,6 +103,16 @@ the `metadata` tier. A tool can fetch all of it at once from the
 [workspace metadata report](../reference/rest-api.md#workspace-metadata), which applies the same filter.
 `DESCRIBE PIVOT …` is the exception: a pivot names its columns after values it reads, so it needs `reader`.
 
+In SQL, [`duckhaven.info_schema`](../querying/system-catalog.md#what-info_schema-shows) lists the schemas, tables and
+columns your grants cover, at any tier:
+
+```sql
+SELECT schema_name, table_name, column_name, data_type
+FROM duckhaven.info_schema.columns
+WHERE catalog_name = 'sales'
+ORDER BY schema_name, table_name, ordinal_position;
+```
+
 What you cannot do is ask the query engine to list objects for you. These are rejected:
 
 - `information_schema.tables`, `information_schema.schemata` and `information_schema.columns`, and the

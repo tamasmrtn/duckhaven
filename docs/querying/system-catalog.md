@@ -4,30 +4,34 @@ type: concept
 
 # System catalog
 
-The `duckhaven` catalog lets you query DuckHaven's own access audit log, current access and query history in SQL,
-read-only, from any workspace. Each table needs a permission of its own.
+The `duckhaven` catalog lets you query, read-only in SQL, the schemas, tables and columns you can see, and DuckHaven's
+audit log, access and query history. Every member can read its `info_schema`, which shows each person only what they
+can see; each other table needs a permission of its own.
 
 !!! info "Availability"
     On the single-host Compose stack, on by default; see
     [Enable the system catalog database](../deployment/system-catalog.md). On
     [Azure with Terraform](../deployment/azure-terraform.md#system-catalog), on by default. The
-    [HA stack](../deployment/high-availability.md#limitations) has none. Each table needs the permission listed in
-    [Who can read it](#who-can-read-it); the `admin` role holds them all.
+    [HA stack](../deployment/high-availability.md#limitations) has none. `info_schema` needs no permission; each other
+    table needs the one listed in [Who can read it](#who-can-read-it), and the `admin` role holds them all.
 
 Name its tables in full, in a worksheet or any other query:
 
 ```sql
-SELECT event_time, action, actor_email, subject_email
-FROM duckhaven.access.audit
-WHERE category = 'access'
-ORDER BY event_time DESC
-LIMIT 20;
+SELECT schema_name, table_name, row_count, bytes, last_altered
+FROM duckhaven.info_schema.tables
+WHERE catalog_name = 'sales'
+ORDER BY schema_name, table_name;
 ```
 
 ## What it holds
 
 | Table | Holds | Needs |
 |---|---|---|
+| `duckhaven.info_schema.catalogs` | The catalogs attached to the workspace the query runs in, with their kind and access mode | Nothing: every member |
+| `duckhaven.info_schema.schemata` | The schemas you can see in those catalogs | Nothing: every member |
+| `duckhaven.info_schema.tables` | The tables you can see, with their format, row count, size, owner and last write | Nothing: every member |
+| `duckhaven.info_schema.columns` | The columns of those tables, with the type a query sees | Nothing: every member |
 | `duckhaven.access.audit` | Every event of the [access audit log](../access/audit-log.md) | `audit:read` |
 | `duckhaven.access.grants` | Current access: one row per role, membership, catalog attachment, catalog grant, agent access mode, agent grant and workspace default compute | `audit:read` |
 | `duckhaven.query.history` | Finished queries, with who ran them, where, on which agent and for how long | `queries:admin` |
@@ -71,11 +75,42 @@ ORDER BY event_time DESC;
 In a [SQL session](sql-sessions.md), the first statement that names it attaches it for the rest of the session, and
 each later statement is checked again.
 
+### What info_schema shows
+
+`info_schema` lists the catalogs attached to the workspace the query runs in, and in them what you can see on the
+**Catalog** page: everything in an open catalog, and in a [scoped](../access/scoped-access.md) one what your grants
+cover, at any tier. A grant on a table shows the table and its schema; on a schema, the schema and its tables; on the
+catalog, all of it. The `admin` role sees no more than its grants. A query made for someone else shows only what both
+of you can see.
+
+Unlike DuckDB's own [`information_schema`](../reference/sql-support.md#inspecting-metadata-information_schema), it
+works in a workspace with a scoped catalog, and it lists the columns of an Iceberg table with the type `DESCRIBE`
+shows:
+
+```sql
+SELECT table_name, column_name, data_type, is_nullable
+FROM duckhaven.info_schema.columns
+WHERE catalog_name = 'sales' AND schema_name = 'analytics'
+ORDER BY table_name, ordinal_position;
+```
+
+It is read from each catalog's own metadata, so it trails changes:
+
+- **A change made through DuckHaven** shows within about two publish intervals, 20 seconds by default. That covers a
+  statement that creates, alters, writes to or drops a table or schema, and a schema or table created or dropped on the
+  **Catalog** page.
+- **Any other change**, such as another engine writing to the same Iceberg catalog, shows when the catalog is next read
+  whole, every 15 minutes by default (`SYSTEM_CATALOG_METADATA_REFRESH_S`).
+- **A newly attached catalog** is in `info_schema.catalogs` within the publish interval, and its schemas and tables
+  after its first read, which comes within a few minutes.
+
+`refreshed_at` on each row says when it was read. Views and macros are not listed.
+
 ### Find it in the catalog tree
 
-For someone who may read any of its tables, the catalog tree lists `duckhaven` first, ahead of the workspace's
-catalogs, badged *system*, with the tables they may read and their columns. It is absent for someone who may read none
-of them. On the **Catalog** page, click it, one of its schemas or one of its tables
+The catalog tree lists `duckhaven` first, ahead of the workspace's catalogs, badged *system*, with the tables you may
+read and their columns: `info_schema` for every member, and each other table for those who hold its permission. On the
+**Catalog** page, click it, one of its schemas or one of its tables
 to open its page, as for any catalog:
 
 - **The catalog's page** counts its schemas and tables. Under **Details** it says what the catalog holds and how fresh
@@ -96,10 +131,13 @@ box does not find its tables.
 
 ### Who can read it
 
-Each table needs one permission, and a query needs it for every table it reads:
+Every member of the workspace reads `info_schema`, which shows each of them only what they can see; see
+[What info_schema shows](#what-info_schema-shows). Each other table needs one permission, and a query needs it for every
+table it reads:
 
 | Tables | Permission |
 |---|---|
+| `duckhaven.info_schema.catalogs`, `.schemata`, `.tables`, `.columns` | None |
 | `duckhaven.access.audit`, `duckhaven.access.grants` | `audit:read` |
 | `duckhaven.query.history` | `queries:admin` |
 
@@ -108,8 +146,8 @@ query made for someone else, by the [assistant](../ai/assistant.md) say, needs t
 for. Without it the query is refused with `403` and `"error": "grant_denied"`, and a message that names each table it
 may not read, such as `Reading duckhaven.query.history needs the queries:admin permission.`
 
-The system catalog's database applies the same rule itself: whatever a statement names, it returns rows only from the
-tables everyone the query runs for may read.
+The system catalog's database applies the same rules itself: whatever a statement names, it returns rows only from the
+tables everyone the query runs for may read, and from `info_schema` only the rows they can all see.
 
 The same check applies to opening a result. A colleague cannot open an admin's query on the system catalog from
 History, and the [result cache](result-cache.md) never serves one.

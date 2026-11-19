@@ -137,7 +137,7 @@ names are reserved, because DuckDB or DuckHaven already uses them, and a catalog
 
 | Name | Used by |
 |---|---|
-| `duckhaven` | DuckHaven's [system catalog](../querying/system-catalog.md): the audit log, current access and query history |
+| `duckhaven` | DuckHaven's [system catalog](../querying/system-catalog.md): the schemas, tables and columns you can see, the audit log, current access and query history |
 | `system` | DuckDB's built-in catalog |
 | `temp` | DuckDB's temporary objects |
 | `memory` | DuckDB's default in-memory database |
@@ -170,7 +170,8 @@ WHERE catalog_name = 'sales';
     spelling, any `SHOW` statement, the `duckdb_tables()` family, the `pg_catalog` views (`pg_tables`, `pg_class`,
     `pg_attribute`, with or without the prefix), `sqlite_master`, the listing `PRAGMA`s, functions that name their table
     in a string (`pragma_table_info()`, `iceberg_snapshots()`), DuckLake's catalog methods (`lake.snapshots()`), and
-    direct file reads. See [Finding objects in a scoped
+    direct file reads. Query [`duckhaven.info_schema`](../querying/system-catalog.md#what-info_schema-shows) instead,
+    which lists only what you can see; see [Finding objects in a scoped
     catalog](../access/scoped-access.md#finding-objects-in-a-scoped-catalog).
 
 ### Columns and types: use `DESCRIBE`
@@ -212,7 +213,8 @@ back to a number, read its column's type in `column_schema`; see [Result values]
 !!! warning "`information_schema.columns` does not work for Iceberg tables"
     For a table in an Iceberg catalog, `information_schema.columns`, `duckdb_columns()`, and the `column_names` and
     `column_types` of `SHOW ALL TABLES` return one placeholder row, column `__` of type `UNKNOWN`, instead of the real
-    columns. Use `DESCRIBE`.
+    columns. Use `DESCRIBE`, or [`duckhaven.info_schema.columns`](../querying/system-catalog.md#what-info_schema-shows)
+    for many tables at once.
 
 DuckDB loads an Iceberg table's schema only when a query first uses the table, one table at a time; filling these views
 eagerly would mean one request to Polaris per table in the catalog. Querying the views does not trigger that load

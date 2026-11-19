@@ -6,7 +6,7 @@ stay elsewhere because the kinds differ there in substance.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
@@ -108,11 +108,27 @@ class SnapshotInfo(_Info):
 
 
 @dataclass(frozen=True)
+class CatalogRoutineInfo:
+    """One overload of a macro stored in a catalog."""
+
+    schema_name: str
+    name: str
+    overload: int
+    # "macro" or "table_macro", as DuckDB's duckdb_functions() names them.
+    routine_type: str
+    # In order, each with its DuckDB type where the macro declares one.
+    parameters: list[str]
+    definition: str
+
+
+@dataclass(frozen=True)
 class CatalogDescription:
-    """Every live schema of a catalog, and every live table with its columns."""
+    """Every live schema of a catalog, every live table with its columns, and
+    every macro: DuckLake only, since an Iceberg catalog stores none."""
 
     schemas: list[CatalogSchemaInfo]
     tables: list[CatalogTableInfo]
+    routines: list[CatalogRoutineInfo] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

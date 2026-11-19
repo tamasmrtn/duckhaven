@@ -26,6 +26,7 @@ from api.services.catalog_backends import (
     CatalogBackendNotFound,
     CatalogColumnInfo,
     CatalogDescription,
+    CatalogRoutineInfo,
     CatalogSchemaInfo,
     CatalogTableInfo,
 )
@@ -82,6 +83,17 @@ async def _seen(factory, workspace: uuid.UUID | None, *principals: uuid.UUID) ->
         await reader.close()
 
 
+async def _read(factory, sql: str, workspace: uuid.UUID, *principals: uuid.UUID) -> set:
+    """The rows ``sql`` reads of info_schema in ``workspace``, run for ``principals``."""
+    reader = await _reader(factory, readable=INFO)
+    try:
+        await reader.execute(f"SET duckhaven.workspace = '{workspace}'")
+        await reader.execute(f"SET duckhaven.principals = '{','.join(map(str, principals))}'")
+        return {tuple(r) for r in await reader.fetch(sql)}
+    finally:
+        await reader.close()
+
+
 # ── Who sees what ─────────────────────────────────────────────────────────────
 
 WS, ELSEWHERE = uuid.uuid4(), uuid.uuid4()
@@ -96,6 +108,20 @@ TABLES = [
     (SCOPED, "scoped_cat", "a", "b.c"),
     (SCOPED, "scoped_cat", "a.b", "c"),
 ]
+ROUTINES = [
+    (OPEN, "open_cat", "raw", "clean"),
+    (SCOPED, "scoped_cat", "analytics", "recent"),
+    (SCOPED, "scoped_cat", "finance", "fx"),
+]
+# Each semantic model, its workspace, and the tables its datasets are on.
+MODELS = {
+    "orders": (WS, [(SCOPED, "analytics", "orders"), (OPEN, "raw", "events")]),
+    "books": (WS, [(SCOPED, "analytics", "orders"), (SCOPED, "finance", "ledger")]),
+    "empty": (WS, []),
+    "detached": (WS, [(uuid.uuid4(), "raw", "events")]),
+    "elsewhere": (ELSEWHERE, [(OPEN, "raw", "events")]),
+}
+MODEL_IDS = {slug: uuid.uuid4() for slug in MODELS}
 
 
 @pytest.fixture
@@ -170,6 +196,59 @@ async def seeded(system_store):
             }
             for c, n, s, t in TABLES
         ],
+        store.INFO_ROUTINES: [
+            {
+                "catalog_id": c,
+                "catalog_name": n,
+                "schema_name": s,
+                "routine_name": r,
+                "overload": 0,
+                "routine_type": "macro",
+                "parameters": "x",
+                "definition": "x",
+                "refreshed_at": now,
+            }
+            for c, n, s, r in ROUTINES
+        ],
+        store.SEMANTIC_MODELS: [
+            {
+                "model_id": MODEL_IDS[slug],
+                "workspace_id": workspace,
+                "model_slug": slug,
+                "name": slug,
+                "status": "published",
+                "provider": "native",
+                "refreshed_at": now,
+            }
+            for slug, (workspace, _) in MODELS.items()
+        ],
+        # One metric per model: each of its tables is filtered as the model is.
+        store.SEMANTIC_METRICS: [
+            {
+                "metric_id": uuid.uuid4(),
+                "model_id": MODEL_IDS[slug],
+                "workspace_id": workspace,
+                "model_slug": slug,
+                "dataset_id": uuid.uuid4(),
+                "name": f"{slug}_count",
+                "agg": "count",
+                "status": "published",
+                "validation_state": "valid",
+                "refreshed_at": now,
+            }
+            for slug, (workspace, _) in MODELS.items()
+        ],
+        store.ACL_SEMANTIC_TABLES: [
+            {
+                "workspace_id": workspace,
+                "model_id": MODEL_IDS[slug],
+                "catalog_id": c,
+                "schema_name": sc,
+                "table_name": t,
+            }
+            for slug, (workspace, tables) in MODELS.items()
+            for c, sc, t in tables
+        ],
     }
     async with store.get_engine().begin() as conn:
         for table, values in rows.items():
@@ -229,11 +308,55 @@ async def test_without_its_workspace_or_anyone_to_run_for_nothing_shows(
 async def test_the_reader_cannot_read_what_the_filters_consult(seeded):
     reader = await _reader(seeded, readable=INFO)
     try:
-        for table in ("_acl.scopes", "_acl.members", "_acl.attachments"):
+        for table in (
+            "_acl.scopes",
+            "_acl.members",
+            "_acl.attachments",
+            "_acl.semantic_tables",
+        ):
             with pytest.raises(asyncpg.InsufficientPrivilegeError):
                 await reader.fetch(f"SELECT * FROM {table}")
     finally:
         await reader.close()
+
+
+_ROUTINES = "SELECT catalog_name, schema_name, routine_name FROM info_schema.routines"
+
+
+async def test_a_macro_shows_for_its_schema_not_for_one_table_in_it(seeded):
+    """Ana holds grants on tables only; the assistant on schema `analytics`."""
+    assert await _read(seeded, _ROUTINES, WS, ANA) == {("open_cat", "raw", "clean")}
+    assert await _read(seeded, _ROUTINES, WS, ASSISTANT) == {
+        ("open_cat", "raw", "clean"),
+        ("scoped_cat", "analytics", "recent"),
+    }
+    assert await _read(seeded, _ROUTINES, WS, BOB) == {(n, s, r) for _, n, s, r in ROUTINES}
+
+
+_MODELS = "SELECT model_slug FROM info_schema.semantic_models"
+_METRICS = "SELECT model_slug FROM info_schema.semantic_metrics"
+
+
+@pytest.mark.parametrize(
+    ("principals", "expected"),
+    [
+        # Bob sees every table of the scoped catalog.
+        ((BOB,), {"orders", "books", "empty"}),
+        # Ana sees `orders`, not `ledger`.
+        ((ANA,), {"orders", "empty"}),
+        ((ASSISTANT,), {"orders", "empty"}),
+        ((ASSISTANT, ANA), {"orders", "empty"}),
+        # Cy is not a member: only the open catalog's tables.
+        ((CY,), {"empty"}),
+    ],
+)
+async def test_a_semantic_model_shows_only_when_each_of_its_tables_does(
+    seeded, principals, expected
+):
+    """A model on a catalog the workspace does not attach, or of another workspace,
+    shows to no one."""
+    assert {r[0] for r in await _read(seeded, _MODELS, WS, *principals)} == expected
+    assert {r[0] for r in await _read(seeded, _METRICS, WS, *principals)} == expected
 
 
 async def test_a_table_left_out_of_the_readable_ones_shows_nothing(seeded):
@@ -342,6 +465,7 @@ class _FakeBackend:
     def __init__(self) -> None:
         self.tables: dict[tuple[str, str], CatalogTableInfo] = {}
         self.schemas: set[str] = set()
+        self.routines: list[CatalogRoutineInfo] = []
         self.whole_reads = 0
         self.table_reads: list[tuple[str, str]] = []
 
@@ -352,6 +476,7 @@ class _FakeBackend:
                 CatalogSchemaInfo(name=s, catalog_name=catalog.slug) for s in sorted(self.schemas)
             ],
             tables=list(self.tables.values()),
+            routines=self.routines,
         )
 
     async def get_table(self, catalog, schema, name) -> CatalogTableInfo:
@@ -469,6 +594,29 @@ async def test_a_schema_change_or_a_ducklake_change_reads_the_catalog_whole(craw
 
     assert backends[iceberg.id].whole_reads == 2
     assert backends[lake.id].whole_reads == 2
+
+
+async def test_a_macro_is_listed_and_goes_with_its_catalog_s_next_read(crawled):
+    backends, _iceberg, lake, tick, finished, rows = crawled
+    backends[lake.id].routines = [
+        CatalogRoutineInfo("main", "add_tax", 0, "macro", ["x", "rate"], "(x * (1 + rate))"),
+        CatalogRoutineInfo("main", "recent", 0, "table_macro", ["n INTEGER"], "SELECT 1"),
+    ]
+    await tick()
+
+    assert {
+        (r.catalog_name, r.routine_name, r.routine_type, r.parameters)
+        for r in await rows(store.INFO_ROUTINES)
+    } == {
+        ("lake", "add_tax", "macro", "x, rate"),
+        ("lake", "recent", "table_macro", "n INTEGER"),
+    }
+
+    backends[lake.id].routines = backends[lake.id].routines[1:]
+    await finished("DROP MACRO lake.main.add_tax;")
+    await tick()
+
+    assert [r.routine_name for r in await rows(store.INFO_ROUTINES)] == ["recent"]
 
 
 async def test_a_rest_change_is_read_on_the_next_tick(crawled):

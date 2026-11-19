@@ -38,7 +38,23 @@ FEATURES = [
     "system_catalog",
     "system_catalog_row_filter",
 ]
-INFO = "info_schema.catalogs,info_schema.columns,info_schema.schemata,info_schema.tables"
+INFO = ",".join(
+    f"info_schema.{t}"
+    for t in sorted(
+        [
+            "catalogs",
+            "columns",
+            "routines",
+            "schemata",
+            "semantic_datasets",
+            "semantic_dimensions",
+            "semantic_metrics",
+            "semantic_models",
+            "semantic_relationships",
+            "tables",
+        ]
+    )
+)
 AUDITED = (
     "access.audit,access.credentials,access.grants,access.table_access,access.users,"
     f"access.workspaces,{INFO},lineage.column_lineage,lineage.table_lineage"
@@ -47,12 +63,15 @@ ALL_TABLES = ",".join(
     sorted(
         [
             *AUDITED.split(","),
+            "ai.assistant_usage",
+            "ai.tool_calls",
             "compute.agent_events",
             "compute.agent_utilization",
             "compute.agents",
             "jobs.schedules",
             "query.history",
             "query.sessions",
+            "storage.backends",
             "storage.maintenance_operations",
             "storage.table_health",
         ]

@@ -15,9 +15,11 @@ import sqlalchemy as sa
 
 from api.config import settings
 from api.models.agent import Agent, AgentLifecycleEvent, AgentMetricsMinute
+from api.models.assistant import AssistantConversation, AssistantMessage, AssistantToolCall
 from api.models.catalog import Catalog
 from api.models.maintenance import MaintenanceRecommendation, TableHealthSample
 from api.models.query import Query, SavedQuery, Schedule
+from api.models.semantic import SemanticDataset, SemanticDimension, SemanticMetric, SemanticModel
 from api.models.sql_session import SqlSession
 from api.models.storage_backend import StorageBackend
 from api.models.user import User
@@ -298,3 +300,141 @@ async def test_the_copy_drops_what_its_retention_drops(published, monkeypatch):
     await tick(now + publisher.PURGE_EVERY)
 
     assert [e.event for e in await rows(store.AGENT_EVENTS)] == ["disconnected"]
+
+
+async def test_assistant_usage_is_copied_without_what_was_said(published):
+    factory, tick, rows = published
+    workspace, ana, _ = await _setup(factory)
+    robot = User(
+        id=uuid.uuid4(),
+        email="assistant@example.com",
+        name="Assistant",
+        auth_provider="service_account",
+    )
+    conversation = AssistantConversation(
+        id=uuid.uuid4(),
+        workspace_id=workspace.id,
+        user_id=ana.id,
+        service_account_id=robot.id,
+        title="Revenue by region",
+    )
+    await _add(factory, robot)
+    await _add(factory, conversation)
+    await _add(
+        factory,
+        AssistantMessage(
+            conversation_id=conversation.id,
+            ordinal=0,
+            payload=[{"parts": [{"content": "secret question"}]}],
+            input_tokens=1200,
+            output_tokens=300,
+        ),
+        AssistantToolCall(
+            conversation_id=conversation.id,
+            tool="run_sql",
+            args={"sql": "SELECT secret FROM t;"},
+            status="denied",
+            detail="no grant on t",
+            latency_ms=40,
+        ),
+    )
+    now = datetime.now(UTC)
+    await tick(now)
+
+    (usage,) = await rows(store.ASSISTANT_USAGE)
+    assert (usage.user_email, usage.service_account_email, usage.turn) == (
+        "ana@example.com",
+        "assistant@example.com",
+        0,
+    )
+    assert (usage.input_tokens, usage.output_tokens, usage.workspace_slug) == (1200, 300, "sales")
+    (call,) = await rows(store.TOOL_CALLS)
+    assert (call.tool, call.status, call.latency_ms) == ("run_sql", "denied", 40)
+    copied = {c.name for t in (store.ASSISTANT_USAGE, store.TOOL_CALLS) for c in t.columns}
+    assert not {"payload", "args", "detail", "tables", "title"} & copied
+
+    # Deleting the conversation keeps what it cost.
+    async with factory() as db:
+        await db.execute(sa.delete(AssistantConversation))
+        await db.commit()
+    await tick(now + timedelta(seconds=10))
+    assert len(await rows(store.ASSISTANT_USAGE)) == 1
+
+
+async def test_storage_backends_are_copied_without_their_credentials(published):
+    factory, tick, rows = published
+    _, ana, _ = await _setup(factory)
+    await _catalog(factory, ana)
+    await _add(
+        factory,
+        StorageBackend(
+            kind="s3",
+            name="lake",
+            root_uri="s3://bucket/lake",
+            config={"role_arn": "arn:aws:iam::1:role/x", "external_id": "e"},
+            created_by=ana.id,
+        ),
+    )
+
+    await tick(datetime.now(UTC))
+
+    assert {
+        (b.name, b.kind, b.root_uri, b.catalog_count, b.created_by_email)
+        for b in await rows(store.STORAGE_BACKENDS)
+    } == {
+        ("b", "object_store", "", 1, "ana@example.com"),
+        ("lake", "s3", "s3://bucket/lake", 0, "ana@example.com"),
+    }
+    assert "config" not in store.STORAGE_BACKENDS.c
+
+
+async def test_semantic_models_are_copied_with_the_tables_their_filter_checks(published):
+    factory, tick, rows = published
+    workspace, ana, _ = await _setup(factory)
+    catalog = await _catalog(factory, ana)
+    model = SemanticModel(
+        id=uuid.uuid4(), workspace_id=workspace.id, slug="revenue", name="Revenue", owner_id=ana.id
+    )
+    await _add(factory, model)
+    dataset = SemanticDataset(
+        id=uuid.uuid4(),
+        model_id=model.id,
+        name="orders",
+        catalog_id=catalog.id,
+        schema_name="analytics",
+        table_name="orders",
+    )
+    await _add(factory, dataset)
+    await _add(
+        factory,
+        SemanticDimension(
+            model_id=model.id,
+            dataset_id=dataset.id,
+            name="region",
+            kind="categorical",
+            expr="region",
+            sample_values=["EMEA", "APAC"],
+        ),
+        SemanticMetric(
+            model_id=model.id, dataset_id=dataset.id, name="revenue", agg="sum", expr="total"
+        ),
+    )
+
+    await tick(datetime.now(UTC))
+
+    (copied,) = await rows(store.SEMANTIC_MODELS)
+    assert (copied.model_slug, copied.status, copied.owner_email) == (
+        "revenue",
+        "draft",
+        "ana@example.com",
+    )
+    (ds,) = await rows(store.SEMANTIC_DATASETS)
+    assert (ds.catalog_name, ds.schema_name, ds.table_name) == ("sales", "analytics", "orders")
+    (dimension,) = await rows(store.SEMANTIC_DIMENSIONS)
+    assert (dimension.dataset_name, dimension.model_slug) == ("orders", "revenue")
+    assert "sample_values" not in store.SEMANTIC_DIMENSIONS.c
+    (metric,) = await rows(store.SEMANTIC_METRICS)
+    assert (metric.name, metric.agg, metric.dataset_name) == ("revenue", "sum", "orders")
+    assert [
+        (t.model_id, t.catalog_id, t.table_name) for t in await rows(store.ACL_SEMANTIC_TABLES)
+    ] == [(model.id, catalog.id, "orders")]

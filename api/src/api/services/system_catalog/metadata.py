@@ -73,10 +73,12 @@ class Change:
 
 
 def changes(sql: str) -> list[Change]:
-    """What running ``sql`` may have changed in a catalog's schemas and tables.
+    """What running ``sql`` may have changed in a catalog's schemas, tables and
+    macros.
 
-    Unreadable SQL changed the current catalog, for all this can tell. A view or
-    macro changes nothing listed here.
+    Unreadable SQL changed the current catalog, for all this can tell; that
+    includes a macro with a parameter default, which sqlglot cannot parse. A view
+    changes nothing listed here.
     """
     try:
         statements = [s for s in sqlglot.parse(sql, read="duckdb") if s is not None]
@@ -88,6 +90,20 @@ def changes(sql: str) -> list[Change]:
             kind = str(stmt.args.get("kind") or "").upper()
             if kind == "SCHEMA":
                 found += [Change(t.catalog or None, None, None) for t in target_tables(stmt)]
+                continue
+            if kind in ("MACRO", "FUNCTION"):
+                # A macro lives in its schema, so its catalog is read again whole.
+                if isinstance(stmt, exp.Create):
+                    names = (
+                        [stmt.this.this] if isinstance(stmt.this, exp.UserDefinedFunction) else []
+                    )
+                else:
+                    names = stmt.args.get("tables") or []
+                found += [
+                    Change(n.catalog or None, n.db or None, None)
+                    for n in names
+                    if isinstance(n, exp.Table)
+                ]
                 continue
             if kind != "TABLE":
                 continue
@@ -372,7 +388,7 @@ async def _read_marked_and_due(
                 )
 
 
-_PER_CATALOG = (store.INFO_SCHEMATA, store.INFO_TABLES, store.INFO_COLUMNS)
+_PER_CATALOG = (store.INFO_SCHEMATA, store.INFO_TABLES, store.INFO_COLUMNS, store.INFO_ROUTINES)
 
 
 async def _read_whole(
@@ -403,6 +419,24 @@ async def _read_whole(
                 ],
             )
         await _insert_tables(conn, catalog, description.tables, tracked, now)
+        if description.routines:
+            await conn.execute(
+                sa.insert(store.INFO_ROUTINES),
+                [
+                    {
+                        "catalog_id": catalog.id,
+                        "catalog_name": catalog.slug,
+                        "schema_name": r.schema_name,
+                        "routine_name": r.name,
+                        "overload": r.overload,
+                        "routine_type": r.routine_type,
+                        "parameters": ", ".join(r.parameters),
+                        "definition": r.definition,
+                        "refreshed_at": now,
+                    }
+                    for r in description.routines
+                ],
+            )
         await _record_read(catalog.id, now, conn)
 
 

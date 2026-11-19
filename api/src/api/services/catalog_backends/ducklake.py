@@ -35,12 +35,14 @@ from api.services.catalog_backends import (
     CatalogBackendUnavailable,
     CatalogCapabilities,
     CatalogColumnInfo,
+    CatalogDescription,
     CatalogSchemaInfo,
     CatalogTableInfo,
     SnapshotInfo,
     TableVersion,
     WriteContext,
 )
+from api.services.catalog_types import ducklake_type
 from api.services.sql_guard import SQLNotAllowed
 from duckhaven_shared.sql import quote_ident as _quote
 
@@ -653,6 +655,47 @@ class DuckLakeCatalogBackend:
         )
         return f"macros:{rows[0][0] if rows else 0}"
 
+    async def describe_catalog(self, catalog: Catalog) -> CatalogDescription:
+        """Three reads, whatever the catalog's size: its schemas, its tables, and
+        all their columns, a nested column's children among them."""
+        schemas = await self.list_schemas(catalog)
+        table_rows = await self._rows(
+            catalog,
+            "SELECT sc.schema_name, t.table_id, t.table_name, t.table_uuid, "
+            "st.record_count, st.file_size_bytes "
+            "FROM {schema}.ducklake_table t "
+            "JOIN {schema}.ducklake_schema sc ON sc.schema_id = t.schema_id "
+            "LEFT JOIN {schema}.ducklake_table_stats st ON st.table_id = t.table_id "
+            "WHERE t.end_snapshot IS NULL AND sc.end_snapshot IS NULL "
+            "ORDER BY sc.schema_name, t.table_name",
+            {},
+            operation="describe_catalog",
+        )
+        column_rows = await self._rows(
+            catalog,
+            "SELECT table_id, column_id, parent_column, column_name, column_type, "
+            "nulls_allowed FROM {schema}.ducklake_column "
+            "WHERE end_snapshot IS NULL ORDER BY table_id, column_order",
+            {},
+            operation="describe_catalog_columns",
+        )
+        columns = _columns_by_table(column_rows)
+        return CatalogDescription(
+            schemas=schemas,
+            tables=[
+                _table_info(
+                    catalog,
+                    schema_name,
+                    name=name,
+                    table_uuid=table_uuid,
+                    record_count=record_count,
+                    size_bytes=size_bytes,
+                    columns=columns.get(table_id, []),
+                )
+                for schema_name, table_id, name, table_uuid, record_count, size_bytes in table_rows
+            ],
+        )
+
     # --- Metadata writes (dispatched to an agent) ---------------------------
     # origin="metadata" keeps these out of the user's query history.
 
@@ -742,6 +785,38 @@ class DuckLakeCatalogBackend:
             ctx,
             what=f"drop table {schema}.{name}",
         )
+
+
+def _columns_by_table(rows: list[Any]) -> dict[Any, list[CatalogColumnInfo]]:
+    """Each table's top-level columns, from ``ducklake_column`` rows in column
+    order, with a nested column's type built from its children's."""
+    children: dict[Any, list[Any]] = {}
+    top: dict[Any, list[Any]] = {}
+    for row in rows:
+        table_id, parent = row[0], row[2]
+        if parent is None:
+            top.setdefault(table_id, []).append(row)
+        else:
+            children.setdefault(parent, []).append(row)
+
+    def duckdb_type(row: Any) -> str:
+        nested = [(child[3], duckdb_type(child)) for child in children.get(row[1], [])]
+        return ducklake_type(str(row[4]), nested)
+
+    return {
+        table_id: [
+            CatalogColumnInfo(
+                name=row[3],
+                type_text=str(row[4]),
+                type_name=_DUCKLAKE_TYPE_DISPLAY.get(str(row[4]).lower(), str(row[4]).upper()),
+                position=position,
+                nullable=bool(row[5]),
+                duckdb_type=duckdb_type(row),
+            )
+            for position, row in enumerate(table_rows)
+        ]
+        for table_id, table_rows in top.items()
+    }
 
 
 def _table_info(

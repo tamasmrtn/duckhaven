@@ -19,12 +19,14 @@ import asyncio
 import logging
 import time
 from collections import OrderedDict
+from datetime import UTC, datetime
 from typing import Any, Literal, Self
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
 
 from api.metrics import record_polaris_request
+from api.services.catalog_types import iceberg_type
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +78,8 @@ class PolarisColumn(_PolarisModel):
     type_name: str
     position: int
     nullable: bool = True
+    # DuckDB's name for it (`services.catalog_types`), nested types included.
+    duckdb_type: str | None = None
 
 
 class PolarisCatalog(_PolarisModel):
@@ -110,6 +114,9 @@ class PolarisTable(_PolarisModel):
     # from the same LoadTableResult payload already fetched for this table —
     # no extra request. None for a table with no snapshots yet.
     current_snapshot_summary: dict[str, str] | None = None
+    # When the table's metadata last changed, by any engine: Iceberg's
+    # `last-updated-ms`.
+    last_modified: datetime | None = None
 
 
 class PolarisTableVersion(_PolarisModel):
@@ -150,7 +157,7 @@ def _columns_from_iceberg_schema(schema: dict[str, Any]) -> list[PolarisColumn]:
     """Map an Iceberg table schema's fields to display columns."""
     cols: list[PolarisColumn] = []
     for position, field in enumerate(schema.get("fields") or []):
-        type_text = field.get("type")
+        raw_type = type_text = field.get("type")
         # Only flat/primitive types are produced by DuckHaven's create-table
         # dialog; nested types (struct/list/map) arrive as dicts — stringify.
         if not isinstance(type_text, str):
@@ -162,6 +169,7 @@ def _columns_from_iceberg_schema(schema: dict[str, Any]) -> list[PolarisColumn]:
                 type_name=_iceberg_type_name(type_text),
                 position=position,
                 nullable=not field.get("required", False),
+                duckdb_type=iceberg_type(raw_type),
             )
         )
     return cols
@@ -756,6 +764,11 @@ class PolarisClient:
             properties=metadata.get("properties") or {},
             format_version=metadata.get("format-version"),
             current_snapshot_summary=current_snapshot_summary,
+            last_modified=(
+                datetime.fromtimestamp(metadata["last-updated-ms"] / 1000, tz=UTC)
+                if isinstance(metadata.get("last-updated-ms"), int)
+                else None
+            ),
         )
 
     @staticmethod

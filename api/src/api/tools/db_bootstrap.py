@@ -16,11 +16,19 @@ create ordinary login roles for the workload identities.
 ``pgaadauth_create_principal`` is only defined in the ``postgres`` database, so
 principal creation and the per-database grants are two separate connections.
 
+With a system catalog database, the roles also get what the API needs to keep
+it: ``CREATEROLE``, to create the reader login agents read it as, and that
+database's ``CONNECT`` and ``CREATE`` to grant on. As
+``scripts/enable-system-catalog.sh`` does on Compose, ``PUBLIC`` loses
+``CONNECT`` on it and on the other databases, so the reader login reaches that
+database and nothing else.
+
 Environment:
-    DB_BOOTSTRAP_HOST         server FQDN
-    DB_BOOTSTRAP_USER         the bootstrap identity's name (an Entra admin)
-    DB_BOOTSTRAP_PRINCIPALS   comma-separated identity names to create roles for
-    DB_BOOTSTRAP_DATABASES    comma-separated databases to grant those roles on
+    DB_BOOTSTRAP_HOST             server FQDN
+    DB_BOOTSTRAP_USER             the bootstrap identity's name (an Entra admin)
+    DB_BOOTSTRAP_PRINCIPALS       comma-separated identity names to create roles for
+    DB_BOOTSTRAP_DATABASES        comma-separated databases to grant those roles on
+    DB_BOOTSTRAP_SYSTEM_DATABASE  the system catalog's database, if it is on
 """
 
 from __future__ import annotations
@@ -73,6 +81,17 @@ async def _create_principals(conn: asyncpg.Connection, principals: list[str]) ->
         print(f"created role {principal}")
 
 
+async def _allow_creating_roles(conn: asyncpg.Connection, principals: list[str]) -> None:
+    """Let the roles create the system catalog's reader login and reset its password.
+
+    Since PostgreSQL 16 a role can only manage the roles it created, so this
+    reaches no other login on the server.
+    """
+    for principal in principals:
+        await conn.execute(f"ALTER ROLE {_quote(principal)} CREATEROLE")
+        print(f"allowed {principal} to create roles")
+
+
 async def _grant(conn: asyncpg.Connection, database: str, principals: list[str]) -> None:
     for principal in principals:
         role = _quote(principal)
@@ -85,11 +104,39 @@ async def _grant(conn: asyncpg.Connection, database: str, principals: list[str])
         print(f"granted {principal} on {database}")
 
 
+async def _close_to_public(conn: asyncpg.Connection, database: str) -> None:
+    """Take ``CONNECT`` from ``PUBLIC``, so the system catalog's reader cannot log in.
+
+    Every role this database needs holds its own grant: the principals from
+    :func:`_grant`, and this identity, granted first so that a re-run can still
+    connect.
+    """
+    db = _quote(database)
+    await conn.execute(f"GRANT CONNECT ON DATABASE {db} TO CURRENT_USER")
+    await conn.execute(f"REVOKE CONNECT ON DATABASE {db} FROM PUBLIC")
+    print(f"closed {database} to PUBLIC")
+
+
+async def _grant_system(conn: asyncpg.Connection, database: str, principals: list[str]) -> None:
+    """What the API needs in the system catalog's database, and nothing for anyone else.
+
+    It creates its schemas there, and grants the reader login ``CONNECT``.
+    """
+    db = _quote(database)
+    await conn.execute(f"REVOKE ALL ON DATABASE {db} FROM PUBLIC")
+    await conn.execute("REVOKE ALL ON SCHEMA public FROM PUBLIC")
+    for principal in principals:
+        role = _quote(principal)
+        await conn.execute(f"GRANT CONNECT, CREATE ON DATABASE {db} TO {role} WITH GRANT OPTION")
+        print(f"granted {principal} on {database}")
+
+
 async def main() -> int:
     host = os.environ.get("DB_BOOTSTRAP_HOST", "")
     user = os.environ.get("DB_BOOTSTRAP_USER", "")
     principals = _names("DB_BOOTSTRAP_PRINCIPALS")
     databases = _names("DB_BOOTSTRAP_DATABASES")
+    system_database = os.environ.get("DB_BOOTSTRAP_SYSTEM_DATABASE", "").strip()
 
     if not host or not user or not principals or not databases:
         print(
@@ -106,6 +153,8 @@ async def main() -> int:
     conn = await _connect(host, user, "postgres", token)
     try:
         await _create_principals(conn, principals)
+        if system_database:
+            await _allow_creating_roles(conn, principals)
     finally:
         await conn.close()
 
@@ -113,6 +162,15 @@ async def main() -> int:
         conn = await _connect(host, user, database, token)
         try:
             await _grant(conn, database, principals)
+            if system_database:
+                await _close_to_public(conn, database)
+        finally:
+            await conn.close()
+
+    if system_database:
+        conn = await _connect(host, user, system_database, token)
+        try:
+            await _grant_system(conn, system_database, principals)
         finally:
             await conn.close()
 

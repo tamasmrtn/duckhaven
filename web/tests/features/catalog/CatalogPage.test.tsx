@@ -257,6 +257,24 @@ describe("CatalogPage", () => {
     expect(WORKSHEETS.at(-1)?.sql).toMatch(/^ALTER TABLE .*"events"/);
   });
 
+  it("opens a worksheet that reads a system table when it is clicked", async () => {
+    const user = userEvent.setup();
+    localStorage.setItem(
+      "dh-tree-expanded-acme-analytics",
+      JSON.stringify(["c:duckhaven", "s:duckhaven.access"]),
+    );
+    renderWithProviders({ initialRoute: "/acme-analytics/catalog" });
+
+    await user.click(await screen.findByRole("button", { name: "audit" }));
+
+    expect(
+      await screen.findByRole("tab", { name: /^audit(?!\.sql)/ }),
+    ).toBeInTheDocument();
+    expect(WORKSHEETS.at(-1)?.sql).toBe(
+      'SELECT * FROM "duckhaven"."access"."audit" LIMIT 100;',
+    );
+  });
+
   it("lists snapshot history under the History tab", async () => {
     const user = userEvent.setup();
     renderWithProviders({

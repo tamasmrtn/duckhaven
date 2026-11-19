@@ -73,6 +73,12 @@ in the identity provider.
 DuckHaven never lets the last active admin be deactivated or demoted, so it cannot lock itself out. Make another
 account an admin first.
 
+### Someone is still an admin after leaving the admin group
+
+They are the last active admin. Their sign-in keeps `admin` rather than take the role their directory groups map to,
+and the [audit log](audit-log.md) records a denied `user.role_change`. Make another account an admin; their next
+sign-in demotes them.
+
 ### Someone sees "You're not in a workspace yet"
 
 They belong to no workspace and cannot create one, since that takes `workspaces:create`, which only the `admin` role

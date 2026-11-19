@@ -11,18 +11,18 @@ enabled, which forces a listener restricted to this deployment's own egress addr
 The container registry is the other exception. Both are forced by Azure, not chosen; see
 [the deviations](#three-documented-deviations).
 
-**Nothing in the running system holds a password it could leak.** The API connects to
-PostgreSQL with a Microsoft Entra token minted per connection, every image pull is
-authenticated by a managed identity, and the storage account has no account keys at all.
-One password remains, for Polaris, because its Quarkus datasource has no Entra path —
-see [Authentication](#authentication).
+**The API holds no password it could leak.** It connects to PostgreSQL with a Microsoft
+Entra token minted per connection, every image pull is authenticated by a managed
+identity, and the storage account has no account keys at all. Two database passwords
+remain: Polaris', because its Quarkus datasource has no Entra path, and the system
+catalog's reader login, which agents read it as — see [Authentication](#authentication).
 
 > **Maturity:** the topology has been applied and exercised end to end on a staging
 > subscription — API reachable, Polaris answering, a storage-backend health check
 > vending credentials and reaching ADLS over its private endpoint, and an elastic
-> agent created, queried and terminated. The passwordless database and registry paths
-> are newer and have not yet been through a full apply. The first apply for any
-> environment is [staged](#the-first-apply-is-staged).
+> agent created, queried and terminated. The passwordless database and registry paths,
+> and the system catalog's database, are newer and have not yet been through a full
+> apply. The first apply for any environment is [staged](#the-first-apply-is-staged).
 
 ## Prerequisites
 
@@ -146,8 +146,20 @@ database on the server. The `dbadmin` identity holds it instead.
 **Polaris is the exception.** Its Quarkus datasource would need
 `azure-identity-extensions` on the pgjdbc classpath to present an Entra token, and the
 stock `apache/polaris` image does not ship it. It keeps a generated password in Key
-Vault, which is why `postgres_password_auth_enabled` defaults to true. Running without
-Polaris lets you set it false and close password authentication off entirely.
+Vault, which is why `postgres_password_auth_enabled` defaults to true.
+
+**The system catalog is the other.** Agents read the
+`duckhaven` system catalog as `dh_system_reader`,
+a password login, because they hold no Entra identity for the server. The API creates
+that login in the `duckhaven_system` database, generates its password and keeps it in its
+own database rather than in Key Vault or state, and sends it to an agent only for a query
+that reads the catalog. The database job grants the API what that takes: `CREATEROLE`,
+which since PostgreSQL 16 reaches only the roles it creates, and `CONNECT` and `CREATE` on
+`duckhaven_system`. It also takes `CONNECT` on the DuckHaven database and on
+`duckhaven_system` from `PUBLIC`, so the reader login cannot open the database that holds
+users and session tokens. Running without Polaris and with `system_catalog_enabled =
+false` lets you set `postgres_password_auth_enabled` false and close password
+authentication off entirely.
 
 **The registry.** No credential is ever issued: `admin_enabled` is false and there are no
 scoped tokens. Container Apps pulls with its app identity; container instances carry the
@@ -246,10 +258,13 @@ database before the thing that uses it starts. Both are safe to re-run.
 make bootstrap ROOT=examples/quickstart
 ```
 
-- **The database job** (`caj-<env>-db-boot-…`) creates the API's Microsoft Entra login role. **The API cannot
-  start until this has run** — an Entra identity can authenticate to the server but
-  cannot log in without a database role, so replicas fail their startup probe until it
-  exists. Terraform can guarantee the job exists, not that it has been run.
+- **The database job** (`caj-<env>-db-boot-…`) creates the API's Microsoft Entra login role, and grants it the
+  system catalog's database. **The API cannot start until this has run** — an Entra
+  identity can authenticate to the server but cannot log in without a database role, so
+  replicas fail their startup probe until it exists. Terraform can guarantee the job
+  exists, not that it has been run. Run it again after an apply that adds the system
+  catalog to an environment whose job ran before; until then the system catalog is
+  unavailable and everything else works.
 - **The Polaris job** (`caj-<env>-polaris-boot-…`) creates the Polaris realm and root principal. The admin tool
   exits 3 when the realm already exists, and the job's command treats that as success —
   the same contract as `deploy/polaris-bootstrap.sh`.

@@ -17,8 +17,8 @@ When someone leaves, what you do depends on how they signed in:
 
 - **SSO / LDAP user** — disable or remove them in your **identity provider** (or remove them from the mapped admin
   group). DuckHaven re-checks the directory on every sign-in, so they cannot sign in and an admin group
-  removal demotes them. To cut off any *currently live* DuckHaven session immediately rather than waiting for it to
-  expire, also **Deactivate** them in **Admin → Users**.
+  removal demotes them, unless they are the last active admin. To cut off any *currently live* DuckHaven session
+  immediately rather than waiting for it to expire, also **Deactivate** them in **Admin → Users**.
 - **Local user** — **Deactivate** them in **Admin → Users**. This blocks new sign-ins and rejects their existing
   session on its next request.
 
@@ -69,7 +69,8 @@ changes in the [access audit log](audit-log.md) with its id as `actor_id`.
 
 ### Deactivate or demote is refused for an admin
 
-DuckHaven never lets the last active admin be deactivated or demoted. Make another account an admin first.
+DuckHaven never lets the last active admin be deactivated or demoted, from **Admin → Users** or by a directory group
+change. Make another account an admin first.
 
 ### A deactivated person's single sign-on still works
 

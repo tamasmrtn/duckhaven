@@ -81,7 +81,7 @@ class _Parser:
 _parser = _Parser()
 
 
-def _shadowed(catalogs: list[Catalog]) -> bool:
+def shadowed(catalogs: list[Catalog]) -> bool:
     """Whether the workspace has a catalog of its own under the system catalog's name."""
     return any(c.slug.lower() == SYSTEM_CATALOG_ALIAS for c in catalogs)
 
@@ -181,7 +181,7 @@ def reads_system_catalog(sql: str, catalogs: list[Catalog]) -> bool:
 
     For a statement that has passed :func:`assert_may_read`.
     """
-    if _shadowed(catalogs) or not _may_name_it(sql):
+    if shadowed(catalogs) or not _may_name_it(sql):
         return False
     try:
         return bool(_tables_read(sql))
@@ -201,7 +201,7 @@ async def assert_may_read(
 
     ``catalogs`` are the workspace's. Open workspaces pay a substring test.
     """
-    if _shadowed(catalogs):
+    if shadowed(catalogs):
         return
     if _is_current(active_catalog):
         raise GrantDenied(NOT_CURRENT)

@@ -22,6 +22,7 @@ import { worksheetHandlers } from "./handlers/worksheets";
 import { searchHandlers } from "./handlers/search";
 import { dashboardHandlers } from "./handlers/dashboards";
 import { auditHandlers } from "./handlers/audit";
+import { systemCatalogHandlers } from "./handlers/system-catalog";
 
 export const worker = setupWorker(
   ...authHandlers,
@@ -47,4 +48,5 @@ export const worker = setupWorker(
   ...worksheetHandlers,
   ...dashboardHandlers,
   ...auditHandlers,
+  ...systemCatalogHandlers,
 );

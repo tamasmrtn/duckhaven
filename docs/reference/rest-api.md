@@ -185,7 +185,7 @@ The OpenAPI schema groups endpoints by tag:
 | `auth` | Sign in and out, the current user (`/api/auth/*`, `/api/me`), your own tokens |
 | `setup` | Creating the first admin from the setup token |
 | `workspaces` | Workspaces and their members |
-| `catalog` | Catalogs, [storage migrations](#catalog-storage-migrations), schemas, tables, samples, snapshots |
+| `catalog` | Catalogs, [storage migrations](#catalog-storage-migrations), schemas, tables, samples, snapshots, the [system catalog](../querying/system-catalog.md)'s tables |
 | `queries` | Queries, results, profiles, saved queries, history |
 | `worksheets` | Your private [worksheets](#worksheets) |
 | `search` | Finding catalogs, schemas, tables, saved queries, dashboards and semantic models by name |

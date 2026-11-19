@@ -127,6 +127,17 @@ variable "postgres_database_name" {
   default     = "duckhaven"
 }
 
+variable "postgres_system_database_name" {
+  description = <<-EOT
+    Database holding the duckhaven system catalog, when system_catalog_enabled: the
+    copy of the audit log, current access and query history that admins query in SQL.
+    A database of its own, so agents can be handed a login that reaches it and
+    nothing else.
+  EOT
+  type        = string
+  default     = "duckhaven_system"
+}
+
 variable "postgres_polaris_database_name" {
   description = <<-EOT
     Database holding Polaris' relational-jdbc schema. A separate database on the same
@@ -219,9 +230,27 @@ variable "postgres_password_auth_enabled" {
     need azure-identity-extensions on the pgjdbc classpath to authenticate with an
     Entra token, and the stock apache/polaris image does not ship it.
 
-    So this stays true while Polaris is part of the deployment. Set it false to close
-    off password auth entirely -- valid only if nothing here needs a password, which
-    today means running without Polaris.
+    So does the system catalog: agents read it as a password login, since they hold
+    no Entra identity for the server.
+
+    So this stays true while Polaris or the system catalog is part of the deployment.
+    Set it false to close off password auth entirely -- valid only if nothing here
+    needs a password, which today means running without Polaris and with
+    system_catalog_enabled = false.
+  EOT
+  type        = bool
+  default     = true
+}
+
+variable "system_catalog_enabled" {
+  description = <<-EOT
+    Whether DuckHaven keeps the duckhaven system catalog, which admins query in SQL:
+    a copy of the access audit log, current access and query history in its own
+    database, postgres_system_database_name. The audit log itself is kept either way.
+
+    Needs postgres_password_auth_enabled: agents read the copy as a password login,
+    dh_system_reader. On a server you already run, create the database and grant the
+    API's role what the db-bootstrap job would; see docs/deployment/azure-terraform.md.
   EOT
   type        = bool
   default     = true

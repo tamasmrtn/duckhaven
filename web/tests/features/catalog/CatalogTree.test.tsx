@@ -19,6 +19,8 @@ import {
 import { CatalogTree } from "@/features/catalog/CatalogTree";
 import { createTestQueryClient, createWrapper } from "@tests/utils";
 import { server } from "@tests/mock/server";
+import { currentUser } from "@/mock/fixtures/users";
+import { systemCatalog } from "@/mock/fixtures/systemCatalog";
 
 // This file wraps CatalogTree in a real RouterProvider (for the hover-card's
 // <Link>s), which resolves its initial route match asynchronously — under a
@@ -559,5 +561,106 @@ describe("CatalogTree", () => {
       expect(row).not.toHaveTextContent("Iceberg");
       expect(row).not.toHaveTextContent("iceberg_polaris");
     }
+  });
+});
+
+describe("CatalogTree system catalog", () => {
+  it("lists the duckhaven catalog's schemas, tables and columns for someone who may read it", async () => {
+    const user = userEvent.setup();
+    renderTree(vi.fn(), { expanded: [] });
+
+    await user.click(await screen.findByRole("button", { name: /duckhaven/ }));
+    expect(screen.getByRole("button", { name: "query" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "access" }));
+    expect(screen.getByRole("button", { name: "grants" })).toBeInTheDocument();
+
+    const audit = screen.getByRole("button", { name: "audit" });
+    await user.click(
+      within(audit.parentElement!).getByRole("button", {
+        name: "Show columns",
+      }),
+    );
+    const eventTime = screen.getByTitle("event_time TIMESTAMP WITH TIME ZONE");
+    expect(eventTime).toHaveTextContent("event_time");
+  });
+
+  it("shows a system table's columns when its name is clicked without a handler", async () => {
+    // As in the worksheet sidebar, where the tree only browses.
+    const onTableClick = vi.fn();
+    const user = userEvent.setup();
+    renderTree(onTableClick, {
+      expanded: ["c:duckhaven", "s:duckhaven.query"],
+    });
+
+    await user.click(await screen.findByRole("button", { name: "history" }));
+
+    expect(screen.getByTitle("duration_ms BIGINT")).toBeInTheDocument();
+    expect(onTableClick).not.toHaveBeenCalled();
+  });
+
+  it("drags a system table as its fully-qualified name", async () => {
+    renderTree(vi.fn(), {
+      expanded: ["c:duckhaven", "s:duckhaven.query"],
+    });
+
+    const history = await screen.findByRole("button", { name: "history" });
+    const setData = vi.fn();
+    fireEvent.dragStart(history, {
+      dataTransfer: { setData, effectAllowed: "" },
+    });
+    expect(setData).toHaveBeenCalledWith(
+      "text/plain",
+      "duckhaven.query.history",
+    );
+  });
+
+  it("is not asked for without both permissions", async () => {
+    const asked = vi.fn();
+    server.use(
+      http.get("/api/me", () =>
+        HttpResponse.json({
+          ...currentUser(),
+          permissions: ["queries:read", "audit:read"],
+        }),
+      ),
+      http.get("/api/workspaces/:ws/system-catalog", () => {
+        asked();
+        return HttpResponse.json(systemCatalog);
+      }),
+    );
+    renderTree(vi.fn());
+
+    expect(
+      await screen.findByRole("button", { name: /events/i }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /duckhaven/ })).toBeNull();
+    expect(asked).not.toHaveBeenCalled();
+  });
+
+  it("is absent where the workspace cannot read it", async () => {
+    server.use(
+      http.get("/api/workspaces/:ws/system-catalog", () =>
+        HttpResponse.json({ detail: "Not Found" }, { status: 404 }),
+      ),
+    );
+    renderTree(vi.fn());
+
+    expect(
+      await screen.findByRole("button", { name: /events/i }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /duckhaven/ })).toBeNull();
+  });
+
+  it("says when its database cannot be reached", async () => {
+    server.use(
+      http.get("/api/workspaces/:ws/system-catalog", () =>
+        HttpResponse.json({ ...systemCatalog, available: false }),
+      ),
+    );
+    renderTree(vi.fn());
+
+    const node = await screen.findByRole("button", { name: /duckhaven/ });
+    expect(node).toHaveTextContent("unavailable");
+    expect(node).not.toHaveTextContent("system");
   });
 });

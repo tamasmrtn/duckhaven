@@ -9,7 +9,7 @@ role is resolved here and enforced at the API boundary.
 from collections.abc import Iterable
 
 from fastapi import HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.models.user import User
@@ -42,6 +42,13 @@ async def _by_subject(db: AsyncSession, provider: str, subject: str) -> User | N
     return result.scalar_one_or_none()
 
 
+async def _active_admin_count(db: AsyncSession) -> int:
+    result = await db.execute(
+        select(func.count()).select_from(User).where(User.role == "admin", User.is_active.is_(True))
+    )
+    return result.scalar_one()
+
+
 async def provision_federated_user(
     db: AsyncSession,
     *,
@@ -72,7 +79,9 @@ async def provision_federated_user(
     Any other account with this email is refused with ``ProvisioningRefused``.
     That is what stops one provider's sign-in from taking over another's account,
     or the local break-glass admin. ``name`` and ``role`` re-sync from the
-    provider on every sign-in: the directory is authoritative.
+    provider on every sign-in: the directory is authoritative, except that it
+    cannot demote the last active admin, as an admin cannot. That demotion is
+    held, and recorded as denied, until another account is an admin.
     """
     user = await _by_subject(db, provider, subject)
     if user is None and legacy_provider is not None:
@@ -119,6 +128,20 @@ async def provision_federated_user(
 
     if not user.is_active:
         raise ProvisioningRefused("Account disabled.")
+    if user.role == "admin" and role != "admin" and await _active_admin_count(db) <= 1:
+        record(
+            db,
+            "user.role_change",
+            target_id=user.id,
+            target_name=user.email,
+            subject=user,
+            before={"role": user.role},
+            after={"role": role},
+            outcome="denied",
+            details={"provider": provider, "reason": "last_active_admin"},
+            actor_type="idp",
+        )
+        role = user.role
     if user.role != role:
         record(
             db,

@@ -53,7 +53,7 @@ Every account has one global role, `admin` or `user`. It is about operating Duck
 users, maintenance — not about reading data: a new admin sees no tables until they join a workspace. `admin` holds every
 [global permission](../reference/permissions.md#global-permissions); `user` holds none. For people who sign in through
 an identity provider, the role follows their group membership, for example `dh-admins → admin`, so promoting or
-demoting someone is a change in the directory.
+demoting someone is a change in the directory. The one exception is the last active admin, whom nothing demotes.
 
 ## Layer 2 — Workspace role: your access to a workspace's data
 

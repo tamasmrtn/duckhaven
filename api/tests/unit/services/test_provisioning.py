@@ -158,3 +158,28 @@ async def test_provision_rejects_disabled_user(db_session):
     with pytest.raises(HTTPException) as exc:
         await _provision(db_session, email="dan@corp.com", subject="s", provider="ldap")
     assert exc.value.status_code == 403
+
+
+async def test_the_directory_cannot_demote_the_last_active_admin(db_session):
+    await _provision(db_session, email="ada@corp.com", subject="s", role="admin")
+    again = await _provision(
+        db_session, email="ada@corp.com", subject="s", name="Ada L", role="user"
+    )
+    assert (again.role, again.name) == ("admin", "Ada L")
+
+
+async def test_a_deactivated_admin_does_not_count_as_another(db_session):
+    await _add(db_session, email="gone@corp.com", role="admin", is_active=False)
+    await _provision(db_session, email="ada@corp.com", subject="s", role="admin")
+    again = await _provision(db_session, email="ada@corp.com", subject="s", role="user")
+    assert again.role == "admin"
+
+
+async def test_the_held_demotion_applies_once_another_admin_exists(db_session):
+    await _provision(db_session, email="ada@corp.com", subject="s", role="admin")
+    held = await _provision(db_session, email="ada@corp.com", subject="s", role="user")
+    assert held.role == "admin"
+
+    await _add(db_session, email="bob@corp.com", role="admin")
+    demoted = await _provision(db_session, email="ada@corp.com", subject="s", role="user")
+    assert demoted.role == "user"

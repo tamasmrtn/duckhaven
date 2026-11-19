@@ -34,6 +34,14 @@ class FakeConn:
         return [sql for sql, _ in self.calls]
 
 
+WS = "8f3c1f0e-5a0b-4c7e-9c3a-2d1e0f4b6a7c"
+ANA = "0b6c2a7e-1d3f-4e5a-8b9c-0d1e2f3a4b5c"
+ATTACH = (
+    f"ATTACH 'options=''-c duckhaven.workspace={WS} -c duckhaven.principals={ANA} "
+    "-c duckhaven.readable=access.audit,query.history''' AS \"duckhaven\" "
+    "(TYPE postgres, SECRET dh_sys, READ_ONLY)"
+)
+
 _POLARIS = {"endpoint": "http://polaris:8181", "client_id": "root", "client_secret": "pw"}
 
 
@@ -49,6 +57,11 @@ def _system() -> dict:
             "database": "duckhaven_system",
             "user": "dh_system_reader",
             "password": "reader-pw",
+            "settings": {
+                "duckhaven.workspace": WS,
+                "duckhaven.principals": ANA,
+                "duckhaven.readable": "access.audit,query.history",
+            },
         },
     }
 
@@ -72,7 +85,43 @@ def test_it_is_attached_read_only_through_postgres(monkeypatch):
     secret, attach = conn.calls
     assert secret[0].startswith("CREATE OR REPLACE SECRET dh_sys (TYPE POSTGRES, HOST ?")
     assert secret[1] == ["postgres", 5432, "duckhaven_system", "dh_system_reader", "reader-pw"]
-    assert attach == ("ATTACH '' AS \"duckhaven\" (TYPE postgres, SECRET dh_sys, READ_ONLY)", [])
+    assert attach == (ATTACH, [])
+
+
+def test_who_it_runs_for_goes_in_the_connection_string_the_store_filters_by():
+    conn = FakeConn()
+
+    runner._attach_system(conn, _system())
+
+    attach = conn.sql()[-1]
+    assert f"-c duckhaven.workspace={WS}" in attach
+    assert f"-c duckhaven.principals={ANA}" in attach
+    assert "-c duckhaven.readable=access.audit,query.history" in attach
+
+
+def test_a_setting_that_could_reach_past_its_own_value_attaches_nothing():
+    conn = FakeConn()
+    system = _system()
+    system["meta"]["settings"]["duckhaven.readable"] = "access.audit' AS x --"
+
+    with pytest.raises(ValueError, match="Invalid value"):
+        runner._attach_system(conn, system)
+
+    assert conn.calls == []
+
+
+def test_without_settings_it_attaches_reading_nothing():
+    """What an older control plane sends: the store's policies then match no row."""
+    conn = FakeConn()
+    system = _system()
+    del system["meta"]["settings"]
+
+    runner._attach_system(conn, system)
+
+    assert conn.sql()[-1].startswith(
+        "ATTACH 'options=''-c duckhaven.workspace= -c duckhaven.principals= "
+        "-c duckhaven.readable=''' AS"
+    )
 
 
 def test_the_password_never_appears_in_statement_text(monkeypatch):
@@ -134,7 +183,7 @@ def test_alone_it_is_attached_but_never_used(monkeypatch):
 
     runner._attach_catalogs(conn, catalogs=[_system()], active_catalog=None, polaris={})
 
-    assert any(s.startswith("ATTACH '' AS \"duckhaven\"") for s in conn.sql())
+    assert ATTACH in conn.sql()
     assert not any(s.startswith("USE") for s in conn.sql())
 
 
@@ -183,7 +232,7 @@ def test_with_no_polaris_a_one_shot_still_attaches_it(monkeypatch):
         catalogs=[_catalog("lake", "ducklake"), _system()], active_catalog="lake", polaris=None
     )
 
-    assert any(s.startswith("ATTACH '' AS \"duckhaven\"") for s in conn.sql())
+    assert ATTACH in conn.sql()
 
 
 def test_the_agent_advertises_it():
@@ -191,3 +240,4 @@ def test_the_agent_advertises_it():
     from agent.control import channel as ch
 
     assert "system_catalog" in ch._PROTOCOL_FEATURES
+    assert "system_catalog_row_filter" in ch._PROTOCOL_FEATURES

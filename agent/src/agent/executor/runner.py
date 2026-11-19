@@ -31,7 +31,7 @@ from agent import runtime
 from agent.executor.plan import parse_profile
 from agent.executor.warm_connections import Prepared, WarmConnections
 from duckhaven_shared.sql import quote_ident as _quote_identifier
-from duckhaven_shared.system_catalog import KIND_SYSTEM
+from duckhaven_shared.system_catalog import KIND_SYSTEM, connection_options
 
 logger = logging.getLogger(__name__)
 
@@ -891,10 +891,15 @@ def _attach_system(conn: duckdb.DuckDBPyConnection, cat: dict[str, Any]) -> None
     API vended.
 
     The password goes in a secret, as DuckLake's does, so it is never in
-    statement text.
+    statement text. Who the statement runs for goes in the connection string, as
+    settings the store's row-level security reads (`meta.settings`): checked to
+    hold only characters neither libpq nor SQL treats as syntax, so they are
+    inlined as they are. Each query has a connection of its own, and a session
+    one person's, so one attach never serves anyone else.
     """
     alias = cat["slug"].replace('"', '""')
     meta = cat.get("meta") or {}
+    options = connection_options(meta.get("settings") or {})
     _create_secret(
         conn,
         f"CREATE OR REPLACE SECRET {_SYSTEM_SECRET}",
@@ -907,7 +912,10 @@ def _attach_system(conn: duckdb.DuckDBPyConnection, cat: dict[str, Any]) -> None
             "PASSWORD": meta["password"],
         },
     )
-    conn.execute(f"ATTACH '' AS \"{alias}\" (TYPE postgres, SECRET {_SYSTEM_SECRET}, READ_ONLY)")
+    conn.execute(
+        f"ATTACH 'options=''{options}''' AS \"{alias}\" "
+        f"(TYPE postgres, SECRET {_SYSTEM_SECRET}, READ_ONLY)"
+    )
 
 
 _SIZE_UNITS = {

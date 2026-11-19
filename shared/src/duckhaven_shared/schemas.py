@@ -61,7 +61,8 @@ class CatalogAttach(BaseModel):
     # DuckLake only; vended per dispatch, never persisted on the agent.
     data_path: str | None = None
     metadata_schema: str | None = None
-    meta: dict[str, str | int] | None = None
+    # The system catalog's also holds `settings`, for its row filters.
+    meta: dict[str, str | int | dict[str, str]] | None = None
     storage: dict[str, object] | None = None
 
 

@@ -123,21 +123,20 @@ def agent_file(monkeypatch):
             return httpx.Response(served.status, content=served.content)
 
         client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-        original_aclose = client.aclose
+        response = await client.send(client.build_request("GET", source.url), stream=True)
+        original_aclose = response.aclose
 
         async def aclose():
             served.closed += 1
             await original_aclose()
 
-        client.aclose = aclose  # type: ignore[method-assign]
-        response = await client.send(client.build_request("GET", source.url), stream=True)
+        response.aclose = aclose  # type: ignore[method-assign]
         try:
             query_service._raise_for_upstream(response.status_code)
         except Exception:
             await response.aclose()
-            await client.aclose()
             raise
-        return client, response
+        return response
 
     monkeypatch.setattr(query_service, "open_result_stream", fake_open)
     return served
@@ -151,7 +150,7 @@ async def test_parquet_is_the_agents_file_byte_for_byte(
     assert resp.status_code == 200
     assert resp.headers["content-type"] == result_stream.PARQUET_MEDIA_TYPE
     assert resp.content == agent_file.content
-    assert agent_file.closed == 1  # the upstream client is released
+    assert agent_file.closed == 1  # the upstream response is released
 
 
 async def test_arrow_keeps_every_value_exact(

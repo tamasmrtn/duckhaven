@@ -811,7 +811,9 @@ async def _with_first_page(
     ):
         out = QueryOut.model_validate(query, from_attributes=True)
         if result is not None:
-            out.first_page = query_service.page_from_parquet(query, result, limit=first_page_limit)
+            out.first_page = await query_service.page_from_parquet(
+                query, result, limit=first_page_limit
+            )
             return out
         try:
             out.first_page = await query_service.fetch_result_page(

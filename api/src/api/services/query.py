@@ -3,12 +3,14 @@ import base64
 import binascii
 import contextlib
 import datetime as dt
+import functools
 import logging
 import os
 import tempfile
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -40,7 +42,7 @@ from api.models.table_metadata import TableMetadata
 from api.models.user import Credential
 from api.models.workspace import Workspace
 from api.schemas.query import RowsPageOut
-from api.services import agent_access, delegation
+from api.services import agent_access, agent_http, delegation
 from api.services import grants as grant_service
 from api.services import runtimes as runtime_service
 from api.services.addresses import result_url
@@ -839,13 +841,10 @@ async def proxy_rows(
     if token:
         headers["Authorization"] = f"Bearer {token}"
     # Timed here rather than at the call sites so all three of them (the rows route,
-    # the table sample, the SQL-metadata reader) are covered by one instrument, and
-    # so the measurement includes building the client -- which is the part worth
-    # watching, since a fresh one is constructed per call.
+    # the table sample, the SQL-metadata reader) are covered by one instrument.
     started = time.perf_counter()
     try:
-        async with httpx.AsyncClient() as client:
-            return await client.get(url, params=params, headers=headers)
+        return await agent_http.client().get(url, params=params, headers=headers)
     finally:
         record_rows_proxy(time.perf_counter() - started)
 
@@ -972,20 +971,22 @@ def _raise_for_upstream(status_code: int) -> None:
         )
 
 
-async def open_result_stream(source: ResultSource) -> tuple[httpx.AsyncClient, httpx.Response]:
-    """Open the agent's whole result file as a stream. The caller closes both.
+async def open_result_stream(source: ResultSource) -> httpx.Response:
+    """Open the agent's whole result file as a stream. The caller closes it.
 
     Raises the HTTPException a failed read maps to, having closed what it opened.
     No read timeout: a large result legitimately takes a while to stream.
     """
     headers = {"Authorization": f"Bearer {source.token}"} if source.token else {}
-    client = httpx.AsyncClient(timeout=httpx.Timeout(10.0, read=None))
+    client = agent_http.client()
     try:
         response = await client.send(
-            client.build_request("GET", source.url, headers=headers), stream=True
+            client.build_request(
+                "GET", source.url, headers=headers, timeout=httpx.Timeout(10.0, read=None)
+            ),
+            stream=True,
         )
     except httpx.HTTPError as exc:
-        await client.aclose()
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Agent result endpoint unavailable",
@@ -994,9 +995,8 @@ async def open_result_stream(source: ResultSource) -> tuple[httpx.AsyncClient, h
         _raise_for_upstream(response.status_code)
     except HTTPException:
         await response.aclose()
-        await client.aclose()
         raise
-    return client, response
+    return response
 
 
 async def fetch_result_page(
@@ -1023,7 +1023,7 @@ async def fetch_result_page(
     column_schema = query.result_schema
     source = await resolve_result_source(db, query)
     if source.inline is not None:
-        return page_from_parquet(query, source.inline, limit=limit, offset=offset)
+        return await page_from_parquet(query, source.inline, limit=limit, offset=offset)
 
     try:
         upstream = await proxy_rows(
@@ -1040,9 +1040,7 @@ async def fetch_result_page(
     # starts at the requested rows, so decode at offset 0. An older agent that
     # ignored the params returns the whole file -- fall back to decoding at offset.
     decode_offset = 0 if "X-DH-Row-Offset" in upstream.headers else offset
-    started = time.monotonic()
-    rows, columns = decode_parquet_page(upstream.content, limit, decode_offset)
-    record_rows_decode(time.monotonic() - started)
+    rows, columns = await decode_page_off_loop(upstream.content, limit, decode_offset)
 
     next_offset = offset + limit
     return RowsPageOut(
@@ -1054,16 +1052,16 @@ async def fetch_result_page(
     )
 
 
-def page_from_parquet(query: Query, data: bytes, *, limit: int, offset: int = 0) -> RowsPageOut:
+async def page_from_parquet(
+    query: Query, data: bytes, *, limit: int, offset: int = 0
+) -> RowsPageOut:
     """One page of ``query``'s rows from its whole result file, held in memory.
 
     For a result that is already here: a result-cache entry kept in Postgres, or
     the file the agent sent with a statement's QUERY_DONE.
     """
     total = query.row_count or 0
-    started = time.monotonic()
-    rows, columns = decode_parquet_page(data, limit, offset)
-    record_rows_decode(time.monotonic() - started)
+    rows, columns = await decode_page_off_loop(data, limit, offset)
     next_offset = offset + limit
     return RowsPageOut(
         rows=rows,
@@ -1072,6 +1070,20 @@ def page_from_parquet(query: Query, data: bytes, *, limit: int, offset: int = 0)
         total=total,
         column_schema=query.result_schema,
     )
+
+
+async def decode_page_off_loop(
+    data: bytes, limit: int, offset: int
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """:func:`decode_parquet_page` in a worker thread, timed.
+
+    Decoding is CPU-bound -- about 7 ms for 1,000 rows -- and on the event loop it
+    held up every other request on the replica while one user paged a result.
+    """
+    started = time.monotonic()
+    page = await asyncio.to_thread(decode_parquet_page, data, limit, offset)
+    record_rows_decode(time.monotonic() - started)
+    return page
 
 
 async def agent_session_token(db: AsyncSession, agent_id: uuid.UUID) -> str | None:
@@ -1125,6 +1137,38 @@ def _json_value(value: Any, value_type: duckdb.DuckDBPyType | None) -> Any:
     return _json_safe(value)
 
 
+# Types DuckDB already returns as a JSON value (bool, int, float, str), which
+# ``_json_value`` would hand back unchanged.
+_JSON_NATIVE = frozenset(
+    {
+        "boolean",
+        "tinyint",
+        "smallint",
+        "integer",
+        "utinyint",
+        "usmallint",
+        "uinteger",
+        "float",
+        "double",
+        "varchar",
+        "enum",
+    }
+)
+
+
+def _cell_converter(value_type: duckdb.DuckDBPyType) -> Callable[[Any], Any] | None:
+    """What ``_json_value`` does to a non-null cell of ``value_type``, chosen once
+    per column; ``None`` when it does nothing."""
+    tid = value_type.id
+    if tid in _JSON_NATIVE:
+        return None
+    if tid in _EXACT_AS_TEXT:
+        return str
+    if tid in ("list", "array", "struct", "map"):
+        return functools.partial(_json_value, value_type=value_type)
+    return _json_safe
+
+
 # One in-memory DuckDB for every page decode. Opening and closing a database per
 # page took about half of a 1000-row decode, on the event loop. Each decode reads
 # through its own cursor, a separate connection to this database, because a
@@ -1144,25 +1188,38 @@ def _decoder_cursor() -> duckdb.DuckDBPyConnection:
 def decode_parquet_page(
     content: bytes, limit: int, offset: int
 ) -> tuple[list[dict[str, Any]], list[str]]:
-    """Decode a page of a Parquet result (bytes) into JSON-safe rows + columns."""
+    """Decode a page of a Parquet result (bytes) into JSON-safe rows + columns.
+
+    The page holds the GIL while it is built, so it holds up the event loop even
+    from a worker thread: only the cells that need converting are visited, with a
+    converter chosen once per column.
+    """
     with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as tmp:
         tmp.write(content)
         path = tmp.name
     try:
         conn = _decoder_cursor()
         try:
+            # Literals, not bound parameters: binding a parameter list has DuckDB try
+            # to import pandas, a search of the whole sys.path on every page when it
+            # is not installed. Both numbers are ints and the path is our own.
+            quoted = path.replace("'", "''")
             cur = conn.execute(
-                "SELECT * FROM read_parquet(?) LIMIT ? OFFSET ?", [path, limit, offset]
+                f"SELECT * FROM read_parquet('{quoted}') LIMIT {int(limit)} OFFSET {int(offset)}"
             )
             columns = [d[0] for d in cur.description]
-            types = [d[1] for d in cur.description]
-            rows = [
-                {
-                    col: _json_value(val, typ)
-                    for col, val, typ in zip(columns, record, types, strict=True)
-                }
-                for record in cur.fetchall()
+            records = cur.fetchall()
+            rows = [dict(zip(columns, record, strict=True)) for record in records]
+            convert = [
+                (i, col, conv)
+                for i, (col, (_, typ, *_)) in enumerate(zip(columns, cur.description, strict=True))
+                if (conv := _cell_converter(typ)) is not None
             ]
+            for i, col, conv in convert:
+                for record, row in zip(records, rows, strict=True):
+                    value = record[i]
+                    if value is not None:
+                        row[col] = conv(value)
             return rows, columns
         finally:
             conn.close()

@@ -30,25 +30,10 @@ A new install creates the database on first start. An install that predates it n
 
 ## What it holds
 
-Eight schemas:
-
-- `info_schema`: the schemas, tables, columns and DuckLake macros of every catalog, and every workspace's semantic
-  models.
-- `access`: the [access audit log](../access/audit-log.md), current access, users, workspaces, tokens, and which tables
-  each query read and wrote.
-- `query`: finished queries and SQL sessions.
-- `lineage`: the lineage graph.
-- `jobs`: schedules.
-- `compute`: agents, their state changes and their minute-by-minute utilization.
-- `storage`: table health at each maintenance scan, each maintenance apply, and the storage backends, without their
-  configuration.
-- `ai`: the tokens each assistant answer used, and each tool it called, without what was asked or answered.
-
-Their tables, columns, and how long each keeps its rows, are in the
-[system catalog reference](../reference/system-catalog.md). The copy keeps what DuckHaven's own pages let go: deleting a
-workspace removes its queries from History but not from the copy, and agent utilization, which the monitoring page
-keeps for a week, stays for `SYSTEM_CATALOG_RETENTION_DAYS`, as do the assistant's usage and tool calls after their
-conversation is deleted.
+Eight schemas, listed in [What it holds](../querying/system-catalog.md#what-it-holds): `info_schema`, a copy of each
+catalog's schemas, tables, columns and DuckLake macros and of every workspace's semantic models, and seven of
+DuckHaven's own records. Every table, how often it is refreshed and how long it keeps its rows are in
+[System catalog tables](../reference/system-catalog.md).
 
 The copy trails `duckhaven` by up to the publish interval. An audit event joins it once every transaction that was
 writing before it on the same Postgres server has finished, so a transaction that runs for minutes holds the audit copy

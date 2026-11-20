@@ -183,7 +183,7 @@ ORDER BY principal_email;
 ```
 
 Each row is one data grant on `sales`; empty `schema_name` and `table_name` mean the whole catalog. Every column is in
-the [system catalog reference](../reference/system-catalog.md).
+[Access and lineage tables](../reference/system-catalog-access.md#accessgrants).
 
 ## If it goes wrong
 

@@ -112,10 +112,10 @@ async def test_a_title_match_outranks_a_passing_mention(corpus):
 
 async def test_a_term_named_only_in_a_table_is_still_found(corpus):
     """Table rows weigh least, but they still match: `cpu_time_ms` is named in
-    one row of the system catalog reference and nowhere else."""
+    one row of the system catalog's operations tables and nowhere else."""
     results = await search_pages(corpus, "cpu_time_ms", limit=5)
 
-    assert [r["path"] for r in results] == ["reference/system-catalog.md"]
+    assert [r["path"] for r in results] == ["reference/system-catalog-operations.md"]
 
 
 async def test_table_rows_weigh_less_than_prose(corpus):

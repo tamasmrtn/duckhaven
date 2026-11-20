@@ -32,6 +32,8 @@ import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { getRecentlyViewed, isRoutableEntry } from "@/utils/recentlyViewed";
 import { objectPath } from "@/utils/objectPath";
 import { useOpenInWorksheet } from "@/features/worksheet/openInWorksheet";
+import { searchSystemCatalog } from "@/features/catalog/systemSearch";
+import { useSystemCatalog } from "@/queries/systemCatalog";
 import { navItems } from "./navItems";
 import { StorageIcon } from "./StorageIcon";
 import type { SearchResult } from "@/types/search";
@@ -56,10 +58,17 @@ export function CommandPalette({
   const [query, setQuery] = useState("");
   const debouncedQuery = useDebouncedValue(query, 200);
   const searching = query.trim().length >= 2;
-  const { data: results = [] } = useWorkspaceSearch(
+  const { data: found = [] } = useWorkspaceSearch(
     currentWs ?? "",
     searching ? debouncedQuery : "",
   );
+  // The server's search does not cover the `duckhaven` system catalog; its
+  // tables are already listed whole, so they are matched here.
+  const { data: system } = useSystemCatalog(currentWs ?? "");
+  const results = [
+    ...found,
+    ...(searching ? searchSystemCatalog(system, debouncedQuery) : []),
+  ];
 
   // Reset on close (rather than on open) so this stays a plain event handler
   // instead of a setState-in-effect: every close path — Escape, outside

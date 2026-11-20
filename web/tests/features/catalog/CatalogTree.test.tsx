@@ -609,6 +609,25 @@ describe("CatalogTree system catalog", () => {
     expect(onTableClick).not.toHaveBeenCalled();
   });
 
+  it("finds a system table by search, which the server search does not cover", async () => {
+    const user = userEvent.setup();
+    renderTree(vi.fn(), { expanded: [] });
+    await screen.findByRole("button", { name: /duckhaven/ });
+
+    await user.type(screen.getByLabelText("Search tables"), "history");
+
+    const results = await screen.findByLabelText("Search results");
+    expect(within(results).getByText("duckhaven")).toBeInTheDocument();
+    expect(within(results).getByText("query")).toBeInTheDocument();
+    // A system table's node, so its columns come from the listing rather
+    // than a request for a `duckhaven` table the workspace does not have.
+    await user.click(within(results).getByRole("button", { name: "history" }));
+    expect(screen.getByTitle("duration_ms BIGINT")).toBeInTheDocument();
+    expect(
+      screen.queryByText(/No catalogs, schemas or tables match/),
+    ).not.toBeInTheDocument();
+  });
+
   it("lets a long column type give way to the column's name", async () => {
     // "TIMESTAMP WITH TIME ZONE" would not shrink, and squeezed `started_at`
     // to "s.". jsdom has no layout, so this pins the classes that share the

@@ -39,6 +39,7 @@ import {
 import { useSchemas, useTable, useTables } from "@/queries/schemas";
 import { useCatalogObjectSearch } from "@/queries/search";
 import { useSystemCatalog } from "@/queries/systemCatalog";
+import { searchSystemCatalog } from "@/features/catalog/systemSearch";
 import { useDebouncedValue } from "@/hooks/useDebouncedValue";
 import { usePersistedSet } from "@/hooks/usePersistedSet";
 import { useRefreshCatalogStats } from "@/queries/schemas.mutations";
@@ -931,6 +932,10 @@ interface SearchResultsTreeProps {
   results: SearchResult[];
   hasMore: boolean;
   onTableClick: (catalog: string, schema: string, table: string) => void;
+  // The `duckhaven` system catalog, matched here: the server's search does not
+  // cover it.
+  system?: SystemCatalog;
+  onSystemTableClick?: (catalog: string, schema: string, table: string) => void;
 }
 
 /**
@@ -944,7 +949,14 @@ function SearchResultsTree({
   results,
   hasMore,
   onTableClick,
+  system,
+  onSystemTableClick,
 }: SearchResultsTreeProps) {
+  // First, as in the tree.
+  const all = useMemo(
+    () => [...searchSystemCatalog(system, needle), ...results],
+    [system, needle, results],
+  );
   const grouped = useMemo(() => {
     const byCatalog = new Map<
       string,
@@ -958,7 +970,12 @@ function SearchResultsTree({
       }
       return schemas;
     };
-    for (const r of results) {
+    for (const r of all) {
+      // A catalog matched by name is listed even with nothing under it.
+      if (r.type === "catalog") {
+        schemasOf(r.name);
+        continue;
+      }
       if (!r.catalog) continue;
       const schemas = schemasOf(r.catalog);
       if (r.type === "schema" || r.type === "table") {
@@ -972,9 +989,9 @@ function SearchResultsTree({
       }
     }
     return byCatalog;
-  }, [results]);
+  }, [all]);
 
-  if (results.length === 0) {
+  if (all.length === 0) {
     return (
       <p className="px-2 py-3 text-sm text-text-tertiary">
         No catalogs, schemas or tables match “{needle}”.
@@ -1005,19 +1022,38 @@ function SearchResultsTree({
                 </div>
                 {schema.tables.length > 0 && (
                   <div className="ml-3 border-l border-[var(--border-subtle)] pl-2">
-                    {schema.tables.map((table) => (
-                      <TableNode
-                        key={table}
-                        ws={ws}
-                        catalog={catalog}
-                        schemaName={schema.name}
-                        // The list payload is not fetched in search mode; the
-                        // hover card and columns load the detail on demand.
-                        table={{ name: table, row_count: null } as CatalogTable}
-                        onTableClick={onTableClick}
-                        highlight={needle}
-                      />
-                    ))}
+                    {schema.tables.map((table) => {
+                      const systemTable =
+                        catalog === system?.catalog
+                          ? system.tables.find(
+                              (t) =>
+                                t.schema_name === schema.name &&
+                                t.name === table,
+                            )
+                          : undefined;
+                      return systemTable ? (
+                        <SystemTableNode
+                          key={table}
+                          catalog={catalog}
+                          table={systemTable}
+                          onClick={onSystemTableClick}
+                        />
+                      ) : (
+                        <TableNode
+                          key={table}
+                          ws={ws}
+                          catalog={catalog}
+                          schemaName={schema.name}
+                          // The list payload is not fetched in search mode; the
+                          // hover card and columns load the detail on demand.
+                          table={
+                            { name: table, row_count: null } as CatalogTable
+                          }
+                          onTableClick={onTableClick}
+                          highlight={needle}
+                        />
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -1184,6 +1220,8 @@ export function CatalogTree({
                 results={search.data.items}
                 hasMore={search.data.has_more}
                 onTableClick={onTableClick}
+                system={systemCatalog}
+                onSystemTableClick={onSystemTableClick}
               />
             ) : search.isError ? (
               <p className="px-2 py-3 text-sm text-text-tertiary">

@@ -34,6 +34,13 @@ summary weighted above the body, which already favours the page a question is ab
 and it was at least as good as flag 2 on every slice of the golden cases, before and
 after the docs were rewritten into shorter pages.
 
+**Table rows weigh least.** The vector (migration 0069) indexes a page's prose at
+'C' and its Markdown table rows at 'D'. Reference pages are mostly tables that
+repeat identifiers (``catalog_name``, ``created_at``), which the parser splits into
+common words; at 'C' they pulled the system catalog reference into the top five
+for questions about catalogs in general. At 'D' a table row still matches, so a
+column or setting named only in a table is still found.
+
 The honest limitation: Postgres full-text has no IDF, so a term that appears in
 most of the corpus ("table", "catalog") pulls in noise, and a handful of cases
 still miss. Ranking by how many distinct query terms a page matches trades recall

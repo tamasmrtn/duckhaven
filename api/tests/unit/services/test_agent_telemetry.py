@@ -12,6 +12,7 @@ from api.services.agent_telemetry import (
     record_lifecycle_event,
     record_lifecycle_event_now,
     reset_rollup_state,
+    rollup_writer,
     take_pending,
 )
 
@@ -299,3 +300,80 @@ async def test_merging_a_split_minute_adds_coverage_and_oom_kills(db_session, ag
     assert row.covered_s == 4.0
     assert row.oom_kills == 2
     assert row.sample_count == 2
+
+
+# ── Rollup writer ────────────────────────────────────────────────────────────
+
+
+def _closed_minutes(agent, *minutes: int):
+    closed = []
+    for m in minutes:
+        accumulate(agent.id, sample(f"2026-07-28T10:{m:02d}:05+00:00"))
+        done = accumulate(agent.id, sample(f"2026-07-28T10:{m + 1:02d}:00+00:00"))
+        closed.append(done)
+        reset_rollup_state()
+    return closed
+
+
+async def test_the_rollup_writer_persists_every_queued_minute(db_session, db_engine, agent):
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    factory = async_sessionmaker(db_engine, expire_on_commit=False)
+    for acc in _closed_minutes(agent, 0, 1, 2):
+        rollup_writer.submit(factory, agent.id, acc)
+    await rollup_writer.drain()
+
+    rows = (await db_session.execute(sa.select(AgentMetricsMinute.minute))).scalars().all()
+    assert sorted(r.replace(tzinfo=UTC) for r in rows) == [
+        datetime(2026, 7, 28, 10, m, tzinfo=UTC) for m in (0, 1, 2)
+    ]
+
+
+async def test_submitting_a_minute_never_waits_for_the_database(agent):
+    """The frame loop hands the minute over and goes on; a slow write holds no one."""
+    import asyncio
+
+    gate = asyncio.Event()
+    written: list = []
+
+    class SlowSession:
+        async def __aenter__(self):
+            await gate.wait()
+            return self
+
+        async def __aexit__(self, *exc):
+            return False
+
+        async def execute(self, *a, **k):
+            written.append(1)
+
+            class R:
+                rowcount = 1
+
+            return R()
+
+        async def commit(self):
+            pass
+
+    [acc] = _closed_minutes(agent, 0)
+    rollup_writer.submit(lambda: SlowSession(), agent.id, acc)  # returns at once
+    await asyncio.sleep(0)
+    assert written == []
+    gate.set()
+    await rollup_writer.drain()
+    assert written == [1]
+
+
+async def test_a_failed_write_does_not_stop_the_writer(db_engine, db_session, agent):
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    def broken():
+        raise RuntimeError("pool exhausted")
+
+    first, second = _closed_minutes(agent, 0, 1)
+    rollup_writer.submit(broken, agent.id, first)
+    rollup_writer.submit(async_sessionmaker(db_engine, expire_on_commit=False), agent.id, second)
+    await rollup_writer.drain()
+
+    rows = (await db_session.execute(sa.select(AgentMetricsMinute.minute))).scalars().all()
+    assert [r.replace(tzinfo=UTC) for r in rows] == [datetime(2026, 7, 28, 10, 1, tzinfo=UTC)]

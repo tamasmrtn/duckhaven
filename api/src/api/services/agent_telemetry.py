@@ -16,6 +16,8 @@ different stories about why an agent went away.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
 import uuid
 from dataclasses import dataclass, field
@@ -23,7 +25,7 @@ from datetime import UTC, datetime, timedelta
 
 import sqlalchemy as sa
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.config import settings
 from api.models.agent import AgentLifecycleEvent, AgentMetricsMinute
@@ -277,6 +279,62 @@ async def flush_minute(db: AsyncSession, agent_id: uuid.UUID, acc: MinuteAccumul
     except Exception:
         logger.exception("Could not flush metrics rollup for agent %s", agent_id)
         await db.rollback()
+
+
+class RollupWriter:
+    """Writes this replica's closed minutes one at a time, off the agents' frame loops.
+
+    Every agent closes its minute within the same couple of seconds, and each used to
+    write it from its own frame loop: 500 agents at once contended for a pool of 15
+    connections, the API stalled for half a second at the turn of every minute, and
+    each agent's next frames waited behind its own write. Queued here, one task writes
+    them over one connection while the frame loops go straight on.
+    """
+
+    def __init__(self) -> None:
+        self._queue: asyncio.Queue | None = None
+        self._task: asyncio.Task | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+
+    def submit(
+        self,
+        session_factory: async_sessionmaker[AsyncSession],
+        agent_id: uuid.UUID,
+        acc: MinuteAccumulator,
+    ) -> None:
+        """Queue one closed minute for writing; never waits."""
+        loop = asyncio.get_running_loop()
+        if self._queue is None or self._loop is not loop:
+            # First use on this event loop (each test runs its own).
+            self._queue, self._loop = asyncio.Queue(), loop
+            self._task = loop.create_task(self._run(self._queue))
+        self._queue.put_nowait((session_factory, agent_id, acc))
+
+    @staticmethod
+    async def _run(queue: asyncio.Queue) -> None:
+        while True:
+            session_factory, agent_id, acc = await queue.get()
+            try:
+                async with session_factory() as db:
+                    await flush_minute(db, agent_id, acc)
+            except Exception:
+                logger.exception("Could not flush metrics rollup for agent %s", agent_id)
+            finally:
+                queue.task_done()
+
+    async def drain(self) -> None:
+        """Write every queued minute, then stop the writer. At shutdown, and in tests."""
+        queue, task, loop = self._queue, self._task, self._loop
+        self._queue = self._task = self._loop = None
+        if queue is None or task is None or loop is not asyncio.get_running_loop():
+            return
+        await queue.join()
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+
+rollup_writer = RollupWriter()
 
 
 async def latest_events(

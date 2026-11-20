@@ -3316,3 +3316,40 @@ async def test_a_close_cancels_an_open_waiting_at_the_gate(monkeypatch):
             await task
     assert admission.running_count == 0, "the cancelled open gave its reservation back"
     assert probe.calls == 0, "and never built a connection"
+
+
+def test_reconnect_delay_is_spread_from_two_to_six_seconds():
+    """Spread so a fleet that lost its sockets together does not return together."""
+    import agent.control.channel as ch_module
+
+    delays = [ch_module.reconnect_delay() for _ in range(2000)]
+    assert all(2.0 <= d <= 6.0 for d in delays)
+    assert 3.8 < sum(delays) / len(delays) < 4.2
+    assert max(delays) - min(delays) > 3.5
+
+
+async def test_a_dropped_socket_waits_the_spread_delay_before_reconnecting(tmp_path, monkeypatch):
+    """The loop sleeps what reconnect_delay says, not a fixed 5 s."""
+    import agent.control.channel as ch_module
+
+    async def handler(ws):
+        await ws.close()
+
+    slept: list[float] = []
+    real_sleep = asyncio.sleep
+
+    async def recording_sleep(seconds, *args, **kwargs):
+        if seconds == 3.25:
+            slept.append(seconds)
+            raise asyncio.CancelledError
+        await real_sleep(seconds, *args, **kwargs)
+
+    async with websockets.serve(handler, "127.0.0.1", 0) as server:
+        port = server.sockets[0].getsockname()[1]
+        monkeypatch.setattr(ch_module.settings, "control_plane_url", f"ws://127.0.0.1:{port}")
+        monkeypatch.setattr(ch_module.settings, "bootstrap_token", "tok-boot")
+        monkeypatch.setattr(ch_module, "reconnect_delay", lambda: 3.25)
+        monkeypatch.setattr(ch_module.asyncio, "sleep", recording_sleep)
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(ch_module.run_control_channel(results_dir=tmp_path), 10)
+    assert slept == [3.25]

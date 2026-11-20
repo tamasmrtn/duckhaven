@@ -9,7 +9,7 @@ Find the message you see in an agent's log, on the Compute page, or in a query's
 Read a static agent's log on its host with `docker compose logs duckhaven-agent`, or `docker compose logs agent` for the
 bundled one. A query's errors are listed in [Troubleshoot queries](../querying/troubleshooting.md).
 
-## "Disconnected (received 1008 (policy violation) Invalid token …), reconnecting in 5s"
+## "Disconnected (received 1008 (policy violation) Invalid token …), reconnecting in …s"
 
 **What it means.** The control plane refused the agent's token. A bootstrap token from **Generate bootstrap** works
 once and expires after 24 hours; a revoked agent's credential stops working at once.
@@ -33,9 +33,9 @@ revoked.
 ## The agent disconnects often
 
 **What it means.** The long-lived WebSocket between the agent and the control plane keeps dropping. The agent
-reconnects after 5 seconds each time. An agent answers a query only on the connection the query arrived on, so each
-query it was running or holding fails with "The agent's connection closed before it sent this run's result". Run them
-again once the connection holds.
+reconnects after 2 to 6 seconds each time, 4 on average. An agent answers a query only on the connection the query
+arrived on, so each query it was running or holding fails with "The agent's connection closed before it sent this run's
+result". Run them again once the connection holds.
 
 **What to do.** Check the network between them. Behind NAT or a load balancer, make sure idle long-lived connections
 are not closed. Tailscale usually keeps them open; a path over the internet may need its MTU lowered.

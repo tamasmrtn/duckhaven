@@ -779,7 +779,7 @@ async def preview_rows(
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY, detail="Failed to fetch preview rows."
         )
-    rows, columns = query_service.decode_parquet_page(upstream.content, SAMPLE_LIMIT, 0)
+    rows, columns = await query_service.decode_page_off_loop(upstream.content, SAMPLE_LIMIT, 0)
     return RowsPageOut(
         rows=rows,
         columns=columns,

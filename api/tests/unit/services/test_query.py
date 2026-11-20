@@ -76,6 +76,26 @@ def test_decode_parquet_page_is_safe_across_threads():
     assert all(n == count for n, count in results)
 
 
+async def test_page_decode_runs_off_the_event_loop(monkeypatch):
+    """A 1,000-row decode is about 7 ms of CPU; on the loop it stalled every request."""
+    import threading
+
+    content = _parquet_bytes("SELECT * FROM range(3) t(n)")
+    seen = []
+    real = query_service.decode_parquet_page
+
+    def recording(*args):
+        seen.append(threading.get_ident())
+        return real(*args)
+
+    monkeypatch.setattr(query_service, "decode_parquet_page", recording)
+    query = Query(workspace_id=uuid.uuid4(), sql="SELECT 1", status="done", row_count=3)
+    page = await query_service.page_from_parquet(query, content, limit=2)
+    assert page.rows == [{"n": "0"}, {"n": "1"}]
+    assert page.cursor == "2"
+    assert seen and seen[0] != threading.get_ident()
+
+
 def test_a_failed_decode_does_not_break_the_next():
     with pytest.raises(duckdb.Error):
         query_service.decode_parquet_page(b"not parquet", limit=10, offset=0)

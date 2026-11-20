@@ -993,9 +993,8 @@ async def open_result_stream(source: ResultSource) -> httpx.Response:
         _raise_for_upstream(response.status_code)
     except HTTPException:
         await response.aclose()
-        await client.aclose()
         raise
-    return client, response
+    return response
 
 
 async def fetch_result_page(
@@ -1022,7 +1021,7 @@ async def fetch_result_page(
     column_schema = query.result_schema
     source = await resolve_result_source(db, query)
     if source.inline is not None:
-        return page_from_parquet(query, source.inline, limit=limit, offset=offset)
+        return await page_from_parquet(query, source.inline, limit=limit, offset=offset)
 
     try:
         upstream = await proxy_rows(
@@ -1039,9 +1038,7 @@ async def fetch_result_page(
     # starts at the requested rows, so decode at offset 0. An older agent that
     # ignored the params returns the whole file -- fall back to decoding at offset.
     decode_offset = 0 if "X-DH-Row-Offset" in upstream.headers else offset
-    started = time.monotonic()
-    rows, columns = decode_parquet_page(upstream.content, limit, decode_offset)
-    record_rows_decode(time.monotonic() - started)
+    rows, columns = await decode_page_off_loop(upstream.content, limit, decode_offset)
 
     next_offset = offset + limit
     return RowsPageOut(
@@ -1053,16 +1050,16 @@ async def fetch_result_page(
     )
 
 
-def page_from_parquet(query: Query, data: bytes, *, limit: int, offset: int = 0) -> RowsPageOut:
+async def page_from_parquet(
+    query: Query, data: bytes, *, limit: int, offset: int = 0
+) -> RowsPageOut:
     """One page of ``query``'s rows from its whole result file, held in memory.
 
     For a result that is already here: a result-cache entry kept in Postgres, or
     the file the agent sent with a statement's QUERY_DONE.
     """
     total = query.row_count or 0
-    started = time.monotonic()
-    rows, columns = decode_parquet_page(data, limit, offset)
-    record_rows_decode(time.monotonic() - started)
+    rows, columns = await decode_page_off_loop(data, limit, offset)
     next_offset = offset + limit
     return RowsPageOut(
         rows=rows,
@@ -1071,6 +1068,20 @@ def page_from_parquet(query: Query, data: bytes, *, limit: int, offset: int = 0)
         total=total,
         column_schema=query.result_schema,
     )
+
+
+async def decode_page_off_loop(
+    data: bytes, limit: int, offset: int
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """:func:`decode_parquet_page` in a worker thread, timed.
+
+    Decoding is CPU-bound -- about 7 ms for 1,000 rows -- and on the event loop it
+    held up every other request on the replica while one user paged a result.
+    """
+    started = time.monotonic()
+    page = await asyncio.to_thread(decode_parquet_page, data, limit, offset)
+    record_rows_decode(time.monotonic() - started)
+    return page
 
 
 async def agent_session_token(db: AsyncSession, agent_id: uuid.UUID) -> str | None:

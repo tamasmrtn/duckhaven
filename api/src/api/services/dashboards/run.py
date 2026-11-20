@@ -567,7 +567,7 @@ class _Runner:
         if query.status == "done":
             try:
                 if inline is not None:
-                    statement.page = query_service.page_from_parquet(
+                    statement.page = await query_service.page_from_parquet(
                         query, inline, limit=statement.limit
                     )
                 else:

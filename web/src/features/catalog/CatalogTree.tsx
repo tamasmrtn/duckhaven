@@ -345,7 +345,7 @@ function TableNode({
                 <span className="truncate font-mono text-text-secondary">
                   {col.name}
                 </span>
-                <span className="ml-auto shrink-0 font-mono text-2xs text-[var(--brand-maya-blue)]">
+                <span className="ml-auto shrink-0 font-mono text-2xs text-[var(--text-type)]">
                   {col.type}
                 </span>
               </div>
@@ -911,7 +911,7 @@ function SystemTableNode({ catalog, table, onClick }: SystemTableNodeProps) {
               <span className="truncate font-mono text-text-secondary">
                 {col.name}
               </span>
-              <span className="ml-auto shrink-0 font-mono text-2xs text-[var(--brand-maya-blue)]">
+              <span className="ml-auto shrink-0 font-mono text-2xs text-[var(--text-type)]">
                 {col.type}
               </span>
             </div>

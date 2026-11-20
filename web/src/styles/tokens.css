@@ -10,6 +10,11 @@
      take a deeper shade of it; icons and focus rings keep the brand colour. */
   --link: #5b45e0;
 
+  /* Column types, beside a column's name. The brand maya blue is 2.4:1 on
+     the light surface, so type text takes a deeper blue; icons keep the brand
+     colour. */
+  --text-type: #0369a1;
+
   /* The bar beside the current page in the navigation. The brand yellow is
      1.1:1 on the light surface, so light mode marks it in ink. */
   --nav-marker: #0f172a;
@@ -90,6 +95,7 @@
   --brand-maya-blue: #5bc0ff;
 
   --link: #9c8aff;
+  --text-type: #5bc0ff;
   --nav-marker: #fff100;
 
   --bg-canvas: #0b0f19;

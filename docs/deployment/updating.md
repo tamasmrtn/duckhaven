@@ -12,6 +12,8 @@ Pull new images and restart the stack; database migrations run on their own when
 - **Back up first:** take a [backup](backup-restore.md) of the databases and the secret key.
 - **Check the API version:** if the update changes `api_version`, upgrade API clients first; see
   [below](#upgrade-api-clients-first).
+- **Allow time for migrations:** a migration that builds an index on History's `queries` table holds up the API's
+  start until the index is built, about 10 seconds per 500,000 queries on 4 CPUs.
 
 ## Default — track `:latest`
 

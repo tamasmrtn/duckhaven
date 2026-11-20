@@ -83,6 +83,32 @@ describe("AuditPage", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("puts what happened second, with its marks beside it", async () => {
+    // At 1280px the Affecting column and its "Own access" mark ran past the
+    // edge, and a phone showed only When and By.
+    renderWithProviders({ initialRoute: ROUTE });
+
+    await screen.findByText("Added a workspace member");
+    expect(
+      screen.getAllByRole("columnheader").map((h) => h.textContent),
+    ).toEqual(["When", "Action", "By", "Target", "Affecting"]);
+    const action = screen.getByText("Added a workspace member").closest("td")!;
+    expect(within(action).getByText("Own access")).toBeInTheDocument();
+    expect(
+      within(screen.getByText("Failed to sign in").closest("td")!).getByText(
+        "Failed",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("labels the workspace filter in words that stay once it is typed in", async () => {
+    renderWithProviders({ initialRoute: ROUTE });
+
+    const input = await screen.findByRole("textbox", { name: "workspace" });
+    expect(input).toHaveAttribute("placeholder", "slug");
+    expect(input.parentElement).toHaveTextContent(/^Workspace/);
+  });
+
   it("opens a row to show what changed and where the request came from", async () => {
     const user = userEvent.setup();
     renderWithProviders({ initialRoute: ROUTE });

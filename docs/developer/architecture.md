@@ -80,12 +80,19 @@ sequenceDiagram
     AG->>API: agent_status {capabilities}
     API->>PG: store capabilities, status=healthy
     loop while connected
-        API->>AG: heartbeat
-        AG->>API: heartbeat + agent_status (re-advertise)
+        AG->>API: metrics_sample (every 2 s)
+        API->>PG: last_ping_at (at most every 30 s); closed minute → agent_metrics_minute
         API->>AG: dispatch_query / cancel_query (as needed)
     end
     Note over API,PG: on disconnect → status=unavailable, drop from registry
 ```
+
+Liveness comes from `metrics_sample`: neither side starts a heartbeat. Each
+agent's closed minute of samples goes on a per-replica queue that one task
+writes, so a fleet turning the minute together does not stall the frame loops.
+After a disconnect the agent waits 2 to 6 seconds, 4 on average, before it
+reconnects, so a fleet that lost a replica together does not return in the same
+instant.
 
 The bootstrap token is exchanged exactly once for a long-lived
 `agent_session` token. That session token is what the control plane later

@@ -21,6 +21,7 @@ from api.services.agent_telemetry import (
     accumulate,
     flush_minute,
     record_lifecycle_event_now,
+    rollup_writer,
     take_pending,
 )
 from duckhaven_shared.protocol import Frame, FrameType
@@ -387,8 +388,7 @@ async def agent_connect(
                     # page's 1-24h windows read; the ring buffer cannot span them.
                     closed = accumulate(agent_id, msg_frame.payload)
                     if closed is not None:
-                        async with session_factory() as db:
-                            await flush_minute(db, agent_id, closed)
+                        rollup_writer.submit(session_factory, agent_id, closed)
                     # Metrics arrive every couple of seconds, so they're a
                     # reliable liveness signal: refresh the cluster-wide presence
                     # watermark (throttled) so peer replicas see this agent as

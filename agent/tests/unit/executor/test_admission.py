@@ -10,6 +10,7 @@ from agent.executor.admission import (
     QueueFull,
     ReservationRequest,
     default_pids_reserve,
+    open_transient_threads,
 )
 from duckhaven_shared.concurrency import CONCURRENCY_PROFILES
 
@@ -23,6 +24,7 @@ CORES = 6
 def _admission(profile="decaying_3", **kwargs):
     # No pids limit unless a test sets one, so the host's cgroup never decides.
     kwargs.setdefault("pids_provider", lambda: None)
+    kwargs.setdefault("pids_current_provider", lambda: None)
     return Admission(
         profile=profile,
         headroom=0.0,
@@ -885,6 +887,86 @@ async def test_unbounded_opens_run_together():
 
     await asyncio.gather(*(open_one() for _ in range(8)))
     assert peak == 8
+
+
+def _open_cost(adm, async_threads=0):
+    return adm.threads_for_statement() - 1 + async_threads + open_transient_threads(async_threads)
+
+
+async def test_an_open_waits_for_room_under_the_pids_limit():
+    """The ceiling bounds connections that stay open, not the threads an open holds
+    on its way there: 64 opens at once took an 8-core agent past 512 threads. It
+    leaves room for a warm-spare refill too, which opens without passing here."""
+    current = [0]
+    adm = _pids_bound(512, pids_current_provider=lambda: current[0])
+    cost = _open_cost(adm)
+    holder = await adm.acquire(_req(1))  # another connection, which could close and free room
+    mine = await adm.acquire(_req(1))
+    current[0] = 512 - 2 * cost + 1  # one thread short of room for this open and a refill
+    entered = asyncio.Event()
+
+    async def open_one():
+        async with adm.opening():
+            entered.set()
+
+    task = asyncio.create_task(open_one())
+    await asyncio.sleep(0.15)
+    assert not entered.is_set(), "opened with no room for its threads"
+    current[0] -= 1
+    await asyncio.wait_for(task, timeout=1)
+    adm.release(holder)
+    adm.release(mine)
+
+
+async def test_opens_in_flight_count_at_their_peak():
+    """Room for N opens admits N; the next waits for one to finish, because its
+    threads are not in pids.current until it is under way. One open's room is the
+    refill's."""
+    current = [300]
+    adm = _pids_bound(512, pids_current_provider=lambda: current[0])
+    room_for = (512 - current[0]) // _open_cost(adm) - 1
+    assert room_for >= 2
+    reservations = [await adm.acquire(_req(1)) for _ in range(room_for + 2)]
+    inside = 0
+    peak = 0
+    release = asyncio.Event()
+
+    async def open_one():
+        nonlocal inside, peak
+        async with adm.opening():
+            inside += 1
+            peak = max(peak, inside)
+            await release.wait()
+            inside -= 1
+
+    tasks = [asyncio.create_task(open_one()) for _ in range(room_for + 1)]
+    await asyncio.sleep(0.15)
+    assert peak == room_for
+    release.set()
+    await asyncio.wait_for(asyncio.gather(*tasks), timeout=2)
+    for reservation in reservations:
+        adm.release(reservation)
+
+
+@pytest.mark.parametrize(("pids", "current"), [(None, 10_000), (512, None)])
+async def test_without_a_pids_limit_or_its_count_opens_never_wait(pids, current):
+    adm = _pids_bound(pids, pids_current_provider=lambda: current)
+    holders = [await adm.acquire(_req(1)) for _ in range(2)]
+    async with asyncio.timeout(1):
+        async with adm.opening():
+            pass
+    for holder in holders:
+        adm.release(holder)
+
+
+async def test_a_lone_open_does_not_wait_for_room_nothing_can_free():
+    """With no other connection held or opening, waiting cannot make room."""
+    adm = _pids_bound(512, pids_current_provider=lambda: 511)
+    mine = await adm.acquire(_req(1))
+    async with asyncio.timeout(1):
+        async with adm.opening():
+            pass
+    adm.release(mine)
 
 
 def test_a_one_core_agent_with_an_async_pool_is_still_bounded():

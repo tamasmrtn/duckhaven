@@ -157,6 +157,12 @@ def effective_pids_limit(base: Path = _CGROUP_BASE) -> int | None:
     return _read_cgroup_pids_limit(base)
 
 
+def effective_pids_current(base: Path = _CGROUP_BASE) -> int | None:
+    """The cgroup's ``pids.current``: processes and threads alive in it now, or
+    ``None`` without a pids controller."""
+    return _read_int(base / "pids.current")
+
+
 def cpu_capability(base: Path = _CGROUP_BASE) -> dict[str, object]:
     """Static CPU capability advertised in AGENT_STATUS (cgroup-aware)."""
     return {

@@ -13,7 +13,8 @@ only what they can see; each other table needs a permission of its own.
     [Enable the system catalog database](../deployment/system-catalog.md). On
     [Azure with Terraform](../deployment/azure-terraform.md#system-catalog), on by default. The
     [HA stack](../deployment/high-availability.md#limitations) has none. `info_schema` needs no permission; each other
-    table needs the one listed in [Who can read it](#who-can-read-it), and the `admin` role holds them all.
+    table needs the one listed in [System catalog tables](../reference/system-catalog.md), and the `admin` role holds
+    them all.
 
 Name its tables in full, in a worksheet or any other query:
 
@@ -26,36 +27,21 @@ ORDER BY schema_name, table_name;
 
 ## What it holds
 
-| Table | Holds | Needs |
-|---|---|---|
-| `duckhaven.info_schema.catalogs` | The catalogs attached to the workspace the query runs in, with their kind and access mode | Nothing: every member |
-| `duckhaven.info_schema.schemata` | The schemas you can see in those catalogs | Nothing: every member |
-| `duckhaven.info_schema.tables` | The tables you can see, with their format, row count, size, owner and last write | Nothing: every member |
-| `duckhaven.info_schema.columns` | The columns of those tables, with the type a query sees | Nothing: every member |
-| `duckhaven.info_schema.routines` | The macros of the DuckLake schemas you can see, with their parameters and definition | Nothing: every member |
-| `duckhaven.info_schema.semantic_models`, `.semantic_datasets`, `.semantic_dimensions`, `.semantic_metrics`, `.semantic_relationships` | The workspace's [semantic models](../metadata/semantic-layer.md) whose tables you can all see, and what each defines | Nothing: every member |
-| `duckhaven.access.audit` | Every event of the [access audit log](../access/audit-log.md) | `audit:read` |
-| `duckhaven.access.grants` | Current access: one row per role, membership, catalog attachment, catalog grant, agent access mode, agent grant and workspace default compute | `audit:read` |
-| `duckhaven.access.users` | Every user and service account, with its global role | `audit:read` |
-| `duckhaven.access.workspaces` | Every workspace | `audit:read` |
-| `duckhaven.access.credentials` | Every personal access token: who holds it, and until when | `audit:read` |
-| `duckhaven.access.table_access` | Each table a finished query read or wrote, and who ran it | `audit:read` |
-| `duckhaven.query.history` | Finished queries, with who ran them, where, on which agent, for how long and at what cost | `queries:admin` |
-| `duckhaven.query.sessions` | SQL sessions, open and ended, and why each ended | `queries:admin` |
-| `duckhaven.lineage.table_lineage` | Which tables feed which, in every catalog | `audit:read` |
-| `duckhaven.lineage.column_lineage` | Which columns feed which | `audit:read` |
-| `duckhaven.jobs.schedules` | Every schedule, and how it last ran | `queries:admin` |
-| `duckhaven.compute.agents` | Every agent, and its state | `agents:manage` |
-| `duckhaven.compute.agent_events` | Each time an agent started, connected, disconnected or stopped | `agents:manage` |
-| `duckhaven.compute.agent_utilization` | Each agent's CPU, memory and queue, minute by minute, for a year by default | `agents:manage` |
-| `duckhaven.storage.table_health` | Each table's health at each maintenance scan | `maintenance:manage` |
-| `duckhaven.storage.maintenance_operations` | Each maintenance apply, and how it ended | `maintenance:manage` |
-| `duckhaven.storage.backends` | Every storage backend, and how many catalogs use it; never its configuration | `storage:manage` |
-| `duckhaven.ai.assistant_usage` | The tokens each [assistant](../ai/assistant.md) answer used, and for whom | `queries:admin` |
-| `duckhaven.ai.tool_calls` | Each tool the assistant called, and whether it was allowed, refused or failed | `queries:admin` |
+- `info_schema`: the catalogs attached to the workspace, and in them the schemas, tables, columns, DuckLake macros and
+  [semantic models](../metadata/semantic-layer.md) you can see.
+- `access`: the [access audit log](../access/audit-log.md), current access, users, workspaces, tokens, and which tables
+  each query read and wrote.
+- `query`: finished queries and [SQL sessions](sql-sessions.md).
+- `lineage`: the [lineage graph](../metadata/lineage.md), in every catalog.
+- `jobs`: [schedules](schedule-queries.md), and how each last ran.
+- `compute`: agents, their state changes and their minute-by-minute utilization.
+- `storage`: table health at each maintenance scan, each maintenance apply, and the storage backends, without their
+  configuration.
+- `ai`: the tokens each [assistant](../ai/assistant.md) answer used, and each tool it called, without what was asked or
+  answered.
 
-Every column, and how long each table keeps its rows, is in the
-[system catalog reference](../reference/system-catalog.md).
+Every table, the permission it needs, how often it is refreshed and how long it keeps its rows are in
+[System catalog tables](../reference/system-catalog.md), which links to every column.
 
 ## How it works
 
@@ -183,17 +169,8 @@ box does not find its tables.
 ### Who can read it
 
 Every member of the workspace reads `info_schema`, which shows each of them only what they can see; see
-[What info_schema shows](#what-info_schema-shows). Each other table needs one permission, and a query needs it for every
-table it reads:
-
-| Tables | Permission |
-|---|---|
-| Every table in `duckhaven.info_schema` | None |
-| Every table in `duckhaven.access` and `duckhaven.lineage` | `audit:read` |
-| Every table in `duckhaven.query`, `duckhaven.jobs` and `duckhaven.ai` | `queries:admin` |
-| Every table in `duckhaven.compute` | `agents:manage` |
-| `duckhaven.storage.table_health`, `duckhaven.storage.maintenance_operations` | `maintenance:manage` |
-| `duckhaven.storage.backends` | `storage:manage` |
+[What info_schema shows](#what-info_schema-shows). Each other table needs one permission, listed with it in
+[System catalog tables](../reference/system-catalog.md), and a query needs it for every table it reads.
 
 The `admin` role holds every one; the [permissions reference](../reference/permissions.md) lists what else each allows.
 A query made for someone else, by the [assistant](../ai/assistant.md) say, needs the permission for each person it runs
@@ -234,7 +211,7 @@ Other limits:
 
 ## Related
 
-- [System catalog reference](../reference/system-catalog.md): every table and column.
+- [System catalog tables](../reference/system-catalog.md): every table, the permission it needs, and its columns.
 - [Access audit log](../access/audit-log.md): what is recorded, and how long it is kept.
 - [Enable the system catalog database](../deployment/system-catalog.md): turning it on, and watching how far behind
   it is.

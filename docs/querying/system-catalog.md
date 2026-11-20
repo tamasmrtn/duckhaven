@@ -5,8 +5,8 @@ type: concept
 # System catalog
 
 The `duckhaven` catalog lets you query, read-only in SQL, the schemas, tables and columns you can see, and DuckHaven's
-audit log, access and query history. Every member can read its `info_schema`, which shows each person only what they
-can see; each other table needs a permission of its own.
+audit log, access, query history and lineage. Every member can read its `info_schema`, which shows each person only what
+they can see; each other table needs a permission of its own.
 
 !!! info "Availability"
     On the single-host Compose stack, on by default; see
@@ -34,7 +34,13 @@ ORDER BY schema_name, table_name;
 | `duckhaven.info_schema.columns` | The columns of those tables, with the type a query sees | Nothing: every member |
 | `duckhaven.access.audit` | Every event of the [access audit log](../access/audit-log.md) | `audit:read` |
 | `duckhaven.access.grants` | Current access: one row per role, membership, catalog attachment, catalog grant, agent access mode, agent grant and workspace default compute | `audit:read` |
-| `duckhaven.query.history` | Finished queries, with who ran them, where, on which agent and for how long | `queries:admin` |
+| `duckhaven.access.users` | Every user and service account, with its global role | `audit:read` |
+| `duckhaven.access.workspaces` | Every workspace | `audit:read` |
+| `duckhaven.access.credentials` | Every personal access token: who holds it, and until when | `audit:read` |
+| `duckhaven.access.table_access` | Each table a finished query read or wrote, and who ran it | `audit:read` |
+| `duckhaven.query.history` | Finished queries, with who ran them, where, on which agent, for how long and at what cost | `queries:admin` |
+| `duckhaven.lineage.table_lineage` | Which tables feed which, in every catalog | `audit:read` |
+| `duckhaven.lineage.column_lineage` | Which columns feed which | `audit:read` |
 
 Every column, and how long each table keeps its rows, is in the
 [system catalog reference](../reference/system-catalog.md).
@@ -60,6 +66,17 @@ WHERE h.workspace_slug = 'analytics'
     WHERE action LIKE 'catalog_grant.%' AND event_time > now() - INTERVAL 7 DAY
   )
 ORDER BY h.finished_at DESC;
+```
+
+To see who read a table in the last week, and how often:
+
+```sql
+SELECT user_email, count(*) AS queries, max(finished_at) AS last_read
+FROM duckhaven.access.table_access
+WHERE catalog_name = 'sales' AND schema_name = 'analytics' AND table_name = 'orders'
+  AND access = 'read' AND finished_at > now() - INTERVAL 7 DAY
+GROUP BY user_email
+ORDER BY queries DESC;
 ```
 
 `before`, `after` and `details` in `access.audit`, and `tags` in `query.history`, are JSON text. Read a field with
@@ -138,7 +155,7 @@ table it reads:
 | Tables | Permission |
 |---|---|
 | `duckhaven.info_schema.catalogs`, `.schemata`, `.tables`, `.columns` | None |
-| `duckhaven.access.audit`, `duckhaven.access.grants` | `audit:read` |
+| Every table in `duckhaven.access` and `duckhaven.lineage` | `audit:read` |
 | `duckhaven.query.history` | `queries:admin` |
 
 The `admin` role holds both; the [permissions reference](../reference/permissions.md) lists what else each allows. A

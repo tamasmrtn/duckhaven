@@ -199,17 +199,21 @@ async def test_what_each_principal_may_read(db_session, admin, member):
     auditor = await _auditor(db_session)
 
     info = {("info_schema", t) for t in ("catalogs", "schemata", "tables", "columns")}
+    audited = {
+        *(("access", t) for t in ("audit", "grants", "users", "workspaces", "credentials")),
+        ("access", "table_access"),
+        ("lineage", "table_lineage"),
+        ("lineage", "column_lineage"),
+    }
     assert await authorize.readable_by(db_session, admin.id) == authorize.TABLES
     assert await authorize.readable_by(db_session, auditor.id) == {
-        ("access", "audit"),
-        ("access", "grants"),
+        *audited,
         *info,
     }
     assert await authorize.readable_by(db_session, member.id) == info
     with delegation.acting_for(db_session, admin.id, auditor.id):
         assert await authorize.readable_by(db_session, admin.id) == {
-            ("access", "audit"),
-            ("access", "grants"),
+            *audited,
             *info,
         }
 

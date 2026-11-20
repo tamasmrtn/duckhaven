@@ -1,8 +1,8 @@
 """The system catalog's own database: its tables, and the login agents read it with.
 
-DuckHaven keeps a copy of the audit log, current access and query history in a
-database of their own (``duckhaven_system``), so an agent can be handed a login
-that reaches those tables and nothing else. Agents never connect to ``duckhaven``,
+DuckHaven keeps a copy of the audit log, access, query history, lineage and
+catalog metadata in a database of their own (``duckhaven_system``), so an agent can
+be handed a login that reaches those tables and nothing else. Agents never connect to ``duckhaven``,
 which holds users, password hashes and session tokens.
 
 ``ensure()`` creates the schemas, the tables and the reader login, and re-applies
@@ -54,7 +54,7 @@ from duckhaven_shared.system_catalog import (
 
 logger = logging.getLogger(__name__)
 
-ACCESS, QUERY, INFO = "access", "query", "info_schema"
+ACCESS, QUERY, INFO, LINEAGE = "access", "query", "info_schema", "lineage"
 # Private: copy cursors, and what the row filters consult.
 STATE, ACL = "_state", "_acl"
 READER_ROLE = "dh_system_reader"
@@ -135,6 +135,78 @@ GRANTS = sa.Table(
     schema=ACCESS,
 )
 
+# Who and what exists, replaced with access.grants.
+USERS = sa.Table(
+    "users",
+    METADATA,
+    sa.Column("user_id", _UUID, primary_key=True),
+    sa.Column("email", sa.Text, nullable=False),
+    sa.Column("name", sa.Text),
+    sa.Column("principal_type", sa.Text, nullable=False),
+    sa.Column("auth_provider", sa.Text, nullable=False),
+    sa.Column("global_role", sa.Text, nullable=False),
+    sa.Column("is_active", sa.Boolean, nullable=False),
+    sa.Column("created_at", _TS),
+    sa.Column("snapshot_time", _TS, nullable=False),
+    schema=ACCESS,
+)
+
+WORKSPACES = sa.Table(
+    "workspaces",
+    METADATA,
+    sa.Column("workspace_id", _UUID, primary_key=True),
+    sa.Column("workspace_slug", sa.Text, nullable=False),
+    sa.Column("name", sa.Text),
+    sa.Column("description", sa.Text),
+    sa.Column("timezone", sa.Text),
+    sa.Column("default_agent_id", _UUID),
+    sa.Column("default_agent_name", sa.Text),
+    sa.Column("result_cache_enabled", sa.Boolean),
+    sa.Column("created_at", _TS),
+    sa.Column("snapshot_time", _TS, nullable=False),
+    schema=ACCESS,
+)
+
+# Personal access tokens: who holds one, since when and until when. Never the secret
+# or its hash.
+CREDENTIALS = sa.Table(
+    "credentials",
+    METADATA,
+    sa.Column("credential_id", _UUID, primary_key=True),
+    sa.Column("kind", sa.Text, nullable=False),
+    sa.Column("principal_type", sa.Text, nullable=False),
+    sa.Column("principal_id", _UUID, nullable=False),
+    sa.Column("principal_email", sa.Text),
+    sa.Column("principal_active", sa.Boolean),
+    sa.Column("created_at", _TS),
+    sa.Column("expires_at", _TS),
+    sa.Column("snapshot_time", _TS, nullable=False),
+    schema=ACCESS,
+)
+
+# One row per table a finished query read or wrote, worked out from its SQL as it
+# was copied into query.history.
+TABLE_ACCESS = sa.Table(
+    "table_access",
+    METADATA,
+    sa.Column("query_id", _UUID, primary_key=True),
+    sa.Column("catalog_name", sa.Text, primary_key=True),
+    sa.Column("schema_name", sa.Text, primary_key=True),
+    sa.Column("table_name", sa.Text, primary_key=True),
+    sa.Column("access", sa.Text, primary_key=True),
+    sa.Column("catalog_id", _UUID),
+    sa.Column("finished_at", _TS, nullable=False),
+    sa.Column("workspace_id", _UUID, nullable=False),
+    sa.Column("workspace_slug", sa.Text),
+    sa.Column("user_id", _UUID),
+    sa.Column("user_email", sa.Text),
+    sa.Column("on_behalf_of_id", _UUID),
+    sa.Column("on_behalf_of_email", sa.Text),
+    sa.Index("table_access_finished_at_idx", "finished_at"),
+    sa.Index("table_access_table_idx", "catalog_name", "schema_name", "table_name", "finished_at"),
+    schema=ACCESS,
+)
+
 HISTORY = sa.Table(
     "history",
     METADATA,
@@ -165,10 +237,73 @@ HISTORY = sa.Table(
     sa.Column("client_name", sa.Text),
     sa.Column("client_version", sa.Text),
     sa.Column("tags", postgresql.JSONB),
+    sa.Column("active_catalog", sa.Text),
+    sa.Column("active_schema", sa.Text),
+    sa.Column("cache_status", sa.Text),
+    sa.Column("result_source_query_id", _UUID),
+    sa.Column("cpu_time_ms", sa.BigInteger),
+    sa.Column("bytes_read", sa.BigInteger),
+    sa.Column("peak_memory_bytes", sa.BigInteger),
+    sa.Column("spill_bytes", sa.BigInteger),
     sa.Index("history_finished_at_idx", "finished_at"),
     sa.Index("history_user_idx", "user_id", "finished_at"),
     sa.Index("history_workspace_idx", "workspace_id", "finished_at"),
     schema=QUERY,
+)
+
+
+# ── lineage: which tables and columns feed which, replaced every few minutes ───
+
+TABLE_LINEAGE = sa.Table(
+    "table_lineage",
+    METADATA,
+    sa.Column("edge_id", _UUID, primary_key=True),
+    sa.Column("provider", sa.Text, nullable=False),
+    sa.Column("operation", sa.Text),
+    sa.Column("confidence", sa.Text, nullable=False),
+    sa.Column("column_lineage", sa.Text, nullable=False),
+    sa.Column("source_catalog_id", _UUID),
+    sa.Column("source_catalog_name", sa.Text),
+    sa.Column("source_system", sa.Text),
+    sa.Column("source_schema", sa.Text, nullable=False),
+    sa.Column("source_table", sa.Text, nullable=False),
+    sa.Column("target_catalog_id", _UUID),
+    sa.Column("target_catalog_name", sa.Text),
+    sa.Column("target_system", sa.Text),
+    sa.Column("target_schema", sa.Text, nullable=False),
+    sa.Column("target_table", sa.Text, nullable=False),
+    sa.Column("workspace_id", _UUID),
+    sa.Column("workspace_slug", sa.Text),
+    sa.Column("last_query_id", _UUID),
+    sa.Column("first_seen_at", _TS, nullable=False),
+    sa.Column("last_seen_at", _TS, nullable=False),
+    sa.Column("observation_count", sa.Integer, nullable=False),
+    sa.Column("snapshot_time", _TS, nullable=False),
+    schema=LINEAGE,
+)
+
+COLUMN_LINEAGE = sa.Table(
+    "column_lineage",
+    METADATA,
+    sa.Column("id", _UUID, primary_key=True),
+    sa.Column("edge_id", _UUID, nullable=False),
+    sa.Column("source_catalog_id", _UUID),
+    sa.Column("source_catalog_name", sa.Text),
+    sa.Column("source_system", sa.Text),
+    sa.Column("source_schema", sa.Text, nullable=False),
+    sa.Column("source_table", sa.Text, nullable=False),
+    sa.Column("source_column", sa.Text, nullable=False),
+    sa.Column("target_catalog_id", _UUID),
+    sa.Column("target_catalog_name", sa.Text),
+    sa.Column("target_system", sa.Text),
+    sa.Column("target_schema", sa.Text, nullable=False),
+    sa.Column("target_table", sa.Text, nullable=False),
+    sa.Column("target_column", sa.Text, nullable=False),
+    sa.Column("first_seen_at", _TS, nullable=False),
+    sa.Column("last_seen_at", _TS, nullable=False),
+    sa.Column("snapshot_time", _TS, nullable=False),
+    sa.Index("column_lineage_edge_idx", "edge_id"),
+    schema=LINEAGE,
 )
 
 
@@ -338,7 +473,21 @@ TABLES: tuple[SystemTable, ...] = (
     SystemTable(
         GRANTS, "Current access, one row per grant of any kind", Permission.AUDIT_READ.value
     ),
+    SystemTable(USERS, "Every user and service account", Permission.AUDIT_READ.value),
+    SystemTable(WORKSPACES, "Every workspace", Permission.AUDIT_READ.value),
+    SystemTable(
+        CREDENTIALS,
+        "Personal access tokens: who holds each, and until when",
+        Permission.AUDIT_READ.value,
+    ),
+    SystemTable(
+        TABLE_ACCESS, "Each table a finished query read or wrote", Permission.AUDIT_READ.value
+    ),
     SystemTable(HISTORY, "Finished queries", Permission.QUERIES_ADMIN.value),
+    SystemTable(
+        TABLE_LINEAGE, "Which tables feed which, and how often", Permission.AUDIT_READ.value
+    ),
+    SystemTable(COLUMN_LINEAGE, "Which columns feed which", Permission.AUDIT_READ.value),
 )
 # The schemas queries may read, in the order of their first table.
 SCHEMAS: tuple[str, ...] = tuple(dict.fromkeys(t.schema for t in TABLES))

@@ -69,7 +69,13 @@ async def test_an_admin_gets_its_tables_with_the_types_duckdb_reports(client, ad
         ("info_schema", "columns"),
         ("access", "audit"),
         ("access", "grants"),
+        ("access", "users"),
+        ("access", "workspaces"),
+        ("access", "credentials"),
+        ("access", "table_access"),
         ("query", "history"),
+        ("lineage", "table_lineage"),
+        ("lineage", "column_lineage"),
     ]
     # As an agent's DESCRIBE showed them, JSONB read as text included.
     audit = _columns(body, "access", "audit")
@@ -102,7 +108,13 @@ async def test_each_table_says_what_reading_it_takes(client, admin, workspace):
         ("info_schema", "columns"): None,
         ("access", "audit"): "audit:read",
         ("access", "grants"): "audit:read",
+        ("access", "users"): "audit:read",
+        ("access", "workspaces"): "audit:read",
+        ("access", "credentials"): "audit:read",
+        ("access", "table_access"): "audit:read",
         ("query", "history"): "queries:admin",
+        ("lineage", "table_lineage"): "audit:read",
+        ("lineage", "column_lineage"): "audit:read",
     }
 
 
@@ -125,6 +137,12 @@ async def test_a_member_is_shown_only_the_tables_they_may_read(client, db_sessio
         ("info_schema", "columns"),
         ("access", "audit"),
         ("access", "grants"),
+        ("access", "users"),
+        ("access", "workspaces"),
+        ("access", "credentials"),
+        ("access", "table_access"),
+        ("lineage", "table_lineage"),
+        ("lineage", "column_lineage"),
     ]
     resp = await (await _login(client, member)).get(f"/workspaces/{workspace.slug}/system-catalog")
     assert resp.status_code == 200

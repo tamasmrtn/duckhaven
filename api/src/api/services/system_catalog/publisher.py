@@ -1,4 +1,5 @@
-"""Copies the audit log, current access and query history into the system catalog store.
+"""Copies the audit log, current access, query history and lineage into the system
+catalog store.
 
 Every ``SYSTEM_CATALOG_PUBLISH_INTERVAL_S`` one replica, whichever takes the
 advisory lock, runs a tick: one transaction on the store that copies what changed
@@ -18,12 +19,17 @@ copy and the next one starts where the last committed one stopped.
   ``finished_at`` comes from the clock of the replica that finished it, so once a
   minute a tick re-reads the 15 minutes before the newest run copied, to catch a
   run committed after a later one. A run that changes after it was copied is
-  updated in place.
+  updated in place, and each run written works out the tables it read and wrote
+  into **access.table_access**. When the table gains columns (``HISTORY_VERSION``),
+  the runs already copied are copied again, a batch a tick from the oldest, so they
+  gain them too; new runs keep being copied meanwhile.
 - **access.grants** is replaced whole, after a tick copies an access or identity
   event and at least every 5 minutes, which covers what changes access without an
-  event (deleting an agent takes its grants with it). So are
-  ``info_schema.catalogs`` and the ``_acl`` tables the row filters consult, from
-  the same read.
+  event (deleting an agent takes its grants with it). So are **access.users**,
+  **access.workspaces**, **access.credentials**, ``info_schema.catalogs`` and the
+  ``_acl`` tables the row filters consult, from the same read.
+- **lineage.table_lineage** and **lineage.column_lineage** are replaced whole every
+  5 minutes.
 
 A tick copies at most ``BATCH`` rows of each kind; while either is behind, the
 next tick starts at once instead of after the interval.
@@ -49,11 +55,14 @@ from api.models.agent_grant import AgentGrant
 from api.models.audit import AuditEvent
 from api.models.catalog import Catalog, WorkspaceCatalog
 from api.models.catalog_grant import CatalogGrant
+from api.models.lineage import LineageColumnEdge, LineageEdge
 from api.models.query import Query
-from api.models.user import SERVICE_ACCOUNT_PROVIDER, User
+from api.models.user import SERVICE_ACCOUNT_PROVIDER, Credential, User
 from api.models.workspace import Workspace, WorkspaceMember
-from api.services.query_history import HIDDEN_ORIGINS
+from api.services.query_history import HIDDEN_ORIGINS, profile_expr
 from api.services.system_catalog import store
+from api.services.system_catalog.table_access import accesses
+from api.services.workspace import DEFAULT_SCHEMA
 
 logger = logging.getLogger(__name__)
 
@@ -61,12 +70,15 @@ logger = logging.getLogger(__name__)
 _TICK_LOCK_KEY = 0x64687379
 BATCH = 5000
 GRANTS_REFRESH = timedelta(minutes=5)
+LINEAGE_REFRESH = timedelta(minutes=5)
+# Bumped when query.history gains columns, to copy every run again.
+HISTORY_VERSION = 2
 HISTORY_SWEEP_EVERY = timedelta(minutes=1)
 HISTORY_LATE_WINDOW = timedelta(minutes=15)
 PURGE_EVERY = timedelta(hours=1)
 TERMINAL_STATUSES = ("done", "failed", "cancelled")
-# Changing either can change who reaches what.
-_ACCESS_CATEGORIES = frozenset({"access", "identity"})
+# Changing any of these can change who reaches what, or what access.credentials holds.
+_ACCESS_CATEGORIES = frozenset({"access", "identity", "credential"})
 # The cursor rows and the tables whose lag they report.
 LAGGED_TABLES = {"audit": "access.audit", "grants": "access.grants", "history": "query.history"}
 _ZERO = uuid.UUID(int=0)
@@ -95,6 +107,9 @@ async def publish_once(
         if access_changed or _due(state, "grants", "synced_at", GRANTS_REFRESH, now):
             await _refresh_grants(session_factory, target, now)
             state["grants"] = {"synced_at": now.isoformat()}
+        if _due(state, "lineage", "synced_at", LINEAGE_REFRESH, now):
+            await _refresh_lineage(session_factory, target, now)
+            state["lineage"] = {"synced_at": now.isoformat()}
         if _due(state, "purge", "at", PURGE_EVERY, now):
             await _purge(target, now)
             state["purge"] = {"at": now.isoformat()}
@@ -312,6 +327,14 @@ def history_select() -> sa.Select:
             Query.client_name,
             Query.client_version,
             Query.tags,
+            Query.active_catalog,
+            Query.active_schema,
+            Query.cache_status,
+            Query.result_source_query_id,
+            *(
+                profile_expr(field).label(field)
+                for field in ("cpu_time_ms", "bytes_read", "peak_memory_bytes", "spill_bytes")
+            ),
         )
         .select_from(Query)
         .outerjoin(Workspace, Workspace.id == Query.workspace_id)
@@ -353,6 +376,17 @@ async def _copy_history(
 ) -> bool:
     """Copy runs finished past the cursor, and sweep for late ones; return more waiting."""
     cursor = state.get("history", {})
+    if cursor.get("version", 1) != HISTORY_VERSION:
+        # Runs copied before the table gained columns lack them: copy those again,
+        # alongside the new ones.
+        cursor = {
+            **cursor,
+            "version": HISTORY_VERSION,
+            "rewrite_through": (
+                [cursor["finished_at"], cursor["id"]] if cursor.get("finished_at") else None
+            ),
+            "rewrite_after": None,
+        }
     days = settings.system_catalog_query_history_days
     floor = now - timedelta(days=days) if days else None
     after = (
@@ -361,7 +395,7 @@ async def _copy_history(
         else None
     )
     rows = await history_rows(source, after=after, floor=floor)
-    await _upsert_history(target, rows)
+    await _record_table_access(source, target, await _upsert_history(target, rows))
     if rows:
         after = (rows[-1].finished_at, rows[-1].id)
     more = len(rows) == BATCH
@@ -370,13 +404,31 @@ async def _copy_history(
     if not more and after and _older_than(swept_at, now, HISTORY_SWEEP_EVERY):
         page_after = (after[0] - HISTORY_LATE_WINDOW, _ZERO)
         while page := await history_rows(source, after=page_after, through=after, floor=floor):
-            await _upsert_history(target, page)
+            await _record_table_access(source, target, await _upsert_history(target, page))
             if len(page) < BATCH:
                 break
             page_after = (page[-1].finished_at, page[-1].id)
         swept_at = now.isoformat()
 
+    # One batch a tick, oldest first, written whether or not it looks unchanged.
+    rewrite_through, rewrite_after = cursor.get("rewrite_through"), cursor.get("rewrite_after")
+    if rewrite_through:
+        page = await history_rows(
+            source,
+            after=_run_position(rewrite_after),
+            through=_run_position(rewrite_through),
+            floor=floor,
+        )
+        await _record_table_access(source, target, await _upsert_history(target, page, True))
+        if len(page) < BATCH:
+            rewrite_through = rewrite_after = None
+        else:
+            rewrite_after = [page[-1].finished_at.isoformat(), str(page[-1].id)]
+
     state["history"] = {
+        "version": HISTORY_VERSION,
+        "rewrite_through": rewrite_through,
+        "rewrite_after": rewrite_after,
         "finished_at": after[0].isoformat() if after else None,
         "id": str(after[1]) if after else None,
         "swept_at": swept_at,
@@ -386,22 +438,93 @@ async def _copy_history(
     return more
 
 
-async def _upsert_history(target: AsyncConnection, rows: list[Row]) -> None:
+def _run_position(value: list[str] | None) -> tuple[datetime, uuid.UUID] | None:
+    return (datetime.fromisoformat(value[0]), uuid.UUID(value[1])) if value else None
+
+
+async def _upsert_history(
+    target: AsyncConnection, rows: list[Row], rewrite: bool = False
+) -> list[Row]:
+    """Insert or update ``rows``; return those written. A re-read of an unchanged
+    run writes nothing, unless ``rewrite``."""
     if not rows:
-        return
+        return []
     stmt = pg_insert(store.HISTORY)
     columns = [c.name for c in store.HISTORY.columns if c.name != "id"]
-    await target.execute(
-        stmt.on_conflict_do_update(
-            index_elements=["id"],
-            set_={c: stmt.excluded[c] for c in columns},
-            # A re-read of an unchanged run writes nothing.
-            where=sa.tuple_(*(store.HISTORY.c[c] for c in columns)).is_distinct_from(
-                sa.tuple_(*(stmt.excluded[c] for c in columns))
-            ),
-        ),
-        [dict(r._mapping) for r in rows],
+    changed = sa.tuple_(*(store.HISTORY.c[c] for c in columns)).is_distinct_from(
+        sa.tuple_(*(stmt.excluded[c] for c in columns))
     )
+    written = set(
+        await target.scalars(
+            stmt.on_conflict_do_update(
+                index_elements=["id"],
+                set_={c: stmt.excluded[c] for c in columns},
+                where=None if rewrite else changed,
+            ).returning(store.HISTORY.c.id),
+            [dict(r._mapping) for r in rows],
+        )
+    )
+    return [r for r in rows if r.id in written]
+
+
+async def _record_table_access(
+    source: AsyncSession, target: AsyncConnection, rows: list[Row]
+) -> None:
+    """Replace the access.table_access rows of each run in ``rows``."""
+    if not rows:
+        return
+    await target.execute(
+        sa.delete(store.TABLE_ACCESS).where(store.TABLE_ACCESS.c.query_id.in_([r.id for r in rows]))
+    )
+    done = [r for r in rows if r.status == "done"]
+    if not done:
+        return
+    catalogs = {
+        slug.lower(): (id_, slug)
+        for id_, slug in await source.execute(sa.select(Catalog.id, Catalog.slug))
+    }
+    defaults = dict(
+        (
+            await source.execute(
+                sa.select(WorkspaceCatalog.workspace_id, Catalog.slug)
+                .join(Catalog, Catalog.id == WorkspaceCatalog.catalog_id)
+                .where(
+                    WorkspaceCatalog.is_default.is_(True),
+                    WorkspaceCatalog.workspace_id.in_({r.workspace_id for r in done}),
+                )
+            )
+        ).all()
+    )
+
+    def parse() -> list[dict[str, Any]]:
+        return [
+            {
+                "query_id": r.id,
+                "catalog_id": catalogs[a.catalog_name.lower()][0],
+                "catalog_name": a.catalog_name,
+                "schema_name": a.schema_name,
+                "table_name": a.table_name,
+                "access": a.access,
+                "finished_at": r.finished_at,
+                "workspace_id": r.workspace_id,
+                "workspace_slug": r.workspace_slug,
+                "user_id": r.user_id,
+                "user_email": r.user_email,
+                "on_behalf_of_id": r.on_behalf_of_id,
+                "on_behalf_of_email": r.on_behalf_of_email,
+            }
+            for r in done
+            for a in accesses(
+                r.sql,
+                r.active_catalog or defaults.get(r.workspace_id),
+                r.active_schema if r.active_catalog else DEFAULT_SCHEMA,
+                catalogs,
+            )
+        ]
+
+    # Parsing is CPU-bound; a thread keeps the API's event loop answering meanwhile.
+    if found := await asyncio.to_thread(parse):
+        await target.execute(sa.insert(store.TABLE_ACCESS), found)
 
 
 # ── access.grants ─────────────────────────────────────────────────────────────
@@ -409,11 +532,13 @@ async def _upsert_history(target: AsyncConnection, rows: list[Row]) -> None:
 _GRANT_COLUMNS = [c.name for c in store.GRANTS.columns]
 
 
+def _principal_type(auth_provider: str) -> str:
+    return "service_account" if auth_provider == SERVICE_ACCOUNT_PROVIDER else "user"
+
+
 def _principal(user: Any) -> dict[str, Any]:
     return {
-        "principal_type": (
-            "service_account" if user.auth_provider == SERVICE_ACCOUNT_PROVIDER else "user"
-        ),
+        "principal_type": _principal_type(user.auth_provider),
         "principal_id": user.user_id,
         "principal_email": user.email,
         "principal_active": user.is_active,
@@ -628,19 +753,197 @@ async def visibility_rows(source: AsyncSession) -> dict[sa.Table, list[dict[str,
     }
 
 
+async def identity_rows(source: AsyncSession, now: datetime) -> dict[sa.Table, list[dict]]:
+    """Every user, workspace and personal access token, never a secret or a hash.
+
+    The assistant's per-turn tokens, which live for one answer and are recorded on
+    each event made with them, are left out.
+    """
+    default_agent = aliased(Agent)
+    users = await source.execute(
+        sa.select(
+            User.id,
+            User.email,
+            User.name,
+            User.auth_provider,
+            User.role,
+            User.is_active,
+            User.created_at,
+        )
+    )
+    workspaces = await source.execute(
+        sa.select(Workspace, default_agent.name.label("agent_name")).outerjoin(
+            default_agent, default_agent.id == Workspace.default_agent_id
+        )
+    )
+    tokens = await source.execute(
+        sa.select(
+            Credential.id,
+            Credential.kind,
+            Credential.created_at,
+            Credential.expires_at,
+            User.id.label("user_id"),
+            User.email,
+            User.auth_provider,
+            User.is_active,
+        )
+        .join(User, User.id == Credential.user_id)
+        .where(Credential.kind == "pat", Credential.on_behalf_of_id.is_(None))
+    )
+    return {
+        store.USERS: [
+            {
+                "user_id": r.id,
+                "email": r.email,
+                "name": r.name,
+                "principal_type": _principal_type(r.auth_provider),
+                "auth_provider": r.auth_provider,
+                "global_role": r.role,
+                "is_active": r.is_active,
+                "created_at": r.created_at,
+                "snapshot_time": now,
+            }
+            for r in users
+        ],
+        store.WORKSPACES: [
+            {
+                "workspace_id": w.id,
+                "workspace_slug": w.slug,
+                "name": w.name,
+                "description": w.description,
+                "timezone": w.timezone,
+                "default_agent_id": w.default_agent_id,
+                "default_agent_name": agent_name,
+                "result_cache_enabled": w.result_cache_enabled,
+                "created_at": w.created_at,
+                "snapshot_time": now,
+            }
+            for w, agent_name in workspaces
+        ],
+        store.CREDENTIALS: [
+            {
+                "credential_id": r.id,
+                "kind": r.kind,
+                **_principal(r),
+                "created_at": r.created_at,
+                "expires_at": r.expires_at,
+                "snapshot_time": now,
+            }
+            for r in tokens
+        ],
+    }
+
+
 async def _refresh_grants(
     session_factory: async_sessionmaker[AsyncSession], target: AsyncConnection, now: datetime
 ) -> None:
-    """Replace access.grants, and what info_schema's row filters consult, with a
-    snapshot read in one consistent view."""
+    """Replace access.grants, the users, workspaces and tokens beside it, and what
+    info_schema's row filters consult, with a snapshot read in one consistent view."""
     async with session_factory() as snapshot:
         await snapshot.connection(execution_options={"isolation_level": "REPEATABLE READ"})
-        tables = {store.GRANTS: await grant_rows(snapshot, now), **await visibility_rows(snapshot)}
+        tables = {
+            store.GRANTS: await grant_rows(snapshot, now),
+            **await identity_rows(snapshot, now),
+            **await visibility_rows(snapshot),
+        }
+    await _replace(target, tables)
+
+
+async def _replace(target: AsyncConnection, tables: dict[sa.Table, list[dict]]) -> None:
     for table, rows in tables.items():
         # Not TRUNCATE: that would block readers until the tick commits.
         await target.execute(sa.delete(table))
         if rows:
             await target.execute(sa.insert(table), rows)
+
+
+# ── lineage ───────────────────────────────────────────────────────────────────
+
+
+async def lineage_rows(source: AsyncSession, now: datetime) -> dict[sa.Table, list[dict]]:
+    """Every lineage edge, with the names of its catalogs and workspace."""
+    source_catalog, target_catalog = aliased(Catalog), aliased(Catalog)
+    names = (
+        source_catalog.slug.label("source_catalog_name"),
+        target_catalog.slug.label("target_catalog_name"),
+    )
+
+    def named(stmt: sa.Select) -> sa.Select:
+        return stmt.outerjoin(
+            source_catalog, source_catalog.id == LineageEdge.source_catalog_id
+        ).outerjoin(target_catalog, target_catalog.id == LineageEdge.target_catalog_id)
+
+    edges = await source.execute(
+        named(
+            sa.select(LineageEdge, *names, Workspace.slug.label("workspace_slug"))
+            .select_from(LineageEdge)
+            .outerjoin(Workspace, Workspace.id == LineageEdge.workspace_id)
+        )
+    )
+    columns = await source.execute(
+        named(
+            sa.select(LineageColumnEdge, LineageEdge, *names)
+            .select_from(LineageColumnEdge)
+            .join(LineageEdge, LineageEdge.id == LineageColumnEdge.edge_id)
+        )
+    )
+
+    def ends(edge: LineageEdge, source_name: str | None, target_name: str | None) -> dict:
+        return {
+            "source_catalog_id": edge.source_catalog_id,
+            "source_catalog_name": source_name,
+            "source_system": edge.source_system,
+            "source_schema": edge.source_schema,
+            "source_table": edge.source_table,
+            "target_catalog_id": edge.target_catalog_id,
+            "target_catalog_name": target_name,
+            "target_system": edge.target_system,
+            "target_schema": edge.target_schema,
+            "target_table": edge.target_table,
+        }
+
+    return {
+        store.TABLE_LINEAGE: [
+            {
+                "edge_id": e.id,
+                "provider": e.provider,
+                "operation": e.operation,
+                "confidence": e.confidence,
+                "column_lineage": e.column_lineage,
+                **ends(e, source_name, target_name),
+                "workspace_id": e.workspace_id,
+                "workspace_slug": workspace_slug,
+                "last_query_id": e.last_query_id,
+                "first_seen_at": e.first_seen_at,
+                "last_seen_at": e.last_seen_at,
+                "observation_count": e.observation_count,
+                "snapshot_time": now,
+            }
+            for e, source_name, target_name, workspace_slug in edges
+        ],
+        store.COLUMN_LINEAGE: [
+            {
+                "id": c.id,
+                "edge_id": c.edge_id,
+                **ends(e, source_name, target_name),
+                "source_column": c.source_column,
+                "target_column": c.target_column,
+                "first_seen_at": c.first_seen_at,
+                "last_seen_at": c.last_seen_at,
+                "snapshot_time": now,
+            }
+            for c, e, source_name, target_name in columns
+        ],
+    }
+
+
+async def _refresh_lineage(
+    session_factory: async_sessionmaker[AsyncSession], target: AsyncConnection, now: datetime
+) -> None:
+    async with session_factory() as snapshot:
+        await snapshot.connection(execution_options={"isolation_level": "REPEATABLE READ"})
+        tables = await lineage_rows(snapshot, now)
+    await _replace(target, tables)
 
 
 # ── Retention ─────────────────────────────────────────────────────────────────
@@ -653,9 +956,10 @@ async def _purge(target: AsyncConnection, now: datetime) -> None:
             sa.delete(store.AUDIT).where(store.AUDIT.c.event_time < now - timedelta(days=days))
         )
     if days := settings.system_catalog_query_history_days:
-        await target.execute(
-            sa.delete(store.HISTORY).where(store.HISTORY.c.finished_at < now - timedelta(days=days))
-        )
+        for table in (store.HISTORY, store.TABLE_ACCESS):
+            await target.execute(
+                sa.delete(table).where(table.c.finished_at < now - timedelta(days=days))
+            )
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

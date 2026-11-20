@@ -14,8 +14,11 @@ import sqlalchemy as sa
 
 from api.config import settings
 from api.models.agent import Agent
+from api.models.catalog import Catalog, WorkspaceCatalog
+from api.models.lineage import LineageColumnEdge, LineageEdge
 from api.models.query import Query
-from api.models.user import SERVICE_ACCOUNT_PROVIDER, User
+from api.models.storage_backend import StorageBackend
+from api.models.user import SERVICE_ACCOUNT_PROVIDER, Credential, User
 from api.models.workspace import Workspace, WorkspaceMember
 from api.services.audit import record
 from api.services.system_catalog import publisher, store
@@ -358,3 +361,237 @@ async def test_each_table_reports_how_far_behind_it_is(published):
     lag = await publisher.lag_seconds(now=now + timedelta(seconds=40))
 
     assert lag == {"access.audit": 40.0, "access.grants": 40.0, "query.history": 40.0}
+
+
+async def test_history_says_where_a_run_ran_and_what_it_cost(published):
+    factory, tick, rows = published
+    workspace, ana = await _setup(factory)
+    now = datetime.now(UTC)
+    first = _run(workspace, ana, now - timedelta(seconds=5))
+    hit = _run(
+        workspace,
+        ana,
+        now,
+        active_catalog="sales",
+        active_schema="analytics",
+        cache_status="hit",
+        result_source_query_id=first.id,
+        profile={
+            "summary": {
+                "cpu_time_ms": 12.6,
+                "bytes_read": 4096,
+                "peak_memory_bytes": 2048,
+                "spill_bytes": 0,
+            }
+        },
+    )
+    async with factory() as db:
+        db.add_all([first, hit])
+        await db.commit()
+
+    await tick()
+
+    (copied,) = [r for r in await rows(store.HISTORY) if r.id == hit.id]
+    assert (copied.active_catalog, copied.active_schema) == ("sales", "analytics")
+    assert (copied.cache_status, copied.result_source_query_id) == ("hit", first.id)
+    assert (
+        copied.cpu_time_ms,
+        copied.bytes_read,
+        copied.peak_memory_bytes,
+        copied.spill_bytes,
+        # Rounded to whole milliseconds.
+    ) == (13, 4096, 2048, 0)
+
+
+async def _sales_catalog(factory, workspace: Workspace, owner: User) -> Catalog:
+    backend = StorageBackend(kind="object_store", name="b", root_uri="", created_by=owner.id)
+    catalog = Catalog(
+        id=uuid.uuid4(), slug="sales", name="sales", polaris_name="sales", created_by=owner.id
+    )
+    catalog.storage_backend = backend
+    async with factory() as db:
+        db.add_all([backend, catalog])
+        await db.flush()
+        db.add(WorkspaceCatalog(workspace_id=workspace.id, catalog_id=catalog.id, is_default=True))
+        await db.commit()
+    return catalog
+
+
+async def test_each_table_a_run_read_and_wrote_is_recorded(published):
+    factory, tick, rows = published
+    workspace, ana = await _setup(factory)
+    catalog = await _sales_catalog(factory, workspace, ana)
+    now = datetime.now(UTC)
+    insert = _run(
+        workspace,
+        ana,
+        now,
+        sql="INSERT INTO sales.analytics.daily SELECT * FROM orders;",
+        active_catalog="sales",
+        active_schema="analytics",
+    )
+    # No context recorded: the workspace's default catalog and schema.
+    unplaced = _run(workspace, ana, now, sql="SELECT * FROM customers;")
+    failed = _run(workspace, ana, now, sql="SELECT * FROM refunds;", status="failed")
+    async with factory() as db:
+        db.add_all([insert, unplaced, failed])
+        await db.commit()
+
+    await tick()
+
+    recorded = {
+        (r.query_id, r.catalog_id, r.schema_name, r.table_name, r.access, r.user_email)
+        for r in await rows(store.TABLE_ACCESS)
+    }
+    assert recorded == {
+        (insert.id, catalog.id, "analytics", "daily", "write", "ana@example.com"),
+        (insert.id, catalog.id, "analytics", "orders", "read", "ana@example.com"),
+        (unplaced.id, catalog.id, "analytics", "customers", "read", "ana@example.com"),
+    }
+
+
+async def test_runs_copied_before_history_gained_columns_are_copied_again(published):
+    factory, tick, rows = published
+    workspace, ana = await _setup(factory)
+    await _sales_catalog(factory, workspace, ana)
+    now = datetime.now(UTC)
+    run = _run(workspace, ana, now, sql="SELECT * FROM orders;", cache_status="miss")
+    async with factory() as db:
+        db.add(run)
+        await db.commit()
+    await tick(now)
+    # As an older API left it: no cache_status, no table access, an older cursor.
+    async with store.get_engine().begin() as conn:
+        await conn.execute(sa.update(store.HISTORY).values(cache_status=None))
+        await conn.execute(sa.delete(store.TABLE_ACCESS))
+        cursor = await conn.scalar(
+            sa.select(store.CURSORS.c.value).where(store.CURSORS.c.name == "history")
+        )
+        await conn.execute(
+            sa.update(store.CURSORS)
+            .where(store.CURSORS.c.name == "history")
+            .values(value={k: v for k, v in cursor.items() if k != "version"})
+        )
+
+    # A run finished meanwhile is copied in the same tick, not after the old ones.
+    new = _run(workspace, ana, now + timedelta(seconds=5), sql="SELECT * FROM customers;")
+    async with factory() as db:
+        db.add(new)
+        await db.commit()
+
+    await tick(now + timedelta(seconds=10))
+
+    assert {r.id: r.cache_status for r in await rows(store.HISTORY)} == {
+        run.id: "miss",
+        new.id: None,
+    }
+    assert sorted(r.table_name for r in await rows(store.TABLE_ACCESS)) == ["customers", "orders"]
+    cursor = await _cursor()
+    assert (cursor["version"], cursor["rewrite_through"]) == (publisher.HISTORY_VERSION, None)
+
+
+async def _cursor() -> dict:
+    async with store.get_engine().connect() as conn:
+        return await conn.scalar(
+            sa.select(store.CURSORS.c.value).where(store.CURSORS.c.name == "history")
+        )
+
+
+async def test_users_workspaces_and_tokens_are_copied_without_secrets(published):
+    factory, tick, rows = published
+    workspace, ana = await _setup(factory)
+    robot = _user("robot@example.com", SERVICE_ACCOUNT_PROVIDER)
+    expires = datetime(2027, 1, 1, tzinfo=UTC)
+    pat = Credential(user=ana, kind="pat", token_hash="a" * 64, expires_at=expires)
+    async with factory() as db:
+        db.add(robot)
+        await db.flush()
+        db.add_all(
+            [
+                pat,
+                Credential(user_id=ana.id, kind="session", token="s3cret"),
+                # The assistant's per-turn token.
+                Credential(
+                    user_id=robot.id, on_behalf_of_id=ana.id, kind="pat", token_hash="b" * 64
+                ),
+            ]
+        )
+        await db.commit()
+
+    await tick()
+
+    users = {r.email: r for r in await rows(store.USERS)}
+    assert (users["ana@example.com"].principal_type, users["ana@example.com"].global_role) == (
+        "user",
+        "user",
+    )
+    assert users["robot@example.com"].principal_type == "service_account"
+    (copied,) = await rows(store.WORKSPACES)
+    assert (copied.workspace_id, copied.workspace_slug, copied.name) == (
+        workspace.id,
+        "sales",
+        "Sales",
+    )
+    (token,) = await rows(store.CREDENTIALS)
+    assert (token.credential_id, token.kind, token.principal_email, token.expires_at) == (
+        pat.id,
+        "pat",
+        "ana@example.com",
+        expires,
+    )
+    assert not {"token", "token_hash"} & set(store.CREDENTIALS.c.keys())
+
+
+async def test_lineage_is_replaced_every_few_minutes(published):
+    factory, tick, rows = published
+    workspace, ana = await _setup(factory)
+    catalog = await _sales_catalog(factory, workspace, ana)
+    edge = LineageEdge(
+        source_key="s",
+        source_catalog_id=catalog.id,
+        source_schema="analytics",
+        source_table="orders",
+        target_key="t",
+        source_system=None,
+        target_catalog_id=catalog.id,
+        target_schema="analytics",
+        target_table="daily",
+        provider="execution",
+        operation="insert",
+        workspace_id=workspace.id,
+    )
+    async with factory() as db:
+        db.add(edge)
+        await db.flush()
+        db.add(LineageColumnEdge(edge_id=edge.id, source_column="total", target_column="revenue"))
+        await db.commit()
+    now = datetime.now(UTC)
+
+    await tick(now)
+
+    (copied,) = await rows(store.TABLE_LINEAGE)
+    assert (copied.source_catalog_name, copied.source_table, copied.target_table) == (
+        "sales",
+        "orders",
+        "daily",
+    )
+    assert (copied.workspace_slug, copied.operation, copied.column_lineage) == (
+        "sales",
+        "insert",
+        "unknown",
+    )
+    (column,) = await rows(store.COLUMN_LINEAGE)
+    assert (column.source_table, column.source_column, column.target_column) == (
+        "orders",
+        "total",
+        "revenue",
+    )
+
+    async with factory() as db:
+        await db.execute(sa.delete(LineageEdge))
+        await db.commit()
+    await tick(now + timedelta(seconds=10))
+    assert len(await rows(store.TABLE_LINEAGE)) == 1
+    await tick(now + publisher.LINEAGE_REFRESH)
+    assert await rows(store.TABLE_LINEAGE) == []
+    assert await rows(store.COLUMN_LINEAGE) == []

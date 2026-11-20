@@ -39,7 +39,11 @@ FEATURES = [
     "system_catalog_row_filter",
 ]
 INFO = "info_schema.catalogs,info_schema.columns,info_schema.schemata,info_schema.tables"
-ALL_TABLES = f"access.audit,access.grants,{INFO},query.history"
+AUDITED = (
+    "access.audit,access.credentials,access.grants,access.table_access,access.users,"
+    f"access.workspaces,{INFO},lineage.column_lineage,lineage.table_lineage"
+)
+ALL_TABLES = f"{AUDITED},query.history"
 
 
 class MockWebSocket:
@@ -261,7 +265,7 @@ async def test_a_query_run_for_someone_reads_only_what_both_may(
     (frame,) = sock.frames(FrameType.DISPATCH_BATCH)
     settings_sent = frame.payload["catalogs"][-1]["meta"]["settings"]
     assert settings_sent["duckhaven.principals"] == f"{admin.id},{auditor.id}"
-    assert settings_sent["duckhaven.readable"] == f"access.audit,access.grants,{INFO}"
+    assert settings_sent["duckhaven.readable"] == AUDITED
 
 
 # --- SQL sessions --------------------------------------------------------------

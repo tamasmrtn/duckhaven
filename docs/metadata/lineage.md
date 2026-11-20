@@ -54,9 +54,9 @@ lineage without any integration at all.
 
 Some omissions are deliberate, and knowing them is part of reading the graph correctly:
 
-- **Reads.** A `SELECT` touches tables but produces no dataset, so it is not lineage. Query history already records
-  who read what. A statement made only of reads is not parsed for lineage at all, so the failure count below covers
-  only statements that write.
+- **Reads.** A `SELECT` touches tables but produces no dataset, so it is not lineage. Query history records who read
+  what, and the system catalog's `duckhaven.access.table_access` lists each table each query read. A statement made only
+  of reads is not parsed for lineage at all, so the failure count below covers only statements that write.
 - **Writes with no source dataset.** `INSERT … VALUES` and `COPY … FROM '<file>'` have nothing upstream to point at.
   DuckHaven records nothing rather than inventing an edge.
 - **`CREATE TABLE` with only a column list.** It declares a shape; it derives nothing.
@@ -85,6 +85,9 @@ between two tables is a fact about the data, so a catalog attached to both a `de
 lineage graph rather than two divergent copies.
 
 The workspace is still the boundary you *read* through: traversal never leaves the catalogs your workspace attaches.
+Holders of `audit:read` can also query the whole graph in SQL, every catalog and every name, as
+`duckhaven.lineage.table_lineage` and `duckhaven.lineage.column_lineage`; see
+[System catalog](../querying/system-catalog.md).
 
 ## Provenance
 

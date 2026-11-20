@@ -751,7 +751,7 @@ function SystemCatalogNode({
           onClick={() =>
             onCatalogClick ? onCatalogClick(system.catalog) : toggleOpen()
           }
-          title="Built-in and read-only: this deployment's audit log, current access and query history"
+          title="Built-in and read-only: DuckHaven's own records, the tables you may read"
           className="flex min-w-0 flex-1 items-center gap-1.5 rounded py-1 pr-2 focus-visible:outline-2 focus-visible:outline-[var(--brand-slate-blue)]"
         >
           <Book className="size-3.5 shrink-0 text-[var(--brand-slate-blue)]" />

@@ -96,12 +96,15 @@ describe('CommandPalette', () => {
 
     await userEvent.type(input, 'event')
 
+    // `compute.agent_events` in the system catalog matches too, so pick the
+    // workspace's own table by the path that tells them apart.
     const tablesGroup = await within(dialog).findByText('Tables')
-    const tableItem = tablesGroup
-      .closest('[cmdk-group]')!
-      .querySelector('[cmdk-item]') as HTMLElement
+    const tableItem = (
+      await within(tablesGroup.closest('[cmdk-group]') as HTMLElement).findByText(
+        'acme_analytics.raw',
+      )
+    ).closest('[cmdk-item]') as HTMLElement
     expect(tableItem).toHaveTextContent('events')
-    expect(tableItem).toHaveTextContent('acme_analytics.raw')
   })
 
   it('navigates directly to a table result\'s object-detail page', async () => {
@@ -110,15 +113,30 @@ describe('CommandPalette', () => {
     const input = within(dialog).getByPlaceholderText(/search commands/i)
 
     await userEvent.type(input, 'event')
-    const tablesGroup = await within(dialog).findByText('Tables')
-    const tableItem = tablesGroup
-      .closest('[cmdk-group]')!
-      .querySelector('[cmdk-item]') as HTMLElement
+    const tableItem = (
+      await within(dialog).findByText('acme_analytics.raw')
+    ).closest('[cmdk-item]') as HTMLElement
     await userEvent.click(tableItem)
 
     await waitFor(() =>
       expect(router.state.location.pathname).toBe(
         '/acme-analytics/catalog/acme_analytics/raw/events',
+      ),
+    )
+  })
+
+  it('finds a system catalog table, which the server search does not cover, and opens its page', async () => {
+    const { router } = renderWithProviders({ initialRoute: WS_ROUTE })
+    const dialog = await openPalette()
+    const input = within(dialog).getByPlaceholderText(/search commands/i)
+
+    await userEvent.type(input, 'table_access')
+    const item = await within(dialog).findByText('duckhaven.access')
+    await userEvent.click(item.closest('[cmdk-item]') as HTMLElement)
+
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe(
+        '/acme-analytics/catalog/duckhaven/access/table_access',
       ),
     )
   })

@@ -103,19 +103,19 @@ export function SystemCatalogDetail({ system }: { system: SystemCatalog }) {
               <MetaRow label="Kind" value="System catalog, built in" />
               <MetaRow
                 label="Holds"
-                value="This deployment's access audit log, current access and query history"
+                value="DuckHaven's own records: what this workspace's catalogs contain, who has access and what changed it, queries, compute, storage, schedules and the assistant's use"
               />
               <MetaRow
                 label="Covers"
-                value="Every workspace, not only this one"
+                value="info_schema: this workspace's catalogs. Every other schema: every workspace."
               />
               <MetaRow
                 label="Access"
-                value="Read-only. Each table needs its own permission; these are the ones you may read."
+                value="Read-only. info_schema is open to every member and shows each only what they can see; every other table needs the permission listed below, and only those you hold are listed."
               />
               <MetaRow
                 label="Freshness"
-                value="A copy, refreshed every 10 seconds by default"
+                value="A copy. Audit events and query history arrive within about 10 seconds by default; the other tables are replaced every minute to every 15 minutes."
               />
               <MetaRow
                 label="Status"
@@ -322,7 +322,7 @@ export function SystemTableDetail({
                     <td className="py-1 pr-2 font-mono text-xs text-text-primary">
                       {col.name}
                     </td>
-                    <td className="py-1 text-xs text-[var(--brand-maya-blue)]">
+                    <td className="py-1 text-xs text-[var(--text-type)]">
                       {col.type}
                     </td>
                   </tr>

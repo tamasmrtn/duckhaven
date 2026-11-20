@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
+import { readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 /**
@@ -15,6 +16,15 @@ const tokens = readFileSync(
   join(resolve(process.cwd(), "src"), "styles/tokens.css"),
   "utf8",
 );
+
+/** Every file under `dir`, recursively. */
+function* sourceFiles(dir: string): Generator<string> {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) yield* sourceFiles(path);
+    else yield path;
+  }
+}
 
 /** Every definition of a custom property, in file order: light first, dark second. */
 function values(name: string): string[] {
@@ -68,6 +78,11 @@ describe("text token contrast", () => {
     ["--status-success", "dark", 1],
     ["--status-failed", "light", 0],
     ["--status-failed", "dark", 1],
+    // Column types beside their names, at 11-12px in the catalog tree, a
+    // table's schema and the results header. They shipped at 2.4:1 in light
+    // mode in the brand maya blue.
+    ["--text-type", "light", 0],
+    ["--text-type", "dark", 1],
   ])("keeps %s at 4.5:1 on every %s surface", (token, _theme, i) => {
     const defined = values(token);
     expect(defined).toHaveLength(2);
@@ -78,6 +93,27 @@ describe("text token contrast", () => {
         `${token} ${defined[i]} on ${surface} ${bg}`,
       ).toBeGreaterThanOrEqual(4.5);
     }
+  });
+
+  it("writes no text in the brand maya blue, which is 2.4:1 in light mode", () => {
+    // Icons may use it; text takes --text-type, --link or a text token. The
+    // lineage strip and a snapshot's operation are known holdouts.
+    const offenders = [...sourceFiles(join(resolve(process.cwd(), "src")))]
+      .filter((f) => /\.tsx$/.test(f))
+      .flatMap((f) =>
+        readFileSync(f, "utf8")
+          .split("\n")
+          .map((line, n) => [f, n + 1, line] as const),
+      )
+      .filter(
+        ([f, , line]) =>
+          /\btext-\[var\(--brand-maya-blue\)\]/.test(line) &&
+          // An icon component on the same line: `<Layers className="…" />`.
+          !/<[A-Z]\w*\s+className=/.test(line) &&
+          !/(LineageGraph|LineagePanel|SnapshotHistoryPanel)\.tsx$/.test(f),
+      )
+      .map(([f, n]) => `${f}:${n}`);
+    expect(offenders).toEqual([]);
   });
 
   it("keeps --link at 4.5:1 on the light note's orange tint", () => {

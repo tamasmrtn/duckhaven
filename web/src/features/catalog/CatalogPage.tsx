@@ -267,7 +267,7 @@ function TableDetail({
                     <td className="py-1 pr-2 font-mono text-xs text-text-primary">
                       {col.name}
                     </td>
-                    <td className="py-1 pr-2 text-xs text-[var(--brand-maya-blue)]">
+                    <td className="py-1 pr-2 text-xs text-[var(--text-type)]">
                       {col.type}
                     </td>
                     <td className="py-1 text-xs text-text-tertiary">

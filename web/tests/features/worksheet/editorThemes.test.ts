@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 import type { Monaco } from "@monaco-editor/react";
 import { defineEditorThemes } from "@/features/worksheet/editorThemes";
 
-type Theme = { colors: Record<string, string> };
+type Theme = {
+  colors: Record<string, string>;
+  rules: { token: string; foreground?: string }[];
+};
 
 /** The themes as Monaco is given them, by name. */
 function themes(): Record<string, Theme> {
@@ -50,6 +53,37 @@ describe("editor themes", () => {
           `${key} ${colors[key]} on ${background}`,
         ).toBeGreaterThanOrEqual(4.5);
       }
+    },
+  );
+
+  // SQL is read at 13px; every token is text, and the current line is
+  // highlighted, so each colour holds 4.5:1 on both.
+  it.each(["duckhaven-light", "duckhaven-dark"])(
+    "keeps %s's token colours at 4.5:1 on the editor and its current line",
+    (name) => {
+      const { colors, rules } = themes()[name];
+      for (const surface of [
+        colors["editor.background"],
+        colors["editor.lineHighlightBackground"],
+      ]) {
+        for (const { token, foreground } of rules) {
+          if (!foreground) continue;
+          expect(
+            contrast(`#${foreground}`, surface),
+            `${token} #${foreground} on ${surface}`,
+          ).toBeGreaterThanOrEqual(4.5);
+        }
+      }
+    },
+  );
+
+  // Monaco's base themes colour `operator.sql` #778899 (3.6:1 on white), and
+  // that more specific rule beats a theme's own `operator`.
+  it.each(["duckhaven-light", "duckhaven-dark"])(
+    "colours %s's SQL operators itself",
+    (name) => {
+      const tokens = themes()[name].rules.map((r) => r.token);
+      expect(tokens).toContain("operator.sql");
     },
   );
 });

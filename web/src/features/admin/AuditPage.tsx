@@ -62,7 +62,9 @@ import {
 
 const PAGE_SIZE = 50;
 
-const COLUMNS = ["When", "By", "Action", "Target", "Affecting"];
+// What happened comes right after when, so a phone shows both before the
+// table scrolls sideways.
+const COLUMNS = ["When", "Action", "By", "Target", "Affecting"];
 
 /**
  * Admin → Audit: the access audit log, newest first.
@@ -234,13 +236,15 @@ export function AuditPage() {
           />
         </ToolbarLabel>
 
-        <Input
-          value={wsDraft}
-          onChange={(e) => setWsDraft(e.target.value)}
-          placeholder="Workspace…"
-          aria-label="workspace"
-          className="h-7 w-36 text-xs"
-        />
+        <ToolbarLabel text="Workspace">
+          <Input
+            value={wsDraft}
+            onChange={(e) => setWsDraft(e.target.value)}
+            placeholder="slug"
+            aria-label="workspace"
+            className="h-7 w-36 text-xs"
+          />
+        </ToolbarLabel>
 
         <div className="flex items-center gap-1.5">
           <Checkbox
@@ -418,6 +422,27 @@ function EventRows({
             </span>
           </button>
         </TableCell>
+        <TableCell className="min-w-[12rem] max-w-[18rem] px-4 py-2 text-xs">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span className="text-text-primary">{event.label}</span>
+            {event.outcome !== "success" && (
+              <Pill tone="failed">{OUTCOME_LABELS[event.outcome]}</Pill>
+            )}
+            {/* Beside the action rather than the email it concerns: the
+                Affecting column is the first to scroll out of view. */}
+            {event.self_change && (
+              <Pill
+                tone="attention"
+                title="The person who made this change is the one whose access it changed."
+              >
+                Own access
+              </Pill>
+            )}
+          </div>
+          <div className="font-mono text-2xs text-text-tertiary">
+            {event.action}
+          </div>
+        </TableCell>
         <TableCell className="max-w-[14rem] px-4 py-2 text-xs text-text-secondary">
           <div className="truncate" title={actorName(event)}>
             {actorName(event)}
@@ -433,17 +458,6 @@ function EventRows({
             </div>
           )}
         </TableCell>
-        <TableCell className="px-4 py-2 text-xs">
-          <div className="flex items-center gap-2 whitespace-nowrap">
-            <span className="text-text-primary">{event.label}</span>
-            {event.outcome !== "success" && (
-              <Pill tone="failed">{OUTCOME_LABELS[event.outcome]}</Pill>
-            )}
-          </div>
-          <div className="font-mono text-2xs text-text-tertiary">
-            {event.action}
-          </div>
-        </TableCell>
         <TableCell className="max-w-[14rem] px-4 py-2 font-mono text-xs">
           <div className="truncate text-text-secondary" title={target}>
             {target}
@@ -454,17 +468,9 @@ function EventRows({
             </div>
           )}
         </TableCell>
-        <TableCell className="px-4 py-2 text-xs text-text-secondary">
-          <div className="flex items-center gap-2 whitespace-nowrap">
+        <TableCell className="max-w-[14rem] px-4 py-2 text-xs text-text-secondary">
+          <div className="truncate" title={event.subject.email ?? undefined}>
             {event.subject.email ?? "—"}
-            {event.self_change && (
-              <Pill
-                tone="attention"
-                title="The person who made this change is the one whose access it changed."
-              >
-                Own access
-              </Pill>
-            )}
           </div>
         </TableCell>
       </TableRow>

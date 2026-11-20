@@ -374,7 +374,7 @@ export function ResultsTable({
                       </button>
                       {type && (
                         <span
-                          className="block font-mono text-2xs font-normal text-[var(--brand-maya-blue)]"
+                          className="block font-mono text-2xs font-normal text-[var(--text-type)]"
                           title={type}
                         >
                           {type}

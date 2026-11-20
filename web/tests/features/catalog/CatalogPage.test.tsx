@@ -282,9 +282,18 @@ describe("CatalogPage", () => {
       ).toBeInTheDocument();
       expect(screen.getByText("Schemas")).toBeInTheDocument();
       await user.click(screen.getByRole("tab", { name: "Details" }));
+      // info_schema is this workspace's, open to every member, and refreshed on
+      // schedules of its own; the pane once said otherwise on all three.
+      const details = screen.getByRole("tabpanel");
+      expect(details).toHaveTextContent(
+        "info_schema: this workspace's catalogs. Every other schema: every workspace.",
+      );
+      expect(details).toHaveTextContent(/info_schema is open to every member/);
+      expect(details).toHaveTextContent(/every minute to every 15 minutes/);
+      expect(details).not.toHaveTextContent(/refreshed every 10 seconds/);
       expect(
-        screen.getByText("Every workspace, not only this one"),
-      ).toBeInTheDocument();
+        screen.getByText("info_schema.tables").closest("tr"),
+      ).toHaveTextContent("Every member, showing only what they can see");
       // Each table with what reading it takes.
       expect(screen.getByText("access.audit").closest("tr")).toHaveTextContent(
         "Needs audit:read",

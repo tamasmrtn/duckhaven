@@ -133,6 +133,82 @@ def test_decode_parquet_page_sends_wide_numbers_as_exact_strings():
     }
 
 
+# One column of every type DuckDB returns, a row of values and a row of NULLs.
+_EVERY_TYPE = [
+    ("true", "b"),
+    ("1::TINYINT", "ti"),
+    ("2::SMALLINT", "si"),
+    ("3", "i"),
+    ("4::UTINYINT", "ut"),
+    ("5::USMALLINT", "us"),
+    ("6::UINTEGER", "ui"),
+    ("1.5::FLOAT", "f"),
+    ("'nan'::DOUBLE", "d"),
+    ("'x'", "v"),
+    ("'{\"a\": 1}'::JSON", "j"),
+    ("2::BIGINT", "bi"),
+    ("3::UBIGINT", "ub"),
+    ("4::HUGEINT", "hi"),
+    ("0::DECIMAL(18,10)", "dec"),
+    ("TIMESTAMP '2026-01-02 03:04:05.000006'", "ts"),
+    ("DATE '2026-01-02'", "dt"),
+    ("TIME '01:02:03'", "tm"),
+    ("'00000000-0000-0000-0000-000000000001'::UUID", "u"),
+    ("'ab'::BLOB", "bl"),
+    ("[1::BIGINT, NULL]", "l"),
+    ("[1, 2]::INTEGER[2]", "a"),
+    ("{'a': 1.5::DECIMAL(3,1)}", "st"),
+    ("MAP {1::BIGINT: 'v'}", "m"),
+    ("'a'::ENUM('a', 'b')", "e"),
+    ("INTERVAL 1 DAY", "iv"),
+]
+
+
+def test_decode_parquet_page_converts_every_type_as_each_cell_alone_would():
+    """Converting by column must give exactly what converting each cell by its type
+    gives, NULLs included."""
+    values = ", ".join(v for v, _ in _EVERY_TYPE)
+    nulls = ", ".join("NULL" for _ in _EVERY_TYPE)
+    names = ", ".join(n for _, n in _EVERY_TYPE)
+    content = _parquet_bytes(f"SELECT * FROM (VALUES ({values}), ({nulls})) AS t({names})")
+    rows, columns = query_service.decode_parquet_page(content, limit=10, offset=0)
+
+    with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as fh:
+        fh.write(content)
+    try:
+        cur = duckdb.connect().execute("SELECT * FROM read_parquet(?)", [fh.name])
+        types = [d[1] for d in cur.description]
+        expected = [
+            {
+                col: query_service._json_value(val, typ)
+                for col, val, typ in zip(columns, record, types, strict=True)
+            }
+            for record in cur.fetchall()
+        ]
+    finally:
+        os.unlink(fh.name)
+    assert repr(rows) == repr(expected)  # repr: NaN is not equal to itself
+
+
+def test_decode_parquet_page_imports_nothing(monkeypatch):
+    """A bound parameter list had DuckDB look for pandas on every page, searching all
+    of sys.path when it is not installed, with the GIL held."""
+    import sys
+
+    content = _parquet_bytes("SELECT 1::BIGINT AS n, TIMESTAMP '2026-01-02' AS ts")
+    query_service.decode_parquet_page(content, limit=10, offset=0)
+    looked_up: list[str] = []
+
+    class _Recorder:
+        def find_spec(self, name, path=None, target=None):
+            looked_up.append(name)
+            return None
+
+    monkeypatch.setattr(sys, "meta_path", [_Recorder(), *sys.meta_path])
+    query_service.decode_parquet_page(content, limit=10, offset=0)
+    assert looked_up == []
+
+
 def test_decode_parquet_page_handles_timestamptz():
     # DuckDB materializes a TIMESTAMP WITH TIME ZONE cell via pytz; without that
     # dep fetchall() raises and the rows endpoint 500s (issue #162).

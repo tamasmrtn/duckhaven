@@ -3,12 +3,14 @@ import base64
 import binascii
 import contextlib
 import datetime as dt
+import functools
 import logging
 import os
 import tempfile
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -1135,6 +1137,38 @@ def _json_value(value: Any, value_type: duckdb.DuckDBPyType | None) -> Any:
     return _json_safe(value)
 
 
+# Types DuckDB already returns as a JSON value (bool, int, float, str), which
+# ``_json_value`` would hand back unchanged.
+_JSON_NATIVE = frozenset(
+    {
+        "boolean",
+        "tinyint",
+        "smallint",
+        "integer",
+        "utinyint",
+        "usmallint",
+        "uinteger",
+        "float",
+        "double",
+        "varchar",
+        "enum",
+    }
+)
+
+
+def _cell_converter(value_type: duckdb.DuckDBPyType) -> Callable[[Any], Any] | None:
+    """What ``_json_value`` does to a non-null cell of ``value_type``, chosen once
+    per column; ``None`` when it does nothing."""
+    tid = value_type.id
+    if tid in _JSON_NATIVE:
+        return None
+    if tid in _EXACT_AS_TEXT:
+        return str
+    if tid in ("list", "array", "struct", "map"):
+        return functools.partial(_json_value, value_type=value_type)
+    return _json_safe
+
+
 # One in-memory DuckDB for every page decode. Opening and closing a database per
 # page took about half of a 1000-row decode, on the event loop. Each decode reads
 # through its own cursor, a separate connection to this database, because a
@@ -1154,25 +1188,38 @@ def _decoder_cursor() -> duckdb.DuckDBPyConnection:
 def decode_parquet_page(
     content: bytes, limit: int, offset: int
 ) -> tuple[list[dict[str, Any]], list[str]]:
-    """Decode a page of a Parquet result (bytes) into JSON-safe rows + columns."""
+    """Decode a page of a Parquet result (bytes) into JSON-safe rows + columns.
+
+    The page holds the GIL while it is built, so it holds up the event loop even
+    from a worker thread: only the cells that need converting are visited, with a
+    converter chosen once per column.
+    """
     with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as tmp:
         tmp.write(content)
         path = tmp.name
     try:
         conn = _decoder_cursor()
         try:
+            # Literals, not bound parameters: binding a parameter list has DuckDB try
+            # to import pandas, a search of the whole sys.path on every page when it
+            # is not installed. Both numbers are ints and the path is our own.
+            quoted = path.replace("'", "''")
             cur = conn.execute(
-                "SELECT * FROM read_parquet(?) LIMIT ? OFFSET ?", [path, limit, offset]
+                f"SELECT * FROM read_parquet('{quoted}') LIMIT {int(limit)} OFFSET {int(offset)}"
             )
             columns = [d[0] for d in cur.description]
-            types = [d[1] for d in cur.description]
-            rows = [
-                {
-                    col: _json_value(val, typ)
-                    for col, val, typ in zip(columns, record, types, strict=True)
-                }
-                for record in cur.fetchall()
+            records = cur.fetchall()
+            rows = [dict(zip(columns, record, strict=True)) for record in records]
+            convert = [
+                (i, col, conv)
+                for i, (col, (_, typ, *_)) in enumerate(zip(columns, cur.description, strict=True))
+                if (conv := _cell_converter(typ)) is not None
             ]
+            for i, col, conv in convert:
+                for record, row in zip(records, rows, strict=True):
+                    value = record[i]
+                    if value is not None:
+                        row[col] = conv(value)
             return rows, columns
         finally:
             conn.close()

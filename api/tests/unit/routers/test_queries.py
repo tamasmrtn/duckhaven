@@ -1493,9 +1493,8 @@ async def test_proxy_rows_sets_bearer_and_window(monkeypatch):
         return httpx.Response(200, content=b"x")
 
     transport = httpx.MockTransport(handler)
-    real_client = httpx.AsyncClient
     monkeypatch.setattr(
-        query_service.httpx, "AsyncClient", lambda *a, **kw: real_client(transport=transport)
+        query_service.agent_http, "client", lambda: httpx.AsyncClient(transport=transport)
     )
 
     agent = Agent(name="a", status="healthy", result_host="127.0.0.1", result_port=8001)
@@ -1524,9 +1523,8 @@ async def test_proxy_rows_refuses_a_stored_host_that_is_not_bare(monkeypatch):
 
     requests: list[httpx.Request] = []
     transport = httpx.MockTransport(lambda r: requests.append(r) or httpx.Response(200))
-    real_client = httpx.AsyncClient
     monkeypatch.setattr(
-        query_service.httpx, "AsyncClient", lambda *a, **kw: real_client(transport=transport)
+        query_service.agent_http, "client", lambda: httpx.AsyncClient(transport=transport)
     )
 
     agent = Agent(name="a", status="healthy", result_host="agent.example/path", result_port=8001)

@@ -29,6 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.config import settings
 from api.models.agent import Agent
+from api.services import agent_http
 from api.services.agent_registry import registry
 from api.services.agent_telemetry import record_lifecycle_event
 
@@ -129,12 +130,12 @@ async def send_to_agent(db: AsyncSession, agent_id: uuid.UUID, payload: str) -> 
 
     url = f"{agent.owner_url.rstrip('/')}/internal/agents/{agent_id}/send"
     try:
-        async with httpx.AsyncClient(timeout=_FORWARD_TIMEOUT_S) as client:
-            resp = await client.post(
-                url,
-                json={"payload": payload},
-                headers={"X-Internal-Secret": settings.internal_api_secret},
-            )
+        resp = await agent_http.client().post(
+            url,
+            json={"payload": payload},
+            headers={"X-Internal-Secret": settings.internal_api_secret},
+            timeout=_FORWARD_TIMEOUT_S,
+        )
         return resp.status_code == 200 and resp.json().get("delivered") is True
     except httpx.HTTPError as exc:
         logger.warning("Forward to owner for agent %s failed: %s", agent_id, exc)
@@ -152,10 +153,11 @@ async def disconnect_agent(db: AsyncSession, agent_id: uuid.UUID) -> bool:
         return False
     url = f"{agent.owner_url.rstrip('/')}/internal/agents/{agent_id}/disconnect"
     try:
-        async with httpx.AsyncClient(timeout=_FORWARD_TIMEOUT_S) as client:
-            resp = await client.post(
-                url, headers={"X-Internal-Secret": settings.internal_api_secret}
-            )
+        resp = await agent_http.client().post(
+            url,
+            headers={"X-Internal-Secret": settings.internal_api_secret},
+            timeout=_FORWARD_TIMEOUT_S,
+        )
         return resp.status_code == 200
     except httpx.HTTPError as exc:
         logger.warning("Disconnect forward for agent %s failed: %s", agent_id, exc)
@@ -195,10 +197,11 @@ async def _fetch_peer_metrics(owner_url: str, agent_id) -> list[dict]:
     """One agent's live samples from the peer replica that holds its socket."""
     url = f"{owner_url.rstrip('/')}/internal/agents/{agent_id}/metrics"
     try:
-        async with httpx.AsyncClient(timeout=_FORWARD_TIMEOUT_S) as client:
-            resp = await client.get(
-                url, headers={"X-Internal-Secret": settings.internal_api_secret}
-            )
+        resp = await agent_http.client().get(
+            url,
+            headers={"X-Internal-Secret": settings.internal_api_secret},
+            timeout=_FORWARD_TIMEOUT_S,
+        )
         if resp.status_code == 200:
             return resp.json().get("metrics") or []
     except httpx.HTTPError as exc:

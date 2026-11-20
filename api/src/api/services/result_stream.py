@@ -78,7 +78,7 @@ async def open_parquet(source: ResultSource) -> tuple[AsyncIterator[bytes], dict
 
         return body(), {"Content-Length": str(len(inline))}
 
-    client, response = await query_service.open_result_stream(source)
+    response = await query_service.open_result_stream(source)
     headers = {}
     if "content-length" in response.headers:
         headers["Content-Length"] = response.headers["content-length"]
@@ -92,7 +92,6 @@ async def open_parquet(source: ResultSource) -> tuple[AsyncIterator[bytes], dict
             # Here, not in a background task: Starlette skips those when the client
             # disconnects, which would leak the upstream connection.
             await response.aclose()
-            await client.aclose()
             record_rows_proxy(time.perf_counter() - started)
 
     return stream(), headers
@@ -111,14 +110,13 @@ async def open_arrow(source: ResultSource) -> AsyncIterator[bytes]:
             if source.inline is not None:
                 spool.write(source.inline)
             else:
-                client, response = await query_service.open_result_stream(source)
+                response = await query_service.open_result_stream(source)
                 started = time.perf_counter()
                 try:
                     async for chunk in _relay(source, response):
                         spool.write(chunk)
                 finally:
                     await response.aclose()
-                    await client.aclose()
                     record_rows_proxy(time.perf_counter() - started)
     except BaseException:
         with contextlib.suppress(FileNotFoundError):
@@ -206,7 +204,7 @@ async def read_arrow_inline(source: ResultSource, max_bytes: int) -> str | None:
     if source.inline is not None:
         data = source.inline
     else:
-        client, response = await query_service.open_result_stream(source)
+        response = await query_service.open_result_stream(source)
         started = time.perf_counter()
         chunks: list[bytes] = []
         size = 0
@@ -218,7 +216,6 @@ async def read_arrow_inline(source: ResultSource, max_bytes: int) -> str | None:
                 chunks.append(chunk)
         finally:
             await response.aclose()
-            await client.aclose()
             record_rows_proxy(time.perf_counter() - started)
         data = b"".join(chunks)
     if len(data) > max_bytes:

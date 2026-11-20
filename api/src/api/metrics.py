@@ -416,7 +416,7 @@ def record_rows_proxy(seconds: float) -> None:
     """Time spent fetching one result page from the agent, including connection setup.
 
     Separate from the decode it precedes: they have different causes and different
-    fixes, and reporting them together hid that one of them builds a fresh HTTP
+    fixes, and reporting them together hid that the fetch once built a fresh HTTP
     client per call.
     """
     QUERY_ROWS_PROXY.labels(settings.replica_id).observe(seconds)

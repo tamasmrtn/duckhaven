@@ -40,7 +40,7 @@ from api.models.table_metadata import TableMetadata
 from api.models.user import Credential
 from api.models.workspace import Workspace
 from api.schemas.query import RowsPageOut
-from api.services import agent_access, delegation
+from api.services import agent_access, agent_http, delegation
 from api.services import grants as grant_service
 from api.services import runtimes as runtime_service
 from api.services.addresses import result_url
@@ -839,13 +839,10 @@ async def proxy_rows(
     if token:
         headers["Authorization"] = f"Bearer {token}"
     # Timed here rather than at the call sites so all three of them (the rows route,
-    # the table sample, the SQL-metadata reader) are covered by one instrument, and
-    # so the measurement includes building the client -- which is the part worth
-    # watching, since a fresh one is constructed per call.
+    # the table sample, the SQL-metadata reader) are covered by one instrument.
     started = time.perf_counter()
     try:
-        async with httpx.AsyncClient() as client:
-            return await client.get(url, params=params, headers=headers)
+        return await agent_http.client().get(url, params=params, headers=headers)
     finally:
         record_rows_proxy(time.perf_counter() - started)
 
@@ -972,20 +969,22 @@ def _raise_for_upstream(status_code: int) -> None:
         )
 
 
-async def open_result_stream(source: ResultSource) -> tuple[httpx.AsyncClient, httpx.Response]:
-    """Open the agent's whole result file as a stream. The caller closes both.
+async def open_result_stream(source: ResultSource) -> httpx.Response:
+    """Open the agent's whole result file as a stream. The caller closes it.
 
     Raises the HTTPException a failed read maps to, having closed what it opened.
     No read timeout: a large result legitimately takes a while to stream.
     """
     headers = {"Authorization": f"Bearer {source.token}"} if source.token else {}
-    client = httpx.AsyncClient(timeout=httpx.Timeout(10.0, read=None))
+    client = agent_http.client()
     try:
         response = await client.send(
-            client.build_request("GET", source.url, headers=headers), stream=True
+            client.build_request(
+                "GET", source.url, headers=headers, timeout=httpx.Timeout(10.0, read=None)
+            ),
+            stream=True,
         )
     except httpx.HTTPError as exc:
-        await client.aclose()
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Agent result endpoint unavailable",

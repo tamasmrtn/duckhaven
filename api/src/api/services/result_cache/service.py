@@ -46,6 +46,7 @@ from api.models.catalog import Catalog
 from api.models.query import Query
 from api.models.result_cache import ResultCacheEntry
 from api.models.workspace import Workspace
+from api.services import agent_http
 from api.services.addresses import result_url
 from api.services.catalog_backends import CatalogBackendError, TableVersion, backend_for
 from api.services.catalog_refs import statement_catalogs
@@ -280,8 +281,11 @@ async def _agent_result_available(db: AsyncSession, entry: ResultCacheEntry) -> 
         return False
     token = await agent_session_token(db, agent.id)
     try:
-        async with httpx.AsyncClient(timeout=settings.result_cache_lookup_timeout_s) as client:
-            resp = await client.head(url, headers={"Authorization": f"Bearer {token}"})
+        resp = await agent_http.client().head(
+            url,
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=settings.result_cache_lookup_timeout_s,
+        )
     except httpx.HTTPError:
         return False
     return resp.status_code == 200

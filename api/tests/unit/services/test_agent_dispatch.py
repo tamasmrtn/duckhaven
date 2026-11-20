@@ -125,21 +125,12 @@ async def test_send_to_agent_forwards_to_owner(db_session, monkeypatch, _own_rep
             return {"delivered": True}
 
     class FakeClient:
-        def __init__(self, *a, **k):
-            pass
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *a):
-            return False
-
-        async def post(self, url, json, headers):
+        async def post(self, url, json, headers, timeout):
             captured["url"] = url
             captured["headers"] = headers
             return FakeResp()
 
-    monkeypatch.setattr(agent_dispatch.httpx, "AsyncClient", FakeClient)
+    monkeypatch.setattr(agent_dispatch.agent_http, "client", FakeClient)
     assert await send_to_agent(db_session, agent.id, "frame") is True
     assert captured["url"] == f"http://peer:8000/internal/agents/{agent.id}/send"
     assert captured["headers"]["X-Internal-Secret"] == "shared"

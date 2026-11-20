@@ -142,13 +142,12 @@ async def _done_on_agent_at(db, host: str) -> Query:
 
 async def test_a_stored_host_that_is_not_bare_is_never_fetched(sessions, monkeypatch) -> None:
     """Cache admission and revalidation read from the agent only at a bare host."""
-    from api.services import agent_dispatch
+    from api.services import agent_dispatch, agent_http
     from api.services.result_cache.storage import store
 
     requests: list[httpx.Request] = []
     transport = httpx.MockTransport(lambda r: requests.append(r) or httpx.Response(200))
-    real_client = httpx.AsyncClient
-    monkeypatch.setattr(httpx, "AsyncClient", lambda *a, **kw: real_client(transport=transport))
+    monkeypatch.setattr(agent_http, "client", lambda: httpx.AsyncClient(transport=transport))
 
     async def connected(db, agent_id) -> bool:
         return True

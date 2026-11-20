@@ -57,6 +57,7 @@ from api.routers.admin import maintenance as admin_maintenance
 from api.routers.admin import service_accounts as admin_service_accounts
 from api.routers.admin import storage as admin_storage
 from api.routers.admin import users as admin_users
+from api.services import agent_http
 from api.services.agent_dispatch import drain_local_agents
 from api.services.assistant.identity import ASSISTANT_EMAIL
 from api.services.assistant.knowledge.sync import sync_corpus
@@ -244,6 +245,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
         await drain_admissions()
         await app.state.polaris_client.aclose()
+        await agent_http.aclose()
         await dispose_ducklake_engine()
         await dispose_system_catalog_engine()
 

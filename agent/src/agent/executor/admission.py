@@ -66,7 +66,12 @@ from collections import deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
-from agent.metrics.system import effective_cores, effective_memory_bytes, effective_pids_limit
+from agent.metrics.system import (
+    effective_cores,
+    effective_memory_bytes,
+    effective_pids_current,
+    effective_pids_limit,
+)
 from duckhaven_shared.concurrency import CONCURRENCY_PROFILES, DEFAULT_PROFILE
 
 logger = logging.getLogger(__name__)
@@ -83,6 +88,21 @@ def default_pids_reserve(async_threads: int) -> int:
     the pool, so on larger agents the cap is the safer bound, not the reserve.
     """
     return 224 if async_threads > 0 else 64
+
+
+def open_transient_threads(async_threads: int) -> int:
+    """Threads one connection open holds at its peak above the connection's settled
+    count: signature checks on one thread per MiB of extension, and the warm-spare
+    refill behind the open. Measured one open at a time: about 30 on an 8-core DuckDB
+    1.5 agent, about 85 on a 6-core DuckDB 2.0 agent. Opens under way together hash
+    at once and peak higher: ten at once on DuckDB 1.5 passed 41 each, so 1.5 counts
+    48.
+    """
+    return 96 if async_threads > 0 else 48
+
+
+# How often an open waiting for room under the pids limit looks again.
+_OPEN_ROOM_POLL_S = 0.05
 
 
 class QueueFull(Exception):
@@ -174,6 +194,7 @@ class Admission:
         mem_bytes_provider=None,
         cores_provider=None,
         pids_provider=None,
+        pids_current_provider=None,
         pids_reserve: int = 0,
         async_threads: int = 0,
     ) -> None:
@@ -185,6 +206,7 @@ class Admission:
         self._budget = max(1, int(mem_bytes_provider() * (1 - headroom)))
         self._cores = max(1, cores_provider())
         self._pids_limit = pids_provider()
+        self._pids_current = pids_current_provider or effective_pids_current
         self._async_threads = max(0, async_threads)
         self._max_connections = self._connection_ceiling(self._pids_limit, pids_reserve)
         self._log_connection_cap(pids_reserve)
@@ -192,6 +214,9 @@ class Admission:
         # burst of threads big enough to matter (see the module docstring).
         bounded = self._pids_limit is not None and self._async_threads > 0
         self._open_gate = asyncio.Semaphore(1) if bounded else None
+        # Opens past the room check whose threads may not all exist yet; each is
+        # counted at its peak (see ``_await_room_to_open``).
+        self._opens_in_flight = 0
         # Connections opened ahead of their reservation (``try_open_slot``).
         self._pending_slots = 0
         self._max_queue_depth = max_queue_depth
@@ -242,12 +267,60 @@ class Admission:
 
     @contextlib.asynccontextmanager
     async def opening(self):
-        """Hold while a connection is being opened, so too many opens never overlap."""
-        if self._open_gate is None:
-            yield
+        """Hold while a connection is being opened, so too many opens never overlap.
+
+        Where the engine has an async pool, opens run one at a time. Under a pids
+        limit, an open also waits until the container has room for it at its peak.
+        """
+        async with self._open_gate if self._open_gate is not None else contextlib.nullcontext():
+            await self._await_room_to_open()
+            self._opens_in_flight += 1
+            try:
+                yield
+            finally:
+                self._opens_in_flight -= 1
+
+    async def _await_room_to_open(self) -> None:
+        """Wait until the pids limit has room for one more open at its peak.
+
+        The connection ceiling bounds the connections that stay open, but not the
+        threads they hold while they open: a burst of 64 session opens on an 8-core
+        DuckDB 1.5 agent ran eight at a time, peaked past its 512-thread limit and
+        took the agent down. Read from the cgroup, so whatever else is running is
+        counted; opens already past this check count at their peak, because their
+        threads may not exist yet. One more open's peak stays free for the warm-spare
+        refill, which runs behind the opens without passing here: without it, a
+        refill behind eleven opens under way took the agent past the limit.
+
+        Never waits when nothing else holds or is opening a connection: there is
+        nothing to wait for then.
+        """
+        if self._pids_limit is None:
             return
-        async with self._open_gate:
-            yield
+        cost = self.threads_for_statement() - 1 + self._async_threads
+        cost += open_transient_threads(self._async_threads)
+        logged = False
+        while True:
+            current = self._pids_current()
+            if current is None:
+                return
+            # this open, the ones under way, and a refill behind them
+            if current + (self._opens_in_flight + 2) * cost <= self._pids_limit:
+                return
+            others = self._running + self._pending_slots - 1 + self._opens_in_flight
+            if others <= 0:
+                return
+            if not logged:
+                logger.info(
+                    "A connection open waits for room: %d of %d threads in use, %d opens "
+                    "in flight, %d needed for each",
+                    current,
+                    self._pids_limit,
+                    self._opens_in_flight,
+                    cost,
+                )
+                logged = True
+            await asyncio.sleep(_OPEN_ROOM_POLL_S)
 
     def _log_connection_cap(self, reserve: int) -> None:
         """Say once, at start-up, how the pids limit became a cap on open connections."""

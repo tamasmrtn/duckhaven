@@ -118,7 +118,10 @@
 - [Dashboard files](https://tamasmrtn.github.io/duckhaven/reference/dashboard-spec/): A dashboard is one YAML file, <name>.dashboard.yml, that lists parameters and rows of widgets.
 - [Permissions](https://tamasmrtn.github.io/duckhaven/reference/permissions/): Every global permission, workspace role, data-grant tier and agent tier in DuckHaven, and what each one allows.
 - [Audit events](https://tamasmrtn.github.io/duckhaven/reference/audit-events/): Every action the access audit log records, the fields each event carries, and what each action puts in before, after and details.
-- [System catalog tables](https://tamasmrtn.github.io/duckhaven/reference/system-catalog/): Every table and column of the duckhaven system catalog, which you query in SQL: info_schema as any member, the rest with the permission each table needs.
+- [System catalog tables](https://tamasmrtn.github.io/duckhaven/reference/system-catalog/): Every table of the duckhaven system catalog: what it holds, the permission it needs, how often it is refreshed and how long it keeps its rows.
+- [info_schema tables](https://tamasmrtn.github.io/duckhaven/reference/system-catalog-info-schema/): Every column of the duckhaven.info_schema tables, which any member of a workspace queries in SQL to list its catalogs, schemas, tables, columns, macros and semantic models.
+- [Access and lineage tables](https://tamasmrtn.github.io/duckhaven/reference/system-catalog-access/): Every column of the duckhaven.access and duckhaven.lineage tables: the audit log, current access, accounts, tokens, which tables each query used, and lineage.
+- [Operations tables](https://tamasmrtn.github.io/duckhaven/reference/system-catalog-operations/): Every column of the duckhaven tables of queries, SQL sessions, schedules, compute, storage and the assistant: the query, jobs, compute, storage and ai schemas.
 - [Agent configuration](https://tamasmrtn.github.io/duckhaven/reference/agent-configuration/): Every environment variable an agent reads; an agent needs only CONTROL_PLANE_URL and BOOTSTRAP_TOKEN.
 - [CLI reference](https://tamasmrtn.github.io/duckhaven/reference/cli/): Every dh command, its summary and its flags.
 - [REST API](https://tamasmrtn.github.io/duckhaven/reference/rest-api/): DuckHaven's REST API, under /api, does everything the web UI does, so any task can be scripted with a token.

@@ -255,6 +255,9 @@ nav:
       - Permissions: reference/permissions.md
       - Audit events: reference/audit-events.md
       - System catalog tables: reference/system-catalog.md
+      - info_schema tables: reference/system-catalog-info-schema.md
+      - Access and lineage tables: reference/system-catalog-access.md
+      - Operations tables: reference/system-catalog-operations.md
       - Agent configuration: reference/agent-configuration.md
       - CLI reference: reference/cli.md
       - REST API: reference/rest-api.md

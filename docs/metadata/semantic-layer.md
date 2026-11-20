@@ -236,7 +236,8 @@ WHERE validation_state = 'broken'
 ORDER BY model_slug, name;
 ```
 
-Every column is in the [system catalog reference](../reference/system-catalog.md#info_schemasemantic_models).
+Every column is in
+[info_schema tables](../reference/system-catalog-info-schema.md#info_schemasemantic_models).
 
 ## Related
 

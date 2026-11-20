@@ -405,8 +405,23 @@ pages:
 - path: reference/system-catalog.md
   title: System catalog tables
   section: Reference
-  summary: 'Every table and column of the duckhaven system catalog, which you query in SQL: info_schema
-    as any member, the rest with the permission each table needs.'
+  summary: 'Every table of the duckhaven system catalog: what it holds, the permission it needs, how
+    often it is refreshed and how long it keeps its rows.'
+- path: reference/system-catalog-info-schema.md
+  title: info_schema tables
+  section: Reference
+  summary: Every column of the duckhaven.info_schema tables, which any member of a workspace queries
+    in SQL to list its catalogs, schemas, tables, columns, macros and semantic models.
+- path: reference/system-catalog-access.md
+  title: Access and lineage tables
+  section: Reference
+  summary: 'Every column of the duckhaven.access and duckhaven.lineage tables: the audit log, current
+    access, accounts, tokens, which tables each query used, and lineage.'
+- path: reference/system-catalog-operations.md
+  title: Operations tables
+  section: Reference
+  summary: 'Every column of the duckhaven tables of queries, SQL sessions, schedules, compute, storage
+    and the assistant: the query, jobs, compute, storage and ai schemas.'
 - path: reference/agent-configuration.md
   title: Agent configuration
   section: Reference

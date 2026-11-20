@@ -321,8 +321,10 @@ def test_each_resident_block_is_within_budget():
     # Troubleshoot queries and the SQL sessions API reference. Raised from 4,100
     # for the Dashboard files reference, with room for the dashboards pages to come.
     # Raised from 4,400 for the access audit log's concept, how-to and reference,
-    # and from 4,600 for the system catalog's concept and reference.
-    assert len(DOCS_INDEX_PROMPT.format(index=load_index().prompt_block)) <= 4_700
+    # and from 4,600 for the system catalog's concept and reference. Raised from
+    # 4,700 for the system catalog reference's split into an index and three pages,
+    # which the assistant can each read whole.
+    assert len(DOCS_INDEX_PROMPT.format(index=load_index().prompt_block)) <= 4_900
 
 
 def test_the_ducklake_block_is_injected_only_where_ducklake_exists():
@@ -397,8 +399,9 @@ def test_the_assembled_instructions_are_within_budget():
     # for the ducklake_*() refusal every workspace now gets, from 11,600 for
     # the docs index line of the page on finding your way around the app, and
     # from 11,700 for the three access audit log pages' index lines, and from
-    # 11,900 for the system catalog's two.
-    assert len(build_instructions(ctx())) <= 12_000
+    # 11,900 for the system catalog's two, and from 12,000 for the three pages its
+    # reference was split into.
+    assert len(build_instructions(ctx())) <= 12_200
 
     everything = build_instructions(
         ctx(
@@ -417,14 +420,16 @@ def test_the_assembled_instructions_are_within_budget():
     # Agent monitoring page (split out of Monitoring, which had reached the
     # read_doc_page cap) is one of them, the querying rewrite added four, the
     # Dashboard files reference one more, finding your way around the app one
-    # more, the access audit log three, and the system catalog two.
+    # more, the access audit log three, the system catalog two, and the split of
+    # its reference three more.
     # Raised from 16,400 for the base block's dashboards guidance and the largest
     # page block a dashboard request can describe (~1,500), and from 18,300 for
     # the base block's guidance on proposing dashboard changes, and from 18,600
     # for the date block and the ducklake_*() refusal moving into the base block,
     # from 18,800 for the app-navigation index line, from 18,900 for the
-    # audit log's three, and from 19,100 for the system catalog's two.
-    assert len(everything) <= 19_200
+    # audit log's three, from 19,100 for the system catalog's two, and from
+    # 19,200 for the three pages its reference was split into.
+    assert len(everything) <= 19_400
 
 
 def test_a_dashboard_page_names_where_the_user_is_and_what_they_chose():

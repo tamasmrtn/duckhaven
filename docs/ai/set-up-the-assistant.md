@@ -91,7 +91,7 @@ ORDER BY tokens DESC;
 
 You see one row per person and workspace, the heaviest first. `duckhaven.ai.tool_calls` holds each call's tool and
 outcome, as listed in [How governance works](assistant.md#how-governance-works). Every column is in the
-[system catalog reference](../reference/system-catalog.md#aiassistant_usage).
+[system catalog reference](../reference/system-catalog-operations.md#aiassistant_usage).
 
 ## If it goes wrong
 

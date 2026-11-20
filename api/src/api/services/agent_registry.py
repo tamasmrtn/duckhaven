@@ -67,7 +67,9 @@ class ConnectionManager:
             return False
         # Post-send log: the send-side half of the frame trail. Together with the
         # agent's receive log this localizes a lost frame to one side of the wire.
-        logger.info("Frame sent to agent %s: %s", agent_id, payload[:200])
+        # DEBUG, since it fires for every frame to every agent: LOG_LEVEL=DEBUG
+        # turns it on when a lost frame needs chasing.
+        logger.debug("Frame sent to agent %s: %s", agent_id, payload[:200])
         return True
 
     async def close(self, agent_id: uuid.UUID, code: int = 1012) -> bool:

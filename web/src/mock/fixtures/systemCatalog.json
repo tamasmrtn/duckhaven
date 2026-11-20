@@ -711,6 +711,90 @@
       ]
     },
     {
+      "schema_name": "query",
+      "name": "sessions",
+      "description": "SQL sessions, open and ended",
+      "permission": "queries:admin",
+      "columns": [
+        {
+          "name": "session_id",
+          "type": "UUID"
+        },
+        {
+          "name": "workspace_id",
+          "type": "UUID"
+        },
+        {
+          "name": "workspace_slug",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "user_id",
+          "type": "UUID"
+        },
+        {
+          "name": "user_email",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "agent_id",
+          "type": "UUID"
+        },
+        {
+          "name": "agent_name",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "runtime_id",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "status",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "close_reason",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "error",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "client_name",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "client_version",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "active_catalog",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "use_cache",
+          "type": "BOOLEAN"
+        },
+        {
+          "name": "created_at",
+          "type": "TIMESTAMP WITH TIME ZONE"
+        },
+        {
+          "name": "opened_at",
+          "type": "TIMESTAMP WITH TIME ZONE"
+        },
+        {
+          "name": "last_active_at",
+          "type": "TIMESTAMP WITH TIME ZONE"
+        },
+        {
+          "name": "closed_at",
+          "type": "TIMESTAMP WITH TIME ZONE"
+        }
+      ]
+    },
+    {
       "schema_name": "lineage",
       "name": "table_lineage",
       "description": "Which tables feed which, and how often",
@@ -879,6 +963,442 @@
         {
           "name": "snapshot_time",
           "type": "TIMESTAMP WITH TIME ZONE"
+        }
+      ]
+    },
+    {
+      "schema_name": "jobs",
+      "name": "schedules",
+      "description": "Scheduled jobs, and how each last ran",
+      "permission": "queries:admin",
+      "columns": [
+        {
+          "name": "schedule_id",
+          "type": "UUID"
+        },
+        {
+          "name": "workspace_id",
+          "type": "UUID"
+        },
+        {
+          "name": "workspace_slug",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "job_type",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "saved_query_id",
+          "type": "UUID"
+        },
+        {
+          "name": "saved_query_name",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "agent_id",
+          "type": "UUID"
+        },
+        {
+          "name": "agent_name",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "cron",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "timezone",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "enabled",
+          "type": "BOOLEAN"
+        },
+        {
+          "name": "next_run_at",
+          "type": "TIMESTAMP WITH TIME ZONE"
+        },
+        {
+          "name": "last_run_at",
+          "type": "TIMESTAMP WITH TIME ZONE"
+        },
+        {
+          "name": "last_run_query_id",
+          "type": "UUID"
+        },
+        {
+          "name": "last_run_status",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "created_by_id",
+          "type": "UUID"
+        },
+        {
+          "name": "created_by_email",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "created_at",
+          "type": "TIMESTAMP WITH TIME ZONE"
+        },
+        {
+          "name": "snapshot_time",
+          "type": "TIMESTAMP WITH TIME ZONE"
+        }
+      ]
+    },
+    {
+      "schema_name": "compute",
+      "name": "agents",
+      "description": "Every agent, and its state now",
+      "permission": "agents:manage",
+      "columns": [
+        {
+          "name": "agent_id",
+          "type": "UUID"
+        },
+        {
+          "name": "name",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "kind",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "provider",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "status",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "lifecycle",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "access_mode",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "runtime_id",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "duckdb_version",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "agent_version",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "cores",
+          "type": "INTEGER"
+        },
+        {
+          "name": "memory_limit_gb",
+          "type": "DOUBLE"
+        },
+        {
+          "name": "requested_cpu",
+          "type": "DOUBLE"
+        },
+        {
+          "name": "requested_memory_gb",
+          "type": "DOUBLE"
+        },
+        {
+          "name": "idle_timeout_s",
+          "type": "DOUBLE"
+        },
+        {
+          "name": "max_timeout_s",
+          "type": "DOUBLE"
+        },
+        {
+          "name": "created_at",
+          "type": "TIMESTAMP WITH TIME ZONE"
+        },
+        {
+          "name": "provisioned_at",
+          "type": "TIMESTAMP WITH TIME ZONE"
+        },
+        {
+          "name": "terminated_at",
+          "type": "TIMESTAMP WITH TIME ZONE"
+        },
+        {
+          "name": "last_ping_at",
+          "type": "TIMESTAMP WITH TIME ZONE"
+        },
+        {
+          "name": "last_active_at",
+          "type": "TIMESTAMP WITH TIME ZONE"
+        },
+        {
+          "name": "snapshot_time",
+          "type": "TIMESTAMP WITH TIME ZONE"
+        }
+      ]
+    },
+    {
+      "schema_name": "compute",
+      "name": "agent_events",
+      "description": "Each time an agent started, connected, disconnected or stopped",
+      "permission": "agents:manage",
+      "columns": [
+        {
+          "name": "event_id",
+          "type": "UUID"
+        },
+        {
+          "name": "agent_id",
+          "type": "UUID"
+        },
+        {
+          "name": "agent_name",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "event",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "reason",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "event_time",
+          "type": "TIMESTAMP WITH TIME ZONE"
+        }
+      ]
+    },
+    {
+      "schema_name": "compute",
+      "name": "agent_utilization",
+      "description": "Each agent's CPU, memory and queue, minute by minute",
+      "permission": "agents:manage",
+      "columns": [
+        {
+          "name": "agent_id",
+          "type": "UUID"
+        },
+        {
+          "name": "minute",
+          "type": "TIMESTAMP WITH TIME ZONE"
+        },
+        {
+          "name": "agent_name",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "cpu_avg_percent",
+          "type": "DOUBLE"
+        },
+        {
+          "name": "cpu_max_percent",
+          "type": "DOUBLE"
+        },
+        {
+          "name": "memory_avg_percent",
+          "type": "DOUBLE"
+        },
+        {
+          "name": "memory_max_percent",
+          "type": "DOUBLE"
+        },
+        {
+          "name": "running_queries_max",
+          "type": "INTEGER"
+        },
+        {
+          "name": "queued_queries_max",
+          "type": "INTEGER"
+        },
+        {
+          "name": "sessions_max",
+          "type": "INTEGER"
+        },
+        {
+          "name": "sample_count",
+          "type": "INTEGER"
+        },
+        {
+          "name": "covered_seconds",
+          "type": "DOUBLE"
+        },
+        {
+          "name": "oom_kills",
+          "type": "INTEGER"
+        }
+      ]
+    },
+    {
+      "schema_name": "storage",
+      "name": "table_health",
+      "description": "Each table's health at each maintenance scan",
+      "permission": "maintenance:manage",
+      "columns": [
+        {
+          "name": "sample_id",
+          "type": "UUID"
+        },
+        {
+          "name": "scanned_at",
+          "type": "TIMESTAMP WITH TIME ZONE"
+        },
+        {
+          "name": "catalog_id",
+          "type": "UUID"
+        },
+        {
+          "name": "catalog_name",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "workspace_id",
+          "type": "UUID"
+        },
+        {
+          "name": "workspace_slug",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "schema_name",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "table_name",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "score",
+          "type": "INTEGER"
+        },
+        {
+          "name": "snapshot_count",
+          "type": "INTEGER"
+        },
+        {
+          "name": "snapshot_id",
+          "type": "BIGINT"
+        },
+        {
+          "name": "oldest_snapshot_age_days",
+          "type": "DOUBLE"
+        },
+        {
+          "name": "data_file_count",
+          "type": "INTEGER"
+        },
+        {
+          "name": "manifest_count",
+          "type": "INTEGER"
+        },
+        {
+          "name": "total_data_bytes",
+          "type": "BIGINT"
+        },
+        {
+          "name": "avg_file_bytes",
+          "type": "BIGINT"
+        },
+        {
+          "name": "metadata_bytes",
+          "type": "BIGINT"
+        },
+        {
+          "name": "orphan_bytes",
+          "type": "BIGINT"
+        },
+        {
+          "name": "orphan_file_count",
+          "type": "INTEGER"
+        },
+        {
+          "name": "small_file_ratio",
+          "type": "DOUBLE"
+        },
+        {
+          "name": "factors",
+          "type": "VARCHAR"
+        }
+      ]
+    },
+    {
+      "schema_name": "storage",
+      "name": "maintenance_operations",
+      "description": "Each maintenance run on a table, and its outcome",
+      "permission": "maintenance:manage",
+      "columns": [
+        {
+          "name": "query_id",
+          "type": "UUID"
+        },
+        {
+          "name": "recommendation_id",
+          "type": "UUID"
+        },
+        {
+          "name": "kind",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "catalog_id",
+          "type": "UUID"
+        },
+        {
+          "name": "catalog_name",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "workspace_id",
+          "type": "UUID"
+        },
+        {
+          "name": "workspace_slug",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "schema_name",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "table_name",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "status",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "error",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "result",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "started_at",
+          "type": "TIMESTAMP WITH TIME ZONE"
+        },
+        {
+          "name": "finished_at",
+          "type": "TIMESTAMP WITH TIME ZONE"
+        },
+        {
+          "name": "applied_by_id",
+          "type": "UUID"
+        },
+        {
+          "name": "applied_by_email",
+          "type": "VARCHAR"
         }
       ]
     }

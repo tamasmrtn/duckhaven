@@ -190,6 +190,10 @@ A workable cadence for a mid-sized deployment:
 - **Catalog table detail** — a Health panel beside the snapshot history: the table's score, factor breakdown,
   storage-growth trend, and recommendations.
 - **Admin → Maintenance** — the policy form, last-scan status, and a manual **Scan now** trigger.
+- **SQL** — holders of `maintenance:manage` can query every table's health at every scan, and every apply with its
+  outcome, as `duckhaven.storage.table_health` and `duckhaven.storage.maintenance_operations` in the
+  [system catalog](../querying/system-catalog.md). Its health history is kept a year by default; the trend here reads 30
+  days.
 
 ## Related
 

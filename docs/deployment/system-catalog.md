@@ -4,8 +4,8 @@ type: how-to
 
 # Enable the system catalog database
 
-DuckHaven keeps a read-only copy of its audit log, access, query history, lineage and catalog metadata in a second
-Postgres database, `duckhaven_system`, refreshed every 10 seconds.
+DuckHaven keeps a read-only copy of its own records and of each catalog's metadata in a second Postgres database,
+`duckhaven_system`, refreshed every 10 seconds.
 
 People query the copy in SQL as the `duckhaven` catalog, each table with the permission it needs; see
 [System catalog](../querying/system-catalog.md). It is kept apart from `duckhaven`, the database that holds users,
@@ -30,11 +30,21 @@ A new install creates the database on first start. An install that predates it n
 
 ## What it holds
 
-Four schemas: `info_schema`, the schemas, tables and columns of every catalog; `access`, the
-[access audit log](../access/audit-log.md), current access, users, workspaces, tokens and which tables each query read
-and wrote; `query.history`, finished queries; and `lineage`, the lineage graph. Their tables, columns, and how long each
-keeps its rows, are in the [system catalog reference](../reference/system-catalog.md). Deleting a workspace removes its
-queries from History, but not from the copy.
+Seven schemas:
+
+- `info_schema`: the schemas, tables and columns of every catalog.
+- `access`: the [access audit log](../access/audit-log.md), current access, users, workspaces, tokens, and which tables
+  each query read and wrote.
+- `query`: finished queries and SQL sessions.
+- `lineage`: the lineage graph.
+- `jobs`: schedules.
+- `compute`: agents, their state changes and their minute-by-minute utilization.
+- `storage`: table health at each maintenance scan, and each maintenance apply.
+
+Their tables, columns, and how long each keeps its rows, are in the
+[system catalog reference](../reference/system-catalog.md). The copy keeps what DuckHaven's own pages let go: deleting a
+workspace removes its queries from History but not from the copy, and agent utilization, which the monitoring page
+keeps for a week, stays for `SYSTEM_CATALOG_RETENTION_DAYS`.
 
 The copy trails `duckhaven` by up to the publish interval. An audit event joins it once every transaction that was
 writing before it on the same Postgres server has finished, so a transaction that runs for minutes holds the audit copy

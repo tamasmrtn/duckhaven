@@ -95,6 +95,9 @@ def test_contributor_docs_are_left_out():
 TRUNCATES = {
     "reference/configuration.md",
     "reference/rest-api.md",
+    # Every column of every system catalog table: one question, and a query can
+    # read the same columns from the catalog itself with DESCRIBE.
+    "reference/system-catalog.md",
 }
 
 

@@ -102,7 +102,7 @@ pages:
   title: System catalog
   section: Querying
   summary: The duckhaven catalog lets you query, read-only in SQL, the schemas, tables and columns
-    you can see, and DuckHaven's audit log, access, query history and lineage.
+    you can see, and DuckHaven's own records of access, queries, compute and storage.
 - path: querying/troubleshooting.md
   title: Troubleshoot queries
   section: Querying
@@ -334,8 +334,8 @@ pages:
 - path: deployment/system-catalog.md
   title: Enable the system catalog
   section: Deploy
-  summary: DuckHaven keeps a read-only copy of its audit log, access, query history, lineage and catalog
-    metadata in a second Postgres database, duckhaven_system, refreshed every 10 seconds.
+  summary: DuckHaven keeps a read-only copy of its own records and of each catalog's metadata in a
+    second Postgres database, duckhaven_system, refreshed every 10 seconds.
 - path: deployment/high-availability.md
   title: High availability
   section: Deploy

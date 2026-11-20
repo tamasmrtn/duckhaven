@@ -5,8 +5,8 @@ type: concept
 # System catalog
 
 The `duckhaven` catalog lets you query, read-only in SQL, the schemas, tables and columns you can see, and DuckHaven's
-audit log, access, query history and lineage. Every member can read its `info_schema`, which shows each person only what
-they can see; each other table needs a permission of its own.
+own records of access, queries, compute and storage. Every member can read its `info_schema`, which shows each person
+only what they can see; each other table needs a permission of its own.
 
 !!! info "Availability"
     On the single-host Compose stack, on by default; see
@@ -39,8 +39,15 @@ ORDER BY schema_name, table_name;
 | `duckhaven.access.credentials` | Every personal access token: who holds it, and until when | `audit:read` |
 | `duckhaven.access.table_access` | Each table a finished query read or wrote, and who ran it | `audit:read` |
 | `duckhaven.query.history` | Finished queries, with who ran them, where, on which agent, for how long and at what cost | `queries:admin` |
+| `duckhaven.query.sessions` | SQL sessions, open and ended, and why each ended | `queries:admin` |
 | `duckhaven.lineage.table_lineage` | Which tables feed which, in every catalog | `audit:read` |
 | `duckhaven.lineage.column_lineage` | Which columns feed which | `audit:read` |
+| `duckhaven.jobs.schedules` | Every schedule, and how it last ran | `queries:admin` |
+| `duckhaven.compute.agents` | Every agent, and its state | `agents:manage` |
+| `duckhaven.compute.agent_events` | Each time an agent started, connected, disconnected or stopped | `agents:manage` |
+| `duckhaven.compute.agent_utilization` | Each agent's CPU, memory and queue, minute by minute, for a year by default | `agents:manage` |
+| `duckhaven.storage.table_health` | Each table's health at each maintenance scan | `maintenance:manage` |
+| `duckhaven.storage.maintenance_operations` | Each maintenance apply, and how it ended | `maintenance:manage` |
 
 Every column, and how long each table keeps its rows, is in the
 [system catalog reference](../reference/system-catalog.md).
@@ -77,6 +84,17 @@ WHERE catalog_name = 'sales' AND schema_name = 'analytics' AND table_name = 'ord
   AND access = 'read' AND finished_at > now() - INTERVAL 7 DAY
 GROUP BY user_email
 ORDER BY queries DESC;
+```
+
+To see how busy each agent was each day of the last month:
+
+```sql
+SELECT agent_name, date_trunc('day', minute) AS day,
+       round(avg(cpu_avg_percent), 1) AS cpu_percent, max(queued_queries_max) AS most_queued
+FROM duckhaven.compute.agent_utilization
+WHERE minute > now() - INTERVAL 30 DAY
+GROUP BY agent_name, day
+ORDER BY agent_name, day;
 ```
 
 `before`, `after` and `details` in `access.audit`, and `tags` in `query.history`, are JSON text. Read a field with
@@ -156,7 +174,9 @@ table it reads:
 |---|---|
 | `duckhaven.info_schema.catalogs`, `.schemata`, `.tables`, `.columns` | None |
 | Every table in `duckhaven.access` and `duckhaven.lineage` | `audit:read` |
-| `duckhaven.query.history` | `queries:admin` |
+| Every table in `duckhaven.query` and `duckhaven.jobs` | `queries:admin` |
+| Every table in `duckhaven.compute` | `agents:manage` |
+| Every table in `duckhaven.storage` | `maintenance:manage` |
 
 The `admin` role holds both; the [permissions reference](../reference/permissions.md) lists what else each allows. A
 query made for someone else, by the [assistant](../ai/assistant.md) say, needs the permission for each person it runs

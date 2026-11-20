@@ -96,3 +96,4 @@ the previous run's duration in **Runs**.
 - [Saved queries](saved-queries.md) — the query a schedule runs.
 - [Configuration → Scheduler](../reference/configuration.md#scheduler) — the loop's settings.
 - [High availability](../deployment/high-availability.md) — schedules across replicas.
+- [System catalog](system-catalog.md) — every schedule, in every workspace, in SQL as `duckhaven.jobs.schedules`.

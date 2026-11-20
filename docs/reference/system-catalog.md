@@ -21,8 +21,15 @@ with the permission each table needs. What the catalog is, and how a query reads
 | [`duckhaven.access.credentials`](#accesscredentials) | Every personal access token, never its secret | `audit:read` | Replaced with `access.grants` |
 | [`duckhaven.access.table_access`](#accesstable_access) | Each table a finished query read or wrote | `audit:read` | As `query.history` |
 | [`duckhaven.query.history`](#queryhistory) | Finished queries: `done`, `failed` or `cancelled` | `queries:admin` | `SYSTEM_CATALOG_QUERY_HISTORY_DAYS`, 365 days by default, counted from when each finished |
+| [`duckhaven.query.sessions`](#querysessions) | [SQL sessions](../querying/sql-sessions.md), open and ended | `queries:admin` | `SYSTEM_CATALOG_RETENTION_DAYS`, 365 days by default, counted from when each opened |
 | [`duckhaven.lineage.table_lineage`](#lineagetable_lineage) | Which tables feed which | `audit:read` | Replaced whole at least every 5 minutes |
 | [`duckhaven.lineage.column_lineage`](#lineagecolumn_lineage) | Which columns feed which | `audit:read` | Replaced whole at least every 5 minutes |
+| [`duckhaven.jobs.schedules`](#jobsschedules) | Every [schedule](../querying/schedule-queries.md), and how it last ran | `queries:admin` | Replaced whole every minute |
+| [`duckhaven.compute.agents`](#computeagents) | Every agent, and its state | `agents:manage` | Replaced whole every minute |
+| [`duckhaven.compute.agent_events`](#computeagent_events) | Each time an agent started, connected, disconnected or stopped | `agents:manage` | `SYSTEM_CATALOG_RETENTION_DAYS`, 365 days by default |
+| [`duckhaven.compute.agent_utilization`](#computeagent_utilization) | Each agent's CPU, memory and queue, minute by minute | `agents:manage` | `SYSTEM_CATALOG_RETENTION_DAYS`, 365 days by default |
+| [`duckhaven.storage.table_health`](#storagetable_health) | Each table's [health](../data/maintenance.md#health-score) at each maintenance scan | `maintenance:manage` | `SYSTEM_CATALOG_RETENTION_DAYS`, 365 days by default |
+| [`duckhaven.storage.maintenance_operations`](#storagemaintenance_operations) | Each [maintenance apply](../data/maintenance.md#applying-maintenance), and how it ended | `maintenance:manage` | `SYSTEM_CATALOG_RETENTION_DAYS`, 365 days by default |
 
 - **Columns are only added.** A column is never renamed, retyped or removed. Name the columns you read rather than
   `SELECT *` in anything that must keep working.
@@ -31,8 +38,11 @@ with the permission each table needs. What the catalog is, and how a query reads
 - **`info_schema` rows are filtered.** Each query sees the rows of its own workspace's catalogs that everyone it runs
   for can see; see [What info_schema shows](../querying/system-catalog.md#what-info_schema-shows), which also says how
   soon a change appears.
-- **JSON columns are text.** `before`, `after`, `details` and `tags` hold JSON; read a field with `->>`, as in
-  `after ->> 'tier'`.
+- **The copy keeps what the source drops.** Agent events and minutes, table health samples and maintenance applies
+  stay in the copy for their own retention, after DuckHaven's own pages have let them go, and after the agent, table or
+  workspace is deleted.
+- **JSON columns are text.** `before`, `after`, `details`, `tags`, `factors` and `result` hold JSON; read a field with
+  `->>`, as in `after ->> 'tier'`.
 
 ## info_schema.catalogs
 
@@ -260,6 +270,30 @@ reads and maintenance checks, are left out, and so are results and profiles.
 The last four are from the query's [profile](../querying/query-profiles.md), and are empty for a query without one,
 such as most DDL.
 
+## query.sessions
+
+One row per [SQL session](../querying/sql-sessions.md), as the [session audit trail](../querying/session-audit.md)
+shows it. A session appears within the publish interval of opening, and its row is updated until it ends. Its
+statements are in `query.history`, with this `session_id`.
+
+| Column | Type | Meaning |
+|---|---|---|
+| `session_id` | `UUID` | The session |
+| `workspace_id`, `workspace_slug` | `UUID`, `VARCHAR` | The workspace it runs in |
+| `user_id`, `user_email` | `UUID`, `VARCHAR` | Who opened it |
+| `agent_id`, `agent_name` | `UUID`, `VARCHAR` | The agent holding it; empty while compute starts |
+| `runtime_id` | `VARCHAR` | The agent's [runtime](../compute/runtimes.md) |
+| `status` | `VARCHAR` | `pending`, `opening`, `open` or `closing` while it lives; `closed`, `expired` or `failed` once it ends |
+| `close_reason` | `VARCHAR` | Why it ended: `client`, `idle`, `max_lifetime`, `open_timeout`, `agent_disconnect`, `agent_lease`, `failed`, `compute_timeout` or `provisioning_timeout`; see [Find out why a session ended](../querying/session-audit.md#find-out-why-a-session-ended) |
+| `error` | `VARCHAR` | What went wrong, for a session that failed |
+| `client_name`, `client_version` | `VARCHAR` | The tool that opened it, from its `User-Agent` |
+| `active_catalog` | `VARCHAR` | The catalog it opened in |
+| `use_cache` | `BOOLEAN` | Whether the [result cache](../querying/result-cache.md) may answer its statements |
+| `created_at` | `TIMESTAMP WITH TIME ZONE` | When it was asked for |
+| `opened_at` | `TIMESTAMP WITH TIME ZONE` | When it became usable; empty if it never did |
+| `last_active_at` | `TIMESTAMP WITH TIME ZONE` | Its last statement |
+| `closed_at` | `TIMESTAMP WITH TIME ZONE` | When it ended |
+
 ## lineage.table_lineage
 
 One row per relationship in the [lineage graph](../metadata/lineage.md), across every catalog, with every table named:
@@ -296,6 +330,124 @@ One row per column-to-column relationship, under a relationship of `table_lineag
 | `target_column` | `VARCHAR` | The target column |
 | `first_seen_at`, `last_seen_at` | `TIMESTAMP WITH TIME ZONE` | When it was first and last observed |
 | `snapshot_time` | `TIMESTAMP WITH TIME ZONE` | When the table was last replaced |
+
+## jobs.schedules
+
+One row per [schedule](../querying/schedule-queries.md), enabled or not.
+
+| Column | Type | Meaning |
+|---|---|---|
+| `schedule_id` | `UUID` | The schedule, as `schedule_id` in `query.history` |
+| `workspace_id`, `workspace_slug` | `UUID`, `VARCHAR` | Its workspace |
+| `job_type` | `VARCHAR` | What it runs: `saved_query` |
+| `saved_query_id`, `saved_query_name` | `UUID`, `VARCHAR` | The saved query it runs |
+| `agent_id`, `agent_name` | `UUID`, `VARCHAR` | The agent it asks for; empty to let DuckHaven pick one |
+| `cron` | `VARCHAR` | Its cron expression |
+| `timezone` | `VARCHAR` | The workspace's time zone, which the cron expression is read in |
+| `enabled` | `BOOLEAN` | Whether it runs |
+| `next_run_at`, `last_run_at` | `TIMESTAMP WITH TIME ZONE` | Its next and last run |
+| `last_run_query_id` | `UUID` | The query its last run started, as `id` in `query.history` |
+| `last_run_status` | `VARCHAR` | That query's status: `queued` or `running` while it runs, then `done`, `failed` or `cancelled` |
+| `created_by_id`, `created_by_email` | `UUID`, `VARCHAR` | Who created it |
+| `created_at` | `TIMESTAMP WITH TIME ZONE` | When it was created |
+| `snapshot_time` | `TIMESTAMP WITH TIME ZONE` | When the table was last replaced |
+
+## compute.agents
+
+One row per agent, static or [elastic](../compute/elastic-compute.md), as **Compute** lists it. A deleted agent drops
+out; its events and minutes stay.
+
+| Column | Type | Meaning |
+|---|---|---|
+| `agent_id`, `name` | `UUID`, `VARCHAR` | The agent |
+| `kind` | `VARCHAR` | `static` for one you run, `elastic` for one DuckHaven starts |
+| `provider` | `VARCHAR` | For an elastic agent, the compute backend that starts it |
+| `status` | `VARCHAR` | `healthy` while it is connected, otherwise `unavailable` |
+| `lifecycle` | `VARCHAR` | For an elastic agent: `provisioning`, `running`, `terminating`, `terminated` or `failed` |
+| `access_mode` | `VARCHAR` | `open` or `restricted`; see [Agent access](../access/agent-access.md) |
+| `runtime_id` | `VARCHAR` | Its [runtime](../compute/runtimes.md), as it reported it, or as it was started before it has |
+| `duckdb_version`, `agent_version` | `VARCHAR` | What it reported when it connected |
+| `cores`, `memory_limit_gb` | `INTEGER`, `DOUBLE` | The cores and memory it reported |
+| `requested_cpu`, `requested_memory_gb` | `DOUBLE` | The size an elastic agent was started at |
+| `idle_timeout_s` | `DOUBLE` | Seconds idle before an elastic agent stops; empty for the default |
+| `max_timeout_s` | `DOUBLE` | Its longest query timeout; empty for the image's default |
+| `created_at`, `provisioned_at`, `terminated_at` | `TIMESTAMP WITH TIME ZONE` | When it was created, last started and last stopped |
+| `last_ping_at` | `TIMESTAMP WITH TIME ZONE` | Its last heartbeat |
+| `last_active_at` | `TIMESTAMP WITH TIME ZONE` | When it was last sent work |
+| `snapshot_time` | `TIMESTAMP WITH TIME ZONE` | When the table was last replaced |
+
+## compute.agent_events
+
+One row per change in an agent's state, as the [monitoring](../compute/agent-monitoring.md) timeline draws them.
+
+| Column | Type | Meaning |
+|---|---|---|
+| `event_id` | `UUID` | The event |
+| `agent_id`, `agent_name` | `UUID`, `VARCHAR` | The agent |
+| `event` | `VARCHAR` | `provisioning`, `connected`, `disconnected`, `terminating`, `terminated` or `failed` |
+| `reason` | `VARCHAR` | Why, when DuckHaven did it: `idle`, `max_lifetime`, `provisioning_timeout`, `orphan` or `dead_row` |
+| `event_time` | `TIMESTAMP WITH TIME ZONE` | When it happened |
+
+## compute.agent_utilization
+
+One row per agent per minute it was connected, as the [monitoring](../compute/agent-monitoring.md) charts draw them.
+A minute appears once it has ended.
+
+| Column | Type | Meaning |
+|---|---|---|
+| `agent_id`, `agent_name` | `UUID`, `VARCHAR` | The agent |
+| `minute` | `TIMESTAMP WITH TIME ZONE` | The minute's start |
+| `cpu_avg_percent`, `cpu_max_percent` | `DOUBLE` | CPU in use, as a percentage of the agent's cores: the minute's average and highest sample |
+| `memory_avg_percent`, `memory_max_percent` | `DOUBLE` | Memory in use, as a percentage of its limit; the highest includes peaks between samples |
+| `running_queries_max`, `queued_queries_max` | `INTEGER` | The most queries running, and waiting in its queue, at once |
+| `sessions_max` | `INTEGER` | The most SQL sessions it held at once |
+| `sample_count` | `INTEGER` | Samples the minute is made of |
+| `covered_seconds` | `DOUBLE` | Seconds of the minute the samples span |
+| `oom_kills` | `INTEGER` | Processes the kernel killed for memory in the minute |
+
+The last two are empty from an agent too old to report them.
+
+## storage.table_health
+
+One row per table per [maintenance scan](../data/maintenance.md#scanning) that read it. A scan skips a table whose
+snapshot is unchanged, so a table has a row for each scan after it changed.
+
+| Column | Type | Meaning |
+|---|---|---|
+| `sample_id` | `UUID` | The sample |
+| `scanned_at` | `TIMESTAMP WITH TIME ZONE` | When the scan read the table |
+| `catalog_id`, `catalog_name` | `UUID`, `VARCHAR` | The table's catalog |
+| `workspace_id`, `workspace_slug` | `UUID`, `VARCHAR` | The workspace the scan ran in |
+| `schema_name`, `table_name` | `VARCHAR` | The table |
+| `score` | `INTEGER` | Its [health score](../data/maintenance.md#health-score), 0 to 100 |
+| `snapshot_count`, `snapshot_id` | `INTEGER`, `BIGINT` | Its snapshots, and the current one |
+| `oldest_snapshot_age_days` | `DOUBLE` | The age of its oldest snapshot |
+| `data_file_count`, `manifest_count` | `INTEGER` | Its data files and manifests |
+| `total_data_bytes`, `avg_file_bytes`, `metadata_bytes` | `BIGINT` | Its data, average file and metadata sizes |
+| `orphan_bytes`, `orphan_file_count` | `BIGINT`, `INTEGER` | Files in its storage no snapshot references; empty for a scan that did not count them |
+| `small_file_ratio` | `DOUBLE` | The share of its data files below the target size |
+| `factors` | `VARCHAR`, JSON | Each dimension of the score, with its value and sub-score |
+
+A metric the scan could not measure is empty.
+
+## storage.maintenance_operations
+
+One row per [apply](../data/maintenance.md#applying-maintenance) of a maintenance recommendation. The row appears
+within the publish interval of the apply starting and is updated when it ends.
+
+| Column | Type | Meaning |
+|---|---|---|
+| `query_id` | `UUID` | The query that ran it, as `id` in `query.history` |
+| `recommendation_id` | `UUID` | The recommendation applied |
+| `kind` | `VARCHAR` | `compact_small_files`, `expire_snapshots`, `rewrite_manifests` or `cleanup_orphans` |
+| `catalog_id`, `catalog_name` | `UUID`, `VARCHAR` | The table's catalog |
+| `workspace_id`, `workspace_slug` | `UUID`, `VARCHAR` | The workspace it was applied from |
+| `schema_name`, `table_name` | `VARCHAR` | The table; `expire_snapshots` and `cleanup_orphans` act on its whole catalog |
+| `status` | `VARCHAR` | `running`, `succeeded` or `failed` |
+| `error` | `VARCHAR` | Why it failed |
+| `result` | `VARCHAR`, JSON | The table before and after, as the agent measured it, for a run that succeeded |
+| `started_at`, `finished_at` | `TIMESTAMP WITH TIME ZONE` | When it started and ended |
+| `applied_by_id`, `applied_by_email` | `UUID`, `VARCHAR` | Who applied it |
 
 ## Related
 

@@ -159,7 +159,7 @@ a running standby, and `/api/readyz` should return `200`.
 - **No new Postgres leader after Drill 1.** Check `patronictl list` on a surviving node, and etcd's health; Patroni
   needs etcd to elect a leader.
 - **The agent does not reconnect after Drill 2.** Check that Caddy passes WebSocket upgrades and that `api-2` is
-  healthy; the agent retries every 5 seconds.
+  healthy; the agent retries every 2 to 6 seconds.
 - **Both replicas log a scan or a scheduled run for the same tick in Drill 3.** Leader election failed. Check that
   both replicas reach the same Postgres through `pg-haproxy`, since the advisory locks live there, and report the
   logs with the issue.

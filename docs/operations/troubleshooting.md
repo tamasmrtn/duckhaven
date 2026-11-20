@@ -37,7 +37,7 @@ TLS](../deployment/reverse-proxy-tls.md).
 ## Nothing is reachable, and the network is Tailscale
 
 **What it means.** Where Tailscale is the only path to the control plane and its agents, a Tailscale outage makes
-DuckHaven unreachable. Agents reconnect every 5 seconds and come back on their own once the tailnet recovers.
+DuckHaven unreachable. Agents retry every 2 to 6 seconds and come back on their own once the tailnet recovers.
 
 **What to do.** Keep a record of the control plane's and agents' Tailscale addresses, so you can check each is
 reachable, with `tailscale ping`, when the tailnet returns.

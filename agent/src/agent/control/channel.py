@@ -1727,8 +1727,23 @@ async def run_control_channel(
                     metrics_task.cancel()
 
         except (ConnectionClosed, OSError) as exc:
-            logger.warning("Disconnected (%s), reconnecting in 5s", exc)
-        await asyncio.sleep(5)
+            delay = reconnect_delay()
+            logger.warning("Disconnected (%s), reconnecting in %.1fs", exc, delay)
+        else:
+            delay = reconnect_delay()
+        await asyncio.sleep(delay)
+
+
+def reconnect_delay() -> float:
+    """Seconds to wait before reconnecting: anywhere from 2 to 6, 4 on average.
+
+    Spread rather than fixed, because every agent of a fleet loses its socket at the
+    same moment when a control-plane replica restarts. With a fixed delay they all
+    came back in the same instant too, and 500 handshakes at once held the API at
+    full CPU for seconds. The ceiling stays near the fixed 5 s it replaced, so the
+    last agent of a fleet is back no later than before.
+    """
+    return random.uniform(2.0, 6.0)
 
 
 async def _consume(ws, results_dir: Path, admission: Admission) -> None:

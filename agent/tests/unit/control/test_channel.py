@@ -2509,6 +2509,40 @@ async def test_the_watchdog_rescues_a_queue_that_went_quiet_after_parking(monkey
     assert state.admission_wait_ms < 5000, "waited out the full deadline"
 
 
+async def test_the_last_statement_to_finish_releases_a_parked_one_at_once(monkeypatch):
+    """The watchdog runs every two seconds, so a queue of parked statements served
+    by it alone ran one per tick: 57 of them took 102 seconds. The statement whose
+    end leaves nothing able to free budget releases the next parked one itself, and
+    one still running elsewhere keeps the queue parked."""
+    import agent.control.channel as ch_module
+
+    admission = _admission(profile="auto")
+    baseline = 64 * 1024**2
+    ch, state = _session_state(admission, baseline)
+    state.conn = _RecordingConn()
+    busy = _idle_session(admission, "busy", admission.budget_bytes - 3 * baseline)
+    other = _idle_session(admission, "other", baseline)
+    monkeypatch.setattr(ch_module, "estimate_memory_bytes", lambda *a, **k: 700 * 1024**2)
+
+    async def _statement():
+        async with state.lock:
+            await ch._resize_for_statement(state, "SELECT 1", admission, 30.0)
+
+    async with other.lock:
+        async with ch_module._then_release_stuck_growth(admission), busy.lock:
+            sizing = asyncio.create_task(_statement())
+            await asyncio.sleep(0.05)
+            assert admission.growth_waiting == 1, "did not park"
+        await asyncio.sleep(0.05)
+        assert not sizing.done(), "released while another statement could still free budget"
+        assert admission.growth_waiting == 1
+
+    async with ch_module._then_release_stuck_growth(admission), busy.lock:
+        pass
+    await asyncio.wait_for(sizing, timeout=1)
+    assert admission.growth_waiting == 0
+
+
 async def test_use_and_set_are_not_charged_a_third_of_the_agent():
     """`USE`/`SET` move no data. Charging them the unestimable fallback bucket had
     every session in a burst claim a third of the budget for a 1 ms statement."""

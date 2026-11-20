@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import contextlib
 import functools
 import logging
 import platform
@@ -541,6 +542,38 @@ def _nobody_can_free_budget(admission: Admission, *, self_is_waiter: bool) -> bo
     return others_executing <= 0 and one_shot <= 0
 
 
+def _release_stuck_growth(admission: Admission) -> None:
+    """Let the oldest parked statement run when nothing left can free budget for it.
+
+    A parked statement re-evaluates nothing once it parks, so a queue whose last
+    executor finishes would otherwise sleep until each waiter's deadline. Releases
+    one at a time (see ``Admission.release_growth_head``).
+    """
+    if admission.growth_waiting and _nobody_can_free_budget(admission, self_is_waiter=False):
+        if admission.release_growth_head():
+            logger.warning(
+                "Released a statement waiting for budget: %d parked, nothing running",
+                admission.growth_waiting + 1,
+            )
+
+
+@contextlib.asynccontextmanager
+async def _then_release_stuck_growth(admission: Admission):
+    """On exit, release a parked statement if the work just finished was the last
+    that could free budget for it.
+
+    Entered before the session lock, so it exits after the lock is released: a
+    session holding its lock counts as executing (see ``_nobody_can_free_budget``).
+    Without it the next parked statement waited for the watchdog, up to one
+    sampling interval after every statement, which is what serialised a burst of
+    57 statements into one every two seconds.
+    """
+    try:
+        yield
+    finally:
+        _release_stuck_growth(admission)
+
+
 async def _traced_dispatch(ws, msg: Frame, results_dir: Path, admission: Admission) -> None:
     """Run _handle_dispatch inside a consumer span continuing the api's trace.
 
@@ -1009,7 +1042,7 @@ async def _run_on_state(
     ``StatementAbandoned`` means nothing may touch the connection again.
     """
     result_path = results_dir / f"{statement_id}.parquet"
-    async with state.lock:
+    async with _then_release_stuck_growth(admission), state.lock:
         # The catalogs this statement names that the session has not attached
         # yet. Before the estimate, which has to bind against them too.
         if descriptors:
@@ -1600,13 +1633,10 @@ async def _push_metrics(ws, sampler: MetricsSampler, admission: Admission) -> No
         # left to free budget, but the agent can go quiet *after* it parks — and a
         # parked statement re-evaluates nothing. That is how ten of them once sat
         # for 255 seconds on an idle agent. Release the oldest, one per tick: it
-        # runs, finishes, and frees enough for the next.
-        if admission.growth_waiting and _nobody_can_free_budget(admission, self_is_waiter=False):
-            if admission.release_growth_head():
-                logger.warning(
-                    "Released a statement waiting for budget: %d parked, nothing running",
-                    admission.growth_waiting + 1,
-                )
+        # runs, finishes, and frees enough for the next. A session statement also
+        # does this as it finishes (`_then_release_stuck_growth`); this is the
+        # backstop for every other way the agent can go quiet.
+        _release_stuck_growth(admission)
         # A session statement parked for memory holds its lock but is not running.
         executing_sessions = session.executing_count()
         sample = sampler.sample(

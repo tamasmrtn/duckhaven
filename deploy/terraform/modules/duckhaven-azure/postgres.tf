@@ -76,6 +76,17 @@ resource "azurerm_postgresql_flexible_server" "main" {
   }
 }
 
+# Azure refuses CREATE EXTENSION for any extension not on this list. History search
+# indexes the statement text with pg_trgm (migration 0071); without it the migration
+# skips that index and search reads every run.
+resource "azurerm_postgresql_flexible_server_configuration" "extensions" {
+  count = local.postgres_managed_here ? 1 : 0
+
+  name      = "azure.extensions"
+  server_id = azurerm_postgresql_flexible_server.main[0].id
+  value     = "PG_TRGM"
+}
+
 # DuckHaven's own schema, managed by Alembic on API container start.
 resource "azurerm_postgresql_flexible_server_database" "duckhaven" {
   count = local.postgres_managed_here ? 1 : 0

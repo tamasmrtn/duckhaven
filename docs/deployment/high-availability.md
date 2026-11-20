@@ -213,6 +213,10 @@ If you run on a cloud, the simplest HA Postgres is a **managed** one — point
 | Azure | Database for PostgreSQL **Flexible Server**, zone-redundant | Container Apps / VMSS behind **Application Gateway** |
 | GCP | Cloud SQL **HA** | Cloud Run / MIG behind **Cloud Load Balancing** |
 
+Allow the `pg_trgm` extension on the managed server; on Azure, add `PG_TRGM` to the `azure.extensions` server
+parameter. History search uses it for its index. Without it the upgrade still succeeds and search still works, but it
+reads every run, and the API log says so once: `Could not index History search with pg_trgm`.
+
 The application changes are identical in all cases; only the database and load
 balancer are provider-managed. Use a managed L7 load balancer with WebSocket
 support in place of Caddy, and give each replica a service-discoverable

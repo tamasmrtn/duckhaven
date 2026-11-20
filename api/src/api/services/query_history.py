@@ -103,6 +103,10 @@ def _duration_ms_sqlite(element, compiler, **kw) -> str:
 def duration_expr() -> ColumnElement[int]:
     """The duration History filters and sorts on, in milliseconds.
 
+    ``ix_queries_workspace_duration`` (migration 0071) indexes this expression as
+    Postgres compiles it; change one and the other must change with it, or the
+    duration sort reads the whole table again.
+
     ``Query.duration_ms`` is the agent's *execution* time and is null for a run
     that failed before the agent could report one. Filtering on it alone would
     therefore drop every failure — exactly backwards, since a query that hung
@@ -251,10 +255,9 @@ def keyset_predicate(
 def search_predicate(term: str) -> ColumnElement[bool]:
     """Case-insensitive substring match on the statement text.
 
-    A plain ILIKE over a set already narrowed by workspace, time and scope. No
-    trigram index, no tsvector: at the volumes DuckHaven deployments carry that
-    machinery would cost more to maintain than it saves, and it can be added
-    behind this same call when a real deployment shows it is needed.
+    A plain ILIKE, which the trigram index ``ix_queries_sql_trgm`` (migration 0071)
+    serves for terms of three characters or more. Without the index, on a Postgres
+    that does not allow ``pg_trgm``, it is the same match, read from the table.
     """
     return Query.sql.ilike(f"%{_escape_like(term)}%", escape="\\")
 

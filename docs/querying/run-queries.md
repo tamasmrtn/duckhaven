@@ -137,6 +137,11 @@ a colleague; it opens on the first page.
 | **Origin** | **Interactive**, **Scheduled** or **SQL session** (statements run over a [SQL session](sql-sessions.md)) |
 | **Sort** | By *Started* or *Duration*, over every matching run |
 
+- **Search** reads an index for text of three characters or more, so it stays quick however long History grows. A
+  shorter search reads every run in the time range, and so does any search on a Postgres without the `pg_trgm`
+  extension.
+- **Sort** by *Duration*, longest first, reads an index too. Shortest first sorts every matching run, so narrow the time
+  range first on a long History.
 - **Duration** is the time the agent spent running the statement. For a run that failed before the agent reported one,
   it is the time from submission to failure, so a query that hung and died counts as slow. A run still going has no
   duration, and sorts last.

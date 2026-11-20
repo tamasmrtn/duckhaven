@@ -5,12 +5,13 @@ import logoDark from "@/assets/logo-dark.svg";
 import { Button } from "@/components/ui/button";
 import { CreateWorkspaceDialog } from "@/features/workspace/CreateWorkspaceDialog";
 import { useDocumentTitle } from "@/hooks/useDocumentTitle";
-import { useMe } from "@/queries/auth";
+import { useLogout, useMe } from "@/queries/auth";
 
 export function WelcomePage() {
   useDocumentTitle("Welcome");
   const navigate = useNavigate();
   const { data: me, isLoading } = useMe();
+  const logout = useLogout();
   const [open, setOpen] = useState(true);
 
   function handleCreated(slug: string) {
@@ -62,6 +63,22 @@ export function WelcomePage() {
               An admin adds you to one. Send them the email you sign in with,{" "}
               <span className="font-medium text-text-primary">{me?.email}</span>
               , then reload this page.
+            </p>
+            {/* Outside the app shell there is no user menu, so this is the way
+                out for someone signed in with the wrong account. */}
+            <p className="pt-2 text-sm text-text-secondary">
+              Not the right account?{" "}
+              <Button
+                variant="link"
+                className="h-auto p-0 text-sm text-[var(--link)]"
+                disabled={logout.isPending}
+                onClick={async () => {
+                  await logout.mutateAsync();
+                  void navigate({ to: "/login" });
+                }}
+              >
+                Sign out
+              </Button>
             </p>
           </div>
         )}

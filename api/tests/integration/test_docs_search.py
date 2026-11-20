@@ -36,7 +36,9 @@ from tests.evals.metrics import load_cases, recall_at_k, reciprocal_rank, summar
 
 pytestmark = pytest.mark.integration
 
-MIGRATION = Path(__file__).resolve().parents[2] / "alembic" / "versions" / "0041_docs_pages_fts.py"
+VERSIONS = Path(__file__).resolve().parents[2] / "alembic" / "versions"
+# The table and its index, then the weights it ranks with today.
+MIGRATIONS = (VERSIONS / "0041_docs_pages_fts.py", VERSIONS / "0069_docs_search_table_rows.py")
 DOCS_DIR = generate._repo_root() / "docs"
 
 # Thresholds, not per-case assertions, and set from measurement rather than
@@ -49,28 +51,31 @@ MIN_RECALL_AT_5 = 0.70
 MIN_MRR = 0.40
 
 
-def _load_migration():
-    spec = importlib.util.spec_from_file_location("migration_0041", MIGRATION)
+def _load_migration(path: Path):
+    spec = importlib.util.spec_from_file_location(f"migration_{path.stem}", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
 
 
-@pytest.fixture
-async def corpus(pg_engine, monkeypatch):
-    """A real Postgres carrying the real shipped corpus, indexed by the real
-    migration — no hand-written DDL here, so the test cannot drift from it."""
-    monkeypatch.setattr(settings, "assistant_docs_dir", DOCS_DIR)
-    load_index.cache_clear()
-    module = _load_migration()
-
+async def _run(pg_engine, module, direction: str = "upgrade") -> None:
     async with pg_engine.begin() as conn:
         await conn.run_sync(
             lambda sync_conn: setattr(
                 module, "op", Operations(MigrationContext.configure(sync_conn))
             )
         )
-        await conn.run_sync(lambda _: module.upgrade())
+        await conn.run_sync(lambda _: getattr(module, direction)())
+
+
+@pytest.fixture
+async def corpus(pg_engine, monkeypatch):
+    """A real Postgres carrying the real shipped corpus, indexed by the real
+    migrations — no hand-written DDL here, so the test cannot drift from them."""
+    monkeypatch.setattr(settings, "assistant_docs_dir", DOCS_DIR)
+    load_index.cache_clear()
+    for path in MIGRATIONS:
+        await _run(pg_engine, _load_migration(path))
 
     from sqlalchemy.ext.asyncio import async_sessionmaker
 
@@ -103,6 +108,53 @@ async def test_a_title_match_outranks_a_passing_mention(corpus):
 
     assert results
     assert results[0]["path"] == "data/storage-backends.md"
+
+
+async def test_a_term_named_only_in_a_table_is_still_found(corpus):
+    """Table rows weigh least, but they still match: `cpu_time_ms` is named in
+    one row of the system catalog reference and nowhere else."""
+    results = await search_pages(corpus, "cpu_time_ms", limit=5)
+
+    assert [r["path"] for r in results] == ["reference/system-catalog.md"]
+
+
+async def test_table_rows_weigh_less_than_prose(corpus):
+    """The same words rank a page lower when they sit in a table row: reference
+    tables repeat column names, and Postgres ranking has no IDF to discount them."""
+    insert = text(
+        "INSERT INTO docs_pages (path, title, section, summary, body) "
+        "VALUES (:path, 'x', 's', '', :body)"
+    )
+    # Named so a tie would put the table first: only its weight can put it second.
+    await corpus.execute(insert, {"path": "t/b-prose.md", "body": "Lists every zyxwv column."})
+    await corpus.execute(
+        insert,
+        {
+            "path": "t/a-table.md",
+            "body": "| Column | Meaning |\n|---|---|\n| zyxwv | Lists every column |",
+        },
+    )
+    results = await search_pages(corpus, "zyxwv", limit=5)
+
+    assert [r["path"] for r in results] == ["t/b-prose.md", "t/a-table.md"]
+
+
+async def test_the_table_weights_migrate_down_and_up(pg_engine, corpus):
+    """0069 replaces 0041's generated column; each direction leaves a populated
+    vector and its index, so search keeps working across a rollback."""
+    newest = _load_migration(MIGRATIONS[-1])
+    for direction in ("downgrade", "upgrade"):
+        await _run(pg_engine, newest, direction)
+        assert await search_pages(corpus, "storage backends", limit=1)
+        indexed = await corpus.execute(
+            text(
+                "SELECT count(*) FROM pg_indexes "
+                "WHERE indexname = 'ix_docs_pages_search' AND schemaname = current_schema()"
+            )
+        )
+        assert indexed.scalar_one() == 1
+        # End the read, or the next direction's DDL waits on its lock.
+        await corpus.rollback()
 
 
 async def test_results_carry_an_excerpt_showing_the_match(corpus):

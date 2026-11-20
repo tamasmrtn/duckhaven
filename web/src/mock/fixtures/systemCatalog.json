@@ -167,6 +167,418 @@
       ]
     },
     {
+      "schema_name": "info_schema",
+      "name": "routines",
+      "description": "The macros of the schemas you can see",
+      "permission": null,
+      "columns": [
+        {
+          "name": "catalog_id",
+          "type": "UUID"
+        },
+        {
+          "name": "catalog_name",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "schema_name",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "routine_name",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "overload",
+          "type": "INTEGER"
+        },
+        {
+          "name": "routine_type",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "parameters",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "definition",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "refreshed_at",
+          "type": "TIMESTAMP WITH TIME ZONE"
+        }
+      ]
+    },
+    {
+      "schema_name": "info_schema",
+      "name": "semantic_models",
+      "description": "This workspace's semantic models whose tables you can all see",
+      "permission": null,
+      "columns": [
+        {
+          "name": "model_id",
+          "type": "UUID"
+        },
+        {
+          "name": "workspace_id",
+          "type": "UUID"
+        },
+        {
+          "name": "model_slug",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "name",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "description",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "status",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "provider",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "owner_id",
+          "type": "UUID"
+        },
+        {
+          "name": "owner_email",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "created_at",
+          "type": "TIMESTAMP WITH TIME ZONE"
+        },
+        {
+          "name": "updated_at",
+          "type": "TIMESTAMP WITH TIME ZONE"
+        },
+        {
+          "name": "refreshed_at",
+          "type": "TIMESTAMP WITH TIME ZONE"
+        }
+      ]
+    },
+    {
+      "schema_name": "info_schema",
+      "name": "semantic_datasets",
+      "description": "The tables each semantic model you can see is built on",
+      "permission": null,
+      "columns": [
+        {
+          "name": "dataset_id",
+          "type": "UUID"
+        },
+        {
+          "name": "model_id",
+          "type": "UUID"
+        },
+        {
+          "name": "workspace_id",
+          "type": "UUID"
+        },
+        {
+          "name": "model_slug",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "name",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "description",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "catalog_id",
+          "type": "UUID"
+        },
+        {
+          "name": "catalog_name",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "schema_name",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "table_name",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "primary_key",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "synonyms",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "validation_state",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "refreshed_at",
+          "type": "TIMESTAMP WITH TIME ZONE"
+        }
+      ]
+    },
+    {
+      "schema_name": "info_schema",
+      "name": "semantic_dimensions",
+      "description": "The dimensions of the semantic models you can see",
+      "permission": null,
+      "columns": [
+        {
+          "name": "dimension_id",
+          "type": "UUID"
+        },
+        {
+          "name": "model_id",
+          "type": "UUID"
+        },
+        {
+          "name": "workspace_id",
+          "type": "UUID"
+        },
+        {
+          "name": "model_slug",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "dataset_id",
+          "type": "UUID"
+        },
+        {
+          "name": "dataset_name",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "name",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "display_name",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "description",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "kind",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "expr",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "data_type",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "time_grains",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "is_default_time",
+          "type": "BOOLEAN"
+        },
+        {
+          "name": "synonyms",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "validation_state",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "refreshed_at",
+          "type": "TIMESTAMP WITH TIME ZONE"
+        }
+      ]
+    },
+    {
+      "schema_name": "info_schema",
+      "name": "semantic_metrics",
+      "description": "The metrics of the semantic models you can see",
+      "permission": null,
+      "columns": [
+        {
+          "name": "metric_id",
+          "type": "UUID"
+        },
+        {
+          "name": "model_id",
+          "type": "UUID"
+        },
+        {
+          "name": "workspace_id",
+          "type": "UUID"
+        },
+        {
+          "name": "model_slug",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "dataset_id",
+          "type": "UUID"
+        },
+        {
+          "name": "dataset_name",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "name",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "display_name",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "description",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "agg",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "expr",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "filter",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "time_dimension_id",
+          "type": "UUID"
+        },
+        {
+          "name": "format",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "unit",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "currency",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "polarity",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "caveat",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "synonyms",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "status",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "owner_id",
+          "type": "UUID"
+        },
+        {
+          "name": "owner_email",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "validation_state",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "created_at",
+          "type": "TIMESTAMP WITH TIME ZONE"
+        },
+        {
+          "name": "updated_at",
+          "type": "TIMESTAMP WITH TIME ZONE"
+        },
+        {
+          "name": "refreshed_at",
+          "type": "TIMESTAMP WITH TIME ZONE"
+        }
+      ]
+    },
+    {
+      "schema_name": "info_schema",
+      "name": "semantic_relationships",
+      "description": "The joins of the semantic models you can see",
+      "permission": null,
+      "columns": [
+        {
+          "name": "relationship_id",
+          "type": "UUID"
+        },
+        {
+          "name": "model_id",
+          "type": "UUID"
+        },
+        {
+          "name": "workspace_id",
+          "type": "UUID"
+        },
+        {
+          "name": "model_slug",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "name",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "left_dataset_id",
+          "type": "UUID"
+        },
+        {
+          "name": "left_dataset_name",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "right_dataset_id",
+          "type": "UUID"
+        },
+        {
+          "name": "right_dataset_name",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "join_columns",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "cardinality",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "validation_state",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "refreshed_at",
+          "type": "TIMESTAMP WITH TIME ZONE"
+        }
+      ]
+    },
+    {
       "schema_name": "access",
       "name": "audit",
       "description": "Every event of the access audit log",
@@ -1399,6 +1811,158 @@
         {
           "name": "applied_by_email",
           "type": "VARCHAR"
+        }
+      ]
+    },
+    {
+      "schema_name": "storage",
+      "name": "backends",
+      "description": "Every storage backend, never its credentials",
+      "permission": "storage:manage",
+      "columns": [
+        {
+          "name": "backend_id",
+          "type": "UUID"
+        },
+        {
+          "name": "name",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "kind",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "root_uri",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "catalog_count",
+          "type": "INTEGER"
+        },
+        {
+          "name": "created_by_id",
+          "type": "UUID"
+        },
+        {
+          "name": "created_by_email",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "created_at",
+          "type": "TIMESTAMP WITH TIME ZONE"
+        },
+        {
+          "name": "snapshot_time",
+          "type": "TIMESTAMP WITH TIME ZONE"
+        }
+      ]
+    },
+    {
+      "schema_name": "ai",
+      "name": "assistant_usage",
+      "description": "The tokens each assistant answer used",
+      "permission": "queries:admin",
+      "columns": [
+        {
+          "name": "message_id",
+          "type": "UUID"
+        },
+        {
+          "name": "conversation_id",
+          "type": "UUID"
+        },
+        {
+          "name": "workspace_id",
+          "type": "UUID"
+        },
+        {
+          "name": "workspace_slug",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "user_id",
+          "type": "UUID"
+        },
+        {
+          "name": "user_email",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "service_account_id",
+          "type": "UUID"
+        },
+        {
+          "name": "service_account_email",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "turn",
+          "type": "INTEGER"
+        },
+        {
+          "name": "input_tokens",
+          "type": "INTEGER"
+        },
+        {
+          "name": "output_tokens",
+          "type": "INTEGER"
+        },
+        {
+          "name": "created_at",
+          "type": "TIMESTAMP WITH TIME ZONE"
+        }
+      ]
+    },
+    {
+      "schema_name": "ai",
+      "name": "tool_calls",
+      "description": "Each tool the assistant called, and how it ended",
+      "permission": "queries:admin",
+      "columns": [
+        {
+          "name": "call_id",
+          "type": "UUID"
+        },
+        {
+          "name": "conversation_id",
+          "type": "UUID"
+        },
+        {
+          "name": "workspace_id",
+          "type": "UUID"
+        },
+        {
+          "name": "workspace_slug",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "user_id",
+          "type": "UUID"
+        },
+        {
+          "name": "user_email",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "tool",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "status",
+          "type": "VARCHAR"
+        },
+        {
+          "name": "query_id",
+          "type": "UUID"
+        },
+        {
+          "name": "latency_ms",
+          "type": "INTEGER"
+        },
+        {
+          "name": "created_at",
+          "type": "TIMESTAMP WITH TIME ZONE"
         }
       ]
     }

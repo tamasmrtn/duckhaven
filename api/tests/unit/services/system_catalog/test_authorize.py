@@ -198,7 +198,12 @@ async def test_a_refusal_names_each_table_it_may_not_read(db_session, workspace,
 async def test_what_each_principal_may_read(db_session, admin, member):
     auditor = await _auditor(db_session)
 
-    info = {("info_schema", t) for t in ("catalogs", "schemata", "tables", "columns")}
+    info = {
+        ("info_schema", t)
+        for t in ("catalogs", "schemata", "tables", "columns", "routines")
+        + tuple(f"semantic_{kind}" for kind in ("models", "datasets", "dimensions", "metrics"))
+        + ("semantic_relationships",)
+    }
     audited = {
         *(("access", t) for t in ("audit", "grants", "users", "workspaces", "credentials")),
         ("access", "table_access"),

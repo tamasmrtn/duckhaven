@@ -46,6 +46,10 @@ object store receives the store's key, limited to the catalog's prefix (see
 Nothing needs rotating by hand. To revoke DuckHaven's access, remove the role's trust (S3) or the role assignment or
 consent (ADLS) in your cloud account: the next vend fails, and the backend's **Test access** check turns red.
 
+With `storage:manage`, you list every backend in SQL, with how many catalogs are on it, from
+`duckhaven.storage.backends` in the [system catalog](../querying/system-catalog.md). The identifiers above are not
+copied there.
+
 ## Security baseline
 
 DuckHaven cannot enforce what lives in your cloud account. Set these up there:

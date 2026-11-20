@@ -28,9 +28,17 @@ from api.services.system_catalog.metadata import Change, _Attachments, changes, 
         # A schema re-reads its whole catalog.
         ("CREATE SCHEMA sales.analytics;", [Change("sales", None, None)]),
         ("DROP SCHEMA analytics CASCADE;", [Change(None, None, None)]),
+        # A macro re-reads its catalog: the one it names, or its schema's.
+        ("CREATE MACRO twice(x) AS x * 2;", [Change(None, None, None)]),
+        (
+            "CREATE OR REPLACE MACRO sales.analytics.recent(n) AS TABLE SELECT * FROM ops.raw.e;",
+            [Change("sales", "analytics", None)],
+        ),
+        ("DROP MACRO sales.analytics.recent;", [Change("sales", "analytics", None)]),
+        # sqlglot cannot parse a parameter default, so the current catalog.
+        ("CREATE MACRO add_tax(x, rate := 0.2) AS x * (1 + rate);", [Change(None, None, None)]),
         # Not listed in info_schema.
         ("CREATE VIEW v AS SELECT 1;", []),
-        ("CREATE MACRO twice(x) AS x * 2;", []),
         ("COPY orders TO 'out.parquet';", []),
         # Unreadable: the current catalog, for all this can tell.
         ("CREATE TABLE (;", [Change(None, None, None)]),

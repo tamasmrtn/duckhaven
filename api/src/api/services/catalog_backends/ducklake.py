@@ -36,6 +36,7 @@ from api.services.catalog_backends import (
     CatalogCapabilities,
     CatalogColumnInfo,
     CatalogDescription,
+    CatalogRoutineInfo,
     CatalogSchemaInfo,
     CatalogTableInfo,
     SnapshotInfo,
@@ -656,8 +657,9 @@ class DuckLakeCatalogBackend:
         return f"macros:{rows[0][0] if rows else 0}"
 
     async def describe_catalog(self, catalog: Catalog) -> CatalogDescription:
-        """Three reads, whatever the catalog's size: its schemas, its tables, and
-        all their columns, a nested column's children among them."""
+        """Four reads, whatever the catalog's size: its schemas, its tables, all
+        their columns, a nested column's children among them, and its macros; a
+        fifth for their parameters when it has any."""
         schemas = await self.list_schemas(catalog)
         table_rows = await self._rows(
             catalog,
@@ -681,6 +683,7 @@ class DuckLakeCatalogBackend:
         )
         columns = _columns_by_table(column_rows)
         return CatalogDescription(
+            routines=await self._routines(catalog),
             schemas=schemas,
             tables=[
                 _table_info(
@@ -695,6 +698,45 @@ class DuckLakeCatalogBackend:
                 for schema_name, table_id, name, table_uuid, record_count, size_bytes in table_rows
             ],
         )
+
+    async def _routines(self, catalog: Catalog) -> list[CatalogRoutineInfo]:
+        """Each live macro overload. A catalog from before macro support has no
+        macro tables, which reads as none."""
+        overloads = await self._rows(
+            catalog,
+            "SELECT sc.schema_name, m.macro_id, m.macro_name, i.impl_id, i.type, i.sql "
+            "FROM {schema}.ducklake_macro m "
+            "JOIN {schema}.ducklake_schema sc ON sc.schema_id = m.schema_id "
+            "JOIN {schema}.ducklake_macro_impl i ON i.macro_id = m.macro_id "
+            "WHERE m.end_snapshot IS NULL AND sc.end_snapshot IS NULL "
+            "ORDER BY sc.schema_name, m.macro_name, i.impl_id",
+            {},
+            operation="describe_catalog_macros",
+        )
+        if not overloads:
+            return []
+        parameters: dict[tuple[int, int], list[str]] = {}
+        for macro_id, impl_id, name, type_ in await self._rows(
+            catalog,
+            "SELECT macro_id, impl_id, parameter_name, parameter_type "
+            "FROM {schema}.ducklake_macro_parameters ORDER BY macro_id, impl_id, column_id",
+            {},
+            operation="describe_catalog_macro_parameters",
+        ):
+            # An untyped parameter's type is stored as "unknown".
+            typed = "" if type_ == "unknown" else f" {ducklake_type(type_)}"
+            parameters.setdefault((macro_id, impl_id), []).append(f"{name}{typed}")
+        return [
+            CatalogRoutineInfo(
+                schema_name=schema_name,
+                name=name,
+                overload=impl_id,
+                routine_type="table_macro" if kind == "table" else "macro",
+                parameters=parameters.get((macro_id, impl_id), []),
+                definition=definition,
+            )
+            for schema_name, macro_id, name, impl_id, kind, definition in overloads
+        ]
 
     # --- Metadata writes (dispatched to an agent) ---------------------------
     # origin="metadata" keeps these out of the user's query history.

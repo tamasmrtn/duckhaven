@@ -1,5 +1,5 @@
-"""Copies the audit log, access, query history, lineage, compute, jobs and table
-health into the system catalog store.
+"""Copies the audit log, access, query history, lineage, compute, jobs, storage,
+the semantic layer and assistant usage into the system catalog store.
 
 Every ``SYSTEM_CATALOG_PUBLISH_INTERVAL_S`` one replica, whichever takes the
 advisory lock, runs a tick: one transaction on the store that copies what changed
@@ -30,14 +30,17 @@ copy and the next one starts where the last committed one stopped.
   ``_acl`` tables the row filters consult, from the same read.
 - **lineage.table_lineage** and **lineage.column_lineage** are replaced whole every
   5 minutes.
-- **compute.agent_events**, **compute.agent_utilization**, **query.sessions** and
-  **storage.table_health** are copied like query.history, in order of the time each
+- **compute.agent_events**, **compute.agent_utilization**, **query.sessions**,
+  **storage.table_health**, **ai.assistant_usage** and **ai.tool_calls** are copied
+  like query.history, in order of the time each
   row records, with the last 15 minutes re-read once a minute. A session the copy
   still holds as live is re-read every tick until it ends. They outlive the
   source's rows, for ``SYSTEM_CATALOG_RETENTION_DAYS``.
 - **storage.maintenance_operations** is read whole every tick: the source keeps
   only each recommendation's latest run, and the copy keeps one row per run.
-- **compute.agents** and **jobs.schedules** are replaced whole every minute.
+- **compute.agents**, **jobs.schedules**, **storage.backends** and the semantic
+  layer's ``info_schema`` tables, with the ``_acl`` table their row filter reads,
+  are replaced whole every minute.
 
 A tick copies at most ``BATCH`` rows of each kind; while any is behind, the next
 tick starts at once instead of after the interval.
@@ -62,13 +65,22 @@ from sqlalchemy.orm import aliased
 from api.config import settings
 from api.models.agent import Agent, AgentLifecycleEvent, AgentMetricsMinute
 from api.models.agent_grant import AgentGrant
+from api.models.assistant import AssistantConversation, AssistantMessage, AssistantToolCall
 from api.models.audit import AuditEvent
 from api.models.catalog import Catalog, WorkspaceCatalog
 from api.models.catalog_grant import CatalogGrant
 from api.models.lineage import LineageColumnEdge, LineageEdge
 from api.models.maintenance import MaintenanceRecommendation, TableHealthSample
 from api.models.query import Query, SavedQuery, Schedule
+from api.models.semantic import (
+    SemanticDataset,
+    SemanticDimension,
+    SemanticMetric,
+    SemanticModel,
+    SemanticRelationship,
+)
 from api.models.sql_session import SqlSession
+from api.models.storage_backend import StorageBackend
 from api.models.user import SERVICE_ACCOUNT_PROVIDER, Credential, User
 from api.models.workspace import Workspace, WorkspaceMember
 from api.services.query_history import HIDDEN_ORIGINS, profile_expr
@@ -126,7 +138,12 @@ async def publish_once(
             state["lineage"] = {"synced_at": now.isoformat()}
         if _due(state, "snapshots", "synced_at", SNAPSHOT_REFRESH, now):
             async with session_factory() as source:
-                await _replace(target, await snapshot_rows(source, now))
+                # One view, so no dataset is read without its model.
+                await source.connection(execution_options={"isolation_level": "REPEATABLE READ"})
+                await _replace(
+                    target,
+                    {**await snapshot_rows(source, now), **await semantic_rows(source, now)},
+                )
             state["snapshots"] = {"synced_at": now.isoformat()}
         if _due(state, "purge", "at", PURGE_EVERY, now):
             await _purge(target, now)
@@ -1074,6 +1091,56 @@ def _table_health() -> sa.Select:
     )
 
 
+def _assistant_usage() -> sa.Select:
+    message, conversation = AssistantMessage, AssistantConversation
+    service_account = aliased(User)
+    return (
+        sa.select(
+            message.id.label("message_id"),
+            message.conversation_id,
+            conversation.workspace_id,
+            Workspace.slug.label("workspace_slug"),
+            conversation.user_id,
+            User.email.label("user_email"),
+            conversation.service_account_id,
+            service_account.email.label("service_account_email"),
+            message.ordinal.label("turn"),
+            message.input_tokens,
+            message.output_tokens,
+            message.created_at,
+        )
+        .select_from(message)
+        .join(conversation, conversation.id == message.conversation_id)
+        .join(Workspace, Workspace.id == conversation.workspace_id)
+        .outerjoin(User, User.id == conversation.user_id)
+        .outerjoin(service_account, service_account.id == conversation.service_account_id)
+    )
+
+
+def _tool_calls() -> sa.Select:
+    """Which tool, and how it ended: never its arguments, detail or tables."""
+    call, conversation = AssistantToolCall, AssistantConversation
+    return (
+        sa.select(
+            call.id.label("call_id"),
+            call.conversation_id,
+            conversation.workspace_id,
+            Workspace.slug.label("workspace_slug"),
+            conversation.user_id,
+            User.email.label("user_email"),
+            call.tool,
+            call.status,
+            call.query_id,
+            call.latency_ms,
+            call.created_at,
+        )
+        .select_from(call)
+        .join(conversation, conversation.id == call.conversation_id)
+        .join(Workspace, Workspace.id == conversation.workspace_id)
+        .outerjoin(User, User.id == conversation.user_id)
+    )
+
+
 _FEEDS = (
     _Feed(
         "agent_events",
@@ -1106,6 +1173,22 @@ _FEEDS = (
         TableHealthSample.id,
         ("scanned_at", "sample_id"),
         _table_health,
+    ),
+    _Feed(
+        "assistant_usage",
+        store.ASSISTANT_USAGE,
+        AssistantMessage.created_at,
+        AssistantMessage.id,
+        ("created_at", "message_id"),
+        _assistant_usage,
+    ),
+    _Feed(
+        "tool_calls",
+        store.TOOL_CALLS,
+        AssistantToolCall.created_at,
+        AssistantToolCall.id,
+        ("created_at", "call_id"),
+        _tool_calls,
     ),
 )
 _SESSION_ENDED = ("closed", "expired", "failed")
@@ -1206,9 +1289,16 @@ async def maintenance_rows(source: AsyncSession, floor: datetime | None) -> list
 
 
 async def snapshot_rows(source: AsyncSession, now: datetime) -> dict[sa.Table, list[dict]]:
-    """Every agent and every schedule, as they are now."""
+    """Every agent, schedule and storage backend, as they are now."""
     agents = (await source.scalars(sa.select(Agent))).all()
     last_run, creator = aliased(Query), aliased(User)
+    backends = await source.execute(
+        sa.select(StorageBackend, creator.email, sa.func.count(Catalog.id))
+        .select_from(StorageBackend)
+        .outerjoin(creator, creator.id == StorageBackend.created_by)
+        .outerjoin(Catalog, Catalog.storage_backend_id == StorageBackend.id)
+        .group_by(StorageBackend.id, creator.email)
+    )
     schedules = await source.execute(
         sa.select(
             Schedule,
@@ -1228,6 +1318,21 @@ async def snapshot_rows(source: AsyncSession, now: datetime) -> dict[sa.Table, l
     )
     return {
         store.AGENTS: [_agent_row(agent, now) for agent in agents],
+        # Never `config`: what DuckHaven signs in to the backend with.
+        store.STORAGE_BACKENDS: [
+            {
+                "backend_id": backend.id,
+                "name": backend.name,
+                "kind": backend.kind,
+                "root_uri": backend.root_uri,
+                "catalog_count": catalog_count,
+                "created_by_id": backend.created_by,
+                "created_by_email": created_by_email,
+                "created_at": backend.created_at,
+                "snapshot_time": now,
+            }
+            for backend, created_by_email, catalog_count in backends
+        ],
         store.SCHEDULES: [
             {
                 "schedule_id": schedule.id,
@@ -1259,6 +1364,152 @@ async def snapshot_rows(source: AsyncSession, now: datetime) -> dict[sa.Table, l
                 created_by_email,
                 last_run_status,
             ) in schedules
+        ],
+    }
+
+
+async def semantic_rows(source: AsyncSession, now: datetime) -> dict[sa.Table, list[dict]]:
+    """Every semantic model and what it defines, and the tables its row filter checks.
+
+    Sample values are left out: they are rows of the table, which seeing a model's
+    definition does not let a member read.
+    """
+    owner = aliased(User)
+    models = (
+        await source.execute(
+            sa.select(SemanticModel, owner.email).outerjoin(
+                owner, owner.id == SemanticModel.owner_id
+            )
+        )
+    ).all()
+    datasets = (
+        await source.execute(
+            sa.select(SemanticDataset, Catalog.slug).outerjoin(
+                Catalog, Catalog.id == SemanticDataset.catalog_id
+            )
+        )
+    ).all()
+    metrics = (
+        await source.execute(
+            sa.select(SemanticMetric, owner.email).outerjoin(
+                owner, owner.id == SemanticMetric.owner_id
+            )
+        )
+    ).all()
+    dimensions = (await source.scalars(sa.select(SemanticDimension))).all()
+    relationships = (await source.scalars(sa.select(SemanticRelationship))).all()
+    of_model = {
+        m.id: {"model_id": m.id, "workspace_id": m.workspace_id, "model_slug": m.slug}
+        for m, _ in models
+    }
+    dataset_names = {d.id: d.name for d, _ in datasets}
+    return {
+        store.SEMANTIC_MODELS: [
+            {
+                **of_model[m.id],
+                "name": m.name,
+                "description": m.description,
+                "status": m.status,
+                "provider": m.provider,
+                "owner_id": m.owner_id,
+                "owner_email": owner_email,
+                "created_at": m.created_at,
+                "updated_at": m.updated_at,
+                "refreshed_at": now,
+            }
+            for m, owner_email in models
+        ],
+        store.SEMANTIC_DATASETS: [
+            {
+                "dataset_id": d.id,
+                **of_model[d.model_id],
+                "name": d.name,
+                "description": d.description,
+                "catalog_id": d.catalog_id,
+                "catalog_name": catalog_name,
+                "schema_name": d.schema_name,
+                "table_name": d.table_name,
+                "primary_key": d.primary_key,
+                "synonyms": d.synonyms,
+                "validation_state": d.validation_state,
+                "refreshed_at": now,
+            }
+            for d, catalog_name in datasets
+        ],
+        store.SEMANTIC_DIMENSIONS: [
+            {
+                "dimension_id": d.id,
+                **of_model[d.model_id],
+                "dataset_id": d.dataset_id,
+                "dataset_name": dataset_names.get(d.dataset_id),
+                "name": d.name,
+                "display_name": d.display_name,
+                "description": d.description,
+                "kind": d.kind,
+                "expr": d.expr,
+                "data_type": d.data_type,
+                "time_grains": d.time_grains,
+                "is_default_time": d.is_default_time,
+                "synonyms": d.synonyms,
+                "validation_state": d.validation_state,
+                "refreshed_at": now,
+            }
+            for d in dimensions
+        ],
+        store.SEMANTIC_METRICS: [
+            {
+                "metric_id": m.id,
+                **of_model[m.model_id],
+                "dataset_id": m.dataset_id,
+                "dataset_name": dataset_names.get(m.dataset_id),
+                "name": m.name,
+                "display_name": m.display_name,
+                "description": m.description,
+                "agg": m.agg,
+                "expr": m.expr,
+                "filter": m.filter,
+                "time_dimension_id": m.time_dimension_id,
+                "format": m.format,
+                "unit": m.unit,
+                "currency": m.currency,
+                "polarity": m.polarity,
+                "caveat": m.caveat,
+                "synonyms": m.synonyms,
+                "status": m.status,
+                "owner_id": m.owner_id,
+                "owner_email": owner_email,
+                "validation_state": m.validation_state,
+                "created_at": m.created_at,
+                "updated_at": m.updated_at,
+                "refreshed_at": now,
+            }
+            for m, owner_email in metrics
+        ],
+        store.SEMANTIC_RELATIONSHIPS: [
+            {
+                "relationship_id": r.id,
+                **of_model[r.model_id],
+                "name": r.name,
+                "left_dataset_id": r.left_dataset_id,
+                "left_dataset_name": dataset_names.get(r.left_dataset_id),
+                "right_dataset_id": r.right_dataset_id,
+                "right_dataset_name": dataset_names.get(r.right_dataset_id),
+                "join_columns": r.join_columns,
+                "cardinality": r.cardinality,
+                "validation_state": r.validation_state,
+                "refreshed_at": now,
+            }
+            for r in relationships
+        ],
+        store.ACL_SEMANTIC_TABLES: [
+            {
+                "workspace_id": of_model[d.model_id]["workspace_id"],
+                "model_id": d.model_id,
+                "catalog_id": d.catalog_id,
+                "schema_name": d.schema_name,
+                "table_name": d.table_name,
+            }
+            for d, _ in datasets
         ],
     }
 

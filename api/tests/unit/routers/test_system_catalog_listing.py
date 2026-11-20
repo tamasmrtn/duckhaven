@@ -67,6 +67,12 @@ async def test_an_admin_gets_its_tables_with_the_types_duckdb_reports(client, ad
         ("info_schema", "schemata"),
         ("info_schema", "tables"),
         ("info_schema", "columns"),
+        ("info_schema", "routines"),
+        ("info_schema", "semantic_models"),
+        ("info_schema", "semantic_datasets"),
+        ("info_schema", "semantic_dimensions"),
+        ("info_schema", "semantic_metrics"),
+        ("info_schema", "semantic_relationships"),
         ("access", "audit"),
         ("access", "grants"),
         ("access", "users"),
@@ -83,6 +89,9 @@ async def test_an_admin_gets_its_tables_with_the_types_duckdb_reports(client, ad
         ("compute", "agent_utilization"),
         ("storage", "table_health"),
         ("storage", "maintenance_operations"),
+        ("storage", "backends"),
+        ("ai", "assistant_usage"),
+        ("ai", "tool_calls"),
     ]
     # As an agent's DESCRIBE showed them, JSONB read as text included.
     audit = _columns(body, "access", "audit")
@@ -114,6 +123,12 @@ async def test_each_table_says_what_reading_it_takes(client, admin, workspace):
         ("info_schema", "schemata"): None,
         ("info_schema", "tables"): None,
         ("info_schema", "columns"): None,
+        ("info_schema", "routines"): None,
+        ("info_schema", "semantic_models"): None,
+        ("info_schema", "semantic_datasets"): None,
+        ("info_schema", "semantic_dimensions"): None,
+        ("info_schema", "semantic_metrics"): None,
+        ("info_schema", "semantic_relationships"): None,
         ("access", "audit"): "audit:read",
         ("access", "grants"): "audit:read",
         ("access", "users"): "audit:read",
@@ -130,6 +145,9 @@ async def test_each_table_says_what_reading_it_takes(client, admin, workspace):
         ("compute", "agent_utilization"): "agents:manage",
         ("storage", "table_health"): "maintenance:manage",
         ("storage", "maintenance_operations"): "maintenance:manage",
+        ("storage", "backends"): "storage:manage",
+        ("ai", "assistant_usage"): "queries:admin",
+        ("ai", "tool_calls"): "queries:admin",
     }
 
 
@@ -150,6 +168,12 @@ async def test_a_member_is_shown_only_the_tables_they_may_read(client, db_sessio
         ("info_schema", "schemata"),
         ("info_schema", "tables"),
         ("info_schema", "columns"),
+        ("info_schema", "routines"),
+        ("info_schema", "semantic_models"),
+        ("info_schema", "semantic_datasets"),
+        ("info_schema", "semantic_dimensions"),
+        ("info_schema", "semantic_metrics"),
+        ("info_schema", "semantic_relationships"),
         ("access", "audit"),
         ("access", "grants"),
         ("access", "users"),
@@ -166,6 +190,12 @@ async def test_a_member_is_shown_only_the_tables_they_may_read(client, db_sessio
         ("info_schema", "schemata"),
         ("info_schema", "tables"),
         ("info_schema", "columns"),
+        ("info_schema", "routines"),
+        ("info_schema", "semantic_models"),
+        ("info_schema", "semantic_datasets"),
+        ("info_schema", "semantic_dimensions"),
+        ("info_schema", "semantic_metrics"),
+        ("info_schema", "semantic_relationships"),
     ]
 
 

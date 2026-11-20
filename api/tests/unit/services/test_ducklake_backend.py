@@ -479,3 +479,49 @@ def test_ducklake_columns_are_typed_as_duckdb_shows_them():
     assert [(c.type_text, c.duckdb_type) for c in columns[2]] == [
         ("decimal(10,2)", "DECIMAL(10,2)")
     ]
+
+
+async def test_ducklake_macros_are_listed_by_overload(monkeypatch):
+    """Rows as DuckLake holds them on DuckDB 1.5.6 for `analytics.add_tax(x, rate :=
+    0.2)`, a table macro `recent(n INTEGER)` and a macro `twoway` with two overloads."""
+
+    async def rows(self, catalog, sql, params, *, operation="read"):  # noqa: ANN001, ARG001
+        if operation == "describe_catalog_macros":
+            return [
+                ("analytics", 2, "add_tax", 0, "scalar", "(x * (1 + rate))"),
+                ("main", 3, "recent", 0, "table", 'SELECT "range" AS i FROM "range"(n)'),
+                ("main", 4, "twoway", 0, "scalar", "a"),
+                ("main", 4, "twoway", 1, "scalar", "(a + b)"),
+            ]
+        return [
+            (2, 0, "x", "unknown"),
+            (2, 0, "rate", "unknown"),
+            (3, 0, "n", "int32"),
+            (4, 0, "a", "unknown"),
+            (4, 1, "a", "unknown"),
+            (4, 1, "b", "unknown"),
+        ]
+
+    monkeypatch.setattr(DuckLakeCatalogBackend, "_rows", rows)
+
+    routines = await DuckLakeCatalogBackend()._routines(_catalog())
+
+    assert [
+        (r.schema_name, r.name, r.overload, r.routine_type, r.parameters) for r in routines
+    ] == [
+        ("analytics", "add_tax", 0, "macro", ["x", "rate"]),
+        ("main", "recent", 0, "table_macro", ["n INTEGER"]),
+        ("main", "twoway", 0, "macro", ["a"]),
+        ("main", "twoway", 1, "macro", ["a", "b"]),
+    ]
+    assert routines[1].definition == 'SELECT "range" AS i FROM "range"(n)'
+
+
+async def test_a_catalog_without_macros_lists_none(monkeypatch):
+    async def rows(self, catalog, sql, params, *, operation="read"):  # noqa: ANN001, ARG001
+        assert operation == "describe_catalog_macros", "parameters need not be read"
+        return []
+
+    monkeypatch.setattr(DuckLakeCatalogBackend, "_rows", rows)
+
+    assert await DuckLakeCatalogBackend()._routines(_catalog()) == []

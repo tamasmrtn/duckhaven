@@ -1,9 +1,9 @@
 """The system catalog's own database: its tables, and the login agents read it with.
 
 DuckHaven keeps a copy of the audit log, access, query history, lineage, catalog
-metadata, compute, jobs and table health in a database of their own
-(``duckhaven_system``), so an agent can be handed a login that reaches those
-tables and nothing else. Agents never connect to ``duckhaven``, which holds users,
+and semantic metadata, compute, jobs, storage and assistant usage in a database of
+their own (``duckhaven_system``), so an agent can be handed a login that reaches
+those tables and nothing else. Agents never connect to ``duckhaven``, which holds users,
 password hashes and session tokens.
 
 ``ensure()`` creates the schemas, the tables and the reader login, and re-applies
@@ -56,7 +56,7 @@ from duckhaven_shared.system_catalog import (
 logger = logging.getLogger(__name__)
 
 ACCESS, QUERY, INFO, LINEAGE = "access", "query", "info_schema", "lineage"
-COMPUTE, JOBS, STORAGE = "compute", "jobs", "storage"
+COMPUTE, JOBS, STORAGE, AI = "compute", "jobs", "storage", "ai"
 # Private: copy cursors, and what the row filters consult.
 STATE, ACL = "_state", "_acl"
 READER_ROLE = "dh_system_reader"
@@ -427,6 +427,62 @@ MAINTENANCE_OPERATIONS = sa.Table(
     schema=STORAGE,
 )
 
+STORAGE_BACKENDS = sa.Table(
+    "backends",
+    METADATA,
+    sa.Column("backend_id", _UUID, primary_key=True),
+    sa.Column("name", sa.Text, nullable=False),
+    sa.Column("kind", sa.Text, nullable=False),
+    sa.Column("root_uri", sa.Text, nullable=False),
+    sa.Column("catalog_count", sa.Integer, nullable=False),
+    sa.Column("created_by_id", _UUID),
+    sa.Column("created_by_email", sa.Text),
+    sa.Column("created_at", _TS),
+    sa.Column("snapshot_time", _TS, nullable=False),
+    schema=STORAGE,
+)
+
+
+# ── ai: what the assistant cost and did, never what was said ──────────────────
+
+ASSISTANT_USAGE = sa.Table(
+    "assistant_usage",
+    METADATA,
+    sa.Column("message_id", _UUID, primary_key=True),
+    sa.Column("conversation_id", _UUID, nullable=False),
+    sa.Column("workspace_id", _UUID, nullable=False),
+    sa.Column("workspace_slug", sa.Text),
+    sa.Column("user_id", _UUID),
+    sa.Column("user_email", sa.Text),
+    sa.Column("service_account_id", _UUID),
+    sa.Column("service_account_email", sa.Text),
+    sa.Column("turn", sa.Integer, nullable=False),
+    sa.Column("input_tokens", sa.Integer, nullable=False),
+    sa.Column("output_tokens", sa.Integer, nullable=False),
+    sa.Column("created_at", _TS, nullable=False),
+    sa.Index("assistant_usage_created_at_idx", "created_at"),
+    sa.Index("assistant_usage_user_idx", "user_id", "created_at"),
+    schema=AI,
+)
+
+TOOL_CALLS = sa.Table(
+    "tool_calls",
+    METADATA,
+    sa.Column("call_id", _UUID, primary_key=True),
+    sa.Column("conversation_id", _UUID, nullable=False),
+    sa.Column("workspace_id", _UUID, nullable=False),
+    sa.Column("workspace_slug", sa.Text),
+    sa.Column("user_id", _UUID),
+    sa.Column("user_email", sa.Text),
+    sa.Column("tool", sa.Text, nullable=False),
+    sa.Column("status", sa.Text, nullable=False),
+    sa.Column("query_id", _UUID),
+    sa.Column("latency_ms", sa.Integer),
+    sa.Column("created_at", _TS, nullable=False),
+    sa.Index("tool_calls_created_at_idx", "created_at"),
+    schema=AI,
+)
+
 
 # ── lineage: which tables and columns feed which, replaced every few minutes ───
 
@@ -544,6 +600,136 @@ INFO_COLUMNS = sa.Table(
     schema=INFO,
 )
 
+INFO_ROUTINES = sa.Table(
+    "routines",
+    METADATA,
+    sa.Column("catalog_id", _UUID, primary_key=True),
+    sa.Column("catalog_name", sa.Text, nullable=False),
+    sa.Column("schema_name", sa.Text, primary_key=True),
+    sa.Column("routine_name", sa.Text, primary_key=True),
+    sa.Column("overload", sa.Integer, primary_key=True),
+    sa.Column("routine_type", sa.Text, nullable=False),
+    sa.Column("parameters", sa.Text, nullable=False),
+    sa.Column("definition", sa.Text, nullable=False),
+    sa.Column("refreshed_at", _TS, nullable=False),
+    schema=INFO,
+)
+
+
+# The semantic layer, replaced whole every minute. Every row carries its model's
+# workspace, so each table is filtered as the model is.
+def _semantic() -> tuple[sa.Column, ...]:
+    return (
+        sa.Column("model_id", _UUID, nullable=False),
+        sa.Column("workspace_id", _UUID, nullable=False),
+        sa.Column("model_slug", sa.Text, nullable=False),
+    )
+
+
+SEMANTIC_MODELS = sa.Table(
+    "semantic_models",
+    METADATA,
+    sa.Column("model_id", _UUID, primary_key=True),
+    sa.Column("workspace_id", _UUID, nullable=False),
+    sa.Column("model_slug", sa.Text, nullable=False),
+    sa.Column("name", sa.Text, nullable=False),
+    sa.Column("description", sa.Text),
+    sa.Column("status", sa.Text, nullable=False),
+    sa.Column("provider", sa.Text, nullable=False),
+    sa.Column("owner_id", _UUID),
+    sa.Column("owner_email", sa.Text),
+    sa.Column("created_at", _TS),
+    sa.Column("updated_at", _TS),
+    sa.Column("refreshed_at", _TS, nullable=False),
+    schema=INFO,
+)
+
+SEMANTIC_DATASETS = sa.Table(
+    "semantic_datasets",
+    METADATA,
+    sa.Column("dataset_id", _UUID, primary_key=True),
+    *_semantic(),
+    sa.Column("name", sa.Text, nullable=False),
+    sa.Column("description", sa.Text),
+    sa.Column("catalog_id", _UUID, nullable=False),
+    sa.Column("catalog_name", sa.Text),
+    sa.Column("schema_name", sa.Text, nullable=False),
+    sa.Column("table_name", sa.Text, nullable=False),
+    sa.Column("primary_key", postgresql.JSONB),
+    sa.Column("synonyms", postgresql.JSONB),
+    sa.Column("validation_state", sa.Text, nullable=False),
+    sa.Column("refreshed_at", _TS, nullable=False),
+    schema=INFO,
+)
+
+SEMANTIC_DIMENSIONS = sa.Table(
+    "semantic_dimensions",
+    METADATA,
+    sa.Column("dimension_id", _UUID, primary_key=True),
+    *_semantic(),
+    sa.Column("dataset_id", _UUID, nullable=False),
+    sa.Column("dataset_name", sa.Text),
+    sa.Column("name", sa.Text, nullable=False),
+    sa.Column("display_name", sa.Text),
+    sa.Column("description", sa.Text),
+    sa.Column("kind", sa.Text, nullable=False),
+    sa.Column("expr", sa.Text, nullable=False),
+    sa.Column("data_type", sa.Text),
+    sa.Column("time_grains", postgresql.JSONB),
+    sa.Column("is_default_time", sa.Boolean, nullable=False),
+    sa.Column("synonyms", postgresql.JSONB),
+    sa.Column("validation_state", sa.Text, nullable=False),
+    sa.Column("refreshed_at", _TS, nullable=False),
+    schema=INFO,
+)
+
+SEMANTIC_METRICS = sa.Table(
+    "semantic_metrics",
+    METADATA,
+    sa.Column("metric_id", _UUID, primary_key=True),
+    *_semantic(),
+    sa.Column("dataset_id", _UUID, nullable=False),
+    sa.Column("dataset_name", sa.Text),
+    sa.Column("name", sa.Text, nullable=False),
+    sa.Column("display_name", sa.Text),
+    sa.Column("description", sa.Text),
+    sa.Column("agg", sa.Text, nullable=False),
+    sa.Column("expr", sa.Text),
+    sa.Column("filter", sa.Text),
+    sa.Column("time_dimension_id", _UUID),
+    sa.Column("format", sa.Text),
+    sa.Column("unit", sa.Text),
+    sa.Column("currency", sa.Text),
+    sa.Column("polarity", sa.Text),
+    sa.Column("caveat", sa.Text),
+    sa.Column("synonyms", postgresql.JSONB),
+    sa.Column("status", sa.Text, nullable=False),
+    sa.Column("owner_id", _UUID),
+    sa.Column("owner_email", sa.Text),
+    sa.Column("validation_state", sa.Text, nullable=False),
+    sa.Column("created_at", _TS),
+    sa.Column("updated_at", _TS),
+    sa.Column("refreshed_at", _TS, nullable=False),
+    schema=INFO,
+)
+
+SEMANTIC_RELATIONSHIPS = sa.Table(
+    "semantic_relationships",
+    METADATA,
+    sa.Column("relationship_id", _UUID, primary_key=True),
+    *_semantic(),
+    sa.Column("name", sa.Text, nullable=False),
+    sa.Column("left_dataset_id", _UUID, nullable=False),
+    sa.Column("left_dataset_name", sa.Text),
+    sa.Column("right_dataset_id", _UUID, nullable=False),
+    sa.Column("right_dataset_name", sa.Text),
+    sa.Column("join_columns", postgresql.JSONB, nullable=False),
+    sa.Column("cardinality", sa.Text, nullable=False),
+    sa.Column("validation_state", sa.Text, nullable=False),
+    sa.Column("refreshed_at", _TS, nullable=False),
+    schema=INFO,
+)
+
 # ── _acl: what the row filters consult, refreshed with access.grants ──────────
 # Private: the reader reaches it only through `_acl.visible()`.
 
@@ -577,6 +763,21 @@ ACL_SCOPES = sa.Table(
     schema=ACL,
 )
 
+# The table of each semantic dataset, refreshed with the semantic tables: a model
+# is seen only when each of these is. Apart from them, because their own row
+# filter would hide the very datasets that hide a model.
+ACL_SEMANTIC_TABLES = sa.Table(
+    "semantic_tables",
+    METADATA,
+    sa.Column("workspace_id", _UUID, nullable=False),
+    sa.Column("model_id", _UUID, nullable=False),
+    sa.Column("catalog_id", _UUID, nullable=False),
+    sa.Column("schema_name", sa.Text, nullable=False),
+    sa.Column("table_name", sa.Text, nullable=False),
+    sa.Index("semantic_tables_workspace_idx", "workspace_id"),
+    schema=ACL,
+)
+
 
 # What a row of info_schema must be among `_acl.visible()`'s keys to be seen: the
 # catalog, its schema or the table itself. A schema is also seen for a grant on
@@ -594,6 +795,10 @@ _IN_WORKSPACE = (
 )
 _SCHEMA_VISIBLE = _visible(_CATALOG_KEY, _SCHEMA_KEY, _NESTED_KEY)
 _TABLE_VISIBLE = _visible(_CATALOG_KEY, _SCHEMA_KEY, _TABLE_KEY)
+# A macro lives in its schema, not in a table: a grant on one table of the schema
+# does not show it.
+_ROUTINE_VISIBLE = _visible(_CATALOG_KEY, _SCHEMA_KEY)
+_MODEL_VISIBLE = f"{_IN_WORKSPACE} AND model_id NOT IN (SELECT {ACL}.hidden_models())"
 
 
 @dataclass(frozen=True)
@@ -645,6 +850,42 @@ TABLES: tuple[SystemTable, ...] = (
         None,
         row_filter=_TABLE_VISIBLE,
     ),
+    SystemTable(
+        INFO_ROUTINES,
+        "The macros of the schemas you can see",
+        None,
+        row_filter=_ROUTINE_VISIBLE,
+    ),
+    SystemTable(
+        SEMANTIC_MODELS,
+        "This workspace's semantic models whose tables you can all see",
+        None,
+        row_filter=_MODEL_VISIBLE,
+    ),
+    SystemTable(
+        SEMANTIC_DATASETS,
+        "The tables each semantic model you can see is built on",
+        None,
+        row_filter=_MODEL_VISIBLE,
+    ),
+    SystemTable(
+        SEMANTIC_DIMENSIONS,
+        "The dimensions of the semantic models you can see",
+        None,
+        row_filter=_MODEL_VISIBLE,
+    ),
+    SystemTable(
+        SEMANTIC_METRICS,
+        "The metrics of the semantic models you can see",
+        None,
+        row_filter=_MODEL_VISIBLE,
+    ),
+    SystemTable(
+        SEMANTIC_RELATIONSHIPS,
+        "The joins of the semantic models you can see",
+        None,
+        row_filter=_MODEL_VISIBLE,
+    ),
     SystemTable(AUDIT, "Every event of the access audit log", Permission.AUDIT_READ.value),
     SystemTable(
         GRANTS, "Current access, one row per grant of any kind", Permission.AUDIT_READ.value
@@ -686,6 +927,21 @@ TABLES: tuple[SystemTable, ...] = (
         MAINTENANCE_OPERATIONS,
         "Each maintenance run on a table, and its outcome",
         Permission.MAINTENANCE_MANAGE.value,
+    ),
+    SystemTable(
+        STORAGE_BACKENDS,
+        "Every storage backend, never its credentials",
+        Permission.STORAGE_MANAGE.value,
+    ),
+    SystemTable(
+        ASSISTANT_USAGE,
+        "The tokens each assistant answer used",
+        Permission.QUERIES_ADMIN.value,
+    ),
+    SystemTable(
+        TOOL_CALLS,
+        "Each tool the assistant called, and how it ended",
+        Permission.QUERIES_ADMIN.value,
     ),
 )
 # The schemas queries may read, in the order of their first table.
@@ -984,6 +1240,19 @@ UNION ALL SELECT format('n:%s.%I', catalog_id, schema_name) FROM covered
 """
 
 
+# The semantic models of the query's workspace with a dataset on a table it may not
+# see: a model is seen whole or not at all, as in `services.semantic.store.visible`.
+_HIDDEN_MODELS = f"""
+WITH v AS MATERIALIZED (SELECT k FROM {ACL}.visible() k)
+SELECT DISTINCT t.model_id FROM {ACL}.semantic_tables t
+WHERE t.workspace_id = {ACL}.workspace() AND NOT EXISTS (
+  SELECT 1 FROM v WHERE v.k IN (
+    format('c:%s', t.catalog_id),
+    format('s:%s.%I', t.catalog_id, t.schema_name),
+    format('t:%s.%I.%I', t.catalog_id, t.schema_name, t.table_name)))
+"""
+
+
 def row_filter(table: SystemTable) -> str:
     """The condition a row of ``table`` must meet for a query to see it."""
     # A sub-select, so Postgres decides it once per query rather than per row.
@@ -1007,6 +1276,13 @@ async def _apply_row_filters(conn: AsyncConnection) -> None:
             f"CREATE OR REPLACE FUNCTION {ACL}.visible() RETURNS SETOF text "
             "LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp "
             f"AS $fn$ {_VISIBLE} $fn$"
+        )
+    )
+    await conn.execute(
+        text(
+            f"CREATE OR REPLACE FUNCTION {ACL}.hidden_models() RETURNS SETOF uuid "
+            "LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp "
+            f"AS $fn$ {_HIDDEN_MODELS} $fn$"
         )
     )
     for table in TABLES:

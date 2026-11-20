@@ -101,8 +101,8 @@ pages:
 - path: querying/system-catalog.md
   title: System catalog
   section: Querying
-  summary: The duckhaven catalog lets you query, read-only in SQL, the schemas, tables and columns
-    you can see, and DuckHaven's own records of access, queries, compute and storage.
+  summary: The duckhaven catalog lets you query, read-only in SQL, what you can see in your catalogs
+    and DuckHaven's own records of access, queries, compute, storage and the assistant.
 - path: querying/troubleshooting.md
   title: Troubleshoot queries
   section: Querying

@@ -63,6 +63,10 @@ async def test_an_admin_gets_its_tables_with_the_types_duckdb_reports(client, ad
     assert body["catalog"] == "duckhaven"
     assert body["available"] is True
     assert [(t["schema_name"], t["name"]) for t in body["tables"]] == [
+        ("info_schema", "catalogs"),
+        ("info_schema", "schemata"),
+        ("info_schema", "tables"),
+        ("info_schema", "columns"),
         ("access", "audit"),
         ("access", "grants"),
         ("query", "history"),
@@ -91,6 +95,11 @@ async def test_each_table_says_what_reading_it_takes(client, admin, workspace):
     resp = await (await _login(client, admin)).get(f"/workspaces/{workspace.slug}/system-catalog")
 
     assert {(t["schema_name"], t["name"]): t["permission"] for t in resp.json()["tables"]} == {
+        # Every member's, each row narrowed to what they can see.
+        ("info_schema", "catalogs"): None,
+        ("info_schema", "schemata"): None,
+        ("info_schema", "tables"): None,
+        ("info_schema", "columns"): None,
         ("access", "audit"): "audit:read",
         ("access", "grants"): "audit:read",
         ("query", "history"): "queries:admin",
@@ -110,12 +119,21 @@ async def test_a_member_is_shown_only_the_tables_they_may_read(client, db_sessio
 
     resp = await (await _login(client, auditor)).get(f"/workspaces/{workspace.slug}/system-catalog")
     assert [(t["schema_name"], t["name"]) for t in resp.json()["tables"]] == [
+        ("info_schema", "catalogs"),
+        ("info_schema", "schemata"),
+        ("info_schema", "tables"),
+        ("info_schema", "columns"),
         ("access", "audit"),
         ("access", "grants"),
     ]
     resp = await (await _login(client, member)).get(f"/workspaces/{workspace.slug}/system-catalog")
     assert resp.status_code == 200
-    assert resp.json()["tables"] == []
+    assert [(t["schema_name"], t["name"]) for t in resp.json()["tables"]] == [
+        ("info_schema", "catalogs"),
+        ("info_schema", "schemata"),
+        ("info_schema", "tables"),
+        ("info_schema", "columns"),
+    ]
 
 
 async def test_an_admin_outside_the_workspace_is_refused(client, db_session, workspace):

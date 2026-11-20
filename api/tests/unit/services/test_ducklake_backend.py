@@ -20,6 +20,7 @@ from api.services.catalog_backends.ducklake import (
     _TYPE_TO_DUCKDB,
     DUCKLAKE_CAPABILITIES,
     DuckLakeCatalogBackend,
+    _columns_by_table,
     _is_missing_relation,
     _quote,
     metadata_schema_for,
@@ -448,3 +449,33 @@ async def test_ddl_the_query_gate_refuses_is_a_bad_request(monkeypatch):
     ctx = SimpleNamespace(db=None, workspace=SimpleNamespace(id="ws"), user=SimpleNamespace(id="u"))
     with pytest.raises(CatalogBackendBadRequest, match="Could not create"):
         await DuckLakeCatalogBackend()._run_ddl(_catalog(), "INSTALL httpfs", ctx, what="create")
+
+
+def test_ducklake_columns_are_typed_as_duckdb_shows_them():
+    """Rows as `ducklake_column` holds them for a table made on DuckDB 1.5.6:
+    `(table_id, column_id, parent_column, name, column_type, nulls_allowed)`."""
+    rows = [
+        (1, 1, None, "id", "int64", False),
+        (1, 2, None, "point", "struct", True),
+        (1, 3, 2, "x", "int32", True),
+        (1, 4, 2, "y z", "varchar", True),
+        (1, 5, None, "tags", "list", True),
+        (1, 6, 5, "element", "varchar", True),
+        (1, 7, None, "attrs", "map", True),
+        (1, 8, 7, "key", "varchar", True),
+        (1, 9, 7, "value", "struct", True),
+        (1, 10, 9, "r", "float64", True),
+        (2, 11, None, "price", "decimal(10,2)", True),
+    ]
+
+    columns = _columns_by_table(rows)
+
+    assert [(c.name, c.position, c.duckdb_type, c.nullable) for c in columns[1]] == [
+        ("id", 0, "BIGINT", False),
+        ("point", 1, 'STRUCT(x INTEGER, "y z" VARCHAR)', True),
+        ("tags", 2, "VARCHAR[]", True),
+        ("attrs", 3, "MAP(VARCHAR, STRUCT(r DOUBLE))", True),
+    ]
+    assert [(c.type_text, c.duckdb_type) for c in columns[2]] == [
+        ("decimal(10,2)", "DECIMAL(10,2)")
+    ]

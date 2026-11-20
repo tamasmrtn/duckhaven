@@ -4,14 +4,15 @@ type: how-to
 
 # Enable the system catalog database
 
-DuckHaven keeps a read-only copy of its access audit log, current access and query history in a second Postgres
-database, `duckhaven_system`, refreshed every 10 seconds.
+DuckHaven keeps a read-only copy of its audit log, current access, query history and catalog metadata in a second
+Postgres database, `duckhaven_system`, refreshed every 10 seconds.
 
 People query the copy in SQL as the `duckhaven` catalog, each table with the permission it needs; see
 [System catalog](../querying/system-catalog.md). It is kept apart from `duckhaven`, the database that holds users,
 password hashes and session tokens, so that agents can attach it through a login that reaches nothing else. The API
 creates that login, `dh_system_reader`, with a generated password; it can read the copied tables and nothing more.
-Row-level security on each table returns rows only to a query that may read that table.
+Row-level security on each table returns rows only to a query that may read that table, and in `info_schema` only the
+rows its principals can see.
 
 A new install creates the database on first start. An install that predates it needs one command; see
 [On an existing install](#on-an-existing-install).
@@ -29,14 +30,22 @@ A new install creates the database on first start. An install that predates it n
 
 ## What it holds
 
-Three tables: `access.audit`, every event of the [access audit log](../access/audit-log.md); `access.grants`, current
-access; and `query.history`, finished queries. Their columns, and how long each keeps its rows, are in the
+Four schemas: `info_schema`, the schemas, tables and columns of every catalog; `access.audit`, every event of the
+[access audit log](../access/audit-log.md); `access.grants`, current access; and `query.history`, finished queries.
+Their columns, and how long each keeps its rows, are in the
 [system catalog reference](../reference/system-catalog.md). Deleting a workspace removes its queries from History, but
 not from the copy.
 
 The copy trails `duckhaven` by up to the publish interval. An audit event joins it once every transaction that was
 writing before it on the same Postgres server has finished, so a transaction that runs for minutes holds the audit copy
 back that long.
+
+`info_schema` is read from each catalog's own metadata. One replica at a time re-reads a table within a publish interval
+or two of a statement or API call that changes it, and reads each catalog whole every
+`SYSTEM_CATALOG_METADATA_REFRESH_S`, 15 minutes by default, two catalogs per publish interval. A whole read of an
+Iceberg catalog costs Polaris one request per schema and one per table, eight at a time; of a DuckLake catalog, three
+queries. When the API first starts with the system catalog, a deployment of 100 catalogs takes about 10 minutes to have
+every one listed.
 
 ## On a new install
 
@@ -169,6 +178,10 @@ docker compose exec postgres psql -U duckhaven -d duckhaven \
 - **A query on it fails with `IO Error: Unable to connect to Postgres at …`.** The agent cannot reach
   `SYSTEM_CATALOG_AGENT_HOST` on `SYSTEM_CATALOG_AGENT_PORT`. On the bundled stack that is `postgres:5432`; for an
   agent on another host, set them to an address it can reach and restart the API.
+- **The API logs `Could not read catalog ⟨slug⟩ for the system catalog: …`.** `info_schema` keeps what it last read of
+  that catalog, and the API tries again when the catalog is next due for a whole read, or on the next tick for a table a
+  statement changed. The message is logged once. The catalog's metastore is unreachable, or, for an Iceberg catalog,
+  the catalog is missing from Polaris.
 - **Only `access.audit` falls behind, and nothing is logged.** A long transaction on the Postgres server is holding it
   back. Find it, oldest first:
 

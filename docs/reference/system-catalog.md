@@ -4,11 +4,16 @@ type: reference
 
 # System catalog tables
 
-Every table and column of the `duckhaven` system catalog, which you query in SQL with the permission each table
-needs. What the catalog is, and how a query reads it, is in [System catalog](../querying/system-catalog.md).
+Every table and column of the `duckhaven` system catalog, which you query in SQL: `info_schema` as any member, the rest
+with the permission each table needs. What the catalog is, and how a query reads it, is in
+[System catalog](../querying/system-catalog.md).
 
 | Table | Holds | Needs | Kept for |
 |---|---|---|---|
+| [`duckhaven.info_schema.catalogs`](#info_schemacatalogs) | The catalogs attached to the query's workspace | Nothing | Replaced after each access change, and at least every 5 minutes |
+| [`duckhaven.info_schema.schemata`](#info_schemaschemata) | The schemas you can see | Nothing | Replaced as each catalog is read again |
+| [`duckhaven.info_schema.tables`](#info_schematables) | The tables you can see | Nothing | Replaced as each catalog is read again |
+| [`duckhaven.info_schema.columns`](#info_schemacolumns) | The columns of the tables you can see | Nothing | Replaced as each catalog is read again |
 | [`duckhaven.access.audit`](#accessaudit) | Every event of the [access audit log](../access/audit-log.md) | `audit:read` | `AUDIT_RETENTION_DAYS`, as in the audit log |
 | [`duckhaven.access.grants`](#accessgrants) | Current access, one row per grant of any kind | `audit:read` | Replaced whole after each access change, and at least every 5 minutes |
 | [`duckhaven.query.history`](#queryhistory) | Finished queries: `done`, `failed` or `cancelled` | `queries:admin` | `SYSTEM_CATALOG_QUERY_HISTORY_DAYS`, 365 days by default, counted from when each finished |
@@ -17,8 +22,66 @@ needs. What the catalog is, and how a query reads it, is in [System catalog](../
   `SELECT *` in anything that must keep working.
 - **Names are copied with the ids.** Emails, workspace slugs, catalog slugs and agent names are kept as they were when
   the row was copied, so a row still reads after the user, workspace or agent is deleted.
+- **`info_schema` rows are filtered.** Each query sees the rows of its own workspace's catalogs that everyone it runs
+  for can see; see [What info_schema shows](../querying/system-catalog.md#what-info_schema-shows), which also says how
+  soon a change appears.
 - **JSON columns are text.** `before`, `after`, `details` and `tags` hold JSON; read a field with `->>`, as in
   `after ->> 'tier'`.
+
+## info_schema.catalogs
+
+One row per catalog attached to the workspace the query runs in, whatever the grants on it.
+
+| Column | Type | Meaning |
+|---|---|---|
+| `workspace_id` | `UUID` | The workspace |
+| `catalog_id`, `catalog_name` | `UUID`, `VARCHAR` | The catalog, by the name queries use |
+| `catalog_kind` | `VARCHAR` | `iceberg_polaris` or `ducklake`; see [Catalog kinds](../data/catalogs.md#catalog-kinds) |
+| `access_mode` | `VARCHAR` | `open` or `scoped`, the [access mode](../access/scoped-access.md) of this attachment |
+| `is_default` | `BOOLEAN` | Whether it is the workspace's default catalog |
+| `created_at` | `TIMESTAMP WITH TIME ZONE` | When the catalog was created |
+| `attached_at` | `TIMESTAMP WITH TIME ZONE` | When it was attached to the workspace |
+
+## info_schema.schemata
+
+One row per schema you can see.
+
+| Column | Type | Meaning |
+|---|---|---|
+| `catalog_id`, `catalog_name` | `UUID`, `VARCHAR` | Its catalog |
+| `schema_name` | `VARCHAR` | The schema |
+| `refreshed_at` | `TIMESTAMP WITH TIME ZONE` | When it was last read from the catalog |
+
+## info_schema.tables
+
+One row per table you can see. Views are not listed.
+
+| Column | Type | Meaning |
+|---|---|---|
+| `catalog_id`, `catalog_name` | `UUID`, `VARCHAR` | Its catalog |
+| `schema_name`, `table_name` | `VARCHAR` | Its schema and name |
+| `table_type` | `VARCHAR` | `BASE TABLE` |
+| `table_format` | `VARCHAR` | `ICEBERG` or `DUCKLAKE` |
+| `column_count` | `INTEGER` | Its top-level columns |
+| `row_count` | `BIGINT` | Its rows, as its page in the catalog tree shows them; empty when unknown |
+| `bytes` | `BIGINT` | The size of its data files, as its page shows it; empty when unknown |
+| `table_owner` | `VARCHAR` | The email of whoever created it on the **Catalog** page; empty for a table created any other way |
+| `last_altered` | `TIMESTAMP WITH TIME ZONE` | Its last change: for an Iceberg table, by any engine; for a DuckLake table, the last DuckHaven saw after a write. Empty when unknown |
+| `refreshed_at` | `TIMESTAMP WITH TIME ZONE` | When it was last read from the catalog |
+
+## info_schema.columns
+
+One row per top-level column of each table you can see. A nested column's fields are in its `data_type`.
+
+| Column | Type | Meaning |
+|---|---|---|
+| `catalog_id`, `catalog_name` | `UUID`, `VARCHAR` | Its table's catalog |
+| `schema_name`, `table_name` | `VARCHAR` | Its table |
+| `column_name` | `VARCHAR` | The column |
+| `ordinal_position` | `INTEGER` | Its place in the table, from 1 |
+| `data_type` | `VARCHAR` | Its type as `DESCRIBE` shows it to a query, such as `BIGINT` or `STRUCT(x INTEGER, y VARCHAR)` |
+| `source_type` | `VARCHAR` | Its type as the catalog stores it, such as Iceberg's `long` or DuckLake's `int64` |
+| `is_nullable` | `VARCHAR` | `YES` or `NO` |
 
 ## access.audit
 

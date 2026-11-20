@@ -42,6 +42,7 @@ from api.services.audit.events import record_grant_denied
 from api.services.delegation import principals_for
 from api.services.sql_denylist import function_name
 from api.services.statement_policy import StatementNotAllowed, check_file_reads
+from duckhaven_shared.system_catalog import SYSTEM_CATALOG_ALIAS
 
 # Grantable tiers, low → high. `owner` is intentionally absent (workspace role).
 TIER_SCALE: dict[str, int] = {"metadata": 0, "reader": 1, "writer": 2}
@@ -656,7 +657,9 @@ def _with_cause(hint: str, scoped_slugs: list[str] | None) -> str:
     return f"{hint} {_scoped_cause(scoped_slugs)}." if scoped_slugs else hint
 
 
-def metadata_enumeration_reason(sql: str, scoped_slugs: list[str] | None = None) -> str | None:
+def metadata_enumeration_reason(
+    sql: str, scoped_slugs: list[str] | None = None, *, system_catalog: str | None = None
+) -> str | None:
     """Why ``sql`` reaches catalog metadata in a way grants cannot check.
 
     ``information_schema`` and its siblings are computed by DuckDB across every
@@ -676,6 +679,10 @@ def metadata_enumeration_reason(sql: str, scoped_slugs: list[str] | None = None)
 
     ``scoped_slugs``, when given, names those catalogs in the returned reason.
 
+    ``system_catalog`` names the attached system catalog, whose tables are not the
+    engine's listings: its ``info_schema`` is a table of its own, filtered to what
+    the principal can see, and the caller has already checked every name in it.
+
     Returns a user-facing reason, or ``None`` when nothing enumerates.
     """
     hint = _enumeration_hint(scoped_slugs)
@@ -688,6 +695,8 @@ def metadata_enumeration_reason(sql: str, scoped_slugs: list[str] | None = None)
         if stmt is None:
             continue
         for table in stmt.find_all(exp.Table):
+            if system_catalog is not None and table.catalog.lower() == system_catalog:
+                continue
             # `information_schema` is matched on the schema, so this catches both the bare
             # `information_schema.tables` and dbt-duckdb's
             # `system.information_schema.tables` spelling.
@@ -811,7 +820,7 @@ async def assert_query_access(
     missing principal — all fail-closed.
     """
     # Import here to avoid module-level cycles with these services.
-    from api.services.system_catalog.authorize import assert_may_read
+    from api.services.system_catalog.authorize import assert_may_read, shadowed
     from api.services.workspace import DEFAULT_SCHEMA
 
     # In every workspace, open ones included. Past it, the system catalog's
@@ -830,7 +839,10 @@ async def assert_query_access(
     # even from a session whose active catalog is open. The reason names the
     # scoped catalogs so that denial is explicable from an open one.
     scoped_slugs = sorted(c.slug for c in catalogs if c.id in scoped_ids)
-    if (reason := metadata_enumeration_reason(sql, scoped_slugs)) is not None:
+    system_catalog = None if shadowed(catalogs) else SYSTEM_CATALOG_ALIAS
+    if (
+        reason := metadata_enumeration_reason(sql, scoped_slugs, system_catalog=system_catalog)
+    ) is not None:
         raise GrantDenied(reason)
     if (reason := file_read_reason(sql, staging_prefixes or [], scoped_slugs)) is not None:
         raise GrantDenied(reason)

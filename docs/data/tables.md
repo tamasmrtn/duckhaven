@@ -28,7 +28,9 @@ The breadth of `CREATE` / `ALTER` support is bounded by the DuckDB `iceberg` ext
 Clicking a table in the catalog browser shows its columns as Polaris holds them. From SQL, use
 `DESCRIBE <catalog>.<schema>.<table>` — the supported path, and the one every DuckHaven client uses.
 `information_schema.columns` cannot introspect an Iceberg table; see
-[SQL support](../reference/sql-support.md#columns-and-types-use-describe) for why and what it returns instead.
+[SQL support](../reference/sql-support.md#columns-and-types-use-describe) for why and what it returns instead. To read
+many tables' columns in one query, use
+[`duckhaven.info_schema.columns`](../querying/system-catalog.md#what-info_schema-shows).
 
 ## Snapshots and time travel
 

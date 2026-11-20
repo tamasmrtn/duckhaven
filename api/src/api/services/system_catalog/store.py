@@ -54,7 +54,7 @@ from duckhaven_shared.system_catalog import (
 
 logger = logging.getLogger(__name__)
 
-ACCESS, QUERY = "access", "query"
+ACCESS, QUERY, INFO = "access", "query", "info_schema"
 # Private: copy cursors, and what the row filters consult.
 STATE, ACL = "_state", "_acl"
 READER_ROLE = "dh_system_reader"
@@ -172,6 +172,119 @@ HISTORY = sa.Table(
 )
 
 
+# ── info_schema: what each member can see of their workspace's catalogs ────────
+
+# One row per catalog attachment; refreshed with access.grants.
+INFO_CATALOGS = sa.Table(
+    "catalogs",
+    METADATA,
+    sa.Column("workspace_id", _UUID, primary_key=True),
+    sa.Column("catalog_id", _UUID, primary_key=True),
+    sa.Column("catalog_name", sa.Text, nullable=False),
+    sa.Column("catalog_kind", sa.Text, nullable=False),
+    sa.Column("access_mode", sa.Text, nullable=False),
+    sa.Column("is_default", sa.Boolean, nullable=False),
+    sa.Column("created_at", _TS),
+    sa.Column("attached_at", _TS),
+    schema=INFO,
+)
+
+# The rest, one catalog at a time, from each catalog's own metadata.
+INFO_SCHEMATA = sa.Table(
+    "schemata",
+    METADATA,
+    sa.Column("catalog_id", _UUID, primary_key=True),
+    sa.Column("catalog_name", sa.Text, nullable=False),
+    sa.Column("schema_name", sa.Text, primary_key=True),
+    sa.Column("refreshed_at", _TS, nullable=False),
+    schema=INFO,
+)
+
+INFO_TABLES = sa.Table(
+    "tables",
+    METADATA,
+    sa.Column("catalog_id", _UUID, primary_key=True),
+    sa.Column("catalog_name", sa.Text, nullable=False),
+    sa.Column("schema_name", sa.Text, primary_key=True),
+    sa.Column("table_name", sa.Text, primary_key=True),
+    sa.Column("table_type", sa.Text, nullable=False),
+    sa.Column("table_format", sa.Text, nullable=False),
+    sa.Column("column_count", sa.Integer, nullable=False),
+    sa.Column("row_count", sa.BigInteger),
+    sa.Column("bytes", sa.BigInteger),
+    sa.Column("table_owner", sa.Text),
+    sa.Column("last_altered", _TS),
+    sa.Column("refreshed_at", _TS, nullable=False),
+    schema=INFO,
+)
+
+INFO_COLUMNS = sa.Table(
+    "columns",
+    METADATA,
+    sa.Column("catalog_id", _UUID, primary_key=True),
+    sa.Column("catalog_name", sa.Text, nullable=False),
+    sa.Column("schema_name", sa.Text, primary_key=True),
+    sa.Column("table_name", sa.Text, primary_key=True),
+    sa.Column("column_name", sa.Text, primary_key=True),
+    sa.Column("ordinal_position", sa.Integer, nullable=False),
+    sa.Column("data_type", sa.Text, nullable=False),
+    sa.Column("source_type", sa.Text, nullable=False),
+    sa.Column("is_nullable", sa.Text, nullable=False),
+    schema=INFO,
+)
+
+# ── _acl: what the row filters consult, refreshed with access.grants ──────────
+# Private: the reader reaches it only through `_acl.visible()`.
+
+ACL_ATTACHMENTS = sa.Table(
+    "attachments",
+    METADATA,
+    sa.Column("workspace_id", _UUID, primary_key=True),
+    sa.Column("catalog_id", _UUID, primary_key=True),
+    sa.Column("access_mode", sa.Text, nullable=False),
+    schema=ACL,
+)
+
+ACL_MEMBERS = sa.Table(
+    "members",
+    METADATA,
+    sa.Column("workspace_id", _UUID, primary_key=True),
+    sa.Column("user_id", _UUID, primary_key=True),
+    schema=ACL,
+)
+
+# Every catalog grant, of any tier: any of them makes what it covers visible.
+ACL_SCOPES = sa.Table(
+    "scopes",
+    METADATA,
+    sa.Column("user_id", _UUID, nullable=False),
+    sa.Column("catalog_id", _UUID, nullable=False),
+    sa.Column("schema_name", sa.Text),
+    sa.Column("table_name", sa.Text),
+    # Each of `_acl.visible()`'s coverage tests is one probe of this.
+    sa.Index("scopes_lookup_idx", "user_id", "catalog_id", "schema_name", "table_name"),
+    schema=ACL,
+)
+
+
+# What a row of info_schema must be among `_acl.visible()`'s keys to be seen: the
+# catalog, its schema or the table itself. A schema is also seen for a grant on
+# one of its tables (`n:`), as the catalog tree shows it.
+def _visible(*keys: str) -> str:
+    return " OR ".join(f"{key} IN (SELECT {ACL}.visible())" for key in keys)
+
+
+_CATALOG_KEY = "format('c:%s', catalog_id)"
+_SCHEMA_KEY = "format('s:%s.%I', catalog_id, schema_name)"
+_NESTED_KEY = "format('n:%s.%I', catalog_id, schema_name)"
+_TABLE_KEY = "format('t:%s.%I.%I', catalog_id, schema_name, table_name)"
+_IN_WORKSPACE = (
+    f"workspace_id = (SELECT {ACL}.workspace()) AND (SELECT cardinality({ACL}.principals()) > 0)"
+)
+_SCHEMA_VISIBLE = _visible(_CATALOG_KEY, _SCHEMA_KEY, _NESTED_KEY)
+_TABLE_VISIBLE = _visible(_CATALOG_KEY, _SCHEMA_KEY, _TABLE_KEY)
+
+
 @dataclass(frozen=True)
 class SystemTable:
     """A table queries may read, and what reading it takes."""
@@ -200,6 +313,27 @@ class SystemTable:
 
 # The tables a query may read, in the order the catalog tree lists them.
 TABLES: tuple[SystemTable, ...] = (
+    SystemTable(
+        INFO_CATALOGS, "The catalogs attached to this workspace", None, row_filter=_IN_WORKSPACE
+    ),
+    SystemTable(
+        INFO_SCHEMATA,
+        "The schemas you can see in this workspace's catalogs",
+        None,
+        row_filter=_SCHEMA_VISIBLE,
+    ),
+    SystemTable(
+        INFO_TABLES,
+        "The tables you can see, with their size and last write",
+        None,
+        row_filter=_TABLE_VISIBLE,
+    ),
+    SystemTable(
+        INFO_COLUMNS,
+        "The columns of the tables you can see, with the type a query sees",
+        None,
+        row_filter=_TABLE_VISIBLE,
+    ),
     SystemTable(AUDIT, "Every event of the access audit log", Permission.AUDIT_READ.value),
     SystemTable(
         GRANTS, "Current access, one row per grant of any kind", Permission.AUDIT_READ.value
@@ -235,6 +369,28 @@ CURSORS = sa.Table(
     sa.Column("name", sa.Text, primary_key=True),
     sa.Column("value", postgresql.JSONB, nullable=False),
     sa.Column("updated_at", _TS, nullable=False, server_default=sa.func.now()),
+    schema=STATE,
+)
+
+# When each catalog was last read whole into info_schema, and what has changed in
+# one since (`metadata`). Private like the cursors.
+METADATA_READS = sa.Table(
+    "metadata_reads",
+    METADATA,
+    sa.Column("catalog_id", _UUID, primary_key=True),
+    sa.Column("read_at", _TS, nullable=False),
+    schema=STATE,
+)
+
+METADATA_CHANGES = sa.Table(
+    "metadata_changes",
+    METADATA,
+    sa.Column("id", sa.BigInteger, sa.Identity(), primary_key=True),
+    sa.Column("catalog_id", _UUID, nullable=False),
+    # A table's change, or the whole catalog's when both are null.
+    sa.Column("schema_name", sa.Text),
+    sa.Column("table_name", sa.Text),
+    sa.Column("marked_at", _TS, nullable=False, server_default=sa.func.now()),
     schema=STATE,
 )
 
@@ -369,11 +525,12 @@ async def _apply_reader_login(conn: AsyncConnection, password: str) -> None:
             f"current_database(), '{READER_ROLE}'); END $do$"
         )
     )
-    # `_acl` for the functions and tables the row filters consult, which run as
-    # the reader; `_state` not at all.
-    readable = ", ".join((*SCHEMAS, ACL))
-    await conn.execute(text(f"GRANT USAGE ON SCHEMA {readable} TO {READER_ROLE}"))
+    readable = ", ".join(SCHEMAS)
+    await conn.execute(text(f"GRANT USAGE ON SCHEMA {readable}, {ACL} TO {READER_ROLE}"))
     await conn.execute(text(f"GRANT SELECT ON ALL TABLES IN SCHEMA {readable} TO {READER_ROLE}"))
+    # The row filters call `_acl`'s functions as the reader; `visible()` reads its
+    # tables as their owner, so the reader holds nothing on them itself.
+    await conn.execute(text(f"REVOKE ALL ON ALL TABLES IN SCHEMA {ACL} FROM {READER_ROLE}"))
 
 
 async def _add_missing_columns(conn: AsyncConnection) -> None:
@@ -422,6 +579,62 @@ _ROW_FILTER_FUNCTIONS = {
 }
 
 
+# The keys of what everyone the query runs for may see in the workspace's catalogs,
+# for the info_schema filters: `c:` a whole catalog, `s:` a schema, `t:` a table,
+# and `n:` a schema seen for a table in it. It mirrors `services.grants`: an open
+# attachment shows every member everything; a scoped one shows what a grant of
+# any tier covers, for a member, and a query run for someone else shows only
+# what both may see. With several principals, a grant's node is in it when each
+# of them holds a grant on it or above it: the deepest grant on a path that all
+# of them cover is one of theirs, so testing each of their grants finds it.
+_VISIBLE = f"""
+WITH ps AS (
+  SELECT ids, (SELECT count(DISTINCT x) FROM unnest(ids) x) AS n
+  FROM (SELECT {ACL}.principals() AS ids) p
+),
+attached AS (
+  SELECT a.catalog_id, a.access_mode
+  FROM {ACL}.attachments a, ps
+  WHERE a.workspace_id = {ACL}.workspace() AND ps.n > 0
+),
+members AS (
+  SELECT count(DISTINCT m.user_id) = (SELECT n FROM ps) AS all_in
+  FROM {ACL}.members m, ps
+  WHERE m.workspace_id = {ACL}.workspace() AND m.user_id = ANY (ps.ids)
+),
+candidates AS (
+  SELECT DISTINCT k.catalog_id, k.schema_name, k.table_name
+  FROM {ACL}.scopes k
+  JOIN attached a ON a.catalog_id = k.catalog_id AND a.access_mode = 'scoped', ps, members
+  WHERE members.all_in AND k.user_id = ANY (ps.ids)
+),
+covered AS (
+  SELECT k.* FROM candidates k, ps
+  WHERE ps.n = 1 OR NOT EXISTS (
+    SELECT 1 FROM unnest(ps.ids) p(id)
+    WHERE NOT EXISTS (
+        SELECT 1 FROM {ACL}.scopes g
+        WHERE g.user_id = p.id AND g.catalog_id = k.catalog_id AND g.schema_name IS NULL)
+      AND NOT EXISTS (
+        SELECT 1 FROM {ACL}.scopes g
+        WHERE g.user_id = p.id AND g.catalog_id = k.catalog_id
+          AND g.schema_name = k.schema_name AND g.table_name IS NULL)
+      AND NOT EXISTS (
+        SELECT 1 FROM {ACL}.scopes g
+        WHERE g.user_id = p.id AND g.catalog_id = k.catalog_id
+          AND g.schema_name = k.schema_name AND g.table_name = k.table_name))
+)
+SELECT 'c:' || catalog_id FROM attached WHERE access_mode = 'open'
+UNION ALL SELECT 'c:' || catalog_id FROM covered WHERE schema_name IS NULL
+UNION ALL SELECT format('s:%s.%I', catalog_id, schema_name) FROM covered
+  WHERE schema_name IS NOT NULL AND table_name IS NULL
+UNION ALL SELECT format('t:%s.%I.%I', catalog_id, schema_name, table_name) FROM covered
+  WHERE table_name IS NOT NULL
+UNION ALL SELECT format('n:%s.%I', catalog_id, schema_name) FROM covered
+  WHERE table_name IS NOT NULL
+"""
+
+
 def row_filter(table: SystemTable) -> str:
     """The condition a row of ``table`` must meet for a query to see it."""
     # A sub-select, so Postgres decides it once per query rather than per row.
@@ -438,6 +651,15 @@ async def _apply_row_filters(conn: AsyncConnection) -> None:
                 f"LANGUAGE sql STABLE AS $fn$ {body} $fn$"
             )
         )
+    # As its owner, with a fixed search path, so the reader needs nothing on the
+    # tables it reads and no schema of theirs can stand in for one of these.
+    await conn.execute(
+        text(
+            f"CREATE OR REPLACE FUNCTION {ACL}.visible() RETURNS SETOF text "
+            "LANGUAGE sql STABLE SECURITY DEFINER SET search_path = pg_catalog, pg_temp "
+            f"AS $fn$ {_VISIBLE} $fn$"
+        )
+    )
     for table in TABLES:
         await conn.execute(text(f"ALTER TABLE {table.qualified} ENABLE ROW LEVEL SECURITY"))
         await conn.execute(text(f"DROP POLICY IF EXISTS readable ON {table.qualified}"))

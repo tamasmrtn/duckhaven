@@ -16,6 +16,7 @@ from api.services.catalog_backends import (
     CatalogBackendNotFound,
     CatalogBackendUnavailable,
     CatalogCapabilities,
+    CatalogDescription,
     CatalogSchemaInfo,
     CatalogTableInfo,
     SnapshotInfo,
@@ -54,6 +55,10 @@ _TYPE_TO_ICEBERG: dict[str, str] = {
     "TIMESTAMP": "timestamp",
     "DECIMAL": "decimal(38,9)",
 }
+
+
+# Polaris requests one catalog description makes at once.
+_DESCRIBE_CONCURRENCY = 8
 
 
 def column_for_iceberg(spec: ColumnSpec, field_id: int) -> dict[str, object]:
@@ -283,3 +288,20 @@ class PolarisCatalogBackend:
     async def routines_version(self, catalog: Catalog) -> str | None:
         # An Iceberg REST catalog stores no functions DuckDB could call.
         return None
+
+    async def describe_catalog(self, catalog: Catalog) -> CatalogDescription:
+        """One listing per schema, then one load per table, a few at a time:
+        the REST API returns a table's columns only with the whole table."""
+        schemas = await self.list_schemas(catalog)
+        listed = [t for s in schemas for t in await self.list_tables(catalog, s.name)]
+        gate = asyncio.Semaphore(_DESCRIBE_CONCURRENCY)
+
+        async def load(table: CatalogTableInfo) -> CatalogTableInfo | None:
+            async with gate:
+                try:
+                    return await self.get_table(catalog, table.schema_name, table.name)
+                except CatalogBackendNotFound:
+                    return None
+
+        loaded = await asyncio.gather(*(load(t) for t in listed))
+        return CatalogDescription(schemas=schemas, tables=[t for t in loaded if t is not None])

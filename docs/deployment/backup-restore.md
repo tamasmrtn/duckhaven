@@ -16,7 +16,7 @@ of deleted workspaces, which only it keeps:
 | `duckhaven` | Users, workspaces, saved queries, history and audit log, agent registrations |
 | `polaris` | The Iceberg metastore |
 | `ducklake` | The only copy of every DuckLake table's schema, snapshots and file list |
-| `duckhaven_system` | The [system catalog](system-catalog.md): a read-only copy of the audit log, current access and query history |
+| `duckhaven_system` | The [system catalog](system-catalog.md): a read-only copy of the audit log, current access, query history and each catalog's schemas, tables and columns |
 
 `api_data` holds the generated `SECRET_KEY`. Losing it invalidates every session and token, so back it up with the
 databases. Table data lives on your [storage backends](../data/storage-backends.md); back those up with their own

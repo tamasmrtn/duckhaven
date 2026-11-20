@@ -202,10 +202,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     # Creates its store if it can, and keeps retrying if it cannot: an install
     # without the database runs as before, and gets the copy once it exists.
     system_catalog_task: asyncio.Task | None = None
+    system_metadata_task: asyncio.Task | None = None
     if settings.system_catalog_enabled:
+        from api.services.system_catalog.metadata import metadata_loop
         from api.services.system_catalog.publisher import publisher_loop
 
         system_catalog_task = asyncio.create_task(publisher_loop(async_session_factory))
+        system_metadata_task = asyncio.create_task(
+            metadata_loop(async_session_factory, app.state.polaris_client)
+        )
 
     compute_reaper_task: asyncio.Task | None = None
     if settings.elastic_compute_enabled:
@@ -229,6 +234,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             result_cache_task,
             audit_retention_task,
             system_catalog_task,
+            system_metadata_task,
         ):
             if task is not None:
                 task.cancel()

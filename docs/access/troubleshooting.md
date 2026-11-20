@@ -91,8 +91,9 @@ one the query needed: `reader` to read, `writer` to change.
 `pg_catalog` views such as `pg_tables`, and similar — in a workspace where at least one catalog is scoped. The message
 names the scoped catalog, even when you were working in an open one.
 
-**What to do.** Browse the catalog tree, or use `DESCRIBE ⟨catalog⟩.⟨schema⟩.⟨table⟩` for columns. For tools that need
-`information_schema`, see [Scoped access](scoped-access.md#the-rejection-covers-the-whole-workspace).
+**What to do.** Query [`duckhaven.info_schema`](../querying/system-catalog.md#what-info_schema-shows) instead, which
+lists only what you can see. Or browse the catalog tree, or use `DESCRIBE ⟨catalog⟩.⟨schema⟩.⟨table⟩` for columns. For
+tools that need `information_schema`, see [Scoped access](scoped-access.md#the-rejection-covers-the-whole-workspace).
 
 ## "Reading files directly is not available in a workspace with a scoped catalog…"
 

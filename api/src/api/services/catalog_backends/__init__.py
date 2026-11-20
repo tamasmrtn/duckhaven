@@ -7,6 +7,7 @@ stay elsewhere because the kinds differ there in substance.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -59,6 +60,9 @@ class CatalogColumnInfo(_Info):
     type_name: str
     position: int
     nullable: bool = True
+    # How a query sees the type, as DuckDB's DESCRIBE names it
+    # (`services.catalog_types`). None where the backend does not say.
+    duckdb_type: str | None = None
 
 
 class CatalogSchemaInfo(_Info):
@@ -81,6 +85,9 @@ class CatalogTableInfo(_Info):
     comment: str | None = None
     format_version: int | None = None
     current_snapshot_summary: dict[str, str] | None = None
+    # When the table last changed, by any engine, where the catalog records it:
+    # Iceberg only.
+    last_modified: datetime | None = None
 
 
 class SnapshotInfo(_Info):
@@ -98,6 +105,14 @@ class SnapshotInfo(_Info):
     schema_id: int | None = None
     is_current: bool = False
     granularity: Literal["table", "catalog"] = "table"
+
+
+@dataclass(frozen=True)
+class CatalogDescription:
+    """Every live schema of a catalog, and every live table with its columns."""
+
+    schemas: list[CatalogSchemaInfo]
+    tables: list[CatalogTableInfo]
 
 
 @dataclass(frozen=True)
@@ -220,6 +235,11 @@ class CatalogBackend(Protocol):
 
         Needed because such a function can shadow a built-in of the same name for
         every query that runs with this catalog current."""
+        ...
+
+    async def describe_catalog(self, catalog: Catalog) -> CatalogDescription:
+        """Every schema and table of the catalog, each table with its columns and
+        their ``duckdb_type``. A table dropped while it is read is left out."""
         ...
 
 

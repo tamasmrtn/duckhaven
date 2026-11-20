@@ -104,9 +104,10 @@ async def test_anything_but_reading_its_tables_is_refused(api_client, workspace,
     assert resp.json()["error"] == "grant_denied"
 
 
-async def test_a_member_without_the_permission_is_refused(
-    stack, api_client, workspace, ready
-) -> None:
+@pytest_asyncio.fixture
+async def member(stack, api_client, workspace):
+    """A client signed in as a reader of `workspace` with no system permission, and
+    the reader's id."""
     email, password = f"member-{uuid.uuid4().hex[:8]}@xc.test", "xc-password-123"
     user = await api_client.post(
         "/api/admin/users", json={"email": email, "name": "Member", "password": password}
@@ -117,11 +118,15 @@ async def test_a_member_without_the_permission_is_refused(
         json={"user_id": user.json()["id"], "role": "reader"},
     )
     assert added.status_code == 201, added.text
-
-    async with httpx.AsyncClient(base_url=stack.base_url, timeout=30.0) as member:
-        login = await member.post("/api/auth/login", json={"email": email, "password": password})
+    async with httpx.AsyncClient(base_url=stack.base_url, timeout=30.0) as client:
+        login = await client.post("/api/auth/login", json={"email": email, "password": password})
         login.raise_for_status()
-        resp = await _submit(member, workspace, ready, "SELECT * FROM duckhaven.access.audit;")
+        yield client, user.json()["id"]
+
+
+async def test_a_member_without_the_permission_is_refused(member, workspace, ready) -> None:
+    client, _ = member
+    resp = await _submit(client, workspace, ready, "SELECT * FROM duckhaven.access.audit;")
 
     assert resp.status_code == 403, resp.text
     assert (
@@ -148,3 +153,87 @@ async def test_a_session_reads_it_and_never_moves_into_it(api_client, workspace,
         assert moved.status_code == 403, moved.text
     finally:
         await api_client.delete(f"/api/sql/sessions/{session}")
+
+
+async def test_a_member_sees_a_new_table_in_info_schema(
+    api_client, member, workspace, catalog, ready
+) -> None:
+    """The statement that made it has it read in within a tick or two."""
+    client, _ = member
+    created = await _submit(
+        api_client,
+        workspace,
+        ready,
+        f"CREATE TABLE {catalog}.analytics.xc_info AS SELECT 1::BIGINT AS id, 'a' AS name;",
+    )
+    assert created.status_code == 202, created.text
+    assert (await _finished(api_client, created.json()["id"]))["status"] == "done"
+
+    where = f"WHERE catalog_name = '{catalog}' AND table_name = 'xc_info'"
+    sql = f"SELECT schema_name, column_count FROM duckhaven.info_schema.tables {where};"
+    deadline = asyncio.get_event_loop().time() + _DEADLINE_S
+    while not (rows := await _rows(client, workspace, ready, sql)):
+        assert asyncio.get_event_loop().time() < deadline, "the table never reached info_schema"
+        await asyncio.sleep(2.0)
+
+    assert rows == [{"schema_name": "analytics", "column_count": 2}]
+    columns = await _rows(
+        client,
+        workspace,
+        ready,
+        "SELECT column_name, data_type FROM duckhaven.info_schema.columns "
+        f"{where} ORDER BY ordinal_position;",
+    )
+    assert columns == [
+        {"column_name": "id", "data_type": "BIGINT"},
+        {"column_name": "name", "data_type": "VARCHAR"},
+    ]
+
+
+async def _until(client, workspace: str, agent: str, sql: str, expected: list[dict]) -> None:
+    deadline = asyncio.get_event_loop().time() + _DEADLINE_S
+    while (rows := await _rows(client, workspace, agent, sql)) != expected:
+        assert asyncio.get_event_loop().time() < deadline, rows
+        await asyncio.sleep(2.0)
+
+
+async def test_a_scoped_catalog_shows_a_member_only_what_a_grant_covers(
+    api_client, member, workspace, catalog, ready
+) -> None:
+    client, member_id = member
+    for name in ("xc_granted", "xc_hidden"):
+        created = await _submit(
+            api_client,
+            workspace,
+            ready,
+            f"CREATE TABLE {catalog}.analytics.{name} AS SELECT 1 AS id;",
+        )
+        assert created.status_code == 202, created.text
+        assert (await _finished(api_client, created.json()["id"]))["status"] == "done"
+    tables = (
+        "SELECT table_name FROM duckhaven.info_schema.tables "
+        f"WHERE catalog_name = '{catalog}' ORDER BY table_name;"
+    )
+    both = [{"table_name": "xc_granted"}, {"table_name": "xc_hidden"}]
+    await _until(client, workspace, ready, tables, both)
+
+    base = f"/api/workspaces/{workspace}/catalogs/{catalog}"
+    scoped = await api_client.patch(f"{base}/access-mode", json={"access_mode": "scoped"})
+    assert scoped.status_code == 200, scoped.text
+    granted = await api_client.put(
+        f"{base}/grants",
+        json={
+            "user_id": member_id,
+            "schema_name": "analytics",
+            "table_name": "xc_granted",
+            "tier": "reader",
+        },
+    )
+    assert granted.status_code == 201, granted.text
+
+    await _until(client, workspace, ready, tables, [{"table_name": "xc_granted"}])
+    columns = (
+        "SELECT DISTINCT table_name FROM duckhaven.info_schema.columns "
+        f"WHERE catalog_name = '{catalog}';"
+    )
+    assert await _rows(client, workspace, ready, columns) == [{"table_name": "xc_granted"}]

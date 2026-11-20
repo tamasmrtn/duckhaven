@@ -108,6 +108,8 @@ DESCRIBE sales.analytics.orders;
 `information_schema` appears in the catalog tree under each catalog, marked *read-only*. In a workspace with a
 [scoped catalog](../access/scoped-access.md) it is refused, and `DESCRIBE` works for tables you can read; see
 [Inspecting metadata](../reference/sql-support.md#inspecting-metadata-information_schema).
+[`duckhaven.info_schema`](system-catalog.md#what-info_schema-shows) works in every workspace, and lists only what you
+can see.
 
 ## Save for later
 

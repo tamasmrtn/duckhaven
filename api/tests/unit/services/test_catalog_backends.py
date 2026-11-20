@@ -20,10 +20,13 @@ from api.services.catalog_backends import (
 from api.services.catalog_backends.polaris import PolarisCatalogBackend, _translate
 from api.services.polaris import (
     PolarisBadRequestError,
+    PolarisColumn,
     PolarisConflictError,
     PolarisError,
     PolarisNotFoundError,
+    PolarisSchema,
     PolarisServerError,
+    PolarisTable,
 )
 
 
@@ -117,3 +120,38 @@ def test_iceberg_keeps_every_capability_it_had():
     assert caps.supports_storage_migration is True
     # The exception, and it is the extension's doing rather than a choice.
     assert caps.supports_maintenance_apply is False
+
+
+class _Polaris:
+    """Two schemas, one table each; `gone` is listed but deleted before its load."""
+
+    def __init__(self) -> None:
+        self.loaded: list[tuple[str, str]] = []
+
+    async def list_schemas(self, catalog):
+        return [PolarisSchema(name=n, catalog_name=catalog) for n in ("analytics", "staging")]
+
+    async def list_tables(self, catalog, schema):
+        name = {"analytics": "orders", "staging": "gone"}[schema]
+        return [PolarisTable(name=name, catalog_name=catalog, schema_name=schema)]
+
+    async def get_table(self, catalog, schema, name):
+        self.loaded.append((schema, name))
+        if name == "gone":
+            raise PolarisNotFoundError(name)
+        column = PolarisColumn(
+            name="id", type_text="long", type_name="LONG", position=0, duckdb_type="BIGINT"
+        )
+        return PolarisTable(name=name, catalog_name=catalog, schema_name=schema, columns=[column])
+
+
+async def test_an_iceberg_catalog_is_described_table_by_table():
+    """Its listing has no columns, so each table is loaded; one dropped meanwhile is left out."""
+    polaris = _Polaris()
+
+    description = await PolarisCatalogBackend(polaris).describe_catalog(_catalog())
+
+    assert [s.name for s in description.schemas] == ["analytics", "staging"]
+    assert [(t.schema_name, t.name) for t in description.tables] == [("analytics", "orders")]
+    assert [(c.name, c.duckdb_type) for c in description.tables[0].columns] == [("id", "BIGINT")]
+    assert sorted(polaris.loaded) == [("analytics", "orders"), ("staging", "gone")]

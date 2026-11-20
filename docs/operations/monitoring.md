@@ -105,7 +105,7 @@ Cardinality is the main operational risk, so labels are deliberately bounded:
 
 - **Permitted:** `replica_id`, `agent_id` + `agent_name`, `status`, `method`, `route`
   (the matched route *template*, never the raw URL), `severity`, `profile`, and `table` on
-  the system catalog lag, which is one of its three fixed tables.
+  the system catalog lag, which takes one of three fixed values.
 - **Never used as labels:** workspace id, user id, catalog/schema/table names, raw URL paths,
   SQL text, query id, agent host/IP — any of these would grow unbounded on a long-lived
   deployment.

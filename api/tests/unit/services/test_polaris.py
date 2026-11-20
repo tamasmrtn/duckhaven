@@ -10,6 +10,7 @@ plus the status-code dispatch (404 → NotFound, 409 → Conflict, other 4xx
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 
 import httpx
 import pytest
@@ -214,6 +215,7 @@ async def test_get_table_maps_columns(polaris: PolarisClient) -> None:
                         }
                     ],
                     "properties": {"k": "v"},
+                    "last-updated-ms": 1793534400000,
                 },
             },
         )
@@ -221,10 +223,11 @@ async def test_get_table_maps_columns(polaris: PolarisClient) -> None:
     t = await polaris.get_table("ws_alpha", "main", "events")
     assert t.table_id == "abc-123"
     assert t.storage_location.endswith("v1.json")
-    assert [(c.name, c.type_name, c.nullable) for c in t.columns] == [
-        ("id", "LONG", False),
-        ("label", "STRING", True),
+    assert [(c.name, c.type_name, c.duckdb_type, c.nullable) for c in t.columns] == [
+        ("id", "LONG", "BIGINT", False),
+        ("label", "STRING", "VARCHAR", True),
     ]
+    assert t.last_modified == datetime(2026, 11, 1, 12, tzinfo=UTC)
 
 
 @respx.mock
@@ -268,6 +271,7 @@ async def test_get_table_has_no_snapshot_summary_when_no_snapshots(polaris: Pola
     )
     t = await polaris.get_table("ws_alpha", "main", "fresh")
     assert t.current_snapshot_summary is None
+    assert t.last_modified is None
 
 
 @respx.mock

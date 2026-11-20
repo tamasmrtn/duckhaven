@@ -38,7 +38,8 @@ FEATURES = [
     "system_catalog",
     "system_catalog_row_filter",
 ]
-ALL_TABLES = "access.audit,access.grants,query.history"
+INFO = "info_schema.catalogs,info_schema.columns,info_schema.schemata,info_schema.tables"
+ALL_TABLES = f"access.audit,access.grants,{INFO},query.history"
 
 
 class MockWebSocket:
@@ -260,7 +261,7 @@ async def test_a_query_run_for_someone_reads_only_what_both_may(
     (frame,) = sock.frames(FrameType.DISPATCH_BATCH)
     settings_sent = frame.payload["catalogs"][-1]["meta"]["settings"]
     assert settings_sent["duckhaven.principals"] == f"{admin.id},{auditor.id}"
-    assert settings_sent["duckhaven.readable"] == "access.audit,access.grants"
+    assert settings_sent["duckhaven.readable"] == f"access.audit,access.grants,{INFO}"
 
 
 # --- SQL sessions --------------------------------------------------------------
@@ -294,12 +295,12 @@ def captured(monkeypatch) -> list[Frame]:
     return frames
 
 
-@pytest.mark.parametrize(("who", "preloaded"), [("admin", True), ("member", False)])
-async def test_a_session_that_may_read_it_opens_ready_to_attach_it(
-    request, db_session, workspace, available, captured, who, preloaded
+@pytest.mark.parametrize("who", ["admin", "member"])
+async def test_a_session_opens_ready_to_attach_it(
+    request, db_session, workspace, available, captured, who
 ):
     """Its extension must load before the sandbox locks; the catalog itself waits
-    for a statement that reads it."""
+    for a statement that reads it. Every member may read info_schema."""
     agent, _sock = await _agent(db_session)
     session = await _session(db_session, workspace, agent, request.getfixturevalue(who))
 
@@ -309,7 +310,7 @@ async def test_a_session_that_may_read_it_opens_ready_to_attach_it(
 
     (frame,) = captured
     assert [c["slug"] for c in frame.payload["catalogs"]] == ["sales"]
-    assert ("system" in frame.payload["preload"]["catalog_kinds"]) is preloaded
+    assert "system" in frame.payload["preload"]["catalog_kinds"]
 
 
 async def test_a_session_on_a_deployment_without_it_does_not_prepare_for_it(

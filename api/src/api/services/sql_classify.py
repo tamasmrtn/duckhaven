@@ -26,8 +26,9 @@ existed carries.
 
 from __future__ import annotations
 
-import sqlglot
 from sqlglot import exp
+
+from api.services.sql_parse import parse_duckdb
 
 # Node type -> statement kind. Ordered most-specific first where sqlglot's
 # hierarchy overlaps; matched with isinstance so subclasses land on their base.
@@ -96,7 +97,7 @@ def classify_statement(sql: str) -> str | None:
     interesting one" is not.
     """
     try:
-        statements = sqlglot.parse(sql, read="duckdb")
+        statements = parse_duckdb(sql)
     except Exception:  # noqa: BLE001 - fail open: unknown beats a wrong guess
         return None
-    return classify_parsed(statements)
+    return classify_parsed(list(statements))

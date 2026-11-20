@@ -18,8 +18,9 @@ from __future__ import annotations
 
 import re
 
-import sqlglot
 from sqlglot import exp
+
+from api.services.sql_parse import parse_duckdb
 
 # Table functions that reach a foreign database. Non-postgres ones are listed so
 # a future extension load cannot silently reopen the hole.
@@ -227,7 +228,7 @@ def check_sql(sql: str) -> list[exp.Expression] | None:
     could not parse ``sql`` and the lexical check was used instead.
     """
     try:
-        statements = sqlglot.parse(sql, read="duckdb")
+        statements = parse_duckdb(sql)
     except Exception:  # noqa: BLE001 - unparseable falls back to the lexical check
         _check_lexically(sql)
         return None

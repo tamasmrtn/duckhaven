@@ -261,7 +261,7 @@ def test_unparseable_sql_with_a_file_reader_is_refused(monkeypatch) -> None:
     def _fail(*_args, **_kwargs):
         raise ValueError("unparseable")
 
-    monkeypatch.setattr(denylist.sqlglot, "parse", _fail)
+    monkeypatch.setattr(denylist, "parse_duckdb", _fail)
     with pytest.raises(SQLNotAllowed):
         assert_allowed("SELECT * FROM read_parquet('s3://bucket/x.parquet')")
     with pytest.raises(SQLNotAllowed):

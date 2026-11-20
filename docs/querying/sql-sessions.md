@@ -71,6 +71,11 @@ agent (9 on 2.0) with the default limit of 512 (see
 **queue** for capacity, and give up after `SESSION_QUEUED_TIMEOUT_S` with an error. If tools routinely open more
 sessions than an agent holds, add or enlarge agents; a longer timeout does not help.
 
+A session holds more threads while it opens than once it is open: about 30 more on DuckDB 1.5 and 85 on 2.0, and more
+when several open at once. Near the process limit, an open **waits** until the container has room for it at that peak,
+counting the opens already under way, so a burst of opens close to the limit opens in turns instead of crashing the
+agent; an open that waits past `SESSION_QUEUED_TIMEOUT_S` fails. Away from the limit no open waits.
+
 !!! note "Static concurrency profiles"
     Under a static profile (`single`, `equal_2`, …) a session takes a whole slot for its life and does not grow or
     shrink. `single` gives one session the entire agent, so no other query runs until it closes.

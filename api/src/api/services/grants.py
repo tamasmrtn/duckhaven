@@ -29,7 +29,6 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
-import sqlglot
 from fastapi import HTTPException, status
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -41,6 +40,7 @@ from api.models.workspace import WorkspaceMember
 from api.services.audit.events import record_grant_denied
 from api.services.delegation import principals_for
 from api.services.sql_denylist import function_name
+from api.services.sql_parse import parse_duckdb
 from api.services.statement_policy import StatementNotAllowed, check_file_reads
 from duckhaven_shared.system_catalog import SYSTEM_CATALOG_ALIAS
 
@@ -403,7 +403,7 @@ def extract_table_refs(sql: str) -> list[TableRef]:
 
 def _parse_statements(sql: str) -> list[exp.Expression]:
     try:
-        statements = sqlglot.parse(sql, read="duckdb")
+        statements = parse_duckdb(sql)
     except Exception as exc:  # sqlglot.errors.ParseError et al
         raise GrantDenied(f"Could not parse SQL for grant check: {exc}") from exc
     return [stmt for stmt in statements if stmt is not None]
@@ -687,7 +687,7 @@ def metadata_enumeration_reason(
     """
     hint = _enumeration_hint(scoped_slugs)
     try:
-        statements = sqlglot.parse(sql, read="duckdb")
+        statements = parse_duckdb(sql)
     except Exception as exc:  # sqlglot.errors.ParseError et al - fail closed
         raise GrantDenied(f"Could not parse SQL for grant check: {exc}") from exc
 
@@ -751,7 +751,7 @@ def file_read_reason(
     prefixes to allow; every other path passes none, so every read is refused.
     """
     try:
-        statements = sqlglot.parse(sql, read="duckdb")
+        statements = parse_duckdb(sql)
     except Exception as exc:  # sqlglot.errors.ParseError et al - fail closed
         raise GrantDenied(f"Could not parse SQL for grant check: {exc}") from exc
     for stmt in statements:

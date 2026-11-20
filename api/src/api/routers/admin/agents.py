@@ -34,6 +34,7 @@ from api.services.agent_dispatch import (
 from api.services.agent_monitoring import MIN_RANGE, PRESETS, build_monitoring
 from api.services.agent_view import (
     build_agent_out,
+    build_agent_outs,
     build_runtime_catalog_out,
     effective_status,
 )
@@ -65,17 +66,7 @@ async def list_all_agents(
     result = await db.execute(select(Agent))
     agents = result.scalars().all()
     tiers = await visible_tiers(db, user, agents)
-    connected = await connected_agent_ids(db)
-    out = []
-    for agent in agents:
-        if agent.id not in tiers:
-            continue
-        out.append(
-            build_agent_out(
-                agent, status=effective_status(agent, connected), access_tier=tiers[agent.id]
-            )
-        )
-    return out
+    return build_agent_outs(agents, tiers, await connected_agent_ids(db))
 
 
 @router.get("/metrics", response_model=list[AgentMetricsOut])

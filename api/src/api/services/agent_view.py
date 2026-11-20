@@ -9,9 +9,15 @@ rather than derived here: it is a property of the *request*, not of the agent.
 
 from __future__ import annotations
 
+import uuid
+from collections.abc import Iterable
+from typing import Any
+
+from pydantic import TypeAdapter
+
 from api.config import settings
 from api.models.agent import Agent
-from api.schemas.agent import AgentCapabilitiesOut, AgentOut, AgentRuntimeOut, RuntimeOut
+from api.schemas.agent import AgentOut, AgentRuntimeOut, RuntimeOut
 from api.services import runtimes
 from api.services.compute import pricing
 from duckhaven_shared.runtimes import Runtime
@@ -32,41 +38,68 @@ def effective_status(agent: Agent, connected: set[str]) -> str:
 
 
 def build_agent_out(agent: Agent, *, status: str, access_tier: str | None = None) -> AgentOut:
-    caps = AgentCapabilitiesOut(**agent.capabilities) if agent.capabilities else None
+    return AgentOut.model_validate(_agent_out_fields(agent, status, access_tier))
+
+
+_AGENT_LIST = TypeAdapter(list[AgentOut])
+
+
+def build_agent_outs(
+    agents: Iterable[Agent], tiers: dict[uuid.UUID, str], connected: set[str]
+) -> list[AgentOut]:
+    """The agents the caller holds a tier on, each with its live status.
+
+    Validated as one list rather than an ``AgentOut`` at a time: at 750 agents the
+    per-model calls cost about a quarter more of the request's time on the event loop.
+    """
+    return _AGENT_LIST.validate_python(
+        [
+            _agent_out_fields(agent, effective_status(agent, connected), tiers[agent.id])
+            for agent in agents
+            if agent.id in tiers
+        ]
+    )
+
+
+def _agent_out_fields(agent: Agent, status: str, access_tier: str | None) -> dict[str, Any]:
     cost = None
     if agent.requested_cpu is not None and agent.requested_memory_gb is not None:
         cost = pricing.hourly_cost(agent.requested_cpu, agent.requested_memory_gb)
     idle_minutes = round(agent.idle_timeout_s / 60) if agent.idle_timeout_s is not None else None
-    return AgentOut(
-        id=agent.id,
-        name=agent.name,
-        status=status,
-        capabilities=caps,
-        last_ping_at=agent.last_ping_at,
-        created_at=agent.created_at,
-        provider=agent.provider,
-        lifecycle=agent.lifecycle,
-        requested_cpu=agent.requested_cpu,
-        requested_memory_gb=agent.requested_memory_gb,
-        hourly_cost=cost,
-        idle_timeout_minutes=idle_minutes,
-        requested_max_timeout_s=agent.requested_max_timeout_s,
-        access_tier=access_tier,
-        access_mode=agent.access_mode,
-        runtime=build_runtime_out(agent),
-    )
+    return {
+        "id": agent.id,
+        "name": agent.name,
+        "status": status,
+        "capabilities": agent.capabilities or None,
+        "last_ping_at": agent.last_ping_at,
+        "created_at": agent.created_at,
+        "provider": agent.provider,
+        "lifecycle": agent.lifecycle,
+        "requested_cpu": agent.requested_cpu,
+        "requested_memory_gb": agent.requested_memory_gb,
+        "hourly_cost": cost,
+        "idle_timeout_minutes": idle_minutes,
+        "requested_max_timeout_s": agent.requested_max_timeout_s,
+        "access_tier": access_tier,
+        "access_mode": agent.access_mode,
+        "runtime": _runtime_fields(agent),
+    }
 
 
 def build_runtime_out(agent: Agent) -> AgentRuntimeOut:
+    return AgentRuntimeOut.model_validate(_runtime_fields(agent))
+
+
+def _runtime_fields(agent: Agent) -> dict[str, Any]:
     resolved = runtimes.resolve(agent)
     runtime = resolved.runtime
-    return AgentRuntimeOut(
-        id=runtime.id if runtime else (agent.capabilities or {}).get("runtime_id"),
-        display_name=runtime.display_name if runtime else None,
-        status=runtime.status if runtime else None,
-        state=resolved.state,
-        default=runtime is not None and runtime.id == settings.default_runtime,
-    )
+    return {
+        "id": runtime.id if runtime else (agent.capabilities or {}).get("runtime_id"),
+        "display_name": runtime.display_name if runtime else None,
+        "status": runtime.status if runtime else None,
+        "state": resolved.state,
+        "default": runtime is not None and runtime.id == settings.default_runtime,
+    }
 
 
 def build_runtime_catalog_out(runtime: Runtime) -> RuntimeOut:

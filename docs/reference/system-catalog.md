@@ -4,14 +4,14 @@ type: reference
 
 # System catalog tables
 
-Every table and column of the `duckhaven` system catalog, which admins query in SQL. What it is and who can read it is
-in [System catalog](../querying/system-catalog.md).
+Every table and column of the `duckhaven` system catalog, which you query in SQL with the permission each table
+needs. What the catalog is, and how a query reads it, is in [System catalog](../querying/system-catalog.md).
 
-| Table | Holds | Kept for |
-|---|---|---|
-| [`duckhaven.access.audit`](#accessaudit) | Every event of the [access audit log](../access/audit-log.md) | `AUDIT_RETENTION_DAYS`, as in the audit log |
-| [`duckhaven.access.grants`](#accessgrants) | Current access, one row per grant of any kind | Replaced whole after each access change, and at least every 5 minutes |
-| [`duckhaven.query.history`](#queryhistory) | Finished queries: `done`, `failed` or `cancelled` | `SYSTEM_CATALOG_QUERY_HISTORY_DAYS`, 365 days by default, counted from when each finished |
+| Table | Holds | Needs | Kept for |
+|---|---|---|---|
+| [`duckhaven.access.audit`](#accessaudit) | Every event of the [access audit log](../access/audit-log.md) | `audit:read` | `AUDIT_RETENTION_DAYS`, as in the audit log |
+| [`duckhaven.access.grants`](#accessgrants) | Current access, one row per grant of any kind | `audit:read` | Replaced whole after each access change, and at least every 5 minutes |
+| [`duckhaven.query.history`](#queryhistory) | Finished queries: `done`, `failed` or `cancelled` | `queries:admin` | `SYSTEM_CATALOG_QUERY_HISTORY_DAYS`, 365 days by default, counted from when each finished |
 
 - **Columns are only added.** A column is never renamed, retyped or removed. Name the columns you read rather than
   `SELECT *` in anything that must keep working.

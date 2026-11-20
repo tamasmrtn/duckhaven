@@ -21,7 +21,6 @@ import { ResultsTable } from "@/features/worksheet/ResultsTable";
 import { StorageIcon } from "@/components/app/StorageIcon";
 import { useWorkspace } from "@/queries/workspaces";
 import { useSystemCatalog } from "@/queries/systemCatalog";
-import { useMe } from "@/queries/auth";
 import { CatalogTree } from "@/features/catalog/CatalogTree";
 import { CatalogDetail } from "@/features/catalog/CatalogDetail";
 import { SchemaDetail } from "@/features/catalog/SchemaDetail";
@@ -441,9 +440,7 @@ export function CatalogPage() {
   const navigate = useNavigate();
   const { data: workspace } = useWorkspace(ws);
   // Known before any pane is chosen: a pane for one of the workspace's catalogs
-  // would ask for a `duckhaven` catalog the workspace does not have. Whether it
-  // is asked for at all waits on who you are.
-  const { isLoading: meLoading } = useMe();
+  // would ask for a `duckhaven` catalog the workspace does not have.
   const { data: system, isLoading: systemLoading } = useSystemCatalog(ws);
   const isSystem = Boolean(catalog) && catalog === system?.catalog;
   useDocumentTitle(table ?? schema ?? catalog ?? "Catalog");
@@ -537,7 +534,7 @@ export function CatalogPage() {
 
         {showDetail && (
           <div className="min-w-0 flex-1 overflow-hidden">
-            {catalog && (meLoading || systemLoading) ? (
+            {catalog && systemLoading ? (
               <div className="flex h-full flex-col gap-4 p-6">
                 <Skeleton className="h-8 w-64 animate-shimmer rounded" />
                 <Skeleton className="h-24 w-full animate-shimmer rounded" />

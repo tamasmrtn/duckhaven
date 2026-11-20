@@ -19,7 +19,6 @@ import {
 import { CatalogTree } from "@/features/catalog/CatalogTree";
 import { createTestQueryClient, createWrapper } from "@tests/utils";
 import { server } from "@tests/mock/server";
-import { currentUser } from "@/mock/fixtures/users";
 import { systemCatalog } from "@/mock/fixtures/systemCatalog";
 
 // This file wraps CatalogTree in a real RouterProvider (for the hover-card's
@@ -99,17 +98,18 @@ describe("CatalogTree", () => {
     // every visit, so finding anything else meant closing them first.
     renderTree(() => {}, { expanded: [] });
 
+    // The duckhaven system catalog's, and the workspace's two.
     const toggle = await screen.findAllByRole("button", { name: "Expand catalog" });
-    expect(toggle).toHaveLength(2);
+    expect(toggle).toHaveLength(3);
     expect(screen.queryByRole("button", { name: /events/i })).not.toBeInTheDocument();
   });
 
   it("remembers what was expanded across visits", async () => {
     const first = renderTree(() => {}, { expanded: [] });
-    const [defaultCatalog] = await screen.findAllByRole("button", {
-      name: "Expand catalog",
-    });
-    await userEvent.click(defaultCatalog);
+    const own = await screen.findByRole("button", { name: /^acme_analytics/ });
+    await userEvent.click(
+      within(own.parentElement!).getByRole("button", { name: "Expand catalog" }),
+    );
     await screen.findByRole("button", { name: /^raw$/i });
     first.unmount();
 
@@ -625,19 +625,11 @@ describe("CatalogTree system catalog", () => {
     );
   });
 
-  it("is not asked for without both permissions", async () => {
-    const asked = vi.fn();
+  it("is absent for a member who may read none of its tables", async () => {
     server.use(
-      http.get("/api/me", () =>
-        HttpResponse.json({
-          ...currentUser(),
-          permissions: ["queries:read", "audit:read"],
-        }),
+      http.get("/api/workspaces/:ws/system-catalog", () =>
+        HttpResponse.json({ ...systemCatalog, tables: [] }),
       ),
-      http.get("/api/workspaces/:ws/system-catalog", () => {
-        asked();
-        return HttpResponse.json(systemCatalog);
-      }),
     );
     renderTree(vi.fn());
 
@@ -645,7 +637,23 @@ describe("CatalogTree system catalog", () => {
       await screen.findByRole("button", { name: /events/i }),
     ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /duckhaven/ })).toBeNull();
-    expect(asked).not.toHaveBeenCalled();
+  });
+
+  it("shows only the tables the server lists for this member", async () => {
+    server.use(
+      http.get("/api/workspaces/:ws/system-catalog", () =>
+        HttpResponse.json({
+          ...systemCatalog,
+          tables: systemCatalog.tables.filter((t) => t.schema_name === "access"),
+        }),
+      ),
+    );
+    const user = userEvent.setup();
+    renderTree(vi.fn(), { expanded: [] });
+
+    await user.click(await screen.findByRole("button", { name: /duckhaven/ }));
+    expect(screen.getByRole("button", { name: "access" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "query" })).toBeNull();
   });
 
   it("is absent where the workspace cannot read it", async () => {

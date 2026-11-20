@@ -14,6 +14,7 @@ from sqlalchemy import func, select
 from api.config import settings
 from api.models.agent import Agent
 from api.models.query import Query
+from api.models.rbac import Role, RolePermission
 from api.models.sql_session import SqlSession
 from api.models.user import Credential, User
 from api.models.workspace import WorkspaceMember
@@ -22,6 +23,7 @@ from api.services import runtimes as runtime_service
 from api.services.agent_registry import registry
 from api.services.auth import hash_password
 from api.services.catalog_requests import answer_catalog_request
+from api.services.permissions import Permission
 from api.services.sql_sessions import service as session_service
 from api.services.system_catalog import store
 from api.services.workspace import resolve_workspace_catalogs
@@ -29,7 +31,14 @@ from duckhaven_shared.protocol import Frame, FrameType
 from duckhaven_shared.schemas import CatalogAttach
 
 READS = "SELECT action FROM duckhaven.access.audit;"
-FEATURES = ["statement_ack", "on_demand_attach", "batch_dispatch", "system_catalog"]
+FEATURES = [
+    "statement_ack",
+    "on_demand_attach",
+    "batch_dispatch",
+    "system_catalog",
+    "system_catalog_row_filter",
+]
+ALL_TABLES = "access.audit,access.grants,query.history"
 
 
 class MockWebSocket:
@@ -121,7 +130,9 @@ async def _queries(db) -> int:
 # --- one-shot queries ----------------------------------------------------------
 
 
-async def test_a_read_attaches_it_last_as_the_reader(as_admin, db_session, workspace, available):
+async def test_a_read_attaches_it_last_as_the_reader(
+    as_admin, db_session, workspace, admin, available
+):
     agent, sock = await _agent(db_session)
 
     resp = await _run(as_admin, workspace, agent)
@@ -141,6 +152,12 @@ async def test_a_read_attaches_it_last_as_the_reader(as_admin, db_session, works
             "database": settings.system_catalog_agent_database,
             "user": "dh_system_reader",
             "password": "reader-pw",
+            # Who it runs for, for the store's row filters.
+            "settings": {
+                "duckhaven.workspace": str(workspace.id),
+                "duckhaven.principals": str(admin.id),
+                "duckhaven.readable": ALL_TABLES,
+            },
         },
     }
     CatalogAttach.model_validate(system)
@@ -181,6 +198,8 @@ async def test_without_its_store_a_read_is_refused(
 @pytest.mark.parametrize(
     ("features", "extensions", "says"),
     [
+        (FEATURES[:-2], ("httpfs", "iceberg", "postgres_scanner"), "too old"),
+        # One that would attach without saying who it runs for, and read nothing.
         (FEATURES[:-1], ("httpfs", "iceberg", "postgres_scanner"), "too old"),
         (FEATURES, ("httpfs", "iceberg"), "postgres_scanner"),
     ],
@@ -213,6 +232,35 @@ async def test_a_batch_attaches_it_once_for_the_query_that_reads_it(
 
     (frame,) = sock.frames(FrameType.DISPATCH_BATCH)
     assert [c["slug"] for c in frame.payload["catalogs"]] == ["sales", "duckhaven"]
+
+
+async def test_a_query_run_for_someone_reads_only_what_both_may(
+    db_session, workspace, admin, available
+):
+    """The assistant's runs: the store narrows them to what the person may read too."""
+    role = Role(name="auditor")
+    db_session.add(role)
+    await db_session.flush()
+    db_session.add(RolePermission(role_id=role.id, permission=Permission.AUDIT_READ.value))
+    auditor = await _user(db_session, "auditor@sysdispatch.local", "auditor")
+    db_session.add(WorkspaceMember(workspace_id=workspace.id, user_id=auditor.id, role="reader"))
+    agent, sock = await _agent(db_session)
+    query = Query(
+        workspace_id=workspace.id,
+        agent_id=agent.id,
+        user_id=admin.id,
+        on_behalf_of_id=auditor.id,
+        sql=READS,
+    )
+    db_session.add(query)
+    await db_session.commit()
+
+    assert await query_service.dispatch_batch(db_session, [query]) == [None]
+
+    (frame,) = sock.frames(FrameType.DISPATCH_BATCH)
+    settings_sent = frame.payload["catalogs"][-1]["meta"]["settings"]
+    assert settings_sent["duckhaven.principals"] == f"{admin.id},{auditor.id}"
+    assert settings_sent["duckhaven.readable"] == "access.audit,access.grants"
 
 
 # --- SQL sessions --------------------------------------------------------------
@@ -336,6 +384,8 @@ async def test_a_session_statement_that_reads_it_is_sent_with_it(
     assert resp.status_code == 202, resp.text
     (system,) = sent
     assert (system["slug"], system["meta"]["password"]) == ("duckhaven", "reader-pw")
+    assert system["meta"]["settings"]["duckhaven.principals"] == str(admin.id)
+    assert system["meta"]["settings"]["duckhaven.readable"] == ALL_TABLES
 
 
 async def test_a_session_statement_it_cannot_serve_leaves_no_statement(

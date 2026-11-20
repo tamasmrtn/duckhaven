@@ -104,7 +104,7 @@ async def test_anything_but_reading_its_tables_is_refused(api_client, workspace,
     assert resp.json()["error"] == "grant_denied"
 
 
-async def test_a_member_without_the_permissions_is_refused(
+async def test_a_member_without_the_permission_is_refused(
     stack, api_client, workspace, ready
 ) -> None:
     email, password = f"member-{uuid.uuid4().hex[:8]}@xc.test", "xc-password-123"
@@ -124,7 +124,9 @@ async def test_a_member_without_the_permissions_is_refused(
         resp = await _submit(member, workspace, ready, "SELECT * FROM duckhaven.access.audit;")
 
     assert resp.status_code == 403, resp.text
-    assert "audit:read and queries:admin" in resp.text
+    assert (
+        resp.json()["message"] == "Reading duckhaven.access.audit needs the audit:read permission."
+    )
 
 
 async def test_a_session_reads_it_and_never_moves_into_it(api_client, workspace, ready) -> None:

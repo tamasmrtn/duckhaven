@@ -8,6 +8,8 @@ are written; this asserts Postgres enforces them, together with the grants
 from __future__ import annotations
 
 import os
+import uuid
+from datetime import UTC, datetime
 from urllib.parse import urlsplit, urlunsplit
 
 import asyncpg
@@ -32,24 +34,117 @@ def _dsn(url: str, *, user: str | None = None, password: str | None = None) -> s
     return urlunsplit(("postgresql", netloc, parts.path, "", ""))
 
 
-async def _reader(session_factory, url: str | None = None) -> asyncpg.Connection:
+async def _reader(
+    session_factory, url: str | None = None, *, readable: str | None = None
+) -> asyncpg.Connection:
+    """The reader login, connected as an agent does: with the row filter's settings
+    when ``readable`` is given, and with none otherwise."""
     async with session_factory() as db:
         password = await store.reader_password(db)
-    return await asyncpg.connect(
-        _dsn(url or settings.system_catalog_database_url, user=store.READER_ROLE, password=password)
+    server_settings = (
+        {
+            "duckhaven.workspace": str(uuid.uuid4()),
+            "duckhaven.principals": str(uuid.uuid4()),
+            "duckhaven.readable": readable,
+        }
+        if readable is not None
+        else None
     )
+    return await asyncpg.connect(
+        _dsn(
+            url or settings.system_catalog_database_url, user=store.READER_ROLE, password=password
+        ),
+        server_settings=server_settings,
+    )
+
+
+async def _one_row_each() -> None:
+    """An event in access.audit and a run in query.history, written as the owner."""
+    now = datetime.now(UTC)
+    async with store.get_engine().begin() as conn:
+        await conn.execute(
+            sa.insert(store.AUDIT).values(
+                id=uuid.uuid4(),
+                event_time=now,
+                event_version=1,
+                category="access",
+                action="catalog_grant.create",
+                outcome="success",
+                actor_type="user",
+                self_change=False,
+            )
+        )
+        await conn.execute(
+            sa.insert(store.HISTORY).values(
+                id=uuid.uuid4(),
+                workspace_id=uuid.uuid4(),
+                status="done",
+                sql="SELECT 1",
+                started_at=now,
+                finished_at=now,
+            )
+        )
 
 
 async def test_ensure_creates_the_tables_and_a_reader_that_reads_them(system_store):
     assert await store.ensure(system_store) is True
     assert store.is_available()
 
-    reader = await _reader(system_store)
+    reader = await _reader(system_store, readable=",".join(t.qualified for t in store.TABLES))
     try:
-        for table in ("access.audit", "access.grants", "query.history"):
-            assert await reader.fetchval(f"SELECT count(*) FROM {table}") == 0
+        for table in store.TABLES:
+            assert await reader.fetchval(f"SELECT count(*) FROM {table.qualified}") == 0
     finally:
         await reader.close()
+
+
+async def test_the_reader_reads_only_the_tables_its_settings_name(system_store):
+    await store.ensure(system_store)
+    await _one_row_each()
+
+    async def counts(readable: str | None) -> tuple[int, int]:
+        reader = await _reader(system_store, readable=readable)
+        try:
+            return (
+                await reader.fetchval("SELECT count(*) FROM access.audit"),
+                await reader.fetchval("SELECT count(*) FROM query.history"),
+            )
+        finally:
+            await reader.close()
+
+    assert await counts("access.audit,query.history") == (1, 1)
+    assert await counts("access.audit") == (1, 0)
+    assert await counts("") == (0, 0)
+    # An agent that attached without them, as one too old to send them would.
+    assert await counts(None) == (0, 0)
+
+
+async def test_ensure_adds_a_column_an_existing_store_lacks(system_store):
+    """The tables only ever gain columns; an upgraded deployment gets them."""
+    await store.ensure(system_store)
+    async with store.get_engine().begin() as conn:
+        await conn.execute(sa.text("ALTER TABLE query.history DROP COLUMN tags"))
+        await conn.execute(sa.text("DROP INDEX query.history_user_idx"))
+    store.mark_stale()
+
+    assert await store.ensure(system_store) is True
+
+    async with store.get_engine().connect() as conn:
+        columns = set(
+            await conn.scalars(
+                sa.text(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_schema = 'query' AND table_name = 'history'"
+                )
+            )
+        )
+        indexes = set(
+            await conn.scalars(
+                sa.text("SELECT indexname FROM pg_indexes WHERE schemaname = 'query'")
+            )
+        )
+    assert "tags" in columns
+    assert "history_user_idx" in indexes
 
 
 async def test_the_reader_cannot_write_even_with_read_only_turned_off(system_store):
@@ -134,7 +229,7 @@ async def test_ensure_repairs_a_dropped_table(system_store):
         await conn.execute(sa.text("DROP TABLE query.history"))
 
     assert await store.ensure(system_store) is True
-    reader = await _reader(system_store)
+    reader = await _reader(system_store, readable="query.history")
     try:
         assert await reader.fetchval("SELECT count(*) FROM query.history") == 0
     finally:

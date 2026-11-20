@@ -2,15 +2,21 @@
 
 from __future__ import annotations
 
+import json
+import os
+from pathlib import Path
+
 import pytest
 import pytest_asyncio
 from conftest import seed_workspace
 from httpx import AsyncClient
 
 from api.config import settings
+from api.models.rbac import Role, RolePermission
 from api.models.user import User
 from api.models.workspace import WorkspaceMember
 from api.services.auth import hash_password
+from api.services.permissions import Permission
 from api.services.system_catalog import store
 
 
@@ -81,14 +87,35 @@ async def test_it_says_when_its_database_cannot_be_reached(client, admin, worksp
     assert resp.json()["available"] is False
 
 
-async def test_a_member_without_the_permissions_is_refused(client, db_session, workspace):
+async def test_each_table_says_what_reading_it_takes(client, admin, workspace):
+    resp = await (await _login(client, admin)).get(f"/workspaces/{workspace.slug}/system-catalog")
+
+    assert {(t["schema_name"], t["name"]): t["permission"] for t in resp.json()["tables"]} == {
+        ("access", "audit"): "audit:read",
+        ("access", "grants"): "audit:read",
+        ("query", "history"): "queries:admin",
+    }
+
+
+async def test_a_member_is_shown_only_the_tables_they_may_read(client, db_session, workspace):
+    role = Role(name="auditor")
+    db_session.add(role)
+    await db_session.flush()
+    db_session.add(RolePermission(role_id=role.id, permission=Permission.AUDIT_READ.value))
+    auditor = await _user(db_session, "auditor@systree.local", "auditor")
     member = await _user(db_session, "member@systree.local", "user")
-    db_session.add(WorkspaceMember(workspace_id=workspace.id, user_id=member.id, role="writer"))
+    for user in (auditor, member):
+        db_session.add(WorkspaceMember(workspace_id=workspace.id, user_id=user.id, role="writer"))
     await db_session.commit()
 
+    resp = await (await _login(client, auditor)).get(f"/workspaces/{workspace.slug}/system-catalog")
+    assert [(t["schema_name"], t["name"]) for t in resp.json()["tables"]] == [
+        ("access", "audit"),
+        ("access", "grants"),
+    ]
     resp = await (await _login(client, member)).get(f"/workspaces/{workspace.slug}/system-catalog")
-
-    assert resp.status_code == 403
+    assert resp.status_code == 200
+    assert resp.json()["tables"] == []
 
 
 async def test_an_admin_outside_the_workspace_is_refused(client, db_session, workspace):
@@ -121,3 +148,20 @@ async def test_an_unknown_workspace_is_not_found(client, admin):
     resp = await (await _login(client, admin)).get("/workspaces/nope/system-catalog")
 
     assert resp.status_code == 404
+
+
+# The mock API the web app is developed and tested against.
+WEB_FIXTURE = Path(__file__).resolve().parents[4] / "web/src/mock/fixtures/systemCatalog.json"
+
+
+async def test_the_web_mock_lists_what_an_admin_is_shown(client, admin, workspace):
+    """Rewrite it with `UPDATE_SYSTEM_CATALOG_FIXTURE=1` after changing a table."""
+    resp = await (await _login(client, admin)).get(f"/workspaces/{workspace.slug}/system-catalog")
+    expected = json.dumps(resp.json(), indent=2, ensure_ascii=False) + "\n"
+
+    if os.environ.get("UPDATE_SYSTEM_CATALOG_FIXTURE"):
+        WEB_FIXTURE.write_text(expected)
+    assert WEB_FIXTURE.read_text() == expected, (
+        "web/src/mock/fixtures/systemCatalog.json is stale: rerun this test with "
+        "UPDATE_SYSTEM_CATALOG_FIXTURE=1"
+    )

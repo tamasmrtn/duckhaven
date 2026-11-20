@@ -704,9 +704,9 @@ function CatalogNode({
   );
 }
 
-// The `duckhaven` system catalog: the deployment's audit log, current access and
-// query history, read-only and readable only with `audit:read` and
-// `queries:admin`. It is not one of the workspace's catalogs, so it has no menu,
+// The `duckhaven` system catalog: read-only tables about the deployment itself,
+// each needing its own permission, so it shows only the tables the server lists
+// for this caller. It is not one of the workspace's catalogs, so it has no menu,
 // and its detail panes are its own (`SystemCatalogDetail`).
 interface SystemCatalogNodeProps {
   system: SystemCatalog;
@@ -1211,7 +1211,7 @@ export function CatalogTree({
           ) : (
             <div className="space-y-0.5">
               {/* First, ahead of the workspace's own catalogs, wherever they sort. */}
-              {systemCatalog && (
+              {systemCatalog && systemCatalog.tables.length > 0 && (
                 <SystemCatalogNode
                   system={systemCatalog}
                   onTableClick={onSystemTableClick}

@@ -4,12 +4,13 @@ An agent attaches the store's database read-only, as its one reader login, for a
 statement that reads it (see ``attach``). Every path a statement reaches an agent
 by checks it here first, through ``grants.assert_query_access``:
 
-- Reading it takes both ``audit:read`` and ``queries:admin``, held by everyone the
-  query runs for. One login reads every table, and a SQL session keeps a catalog
-  attached once a statement has attached it, so the permission is for the catalog
-  as a whole rather than per table.
+- Each table takes the permission its definition names (``store.TABLES``), held
+  by everyone the query runs for: the account that runs it and, for the
+  assistant, the person it acts for. The store enforces the same thing on its
+  side, from the settings the attach carries (``attach.descriptor``), so a name
+  this check could miss still reads no row of a table the query may not read.
 - Only a ``SELECT`` may name it, and only as ``duckhaven.<schema>.<table>`` for one
-  of its three tables. A write could copy it somewhere others can read, a ``USE``
+  of its tables. A write could copy it somewhere others can read, a ``USE``
   or ``SET search_path`` would leave later unqualified names resolving inside it
   unchecked, and the attachment also shows the database's own ``pg_catalog``,
   ``information_schema`` and ``public`` schemas.
@@ -34,23 +35,19 @@ import duckdb
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.models.catalog import Catalog
+from api.services.delegation import principals_for
 from api.services.grants import GrantDenied
-from api.services.permissions import Permission
 from api.services.rbac import principal_permissions
+from api.services.system_catalog import store
 from duckhaven_shared.system_catalog import SYSTEM_CATALOG_ALIAS
 
-TABLES: frozenset[tuple[str, str]] = frozenset(
-    {("access", "audit"), ("access", "grants"), ("query", "history")}
-)
-REQUIRED_PERMISSIONS = frozenset({Permission.AUDIT_READ.value, Permission.QUERIES_ADMIN.value})
+TABLES: frozenset[tuple[str, str]] = frozenset((t.schema, t.name) for t in store.TABLES)
+_BY_NAME = {(t.schema, t.name): t for t in store.TABLES}
 
-NEEDS_PERMISSIONS = (
-    "Reading the duckhaven system catalog needs the audit:read and queries:admin permissions."
-)
 READ_ONLY = "The duckhaven system catalog is read-only: only a SELECT may name it."
 FULL_NAMES = (
-    "Name the duckhaven system catalog's tables in full: duckhaven.access.audit, "
-    "duckhaven.access.grants or duckhaven.query.history."
+    "Name the duckhaven system catalog's tables in full, as in duckhaven.access.audit. "
+    "Its tables are listed in the catalog tree."
 )
 NOT_CURRENT = (
     "The duckhaven system catalog cannot be the current catalog or on the search path. "
@@ -205,13 +202,35 @@ async def assert_may_read(
         return
     if _is_current(active_catalog):
         raise GrantDenied(NOT_CURRENT)
-    if not _may_name_it(sql) or not _tables_read(sql):
+    if not _may_name_it(sql) or not (read := _tables_read(sql)):
         return
-    held = await principal_permissions(db, principal_id) if principal_id is not None else set()
-    if not may_read(held):
-        raise GrantDenied(NEEDS_PERMISSIONS)
+    readable = await readable_by(db, principal_id) if principal_id is not None else frozenset()
+    if missing := sorted(read - readable):
+        raise GrantDenied(needs(missing))
 
 
-def may_read(permissions: set[str]) -> bool:
-    """Whether a principal holding ``permissions`` may read the system catalog."""
-    return REQUIRED_PERMISSIONS <= permissions
+def needs(tables: list[tuple[str, str]]) -> str:
+    """Why a query may not read ``tables``: the permission each takes."""
+    reasons = [
+        f"duckhaven.{schema}.{table} needs the {_BY_NAME[schema, table].permission} permission"
+        for schema, table in tables
+    ]
+    return "Reading " + "; ".join(reasons) + "."
+
+
+def readable_tables(permissions: set[str]) -> frozenset[tuple[str, str]]:
+    """The tables a principal holding ``permissions`` may read."""
+    return frozenset(
+        (t.schema, t.name)
+        for t in store.TABLES
+        if t.permission is None or t.permission in permissions
+    )
+
+
+async def readable_by(db: AsyncSession, principal_id: uuid.UUID) -> frozenset[tuple[str, str]]:
+    """The tables a query run as ``principal_id`` may read: those everyone it runs
+    for may (``services.delegation``)."""
+    readable = TABLES
+    for principal in principals_for(db, principal_id):
+        readable &= readable_tables(await principal_permissions(db, principal))
+    return readable

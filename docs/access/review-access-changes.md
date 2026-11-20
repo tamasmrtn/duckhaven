@@ -209,9 +209,9 @@ The event the cursor points at was deleted by the retention purge. Start again w
   API returns every event unless you send `since` or `until`.
 - It is older than `AUDIT_RETENTION_DAYS`, 365 days by default.
 
-### SQL refused with "Reading the duckhaven system catalog needs the audit:read and queries:admin permissions."
+### SQL refused with "Reading duckhaven.access.audit needs the audit:read permission."
 
-Your account lacks one of the two. An admin can give you the `admin` role in **Admin** → **Users**.
+Your account lacks `audit:read`. An admin can give you a role that holds it, such as `admin`, in **Admin** → **Users**.
 
 ### SQL fails with `422` and `"error": "system_catalog_unavailable"`
 

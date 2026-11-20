@@ -405,7 +405,7 @@ async def system_store(db_session):
 
     async def drop_schemas() -> None:
         async with store.get_engine().begin() as conn:
-            for schema in (store.ACCESS, store.QUERY, store.STATE):
+            for schema in store.ALL_SCHEMAS:
                 await conn.execute(text(f"DROP SCHEMA IF EXISTS {schema} CASCADE"))
 
     await store.dispose_engine()

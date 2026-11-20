@@ -569,16 +569,15 @@ describe("system catalog contract", () => {
       "catalog",
       "tables",
     ]);
-    expect(system.tables.map((t) => `${t.schema_name}.${t.name}`)).toEqual([
+    expect(system.tables.map((t) => `${t.schema_name}.${t.name}`)).toContain(
       "access.audit",
-      "access.grants",
-      "query.history",
-    ]);
+    );
     for (const t of system.tables) {
       expect(Object.keys(t).sort()).toEqual([
         "columns",
         "description",
         "name",
+        "permission",
         "schema_name",
       ]);
       for (const c of t.columns) {

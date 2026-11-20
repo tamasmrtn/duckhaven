@@ -32,10 +32,9 @@ from api.services import runtimes as runtime_service
 from api.services.agent_capabilities import agent_supports_feature
 from api.services.agent_dispatch import send_to_agent
 from api.services.catalog_refs import ON_DEMAND_ATTACH, dispatch_catalogs, statement_catalogs
-from api.services.rbac import principal_permissions
 from api.services.session_credentials import build_catalog_attach, build_polaris_block
 from api.services.system_catalog import attach as system_attach
-from api.services.system_catalog.authorize import may_read
+from api.services.system_catalog.authorize import readable_by
 from duckhaven_shared.protocol import Frame, FrameType
 from duckhaven_shared.system_catalog import KIND_SYSTEM
 from duckhaven_shared.telemetry import inject_trace_context
@@ -235,7 +234,7 @@ async def _may_attach_system_catalog(
     return (
         system_attach.is_available()
         and system_attach.agent_can_attach(agent)
-        and may_read(await principal_permissions(db, session.user_id))
+        and bool(await readable_by(db, session.user_id))
     )
 
 

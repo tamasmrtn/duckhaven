@@ -101,8 +101,8 @@ pages:
 - path: querying/system-catalog.md
   title: System catalog
   section: Querying
-  summary: The duckhaven catalog lets admins query DuckHaven's own access audit log, current access
-    and query history in SQL, read-only, from any workspace.
+  summary: The duckhaven catalog lets you query DuckHaven's own access audit log, current access and
+    query history in SQL, read-only, from any workspace.
 - path: querying/troubleshooting.md
   title: Troubleshoot queries
   section: Querying
@@ -405,8 +405,8 @@ pages:
 - path: reference/system-catalog.md
   title: System catalog tables
   section: Reference
-  summary: Every table and column of the duckhaven system catalog, which admins query in SQL. What
-    it is and who can read it is in System catalog.
+  summary: Every table and column of the duckhaven system catalog, which you query in SQL with the
+    permission each table needs.
 - path: reference/agent-configuration.md
   title: Agent configuration
   section: Reference

@@ -78,8 +78,8 @@ in DuckHaven can change or delete an event except the purge: the table refuses `
 outside it.
 
 A read-only copy, purged on the same schedule, is kept in the
-[system catalog database](../deployment/system-catalog.md), normally within 10 seconds of each event. Admins query it in
-SQL as `duckhaven.access.audit`; see [System catalog](../querying/system-catalog.md).
+[system catalog database](../deployment/system-catalog.md), normally within 10 seconds of each event. Holders of
+`audit:read` query it in SQL as `duckhaven.access.audit`; see [System catalog](../querying/system-catalog.md).
 
 !!! warning "Append-only protects against the application, not against a database administrator"
     Anyone who can connect to Postgres as the database owner can disable that protection. For evidence that survives

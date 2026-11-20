@@ -23,8 +23,8 @@ workspace membership to query anything.
 | `storage:manage` | Register, test and delete storage backends, and name one for a catalog's data: create a catalog on it, export to it, or migrate to it. Without it, a new catalog goes on the bundled object store |
 | `catalogs:admin` | Attach any catalog to a workspace, drop it, migrate its storage, export it, and rotate or reconcile DuckLake catalog roles; without it, only a catalog's creator can |
 | `maintenance:manage` | Change the maintenance policy, start a scan, and apply a recommendation (applying also needs workspace `writer`) |
-| `queries:admin` | Read query history across workspaces and filter it by another user; list an agent's queries; filter and force-close other people's SQL sessions |
-| `audit:read` | Read the [access audit log](../access/audit-log.md): every access change, sign-in, and request refused for lack of a permission or a data grant, in every workspace |
+| `queries:admin` | Read query history across workspaces and filter it by another user, including `duckhaven.query.history` in the [system catalog](../querying/system-catalog.md); list an agent's queries; filter and force-close other people's SQL sessions |
+| `audit:read` | Read the [access audit log](../access/audit-log.md): every access change, sign-in, and request refused for lack of a permission or a data grant, in every workspace. Also `duckhaven.access.audit` and `duckhaven.access.grants` in the [system catalog](../querying/system-catalog.md) |
 | `workspaces:create` | Create a [workspace](../access/workspaces.md), becoming its `owner`; without it, an account works only in the workspaces it is added to |
 
 For people who sign in through an identity provider, the global role comes from their group membership on every

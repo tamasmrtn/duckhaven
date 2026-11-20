@@ -83,7 +83,8 @@ sign-in demotes them.
 
 They belong to no workspace and cannot create one, since that takes `workspaces:create`, which only the `admin` role
 holds. Add them to a workspace as in [Give someone access to a workspace](#give-someone-access-to-a-workspace); the
-message names the email they sign in with. They see the workspace when they reload the page.
+message names the email they sign in with. They see the workspace when they reload the page. If the email is not the
+one you expected, they signed in with another account: **Sign out** on the same message lets them sign in again.
 
 ### Someone sees the workspace but not a catalog's tables
 

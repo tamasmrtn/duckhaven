@@ -18,8 +18,10 @@ through the REST API, or in SQL.
 
 1. Open **Admin** → **Audit**.
 
-    The events of the last 30 days are listed newest first: when each happened, who acted (**By**), the action, what
-    it changed (**Target**, with its workspace below), and whose access changed (**Affecting**).
+    The events of the last 30 days are listed newest first: when each happened, the action, who acted (**By**), what
+    it changed (**Target**, with its workspace below), and whose access changed (**Affecting**). The action carries
+    its marks: **Failed** or **Denied** for a refusal, and **Own access** for a change someone made to their own
+    access.
 
 2. Narrow the list with the filters above it. They combine:
 
@@ -30,7 +32,7 @@ through the REST API, or in SQL.
     | **Any outcome** | **Succeeded**, **Failed** (a refused sign-in) or **Denied** (a request refused for lack of access) |
     | **By** | What one person or service account changed, including the calls the [assistant](../ai/assistant.md) made for them |
     | **Affecting** | Every change to one person's or service account's access, by anyone |
-    | **Workspace…** | One workspace, by its slug |
+    | **Workspace** | One workspace, by its slug |
     | **Changes to own access** | Only changes people made to their own access; each is marked **Own access** |
 
 3. Select an event to open it.

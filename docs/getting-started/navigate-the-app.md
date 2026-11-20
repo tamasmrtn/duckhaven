@@ -34,7 +34,7 @@ A bar beside its name marks the page you are on: ink in the light theme, yellow 
 Press **⌘K** (**Ctrl+K** on Windows and Linux), or click **Search…** in the top bar. Type two or more characters to
 find, by name:
 
-- catalogs, schemas and tables;
+- catalogs, schemas and tables, the `duckhaven` system catalog's among them;
 - saved queries, which open in a worksheet;
 - dashboards, by name or title, and semantic models;
 - any page in the table above, and **Connections** and **Settings**.

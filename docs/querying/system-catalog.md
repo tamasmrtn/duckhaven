@@ -171,6 +171,9 @@ to open its page, as for any catalog:
 These pages are read-only. They have no way to alter, drop or grant anything, and no **History**, **Health**,
 **Lineage**, **Semantics** or **Permissions** tab.
 
+The tree's search box and [⌘K](../getting-started/navigate-the-app.md#search-with-k) find its schemas and tables by
+name, beside the workspace's own.
+
 Beside the editor the tree only browses: drag a table into your SQL to insert its full name. The editor also completes
 its schemas, tables and columns after `duckhaven.`.
 

@@ -123,7 +123,7 @@ async def _run_meta_rows(
     if upstream.status_code != 200:
         raise RuntimeError("failed to fetch metadata rows from agent")
     limit = query.row_count or 100_000
-    rows, _ = await query_service.decode_page_off_loop(upstream.content, limit, 0)
+    rows, _ = await query_service.decode_page(upstream.content, limit, 0)
     return rows
 
 

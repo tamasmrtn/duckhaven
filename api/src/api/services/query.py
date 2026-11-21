@@ -1040,7 +1040,9 @@ async def fetch_result_page(
     # starts at the requested rows, so decode at offset 0. An older agent that
     # ignored the params returns the whole file -- fall back to decoding at offset.
     decode_offset = 0 if "X-DH-Row-Offset" in upstream.headers else offset
-    rows, columns = await decode_page_off_loop(upstream.content, limit, decode_offset)
+    rows, columns = await decode_page(
+        upstream.content, limit, decode_offset, page_rows=_rows_in_page(query, limit, offset)
+    )
 
     next_offset = offset + limit
     return RowsPageOut(
@@ -1061,7 +1063,9 @@ async def page_from_parquet(
     the file the agent sent with a statement's QUERY_DONE.
     """
     total = query.row_count or 0
-    rows, columns = await decode_page_off_loop(data, limit, offset)
+    rows, columns = await decode_page(
+        data, limit, offset, page_rows=_rows_in_page(query, limit, offset)
+    )
     next_offset = offset + limit
     return RowsPageOut(
         rows=rows,
@@ -1072,16 +1076,35 @@ async def page_from_parquet(
     )
 
 
-async def decode_page_off_loop(
-    data: bytes, limit: int, offset: int
-) -> tuple[list[dict[str, Any]], list[str]]:
-    """:func:`decode_parquet_page` in a worker thread, timed.
+# Pages of up to this many rows are decoded on the event loop. Below it the decode is
+# a fixed ~2.5 ms (a temp file and the DuckDB scan), less than handing it to a worker
+# thread costs: a cache hit's one-row page, decoded off the loop, put 18-30% of hits
+# over 27 ms against 4% inline. 500 rows take about 6 ms and 1,000 about 7.5.
+INLINE_DECODE_MAX_ROWS = 200
 
-    Decoding is CPU-bound -- about 7 ms for 1,000 rows -- and on the event loop it
-    held up every other request on the replica while one user paged a result.
+
+def _rows_in_page(query: Query, limit: int, offset: int) -> int | None:
+    """How many rows a page of ``query`` holds, or None when its row count is unknown."""
+    if query.row_count is None:
+        return None
+    return max(0, min(limit, query.row_count - offset))
+
+
+async def decode_page(
+    data: bytes, limit: int, offset: int, *, page_rows: int | None = None
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """:func:`decode_parquet_page`, timed; in a worker thread unless the page is small.
+
+    ``page_rows`` is how many rows the page holds, when the caller knows (``limit``
+    is the most it can hold). A large decode is CPU-bound -- about 7 ms for 1,000
+    rows -- and on the event loop it held up every other request on the replica
+    while one user paged a result.
     """
     started = time.monotonic()
-    page = await asyncio.to_thread(decode_parquet_page, data, limit, offset)
+    if (limit if page_rows is None else page_rows) <= INLINE_DECODE_MAX_ROWS:
+        page = decode_parquet_page(data, limit, offset)
+    else:
+        page = await asyncio.to_thread(decode_parquet_page, data, limit, offset)
     record_rows_decode(time.monotonic() - started)
     return page
 

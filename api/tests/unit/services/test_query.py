@@ -76,12 +76,10 @@ def test_decode_parquet_page_is_safe_across_threads():
     assert all(n == count for n, count in results)
 
 
-async def test_page_decode_runs_off_the_event_loop(monkeypatch):
-    """A 1,000-row decode is about 7 ms of CPU; on the loop it stalled every request."""
+def _record_decode_thread(monkeypatch) -> list[int]:
     import threading
 
-    content = _parquet_bytes("SELECT * FROM range(3) t(n)")
-    seen = []
+    seen: list[int] = []
     real = query_service.decode_parquet_page
 
     def recording(*args):
@@ -89,11 +87,57 @@ async def test_page_decode_runs_off_the_event_loop(monkeypatch):
         return real(*args)
 
     monkeypatch.setattr(query_service, "decode_parquet_page", recording)
+    return seen
+
+
+async def _page_decoded_on_the_loop(
+    monkeypatch, row_count: int | None, *, limit: int, offset: int = 0
+) -> bool:
+    import threading
+
+    seen = _record_decode_thread(monkeypatch)
+    rows = row_count if row_count is not None else 1_000
+    content = _parquet_bytes(f"SELECT * FROM range({rows}) t(n)")
+    query = Query(workspace_id=uuid.uuid4(), sql="SELECT 1", status="done", row_count=row_count)
+    await query_service.page_from_parquet(query, content, limit=limit, offset=offset)
+    assert len(seen) == 1
+    return seen[0] == threading.get_ident()
+
+
+async def test_a_large_page_decodes_off_the_event_loop(monkeypatch):
+    """A 1,000-row decode is about 7 ms of CPU; on the loop it stalled every request."""
+    assert not await _page_decoded_on_the_loop(monkeypatch, 1_000, limit=1_000)
+
+
+async def test_a_small_page_decodes_on_the_event_loop(monkeypatch):
+    """A cache hit's few rows decode in less time than a hand-off to a thread costs."""
+    import threading
+
+    seen = _record_decode_thread(monkeypatch)
+    content = _parquet_bytes("SELECT * FROM range(3) t(n)")
     query = Query(workspace_id=uuid.uuid4(), sql="SELECT 1", status="done", row_count=3)
-    page = await query_service.page_from_parquet(query, content, limit=2)
-    assert page.rows == [{"n": "0"}, {"n": "1"}]
-    assert page.cursor == "2"
-    assert seen and seen[0] != threading.get_ident()
+    page = await query_service.page_from_parquet(query, content, limit=1_000)
+    assert page.rows == [{"n": "0"}, {"n": "1"}, {"n": "2"}]
+    assert page.cursor is None
+    assert seen == [threading.get_ident()]
+
+
+@pytest.mark.parametrize(
+    ("row_count", "limit", "offset", "on_loop"),
+    [
+        (200, 1_000, 0, True),
+        (201, 1_000, 0, False),
+        (1_000, 200, 0, True),
+        (1_000, 1_000, 850, True),  # the last page of a large result
+        (None, 1_000, 0, False),  # row count unknown: the limit bounds the page
+        (None, 200, 0, True),
+    ],
+)
+async def test_the_rows_in_the_page_decide_where_it_decodes(
+    monkeypatch, row_count, limit, offset, on_loop
+):
+    on = await _page_decoded_on_the_loop(monkeypatch, row_count, limit=limit, offset=offset)
+    assert on is on_loop
 
 
 def test_a_failed_decode_does_not_break_the_next():

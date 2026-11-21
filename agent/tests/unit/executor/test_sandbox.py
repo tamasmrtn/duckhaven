@@ -160,6 +160,29 @@ def test_locked_configuration_allows_secret_and_attach():
     conn.execute("ATTACH ':memory:' AS extra")
 
 
+@pytest.fixture
+def postgres_extension():
+    try:
+        duckdb.connect().execute("INSTALL postgres")
+    except duckdb.Error as exc:
+        pytest.skip(f"the postgres extension cannot be installed here: {exc}")
+
+
+def test_locked_configuration_still_loads_an_extension(postgres_extension):
+    """The system catalog's extension is loaded by the statement that attaches it,
+    after the lock (`runner._LOADED_ON_ATTACH`)."""
+    conn = open_and_attach(lock_config=True)
+    conn.execute("LOAD postgres")
+    conn.execute("CREATE SECRET s (TYPE postgres, HOST 'h', DATABASE 'd', USER 'u', PASSWORD 'p')")
+
+
+def test_a_disabled_local_filesystem_refuses_a_late_load(postgres_extension):
+    """Why `open_and_attach` still preloads it when the sandbox disables that filesystem."""
+    conn = open_and_attach(lock_config=True, disabled_filesystems="LocalFileSystem")
+    with pytest.raises(duckdb.PermissionException):
+        conn.execute("LOAD postgres")
+
+
 def test_allowed_configs_covers_every_setting_the_runner_writes():
     """`_ALLOWED_CONFIGS` is the contract between the lock and the runner. The
     profiling option is whichever one this engine has, so the list is exact for

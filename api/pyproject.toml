@@ -37,7 +37,7 @@ dependencies = [
     # Azure Container Instances management, for the elastic-compute azure_aci
     # backend. Imported lazily (only when elastic_provider="azure_aci"), so the
     # null-backend path and tests don't require it.
-    "azure-mgmt-containerinstance>=10.1",
+    "azure-mgmt-containerinstance>=11.0.0",
     # Docker Engine API client, for the elastic-compute docker backend on a
     # single host. Imported lazily on the same rationale as the Azure SDK above.
     "docker>=7.1",

@@ -175,15 +175,6 @@ wheels = [
 ]
 
 [[package]]
-name = "azure-common"
-version = "1.1.28"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/3e/71/f6f71a276e2e69264a97ad39ef850dca0a04fce67b12570730cb38d0ccac/azure-common-1.1.28.zip", hash = "sha256:4ac0cd3214e36b6a1b6a442686722a5d8cc449603aa833f3f0f40bda836704a3", size = 20914, upload-time = "2022-02-03T19:39:44.373Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/62/55/7f118b9c1b23ec15ca05d15a578d8207aa1706bc6f7c87218efffbbf875d/azure_common-1.1.28-py2.py3-none-any.whl", hash = "sha256:5c12d3dcf4ec20599ca6b0d3e09e86e146353d443e7fcc050c9a19c1f9df20ad", size = 14462, upload-time = "2022-02-03T19:39:42.417Z" },
-]
-
-[[package]]
 name = "azure-core"
 version = "1.41.0"
 source = { registry = "https://pypi.org/simple" }
@@ -214,16 +205,16 @@ wheels = [
 
 [[package]]
 name = "azure-mgmt-containerinstance"
-version = "10.1.0"
+version = "11.0.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "azure-common" },
     { name = "azure-mgmt-core" },
     { name = "isodate" },
+    { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/4c/19/cdb22d87560238893f5c014176b4e6868c3befbd6585bb5c44bdb1ddc997/azure-mgmt-containerinstance-10.1.0.zip", hash = "sha256:78d437adb28574f448c838ed5f01f9ced378196098061deb59d9f7031704c17e", size = 106507, upload-time = "2023-04-21T03:30:50.199Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/7a/f9/b111240dea5f42b0fc46ba64e00d247abf9acd3e611384460628ed35fc61/azure_mgmt_containerinstance-11.0.0.tar.gz", hash = "sha256:9b3ccb0e4b4a2bbd05bbc333dce3a8295f46a46ed65b1637649b7fbaaf44bc86", size = 139792, upload-time = "2026-11-12T09:36:50.714Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/34/11/3bfa586ac0514e1fe224879c065dbec39c0d9d2653b74549ac8080408f07/azure_mgmt_containerinstance-10.1.0-py3-none-any.whl", hash = "sha256:ee7977b7b70f2233e44ec6ce8c99027f3f7892bb3452b4bad46df340d9f98959", size = 87314, upload-time = "2023-04-21T03:30:52.379Z" },
+    { url = "https://files.pythonhosted.org/packages/2f/a3/97b71b72eb1fe830dc6999d4e33858403a87a21f83350e04e71acb72934c/azure_mgmt_containerinstance-11.0.0-py3-none-any.whl", hash = "sha256:ed809ad0b691f71550a126e295973be4f0f9e588d79838a5c8420b6af025fd34", size = 129170, upload-time = "2026-11-12T09:36:52.258Z" },
 ]
 
 [[package]]
@@ -784,7 +775,7 @@ requires-dist = [
     { name = "asyncpg", specifier = ">=0.29" },
     { name = "authlib", specifier = ">=1.9.5" },
     { name = "azure-identity", specifier = ">=1.16" },
-    { name = "azure-mgmt-containerinstance", specifier = ">=10.1" },
+    { name = "azure-mgmt-containerinstance", specifier = ">=11.0.0" },
     { name = "azure-storage-blob", specifier = ">=12.19" },
     { name = "bcrypt", specifier = ">=4.0" },
     { name = "boto3", specifier = ">=1.43.126" },

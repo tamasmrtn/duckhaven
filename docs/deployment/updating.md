@@ -52,6 +52,10 @@ connectors. Moving to `api_version` 3 (v0.9.0 and later, and `:latest`) needs
 `duckhaven-sql-connector` 0.8.0 or later, which `dbt-duckhaven` and `dlt-duckhaven` use, and `dh` 0.4.0 or later. What
 each version changes is in [API versions](../reference/api-versions.md).
 
+Moving to `api_version` 4 (v0.11.0 and later, and `:latest`) changes one status code: `POST /api/workspaces` returns
+**403** for an account with the `user` role. A script that creates workspaces needs an `admin` account. Clients that
+never call that route need no upgrade.
+
 ## One-time: updating past the Chainguard base image migration
 
 The `api` and `agent` images moved from a Debian-based base to Chainguard's distroless base, which runs as a fixed

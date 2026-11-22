@@ -201,25 +201,65 @@ def test_a_late_attach_creates_the_iceberg_secret_only_for_iceberg(monkeypatch, 
     assert created == ([True] if creates else [])
 
 
-def test_a_session_that_may_read_it_loads_postgres_before_the_lock(monkeypatch):
-    """The catalog comes with a later statement, after the configuration lock,
-    when `LOAD` is refused."""
+def _open_session(monkeypatch, disabled_filesystems: str = "") -> list[str]:
     conn = FakeConn()
     monkeypatch.setattr(runner.duckdb, "connect", lambda *a, **k: conn)
-
     runner.open_and_attach(
         catalogs=[_catalog("ice", "iceberg_polaris")],
         active_catalog="ice",
         polaris=_POLARIS,
         lock_config=True,
+        disabled_filesystems=disabled_filesystems,
         preload_catalog_kinds=["iceberg_polaris", "system"],
         preload_backend_kinds=["object_store"],
     )
+    return conn.sql()
+
+
+def _loads_postgres(sql: list[str]) -> list[int]:
+    return [i for i, s in enumerate(sql) if s.strip().startswith("LOAD postgres")]
+
+
+def test_a_session_that_may_read_it_does_not_load_postgres_at_open(monkeypatch):
+    """Every session may read it, and a 22-session burst paid for hashing the
+    extension on each open; the statement that attaches it loads it instead."""
+    assert _loads_postgres(_open_session(monkeypatch)) == []
+
+
+@pytest.mark.parametrize("latch", ["LocalFileSystem", "HTTPFileSystem, LocalFileSystem"])
+def test_with_the_local_filesystem_latched_it_loads_postgres_before_the_lock(monkeypatch, latch):
+    """Once `LocalFileSystem` is disabled, a later `LOAD` is refused."""
+    sql = _open_session(monkeypatch, latch)
+    lock_at = next(i for i, s in enumerate(sql) if "lock_configuration" in s)
+    loads = _loads_postgres(sql)
+    assert loads and loads[0] < lock_at, sql
+
+
+def test_only_the_local_filesystem_latch_moves_the_load_to_open(monkeypatch):
+    assert _loads_postgres(_open_session(monkeypatch, "HTTPFileSystem")) == []
+
+
+def test_a_late_attach_loads_postgres_first(monkeypatch):
+    conn = FakeConn()
+    monkeypatch.setattr(runner, "is_attached", lambda conn, slug: False)
+
+    assert runner.attach_catalog(conn, _system(), polaris=_POLARIS)
 
     sql = conn.sql()
-    lock_at = next(i for i, s in enumerate(sql) if "lock_configuration" in s)
-    load_at = next((i for i, s in enumerate(sql) if s.strip().startswith("LOAD postgres")), None)
-    assert load_at is not None and load_at < lock_at, sql
+    assert _loads_postgres(sql) == [0], sql
+    assert ATTACH in sql
+
+
+@pytest.mark.parametrize("kind", ["iceberg_polaris", "ducklake"])
+def test_a_late_attach_of_a_workspace_catalog_loads_nothing(monkeypatch, kind):
+    """Their extensions are loaded at open, before the lock."""
+    conn = FakeConn()
+    monkeypatch.setattr(runner, "is_attached", lambda conn, slug: False)
+    monkeypatch.setattr(runner, "_attach_ducklake", lambda conn, cat: None)
+
+    runner.attach_catalog(conn, _catalog("c", kind), polaris=_POLARIS)
+
+    assert not any(s.strip().startswith("LOAD") for s in conn.sql())
 
 
 def test_with_no_polaris_a_one_shot_still_attaches_it(monkeypatch):

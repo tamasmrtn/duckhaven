@@ -99,7 +99,8 @@ ORDER BY event_time DESC;
 ```
 
 In a [SQL session](sql-sessions.md), the first statement that names it attaches it for the rest of the session, and
-each later statement is checked again.
+each later statement is checked again. That first statement also loads the DuckDB extension the catalog is read
+through, which adds about 50 ms once per session.
 
 ### What info_schema shows
 

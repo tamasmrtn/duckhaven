@@ -160,6 +160,13 @@ _CATALOG_KIND_EXTENSIONS: dict[str, tuple[str, ...]] = {
 }
 KIND_ICEBERG = "iceberg_polaris"
 KIND_DUCKLAKE = "ducklake"
+# Kinds whose extensions the statement that attaches them loads, not the connection
+# open. DuckDB hashes an extension's whole file on every LOAD into a new database,
+# and every session may read the system catalog: preloading its 40 MiB `postgres`
+# made a 22-session burst of Iceberg opens about 1 s slower on DuckDB 2.0, which
+# opens one at a time. A LOAD after `lock_configuration` works; only a disabled
+# `LocalFileSystem` refuses it (verified on 1.5.6 and 2.0.0).
+_LOADED_ON_ATTACH = frozenset({KIND_SYSTEM})
 
 
 # Suffixed by slug: one connection can attach several DuckLake catalogs.
@@ -1096,12 +1103,17 @@ def attach_catalog(
     For catalogs a statement needs that the connection was not opened with. It
     works after the configuration lock (verified on 1.5.5: `CREATE SECRET` and
     `ATTACH` are not configuration), provided `open_and_attach` loaded the
-    catalog kind's extensions first. Idempotent: an attached slug is left alone.
+    catalog kind's extensions first; a `_LOADED_ON_ATTACH` kind's are loaded
+    here. Idempotent: an attached slug is left alone.
     Returns False if it was already attached; raises if the attach fails.
     """
     if is_attached(conn, cat["slug"]):
         return False
-    if (cat.get("kind") or KIND_ICEBERG) == KIND_ICEBERG:
+    if (kind := cat.get("kind") or KIND_ICEBERG) in _LOADED_ON_ATTACH:
+        # Not loaded at open (see `open_and_attach`); a no-op when it was.
+        for ext in _CATALOG_KIND_EXTENSIONS[kind]:
+            conn.execute(f"LOAD {ext}")
+    if kind == KIND_ICEBERG:
         exists = conn.execute(
             "SELECT count(*) FROM duckdb_secrets() WHERE name = ?", [_ICEBERG_SECRET]
         ).fetchone()
@@ -1273,6 +1285,12 @@ def _is_sandbox_denial(exc: Exception) -> bool:
     return any(marker in msg for marker in _SANDBOX_DENIAL_MARKERS)
 
 
+def _local_filesystem_disabled(disabled_filesystems: str | None) -> bool:
+    """Whether the sandbox will switch off `LocalFileSystem`, after which `LOAD` fails."""
+    names = (disabled_filesystems or "").replace(",", " ").split()
+    return "LocalFileSystem" in names
+
+
 def _apply_sandbox(
     conn: duckdb.DuckDBPyConnection,
     disabled_filesystems: str | None,
@@ -1366,7 +1384,9 @@ def open_and_attach(
     can add them later. Their extensions and settings must be in place before
     the sandbox: `SET` is refused once the configuration is locked, and `LOAD` and
     the first `CREATE SECRET` touch the local filesystem, which the optional
-    `disabled_filesystems` latch can switch off (all verified on 1.5.5).
+    `disabled_filesystems` latch can switch off (all verified on 1.5.5). The
+    system catalog's extension is the exception while that filesystem stays on:
+    `attach_catalog` loads it (`_LOADED_ON_ATTACH`).
 
     Loads the union of IO extensions across the catalogs' backends (a workspace
     may mix S3 and ADLS catalogs). Shared by the cost estimator (pre-execution
@@ -1388,7 +1408,11 @@ def open_and_attach(
     backend_kinds = {(cat.get("backend") or {}).get("kind") for cat in catalogs}
     backend_kinds |= set(preload_backend_kinds)
     catalog_kinds = {cat.get("kind", "iceberg_polaris") for cat in catalogs}
-    catalog_kinds |= set(preload_catalog_kinds)
+    preload = set(preload_catalog_kinds)
+    if not _local_filesystem_disabled(disabled_filesystems):
+        # `attach_catalog` loads these when a statement needs them.
+        preload -= _LOADED_ON_ATTACH
+    catalog_kinds |= preload
     shape = (frozenset(backend_kinds), frozenset(catalog_kinds))
     prepared = _warm.take(shape) if _warm is not None else None
     if prepared is None:

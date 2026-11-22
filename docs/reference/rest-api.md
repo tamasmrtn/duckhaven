@@ -152,7 +152,7 @@ An unrecognized value for an enumerated parameter is a **422**, not ignored.
 `GET /api/version` needs no credentials and reports the server's release and its contract version:
 
 ```json
-{"version": "0.0.0-dev", "api_version": 3}
+{"version": "0.0.0-dev", "api_version": 4}
 ```
 
 `version` is the release the server was built from (`0.0.0-dev` for a local build). `api_version` changes only when a

@@ -19,7 +19,7 @@ curl -s "$DH/api/version"
 ```
 
 ```json
-{"version": "0.0.0-dev", "api_version": 3, "features": ["query_schema"]}
+{"version": "0.0.0-dev", "api_version": 4, "features": ["query_schema"]}
 ```
 
 | Field | Meaning |
@@ -43,9 +43,31 @@ There is no `/v1/` path prefix. One server serves one version, and `GET /api/ver
 
 | `api_version` | Servers |
 |---|---|
-| 3 | v0.9.0 and later, and the `:latest` image |
+| 4 | v0.11.0 and later, and the `:latest` image |
+| 3 | v0.9.0 – v0.10.0 |
 | 2 | v0.8.0 |
 | 1 | v0.5.0 – v0.7.0 |
+
+### `api_version` 4: creating a workspace needs `workspaces:create`
+
+`POST /api/workspaces` returns **403** for an account whose global role is `user`, and for a
+[token](../access/service-accounts.md) acting for one. Version 3 let any signed-in account create a workspace and
+become its owner. Only the `admin` role holds `workspaces:create`. A refusal is recorded as
+[`authz.permission_denied`](audit-events.md). Startup grants `workspaces:create` to `admin`, so the upgrade runs no
+migration.
+
+- Workspaces that a `user` account created before the upgrade are kept, with their owners.
+- A client that never calls `POST /api/workspaces` is unaffected, so it needs no upgrade for this version.
+- A script that creates workspaces as a `user` account must run as an account with the `admin` role, or stop creating
+  workspaces.
+- To list the owners of those workspaces, run this from an admin's SQL session:
+
+```sql
+SELECT o.workspace_slug, o.principal_email
+FROM duckhaven.access.grants o
+JOIN duckhaven.access.grants r ON r.kind = 'global_role' AND r.principal_id = o.principal_id
+WHERE o.kind = 'workspace_member' AND o.level = 'owner' AND r.level = 'user';
+```
 
 ### `api_version` 3: exact numbers are strings
 

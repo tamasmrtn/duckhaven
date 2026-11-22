@@ -805,7 +805,7 @@ requires-dist = [
     { name = "opentelemetry-sdk", specifier = ">=1.36" },
     { name = "prometheus-client", specifier = ">=0.20" },
     { name = "pyarrow", specifier = ">=26.0.0" },
-    { name = "pydantic-ai-slim", extras = ["anthropic", "mistral", "openai"], specifier = ">=2.67.0" },
+    { name = "pydantic-ai-slim", extras = ["anthropic", "mistral", "openai"], specifier = ">=2.70.0" },
     { name = "pydantic-settings", specifier = ">=2.0" },
     { name = "pytz", specifier = ">=2026.4" },
     { name = "pyyaml", specifier = ">=6.0" },

@@ -26,7 +26,7 @@ router = APIRouter()
 
 # API contract version — bump only on a breaking change to the API contract,
 # not per release (the release/build version is settings.app_version).
-API_VERSION = 3
+API_VERSION = 4
 
 # Additions a client must know about before relying on them, because a server without
 # one ignores the field silently instead of refusing it. Added to, never removed from.

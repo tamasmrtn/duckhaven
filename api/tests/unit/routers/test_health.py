@@ -24,6 +24,12 @@ async def test_version_ok(client: AsyncClient):
     assert body["api_version"] == API_VERSION
 
 
+async def test_version_reports_api_version_4(client: AsyncClient):
+    """Pins the number clients read. A bump must change this test with it."""
+    resp = await client.get("/version")
+    assert resp.json()["api_version"] == 4
+
+
 async def test_version_names_the_features_a_client_must_check_for(client: AsyncClient):
     """`schema` on a one-shot query is ignored by a server without it, so a client
     has to ask before it sends one."""

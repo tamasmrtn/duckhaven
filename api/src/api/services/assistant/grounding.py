@@ -44,8 +44,18 @@ _WRITTEN = re.compile(
     r"(\s?(?:%|thousand\b|million\b|billion\b|bn\b|[kKmMbB]\b))?"
 )
 # Any number inside text a tool returned or the person wrote, dates and windows
-# included: "15 Oct – 13 Nov 2026" holds 15, 13 and 2026.
-_ANY = re.compile(r"-?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?")
+# included: "15 Oct – 13 Nov 2026" holds 15, 13 and 2026. Exponent notation is read
+# only where it stands as a token of its own, with the few digits a double needs:
+# inside "4c8f7a6b5d4e3689204" it is a hash fragment, not 4 × 10^3689204. Digits
+# inside a word or identifier are still read as plain numbers.
+_ANY = re.compile(
+    r"(?<![\w.])-?\d+(?:\.\d+)?[eE][-+]?\d{1,3}(?!\w)"
+    r"|-?\d+(?:\.\d+)?"
+)
+#: A figure further from 1 than this, in powers of ten, is text that parsed as a
+#: number. Decimal raises Overflow on arithmetic past its exponent limit (999,999),
+#: and no result a tool returns, DOUBLE included, comes near this.
+_MAX_MAGNITUDE = 400
 _MONTH = (
     r"(?:january|february|march|april|may|june|july|august|september|october|november"
     r"|december|jan|feb|mar|apr|jun|jul|aug|sept|sep|oct|nov|dec)\b\.?"
@@ -137,7 +147,9 @@ def _known(messages: Iterable[ModelMessage], extra: Iterable[str]) -> list[Decim
     for text in texts:
         for found in _ANY.findall(text):
             try:
-                numbers.add(Decimal(found))
+                number = Decimal(found)
             except InvalidOperation:
                 continue
+            if abs(number.adjusted()) <= _MAX_MAGNITUDE:
+                numbers.add(number)
     return list(numbers)

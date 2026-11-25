@@ -131,10 +131,7 @@ async def test_approval_still_answerable_without_workspace_access(
 ):
     # A paused turn must stay resolvable in both directions: rejecting a write
     # needs no data access, and refusing here would strand it with no way out.
-    conv = AssistantConversation(workspace_id=workspace.id, user_id=user.id, title="t")
-    db_session.add(conv)
-    await db_session.commit()
-    await db_session.refresh(conv)
+    conv = await _paused_conversation(db_session, workspace, user)
 
     async def _resumed(*_args, **_kwargs):
         yield 'data: {"type": "token", "text": "denied"}\n\n'
@@ -147,6 +144,63 @@ async def test_approval_still_answerable_without_workspace_access(
     )
     assert resp.status_code == 200, resp.text
     assert "denied" in resp.text
+
+
+async def _paused_conversation(db_session, workspace, user) -> AssistantConversation:
+    """A conversation whose last turn ended on a write awaiting approval (``call-1``)."""
+    conv = AssistantConversation(workspace_id=workspace.id, user_id=user.id, title="t")
+    db_session.add(conv)
+    await db_session.commit()
+    await db_session.refresh(conv)
+    asked = [
+        ModelRequest(parts=[UserPromptPart(content="delete it")]),
+        ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name="run_sql", args={"sql": "DELETE FROM t"}, tool_call_id="call-1"
+                )
+            ]
+        ),
+    ]
+    await save_turn(
+        db_session,
+        conv,
+        new_messages_json=ModelMessagesTypeAdapter.dump_json(asked),
+        usage=RunUsage(input_tokens=1, output_tokens=1),
+        records={},
+    )
+    return conv
+
+
+@pytest.mark.parametrize("tool_call_id", ["call-2", ""])
+async def test_an_approval_nothing_is_waiting_on_is_a_conflict_not_a_failed_turn(
+    authed, workspace, db_session, user, assistant_member, tool_call_id
+):
+    conv = await _paused_conversation(db_session, workspace, user)
+
+    resp = await authed.post(
+        f"/workspaces/{workspace.slug}/assistant/conversations/{conv.id}/approvals",
+        json={"tool_call_id": tool_call_id, "approved": True},
+    )
+
+    assert resp.status_code == 409
+    assert resp.json()["error"] == "approval_not_pending"
+
+
+async def test_an_approval_in_a_conversation_with_no_history_is_a_conflict(
+    authed, workspace, db_session, user, assistant_member
+):
+    conv = AssistantConversation(workspace_id=workspace.id, user_id=user.id, title="t")
+    db_session.add(conv)
+    await db_session.commit()
+
+    resp = await authed.post(
+        f"/workspaces/{workspace.slug}/assistant/conversations/{conv.id}/approvals",
+        json={"tool_call_id": "call-1", "approved": False},
+    )
+
+    assert resp.status_code == 409
+    assert resp.json()["error"] == "approval_not_pending"
 
 
 async def test_a_title_longer_than_the_column_is_refused_up_front(authed, workspace):

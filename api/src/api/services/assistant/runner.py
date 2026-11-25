@@ -79,6 +79,10 @@ _run_semaphore: asyncio.Semaphore | None = None
 # Turns running per person on this process. The semaphore caps them all together;
 # this keeps one person's tabs from taking every slot.
 _user_turns: dict[uuid.UUID, int] = {}
+# Approvals being answered on this process, by conversation and tool call. History
+# shows a call as answered only once its turn is saved, after the model has
+# replied, so a second click while the first is running would resume it again.
+_resolving: set[tuple[uuid.UUID, str]] = set()
 
 
 class AssistantDisabledError(RuntimeError):
@@ -428,9 +432,14 @@ async def _stream(
     page_context: WorksheetContext | DashboardContext | None = None,
 ) -> AsyncIterator[str]:
     require_enabled()
+    approvals = {(conversation_id, call_id) for call_id in _resolved_ids(deferred_results)}
+    if approvals & _resolving:
+        yield _sse({"type": "error", "message": "That approval is already being answered."})
+        return
     if not _take_turn(user_id):
         yield _sse({"type": "error", "message": _busy_message()})
         return
+    _resolving.update(approvals)
     try:
         async for frame in _run_turn(
             session_factory,
@@ -445,6 +454,7 @@ async def _stream(
         ):
             yield frame
     finally:
+        _resolving.difference_update(approvals)
         _end_turn(user_id)
 
 

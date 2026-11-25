@@ -14,6 +14,7 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     TextPart,
+    ToolCallPart,
     UserPromptPart,
 )
 from pydantic_ai.usage import RunUsage
@@ -24,7 +25,7 @@ from api.models.assistant import AssistantConversation, AssistantMessage, Assist
 from api.models.user import User
 from api.models.workspace import Workspace
 from api.services.assistant.deps import ToolCallRecord
-from api.services.assistant.persistence import save_turn
+from api.services.assistant.persistence import has_pending_call, save_turn
 from api.services.text_safety import REPLACEMENT
 
 pytestmark = pytest.mark.integration
@@ -89,3 +90,24 @@ async def test_a_title_of_255_four_byte_characters_fits_the_column(db_session, c
 
     await db_session.refresh(conversation)
     assert len(conversation.title) == 255
+
+
+async def test_a_pending_call_is_read_back_from_the_saved_turn(db_session, conversation):
+    asked = ModelMessagesTypeAdapter.dump_json(
+        [
+            ModelRequest(parts=[UserPromptPart(content="delete it")]),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name="run_sql", args={"sql": "DELETE"}, tool_call_id="c1")]
+            ),
+        ]
+    )
+    await save_turn(
+        db_session,
+        conversation,
+        new_messages_json=asked,
+        usage=RunUsage(input_tokens=1, output_tokens=1),
+        records={},
+    )
+
+    assert await has_pending_call(db_session, conversation.id, "c1")
+    assert not await has_pending_call(db_session, conversation.id, "c2")

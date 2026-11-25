@@ -24,7 +24,11 @@ from api.schemas.assistant import (
 from api.schemas.page import Page
 from api.services.assistant import resume_turn, stream_turn
 from api.services.assistant.access import assistant_availability
-from api.services.assistant.persistence import is_history_truncated, render_transcript_with_sql
+from api.services.assistant.persistence import (
+    has_pending_call,
+    is_history_truncated,
+    render_transcript_with_sql,
+)
 from api.services.paging import paginate
 from api.services.workspace import assert_workspace_member, get_workspace
 
@@ -304,6 +308,7 @@ async def send_message(
             ),
             "content": {"text/event-stream": {"schema": {"type": "string"}}},
         },
+        409: {"description": "Nothing is waiting on that approval: it was answered already."},
     },
 )
 async def approve_write(
@@ -327,6 +332,17 @@ async def approve_write(
     # approval that no longer has access fails at the tool call, which is the
     # governed path the assistant explains.
     conversation = await _load_conversation(db, workspace.id, conversation_id, user.id)
+    if not await has_pending_call(db, conversation.id, body.tool_call_id):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "error": "approval_not_pending",
+                "detail": (
+                    "Nothing is waiting on that approval. It was answered already, "
+                    "or the conversation has moved on."
+                ),
+            },
+        )
     stream = resume_turn(
         session_factory,
         conversation_id=conversation.id,

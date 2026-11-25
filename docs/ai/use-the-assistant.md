@@ -38,9 +38,9 @@ and what it can and cannot do, see the [AI data assistant](assistant.md) concept
    answer, **Regenerate** resends the same question as a new turn if you want another attempt.
 
 Each conversation is private to you. Click the history icon in the panel header to search, switch, rename, or delete
-conversations; the panel header also shows the conversation's total token usage. Conversations persist so you can
-return to them later. If a conversation grows very long, the panel shows a small notice that its oldest messages have
-dropped out of context — start a new conversation if you want a clean slate.
+conversations; the panel header also shows the conversation's total token usage. A title holds up to 255 characters.
+Conversations persist so you can return to them later. If a conversation grows very long, the panel shows a small
+notice that its oldest messages have dropped out of context — start a new conversation if you want a clean slate.
 
 ## Ask about DuckHaven itself
 
@@ -101,7 +101,8 @@ statement), the conversation pauses and shows you the exact SQL. Review it and c
 - **Approve & run** runs the statement — still subject to the same permission checks as any query.
 - **Deny** tells the assistant not to run it; it will carry on and can explain or try a different approach.
 
-Nothing that changes data runs without your approval.
+Each write is answered once. A second click, or the same write answered from another tab, is refused and the first
+answer stands. Nothing that changes data runs without your approval.
 
 ## Tips for good results
 
@@ -128,6 +129,25 @@ An admin must add the **Assistant** account to this workspace.
 ### It says a table is not accessible
 
 That is its service account's access, not a fault. Ask an admin to grant the account access to the table.
+
+### "Nothing is waiting on that approval. It was answered already, or the conversation has moved on."
+
+You answered the same write twice, or answered one from an earlier turn. The first answer stands. Reopen the
+conversation to see what the assistant did with it.
+
+### "That approval is already being answered."
+
+A second click arrived while the first was still running. Wait for the turn to finish; do not click again.
+
+### "This conversation was deleted while the assistant was answering, so this turn was not saved."
+
+The conversation was deleted, in this tab or another, while a turn was running. Start a new conversation and ask
+again.
+
+### A character in your question or a result shows as �
+
+A NUL byte or an invalid character cannot be stored, so DuckHaven replaces it with � in your question and in what the
+assistant reads. Remove it from the source if it matters.
 
 ### A long conversation forgets what you said early on
 

@@ -81,6 +81,7 @@ from api.services.polaris import (
 )
 from api.services.rbac import seed_roles
 from api.services.system_catalog.store import dispose_engine as dispose_system_catalog_engine
+from api.services.text_safety import clean_json
 from api.telemetry import setup_telemetry
 from duckhaven_shared.telemetry import LOG_FORMAT, install_log_correlation
 
@@ -266,6 +267,27 @@ api_app = FastAPI(
     telemetry={"auto_configure": False},
 )
 
+
+class NulInPathMiddleware:
+    """Answer 404 to a path holding a NUL, before any handler looks it up.
+
+    No resource is named with one, and a path segment goes to the database as a
+    lookup key, where Postgres refuses a NUL: every route taking a workspace,
+    catalog or table name would answer ``%00`` with a 500.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "http" and "\x00" in scope["path"]:
+            code = status.HTTP_404_NOT_FOUND
+            response = JSONResponse(status_code=code, content=error_body(code, "Not Found"))
+            await response(scope, receive, send)
+            return
+        await self.app(scope, receive, send)
+
+
 # Record request count/latency by route template (skips the /metrics scrape).
 api_app.add_middleware(PrometheusMiddleware)
 
@@ -289,6 +311,8 @@ api_app.add_middleware(
     max_age=600,
 )
 
+api_app.add_middleware(NulInPathMiddleware)
+
 # Outermost, so every handler and exception handler below sees the request's
 # audit context (request id, source address, and the actor once authenticated).
 api_app.add_middleware(AuditContextMiddleware)
@@ -309,7 +333,11 @@ async def _http_error_handler(_: Request, exc: StarletteHTTPException) -> JSONRe
 @api_app.exception_handler(RequestValidationError)
 async def _validation_error_handler(_: Request, exc: RequestValidationError) -> JSONResponse:
     code = status.HTTP_422_UNPROCESSABLE_CONTENT
-    return JSONResponse(status_code=code, content=error_body(code, jsonable_encoder(exc.errors())))
+    # Each error echoes the input it rejected, and the input may hold a character
+    # that cannot be written as UTF-8 (a lone surrogate): without this the 422
+    # itself fails to render and the caller gets a 500 for a request it got wrong.
+    errors = clean_json(jsonable_encoder(exc.errors()))
+    return JSONResponse(status_code=code, content=error_body(code, errors))
 
 
 @api_app.exception_handler(Exception)

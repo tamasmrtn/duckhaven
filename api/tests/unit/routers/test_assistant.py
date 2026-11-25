@@ -149,6 +149,30 @@ async def test_approval_still_answerable_without_workspace_access(
     assert "denied" in resp.text
 
 
+async def test_a_title_longer_than_the_column_is_refused_up_front(authed, workspace):
+    url = f"/workspaces/{workspace.slug}/assistant/conversations"
+
+    assert (await authed.post(url, json={"title": "x" * 255})).status_code == 201
+    refused = await authed.post(url, json={"title": "x" * 256})
+    assert refused.status_code == 422
+    assert refused.json()["error"] == "validation_error"
+
+
+async def test_a_title_with_nul_or_a_lone_surrogate_is_kept_without_them(authed, workspace):
+    url = f"/workspaces/{workspace.slug}/assistant/conversations"
+    json_header = {"content-type": "application/json"}
+
+    created = await authed.post(url, content=b'{"title": "a\\u0000b"}', headers=json_header)
+    assert created.status_code == 201
+    assert created.json()["title"] == "a\ufffdb"
+
+    renamed = await authed.patch(
+        f"{url}/{created.json()['id']}", content=b'{"title": "c\\ud800d"}', headers=json_header
+    )
+    assert renamed.status_code == 200
+    assert renamed.json()["title"] == "c\ufffdd"
+
+
 async def test_turn_refused_without_workspace_access(
     authed, workspace, db_session, user, assistant_account
 ):

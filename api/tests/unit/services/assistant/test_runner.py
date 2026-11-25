@@ -7,6 +7,7 @@ identity minting, the gateway, the governance audit hooks, and persistence toget
 
 import asyncio
 import contextlib
+import decimal
 import uuid
 
 import pytest
@@ -801,3 +802,55 @@ async def test_the_dashboard_on_screen_reaches_the_model(client, db_session, fac
     assert "dashboard 'sales-overview' (version 3)" in captured[0]
     assert '{"country": "NL"}' in captured[0]
     assert "the widget 'revenue'" in captured[0]
+
+
+async def test_a_failing_grounding_check_does_not_cost_the_answer(
+    client, db_session, factory, monkeypatch
+):
+    """The check is advisory: whatever it raises, the answer is sent, saved and unflagged."""
+
+    def broken(*_args, **_kwargs):
+        raise decimal.Overflow()
+
+    monkeypatch.setattr(runner, "unsupported_numbers", broken)
+    ws, _catalog, conv = await _seed(db_session, sa_role="reader")
+
+    with get_agent().override(model=scripted_model([text_step("Revenue rose 37% to 12,345.")])):
+        frames = await _frames(factory, ws, conv, "how is revenue?")
+
+    assert [f for f in frames if f["type"] == "error"] == []
+    assert frames[-1]["type"] == "done"
+    assert "unsupported_numbers" not in frames[-1]
+    async with factory() as db:
+        assert len((await db.execute(select(AssistantMessage))).scalars().all()) == 1
+
+
+async def test_a_conversation_deleted_mid_turn_is_said_so_not_an_internal_error(
+    client, db_session, factory
+):
+    ws, _catalog, conv = await _seed(db_session, sa_role="reader")
+
+    def function(messages, info) -> ModelResponse:
+        return ModelResponse(parts=[TextPart("The answer.")])
+
+    async def stream_function(messages, info):
+        # Another tab deletes the conversation while the model is still answering.
+        async with factory() as db:
+            await db.delete(await db.get(AssistantConversation, conv.id))
+            await db.commit()
+        yield "The answer."
+
+    with get_agent().override(model=FunctionModel(function, stream_function=stream_function)):
+        frames = await _frames(factory, ws, conv, "hi")
+
+    assert frames[-1] == {
+        "type": "error",
+        "message": "This conversation was deleted while the assistant was answering, "
+        "so this turn was not saved.",
+    }
+
+
+def test_a_deleted_conversation_is_a_message_for_the_person_not_a_hidden_failure():
+    from api.services.assistant.runner import ConversationDeletedError, _safe_error_message
+
+    assert _safe_error_message(ConversationDeletedError("It was deleted.")) == "It was deleted."

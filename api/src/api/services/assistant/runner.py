@@ -63,7 +63,10 @@ def _safe_error_message(exc: BaseException) -> str:
     """Map a turn failure to a client-safe message; log the rest server-side."""
     if isinstance(exc, UsageLimitExceeded):
         return "The assistant reached its step limit for this turn. Try a more specific question."
-    if isinstance(exc, GatewayError | AssistantIdentityError | AssistantDisabledError):
+    if isinstance(
+        exc,
+        GatewayError | AssistantIdentityError | AssistantDisabledError | ConversationDeletedError,
+    ):
         return str(exc)
     logger.exception("Assistant turn failed", exc_info=exc)
     return "The assistant hit an internal error."
@@ -80,6 +83,10 @@ _user_turns: dict[uuid.UUID, int] = {}
 
 class AssistantDisabledError(RuntimeError):
     """The assistant feature is not enabled in this deployment."""
+
+
+class ConversationDeletedError(RuntimeError):
+    """The conversation was deleted while its turn was running, so there is nowhere to save it."""
 
 
 def _semaphore() -> asyncio.Semaphore:
@@ -121,6 +128,19 @@ def _page_values(page: WorksheetContext | DashboardContext | None) -> list[str]:
     if isinstance(page, WorksheetContext):
         return [page.sql or "", page.selection or ""]
     return []
+
+
+def _unsupported(result, page: WorksheetContext | DashboardContext | None) -> list[str]:
+    """The numbers the answer holds that nothing in the conversation does.
+
+    Advisory, so a failure here is logged and the answer goes out unflagged: the
+    check exists to help the reader, and must never cost them the answer.
+    """
+    try:
+        return unsupported_numbers(_said(result), result.all_messages(), *_page_values(page))
+    except Exception:  # noqa: BLE001 — a check on the answer must not fail the turn
+        logger.warning("Grounding check failed; the answer is sent unflagged", exc_info=True)
+        return []
 
 
 def _said(result) -> str:
@@ -375,7 +395,12 @@ async def _persist(
                 .where(AssistantConversation.id == conversation_id)
                 .with_for_update()
             )
-        ).scalar_one()
+        ).scalar_one_or_none()
+        if conversation is None:
+            raise ConversationDeletedError(
+                "This conversation was deleted while the assistant was answering, "
+                "so this turn was not saved."
+            )
         # Attribute the conversation to the acting service account (config-driven,
         # so update if it changed since the last turn).
         if conversation.service_account_id != deps.service_account_id:
@@ -508,9 +533,7 @@ async def _run_turn(
                         output = result.output
                         unsupported: list[str] = []
                         if not isinstance(output, DeferredToolRequests):
-                            unsupported = unsupported_numbers(
-                                _said(result), result.all_messages(), *_page_values(deps.page)
-                            )
+                            unsupported = _unsupported(result, deps.page)
                             # Kept with the answer, so it is marked when read again.
                             _flag(result, unsupported)
                         # Shield persistence: once the turn has run, its messages and

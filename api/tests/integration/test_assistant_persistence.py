@@ -1,0 +1,91 @@
+"""Saving an assistant turn against real Postgres.
+
+The unit suite runs on SQLite, which stores NUL and ignores a column's width, so it
+cannot say whether a turn survives the database it ships on. These run the real
+statements. They need only ``DATABASE_URL``: no model, no Polaris.
+"""
+
+from __future__ import annotations
+
+import pytest
+import pytest_asyncio
+from pydantic_ai import ModelMessagesTypeAdapter
+from pydantic_ai.messages import (
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    UserPromptPart,
+)
+from pydantic_ai.usage import RunUsage
+from sqlalchemy import select, text
+from sqlalchemy.exc import DBAPIError
+
+from api.models.assistant import AssistantConversation, AssistantMessage, AssistantToolCall
+from api.models.user import User
+from api.models.workspace import Workspace
+from api.services.assistant.deps import ToolCallRecord
+from api.services.assistant.persistence import save_turn
+from api.services.text_safety import REPLACEMENT
+
+pytestmark = pytest.mark.integration
+
+
+@pytest_asyncio.fixture
+async def conversation(db_session, admin_user: User) -> AssistantConversation:
+    workspace = Workspace(slug="it-assistant", name="IT assistant")
+    db_session.add(workspace)
+    await db_session.flush()
+    conv = AssistantConversation(workspace_id=workspace.id, user_id=admin_user.id, title="t")
+    db_session.add(conv)
+    await db_session.commit()
+    await db_session.refresh(conv)
+    return conv
+
+
+def _turn(answer: str) -> bytes:
+    return ModelMessagesTypeAdapter.dump_json(
+        [
+            ModelRequest(parts=[UserPromptPart(content="what is in the cell?")]),
+            ModelResponse(parts=[TextPart(content=answer)]),
+        ]
+    )
+
+
+async def test_postgres_refuses_nul_in_jsonb(db_session):
+    """The premise: a NUL anywhere in a stored message fails the whole insert."""
+    with pytest.raises(DBAPIError, match="unsupported Unicode escape sequence"):
+        await db_session.execute(text("SELECT CAST(:v AS jsonb)"), {"v": '{"cell": "a\\u0000b"}'})
+
+
+async def test_a_turn_whose_data_holds_nul_is_saved(db_session, conversation):
+    await save_turn(
+        db_session,
+        conversation,
+        new_messages_json=_turn("It holds a\x00b."),
+        usage=RunUsage(input_tokens=1, output_tokens=1),
+        records={
+            "c1": ToolCallRecord(
+                tool="run_sql",
+                args={"sql": "SELECT chr(0)"},
+                status="error",
+                detail="Query failed: a\x00b",
+                tables=[{"catalog": "c", "schema_name": "s", "table": "t\x00"}],
+            )
+        },
+    )
+
+    saved = (await db_session.execute(select(AssistantMessage))).scalar_one()
+    call = (await db_session.execute(select(AssistantToolCall))).scalar_one()
+    assert saved.payload[-1]["parts"][0]["content"] == f"It holds a{REPLACEMENT}b."
+    assert call.detail == f"Query failed: a{REPLACEMENT}b"
+    assert call.tables[0]["table"] == f"t{REPLACEMENT}"
+
+
+async def test_a_title_of_255_four_byte_characters_fits_the_column(db_session, conversation):
+    """The title limit counts characters, as the column does, not bytes."""
+    conversation.title = "\U0001f986" * 255
+
+    await db_session.commit()
+
+    await db_session.refresh(conversation)
+    assert len(conversation.title) == 255

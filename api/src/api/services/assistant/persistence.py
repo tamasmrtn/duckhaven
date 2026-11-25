@@ -29,6 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.config import settings
 from api.models.assistant import AssistantConversation, AssistantMessage, AssistantToolCall
 from api.services.assistant.deps import ToolCallRecord
+from api.services.text_safety import clean, clean_json
 
 
 async def load_history(
@@ -272,7 +273,10 @@ async def save_turn(
 ) -> AssistantMessage:
     """Persist one turn: its messages, usage counters, and tool-call audit rows."""
     ordinal = await _next_ordinal(db, conversation.id)
-    payload = json.loads(new_messages_json)
+    # What the model read and wrote includes data the platform does not control, and
+    # Postgres refuses NUL in JSONB and text: one such cell would fail the save and
+    # lose the whole turn, answer and audit rows with it.
+    payload = clean_json(json.loads(new_messages_json))
     input_tokens = usage.input_tokens or 0
     output_tokens = usage.output_tokens or 0
     message = AssistantMessage(
@@ -291,12 +295,12 @@ async def save_turn(
             AssistantToolCall(
                 conversation_id=conversation.id,
                 tool=record.tool,
-                args=record.args,
+                args=clean_json(record.args),
                 status=record.status,
-                detail=record.detail,
+                detail=clean(record.detail) if record.detail is not None else None,
                 query_id=uuid.UUID(record.query_id) if record.query_id else None,
                 latency_ms=record.latency_ms,
-                tables=record.tables,
+                tables=clean_json(record.tables),
             )
         )
     await db.commit()

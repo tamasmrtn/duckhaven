@@ -441,3 +441,43 @@ async def test_status_dispatch(polaris: PolarisClient) -> None:
         await polaris.get_catalog("c400")
     with pytest.raises(PolarisServerError):
         await polaris.get_catalog("c500")
+
+
+@respx.mock
+async def test_get_table_reads_what_each_column_is_documented_as(polaris: PolarisClient) -> None:
+    _mock_token()
+    respx.get(f"{CAT}/ws_alpha/namespaces/main/tables/events").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "metadata": {
+                    "current-schema-id": 0,
+                    "schemas": [
+                        {
+                            "schema-id": 0,
+                            "fields": [
+                                {
+                                    "id": 1,
+                                    "name": "mrr",
+                                    "required": True,
+                                    "type": "long",
+                                    "doc": "Monthly recurring revenue, in cents.",
+                                },
+                                {"id": 2, "name": "label", "type": "string"},
+                                {"id": 3, "name": "note", "type": "string", "doc": ""},
+                            ],
+                        }
+                    ],
+                },
+            },
+        )
+    )
+
+    t = await polaris.get_table("ws_alpha", "main", "events")
+
+    # No doc, and an empty one, are both "nobody said": None, not an empty string.
+    assert [(c.name, c.description) for c in t.columns] == [
+        ("mrr", "Monthly recurring revenue, in cents."),
+        ("label", None),
+        ("note", None),
+    ]

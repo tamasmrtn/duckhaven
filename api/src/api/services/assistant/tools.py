@@ -86,6 +86,11 @@ async def describe_table(
 ) -> dict:
     """Describe a table: its columns (name, type, nullability), row count, and size.
 
+    A column carries a ``description``, and the table a ``comment``, only where the
+    table's author wrote one. Read them: they say what a column holds in the words of
+    whoever made it, which a name and a type cannot. Where there are none, say what
+    you are assuming a column means instead of presenting it as known.
+
     Args:
         catalog: The catalog slug.
         schema: The schema name.
@@ -178,6 +183,8 @@ async def run_sql(ctx: RunContext[AssistantDeps], sql: str) -> dict:
             sql,
             catalog=ctx.deps.catalog,
             timeout_s=ctx.deps.query_timeout_s,
+            # A write a person has seen and approved may name the file it loads.
+            approved=ctx.tool_call_approved,
         )
     except GatewayError as exc:
         raise _failure(exc) from exc

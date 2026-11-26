@@ -80,6 +80,9 @@ class PolarisColumn(_PolarisModel):
     nullable: bool = True
     # DuckDB's name for it (`services.catalog_types`), nested types included.
     duckdb_type: str | None = None
+    # The field's ``doc`` in the Iceberg schema: what whoever made the table said
+    # the column holds. Absent where nobody wrote one.
+    description: str | None = None
 
 
 class PolarisCatalog(_PolarisModel):
@@ -170,6 +173,7 @@ def _columns_from_iceberg_schema(schema: dict[str, Any]) -> list[PolarisColumn]:
                 position=position,
                 nullable=not field.get("required", False),
                 duckdb_type=iceberg_type(raw_type),
+                description=field.get("doc") or None,
             )
         )
     return cols

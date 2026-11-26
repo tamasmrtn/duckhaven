@@ -1330,7 +1330,8 @@ async def test_sql_runs_only_inside_the_sandbox():
     gateway = EvalGateway()
     with pytest.raises(GatewayError, match="Not allowed"):
         await gateway.run_sql("ATTACH 'elsewhere.db'", catalog="w", timeout_s=30)
-    with pytest.raises(GatewayError, match="Not allowed"):
+    # Refused before it is sent, as the real gateway does, so the API never sees it.
+    with pytest.raises(GatewayError, match="by path is not allowed"):
         await gateway.run_sql("SELECT * FROM read_csv('/etc/passwd')", catalog="w", timeout_s=30)
 
 

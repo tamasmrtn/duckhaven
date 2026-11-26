@@ -29,6 +29,7 @@ from sqlglot import exp
 
 from api.services.sql_denylist import ForeignAccessDenied, function_name
 from api.services.sql_denylist import check_statement as check_denylist
+from api.services.sql_parse import parse_duckdb
 
 # The names an ATTACH may open: each mapped to the slug it must be attached as
 # (None when ambiguous), or a plain set when every name is its own slug.
@@ -294,6 +295,27 @@ def _file_read_sites(stmt: exp.Expression) -> Iterator[tuple[str, str | None]]:
             and node.this.is_string
         ):
             yield "SUMMARIZE", node.this.this
+
+
+def path_reads(sql: str) -> list[tuple[str, str | None]]:
+    """Every file or URL ``sql`` reads by path, as ``(reader, path)``.
+
+    Empty when it reads only tables in catalogs. ``path`` is None where the argument
+    is not a literal and so cannot be seen. For a caller that refuses a statement
+    outright for reading by path, as an assistant must when nobody has seen the
+    statement: an outside address in a query is a way for data to leave. SQL that does
+    not parse reads nothing here, because the query path's own gate rejects it.
+    """
+    try:
+        statements = parse_duckdb(sql)
+    except Exception:  # noqa: BLE001 — unparseable SQL is refused by the gate that runs it
+        return []
+    return [
+        read
+        for stmt in statements
+        if stmt is not None and not isinstance(stmt, exp.Command)
+        for read in _file_read_sites(stmt)
+    ]
 
 
 def check_file_reads(stmt: exp.Expression, staging_prefixes: list[str]) -> None:

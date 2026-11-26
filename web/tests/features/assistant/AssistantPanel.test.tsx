@@ -893,6 +893,140 @@ describe("AssistantPanel", () => {
     );
   });
 
+  it("says who wrote each message, and calls the thread a conversation", async () => {
+    const user = userEvent.setup();
+    renderWithProviders({ initialRoute: ROUTE });
+    await openPanel(user);
+    await screen.findByText("There are 42 events in the events table.");
+
+    expect(
+      screen.getByRole("log", { name: "Conversation" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getAllByRole("article", { name: "You said" }).length,
+    ).toBeGreaterThan(0);
+    expect(
+      screen.getAllByRole("article", { name: "The assistant said" }).length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("is not itself a live region: what a screen reader hears is the throttled mirror", async () => {
+    const user = userEvent.setup();
+    renderWithProviders({ initialRoute: ROUTE });
+    await openPanel(user);
+    await screen.findByText("There are 42 events in the events table.");
+
+    expect(screen.getByRole("log", { name: "Conversation" })).toHaveAttribute(
+      "aria-live",
+      "off",
+    );
+  });
+
+  describe("the composer", () => {
+    async function composer() {
+      const user = userEvent.setup();
+      renderWithProviders({ initialRoute: ROUTE });
+      await openPanel(user);
+      await screen.findByText("There are 42 events in the events table.");
+      return screen.getByLabelText("Message") as HTMLTextAreaElement;
+    }
+
+    it("does not send on the Enter that confirms an IME composition", async () => {
+      const box = await composer();
+      fireEvent.change(box, { target: { value: "こんにちは" } });
+
+      fireEvent.keyDown(box, { key: "Enter", isComposing: true });
+      // Safari ends the composition before the key arrives, but marks it 229.
+      fireEvent.keyDown(box, { key: "Enter", keyCode: 229 });
+
+      expect(box.value).toBe("こんにちは");
+    });
+
+    it("sends on a plain Enter and keeps a new line on Shift+Enter", async () => {
+      const box = await composer();
+      fireEvent.change(box, { target: { value: "hello" } });
+
+      fireEvent.keyDown(box, { key: "Enter", shiftKey: true });
+      expect(box.value).toBe("hello");
+
+      fireEvent.keyDown(box, { key: "Enter" });
+      await waitFor(() => expect(box.value).toBe(""));
+    });
+
+    it("grows with what is typed, up to a limit", async () => {
+      const box = await composer();
+      const height = (px: number) =>
+        Object.defineProperty(box, "scrollHeight", {
+          configurable: true,
+          value: px,
+        });
+
+      height(90);
+      fireEvent.change(box, { target: { value: "one\ntwo\nthree" } });
+      expect(box.style.height).toBe("90px");
+
+      height(900);
+      fireEvent.change(box, { target: { value: "many\nmore\nlines" } });
+      expect(box.style.height).toBe("160px");
+    });
+  });
+
+  describe("copying", () => {
+    it("copies an answer", async () => {
+      const user = userEvent.setup();
+      renderWithProviders({ initialRoute: ROUTE });
+      await openPanel(user);
+      await screen.findByText("There are 42 events in the events table.");
+
+      const answer = screen
+        .getByText("There are 42 events in the events table.")
+        .closest("[role='article']") as HTMLElement;
+      await user.click(
+        within(answer).getByRole("button", { name: "Copy answer" }),
+      );
+
+      expect(await navigator.clipboard.readText()).toBe(
+        "There are 42 events in the events table.",
+      );
+    });
+
+    it("copies the SQL an answer ran", async () => {
+      const user = userEvent.setup();
+      renderWithProviders({ initialRoute: ROUTE });
+      await openPanel(user);
+      await screen.findByText("SELECT count(*) FROM events");
+
+      await user.click(screen.getByRole("button", { name: "Copy SQL" }));
+
+      expect(await navigator.clipboard.readText()).toBe(
+        "SELECT count(*) FROM events",
+      );
+    });
+
+    it("offers no copy on an answer that is still arriving", async () => {
+      const stream = drivenStream();
+      const user = userEvent.setup();
+      renderWithProviders({ initialRoute: ROUTE });
+      await openPanel(user);
+      await screen.findByText("There are 42 events in the events table.");
+      const finished = screen.getAllByRole("button", {
+        name: "Copy answer",
+      }).length;
+      await user.type(screen.getByLabelText("Message"), "go on");
+      await user.click(screen.getByRole("button", { name: "Send" }));
+      await waitFor(() => expect(stream.push).toBeDefined());
+
+      stream.push({ type: "token", text: "Half an ans" });
+      await screen.findByText("Half an ans");
+
+      // Only the answers that are finished have one: the new one is not.
+      expect(finished).toBeGreaterThan(0);
+      expect(
+        screen.getAllByRole("button", { name: "Copy answer" }),
+      ).toHaveLength(finished);
+    });
+  });
+
   describe("following the stream", () => {
     afterEach(() => vi.restoreAllMocks());
 
@@ -1019,6 +1153,64 @@ describe("AssistantPanel", () => {
       await waitFor(() => expect(second.push).toBeDefined());
 
       await waitFor(() => expect(scroll).toHaveBeenCalled());
+    });
+
+    it("offers a way back down once the reader has scrolled away, and only then", async () => {
+      const { stream } = await startTurn();
+      stream.push({ type: "token", text: "First part." });
+      await screen.findByText("First part.");
+
+      expect(
+        screen.queryByRole("button", { name: "Jump to latest" }),
+      ).not.toBeInTheDocument();
+      scrollThreadTo(900);
+      expect(
+        await screen.findByRole("button", { name: "Jump to latest" }),
+      ).toBeInTheDocument();
+
+      scrollThreadTo(10);
+      await waitFor(() =>
+        expect(
+          screen.queryByRole("button", { name: "Jump to latest" }),
+        ).not.toBeInTheDocument(),
+      );
+    });
+
+    it("jumps to the newest text and follows the stream again", async () => {
+      const scroll = vi.spyOn(Element.prototype, "scrollIntoView");
+      const { stream } = await startTurn();
+      stream.push({ type: "token", text: "First part." });
+      await screen.findByText("First part.");
+      scrollThreadTo(900);
+      const user = userEvent.setup();
+
+      scroll.mockClear();
+      await user.click(
+        await screen.findByRole("button", { name: "Jump to latest" }),
+      );
+
+      expect(scroll).toHaveBeenCalledWith({ block: "end" });
+      expect(
+        screen.queryByRole("button", { name: "Jump to latest" }),
+      ).not.toBeInTheDocument();
+      scroll.mockClear();
+      stream.push({ type: "token", text: " Second part." });
+      await screen.findByText("First part. Second part.");
+      expect(scroll).toHaveBeenCalled();
+    });
+
+    it("does not link another site from an answer as it streams in", async () => {
+      const { stream } = await startTurn();
+
+      stream.push({
+        type: "token",
+        text: "See [the report](https://evil.example/r?d=alice%2C42).",
+      });
+
+      expect(await screen.findByText(/evil\.example/)).toBeInTheDocument();
+      expect(
+        screen.queryByRole("link", { name: "the report" }),
+      ).not.toBeInTheDocument();
     });
   });
 });

@@ -4,6 +4,10 @@
   --brand-yellow: #fff100;
   --brand-orange: #ff6900;
   --brand-slate-blue: #7d66ff;
+  /* A surface in the brand colour that carries text. The brand colour itself reads
+     4.03:1 under white text, short of the 4.5:1 body text needs. */
+  --bg-brand: #6b52f5;
+  --text-on-brand: #ffffff;
   --brand-maya-blue: #2eafff;
 
   /* Link text. The brand slate blue is 3.9:1 on the surface, so text links
@@ -92,6 +96,8 @@
 .dark {
   --brand-orange: #ff8a33;
   --brand-slate-blue: #9c8aff;
+  --bg-brand: #9c8aff;
+  --text-on-brand: #14102b;
   --brand-maya-blue: #5bc0ff;
 
   --link: #9c8aff;

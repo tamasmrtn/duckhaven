@@ -10,6 +10,10 @@ const ROTATE_EVERY_MS = 2000;
  * tool call is in flight, with a rotating whimsical status word and an elapsed
  * timer — instead of a blank panel or a static "Running tool…" line.
  *
+ * The word and the clock change every second or two, so a live region holding them
+ * would be read out again each time. They are for the eyes; a screen reader is told
+ * once that the assistant is working.
+ *
  * Only rendered by the caller while a turn is streaming, so mounting starts
  * the clock at 0 and unmounting clears it — no reset-on-prop-change effect. */
 export function ThinkingStatus({
@@ -40,16 +44,18 @@ export function ThinkingStatus({
   }, [prefersReducedMotion]);
 
   return (
-    <p
-      className="flex items-center gap-1.5 text-xs text-text-secondary"
-      role="status"
-    >
+    <p className="flex items-center gap-1.5 text-xs text-text-secondary">
       <RefreshCw
         className={cn("size-3", !prefersReducedMotion && "animate-spin")}
         aria-hidden="true"
       />
-      {pickVerb(currentTool, tick)}{" "}
-      <span className="tabular-nums">{elapsedSeconds}s</span>
+      <span aria-hidden="true">
+        {pickVerb(currentTool, tick)}{" "}
+        <span className="tabular-nums">{elapsedSeconds}s</span>
+      </span>
+      <span role="status" className="sr-only">
+        The assistant is working
+      </span>
     </p>
   );
 }

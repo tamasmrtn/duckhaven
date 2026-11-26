@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { Link } from "@tanstack/react-router";
 import {
   AlertTriangle,
@@ -9,6 +16,7 @@ import {
   X,
   ChevronRight,
   ChevronDown,
+  ArrowDown,
   Loader2,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -29,6 +37,7 @@ import { useAssistant } from "./AssistantContext";
 import { ChatChartCard } from "./ChatChart";
 import { ChatProposalCard } from "./ChatProposal";
 import { ConversationList } from "./ConversationList";
+import { CopyButton } from "./CopyButton";
 import { Markdown } from "./Markdown";
 import { ThinkingStatus } from "./ThinkingStatus";
 import { ToolCallCard } from "./ToolCallCard";
@@ -44,6 +53,10 @@ const chipClass =
 // the stream. Covers a table or code block landing in one render, which makes
 // the content taller than the scroll position for a moment.
 const FOLLOW_THRESHOLD_PX = 64;
+
+// The composer grows with what is typed (a failed query's error and SQL arrive
+// pre-filled over many lines) up to this height, then scrolls.
+const COMPOSER_MAX_HEIGHT_PX = 160;
 
 const GENERIC_STARTER_PROMPTS = [
   "What data do I have access to?",
@@ -151,10 +164,21 @@ export function AssistantPanel({ ws }: { ws: string }) {
   // to look back at a long answer while it is still streaming has left it, and
   // must not be pulled back down on every token.
   const followingRef = useRef(true);
+  // The same fact as a value, for the control that offers the way back down. Keyed
+  // by conversation, so switching to another one starts at its latest, and set only
+  // when it changes, so scrolling does not re-render the thread.
+  const [awayFrom, setAwayFrom] = useState<string | null>(null);
+  const awayFromLatest = awayFrom !== null && awayFrom === effectiveId;
   const onThreadScroll = (e: React.UIEvent<HTMLDivElement>) => {
     const el = e.currentTarget;
     followingRef.current =
       el.scrollHeight - el.scrollTop - el.clientHeight <= FOLLOW_THRESHOLD_PX;
+    setAwayFrom(followingRef.current ? null : effectiveId);
+  };
+  const jumpToLatest = () => {
+    followingRef.current = true;
+    setAwayFrom(null);
+    bottomRef.current?.scrollIntoView({ block: "end" });
   };
   useEffect(() => {
     followingRef.current = true;
@@ -173,6 +197,12 @@ export function AssistantPanel({ ws }: { ws: string }) {
     chat.streamingItems.length,
     chat.liveTools.length,
   ]);
+  useLayoutEffect(() => {
+    const el = composerRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.min(el.scrollHeight, COMPOSER_MAX_HEIGHT_PX)}px`;
+  }, [draft]);
   useEffect(() => {
     // Focus (not send) so the user can review or redact before it goes to
     // the model — the seed text is a raw engine error, which can echo data.
@@ -301,235 +331,272 @@ export function AssistantPanel({ ws }: { ws: string }) {
           />
         </div>
       ) : (
-        <ScrollArea
-          className="flex-1"
-          viewportProps={{ onScroll: onThreadScroll }}
-        >
-          <div className="flex flex-col gap-3 p-3">
-            {threadLoadError ? (
-              <p className="text-sm text-destructive" role="alert">
-                Couldn't load your conversations. Reopen the panel to try again.
-              </p>
-            ) : (
-              loadingThread && (
-                <div className="flex justify-center p-6 text-text-tertiary">
-                  <Loader2
-                    className="size-4 animate-spin"
-                    aria-label="Loading"
+        <div className="relative flex min-h-0 flex-1 flex-col">
+          <ScrollArea
+            className="flex-1"
+            viewportProps={{ onScroll: onThreadScroll }}
+          >
+            {/* A log, so it can be found and read as a conversation. Not live:
+                what is announced is the mirror below, throttled, not every token. */}
+            <div
+              role="log"
+              aria-label="Conversation"
+              aria-live="off"
+              className="flex flex-col gap-3 p-3"
+            >
+              {threadLoadError ? (
+                <p className="text-sm text-destructive" role="alert">
+                  Couldn't load your conversations. Reopen the panel to try
+                  again.
+                </p>
+              ) : (
+                loadingThread && (
+                  <div className="flex justify-center p-6 text-text-tertiary">
+                    <Loader2
+                      className="size-4 animate-spin"
+                      aria-label="Loading"
+                    />
+                  </div>
+                )
+              )}
+              {!threadLoadError &&
+                !loadingThread &&
+                (!detail || detail.transcript.length === 0) &&
+                !chat.pendingUserMessage &&
+                !chat.streaming &&
+                !chat.error &&
+                !chat.stopped && (
+                  <EmptyState
+                    icon={Sparkles}
+                    title="Ask about your data"
+                    description="Or ask me to write SQL in your worksheet."
+                    action={
+                      <div className="flex flex-col items-center gap-1.5">
+                        {starterPrompts(catalogs.map((c) => c.slug)).map(
+                          (prompt) => (
+                            <button
+                              key={prompt}
+                              type="button"
+                              disabled={cannotSend}
+                              onClick={() => void submit(prompt)}
+                              className={cn(
+                                chipClass,
+                                cannotSend && "opacity-50",
+                              )}
+                            >
+                              {prompt}
+                            </button>
+                          ),
+                        )}
+                      </div>
+                    }
                   />
+                )}
+              {detail?.transcript.map((item, i) =>
+                item.role === "chart" ? (
+                  item.chart && (
+                    <ChatChartCard
+                      key={item.chart.tool_call_id}
+                      ws={ws}
+                      chart={item.chart}
+                    />
+                  )
+                ) : item.role === "proposal" ? (
+                  item.proposal && (
+                    <ChatProposalCard
+                      key={item.proposal.tool_call_id}
+                      ws={ws}
+                      card={item.proposal}
+                    />
+                  )
+                ) : (
+                  <Bubble
+                    key={`message-${i}`}
+                    role={item.role}
+                    text={item.text}
+                    sql={item.sql}
+                    sources={item.sources}
+                    unsupported={item.unsupported_numbers}
+                  />
+                ),
+              )}
+              {chat.pendingUserMessage && (
+                <Bubble role="user" text={chat.pendingUserMessage} />
+              )}
+              {chat.error && (
+                <div className="max-w-[90%] self-start space-y-1.5">
+                  <p className="text-sm text-destructive" role="alert">
+                    {chat.error}
+                  </p>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 text-xs"
+                    onClick={chat.regenerate}
+                  >
+                    Retry
+                  </Button>
                 </div>
-              )
-            )}
-            {!threadLoadError &&
-              !loadingThread &&
-              (!detail || detail.transcript.length === 0) &&
-              !chat.pendingUserMessage &&
-              !chat.streaming &&
-              !chat.error &&
-              !chat.stopped && (
-                <EmptyState
-                  icon={Sparkles}
-                  title="Ask about your data"
-                  description="Or ask me to write SQL in your worksheet."
-                  action={
-                    <div className="flex flex-col items-center gap-1.5">
-                      {starterPrompts(catalogs.map((c) => c.slug)).map(
-                        (prompt) => (
-                          <button
-                            key={prompt}
-                            type="button"
-                            disabled={cannotSend}
-                            onClick={() => void submit(prompt)}
-                            className={cn(
-                              chipClass,
-                              cannotSend && "opacity-50",
-                            )}
-                          >
-                            {prompt}
-                          </button>
-                        ),
-                      )}
-                    </div>
+              )}
+              {chat.stopped && (
+                <div className="max-w-[90%] self-start space-y-1.5">
+                  <p className="text-sm text-text-tertiary" role="status">
+                    Stopped.
+                  </p>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 text-xs"
+                    onClick={chat.regenerate}
+                  >
+                    Retry
+                  </Button>
+                </div>
+              )}
+              {chat.streamingItems.some(
+                (item) => item.kind !== "text" || item.text !== "",
+              ) && (
+                <>
+                  {chat.streamingItems.map((item, i) =>
+                    item.kind === "chart" ? (
+                      <ChatChartCard
+                        key={item.chart.tool_call_id}
+                        ws={ws}
+                        chart={item.chart}
+                      />
+                    ) : item.kind === "proposal" ? (
+                      <ChatProposalCard
+                        key={item.proposal.tool_call_id}
+                        ws={ws}
+                        card={item.proposal}
+                      />
+                    ) : (
+                      item.text !== "" && (
+                        <Bubble
+                          key={`streaming-${i}`}
+                          role="assistant"
+                          text={item.text}
+                          streaming
+                        />
+                      )
+                    ),
+                  )}
+                  {/* Throttled so screen readers get periodic updates, not one per token. */}
+                  <div aria-live="polite" className="sr-only">
+                    {throttledStreamingText}
+                  </div>
+                </>
+              )}
+              {chat.streaming && (
+                <ThinkingStatus
+                  currentTool={
+                    chat.liveTools[chat.liveTools.length - 1]?.tool ?? null
                   }
                 />
               )}
-            {detail?.transcript.map((item, i) =>
-              item.role === "chart" ? (
-                item.chart && (
-                  <ChatChartCard key={i} ws={ws} chart={item.chart} />
-                )
-              ) : item.role === "proposal" ? (
-                item.proposal && (
-                  <ChatProposalCard key={i} ws={ws} card={item.proposal} />
-                )
-              ) : (
-                <Bubble
-                  key={i}
-                  role={item.role}
-                  text={item.text}
-                  sql={item.sql}
-                  sources={item.sources}
-                  unsupported={item.unsupported_numbers}
-                />
-              ),
-            )}
-            {chat.pendingUserMessage && (
-              <Bubble role="user" text={chat.pendingUserMessage} />
-            )}
-            {chat.error && (
-              <div className="max-w-[90%] self-start space-y-1.5">
-                <p className="text-sm text-destructive" role="alert">
-                  {chat.error}
-                </p>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-7 text-xs"
-                  onClick={chat.regenerate}
-                >
-                  Retry
-                </Button>
-              </div>
-            )}
-            {chat.stopped && (
-              <div className="max-w-[90%] self-start space-y-1.5">
-                <p className="text-sm text-text-tertiary" role="status">
-                  Stopped.
-                </p>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-7 text-xs"
-                  onClick={chat.regenerate}
-                >
-                  Retry
-                </Button>
-              </div>
-            )}
-            {chat.streamingItems.some(
-              (item) => item.kind !== "text" || item.text !== "",
-            ) && (
-              <>
-                {chat.streamingItems.map((item, i) =>
-                  item.kind === "chart" ? (
-                    <ChatChartCard key={i} ws={ws} chart={item.chart} />
-                  ) : item.kind === "proposal" ? (
-                    <ChatProposalCard key={i} ws={ws} card={item.proposal} />
-                  ) : (
-                    item.text !== "" && (
-                      <Bubble
-                        key={i}
-                        role="assistant"
-                        text={item.text}
-                        streaming
-                      />
-                    )
-                  ),
-                )}
-                {/* Throttled so screen readers get periodic updates, not one per token. */}
-                <div aria-live="polite" className="sr-only">
-                  {throttledStreamingText}
-                </div>
-              </>
-            )}
-            {chat.streaming && (
-              <ThinkingStatus
-                currentTool={
-                  chat.liveTools[chat.liveTools.length - 1]?.tool ?? null
-                }
-              />
-            )}
-            {detail && detail.tool_calls.length > 0 && (
-              <div className="space-y-1">
-                <button
-                  type="button"
-                  onClick={() => setActivityOpen((o) => !o)}
-                  aria-expanded={activityOpen}
-                  className="flex items-center gap-1 text-xs font-medium text-text-secondary hover:text-text-primary"
-                >
-                  {activityOpen ? (
-                    <ChevronDown className="size-3.5" />
-                  ) : (
-                    <ChevronRight className="size-3.5" />
-                  )}
-                  Activity ({detail.tool_calls.length})
-                </button>
-                {activityOpen &&
-                  detail.tool_calls.map((call) => (
-                    <ToolCallCard key={call.id} ws={ws} call={call} />
-                  ))}
-              </div>
-            )}
-            {!chat.streaming &&
-              !chat.pending &&
-              !chat.error &&
-              chat.canRegenerate &&
-              detail &&
-              detail.transcript.length > 0 &&
-              detail.transcript[detail.transcript.length - 1].role !==
-                "user" && (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="h-6 self-start text-xs text-text-tertiary"
-                  onClick={chat.regenerate}
-                >
-                  Regenerate
-                </Button>
-              )}
-            {!chat.streaming &&
-              !chat.pending &&
-              detail &&
-              detail.transcript.length > 0 && (
-                <div className="flex flex-wrap gap-1.5">
-                  {(() => {
-                    const lastQuery = [...detail.tool_calls]
-                      .reverse()
-                      .find((c) => c.tool === "run_sql" && c.query_id);
-                    return (
-                      lastQuery && (
-                        <Link
-                          to="/$ws/queries/$queryId"
-                          params={{ ws, queryId: lastQuery.query_id! }}
-                          className={chipClass}
-                        >
-                          View full result
-                        </Link>
-                      )
-                    );
-                  })()}
-                  {(() => {
-                    const lastWithTables = [...detail.tool_calls]
-                      .reverse()
-                      .find((c) => c.tool === "run_sql" && c.tables?.length);
-                    return lastWithTables?.tables?.map((t) => (
-                      <Link
-                        key={`${t.catalog}.${t.schema_name}.${t.table}`}
-                        to="/$ws/catalog/$catalog/$schema/$table"
-                        params={{
-                          ws,
-                          catalog: t.catalog,
-                          schema: t.schema_name,
-                          table: t.table,
-                        }}
-                        className={chipClass}
-                      >
-                        Open {t.table} in Catalog
-                      </Link>
-                    ));
-                  })()}
+              {detail && detail.tool_calls.length > 0 && (
+                <div className="space-y-1">
                   <button
                     type="button"
-                    onClick={() => composerRef.current?.focus()}
-                    className={chipClass}
+                    onClick={() => setActivityOpen((o) => !o)}
+                    aria-expanded={activityOpen}
+                    className="flex items-center gap-1 text-xs font-medium text-text-secondary hover:text-text-primary"
                   >
-                    Ask a follow-up
+                    {activityOpen ? (
+                      <ChevronDown className="size-3.5" />
+                    ) : (
+                      <ChevronRight className="size-3.5" />
+                    )}
+                    Activity ({detail.tool_calls.length})
                   </button>
+                  {activityOpen &&
+                    detail.tool_calls.map((call) => (
+                      <ToolCallCard key={call.id} ws={ws} call={call} />
+                    ))}
                 </div>
               )}
-            <div ref={bottomRef} />
-          </div>
-        </ScrollArea>
+              {!chat.streaming &&
+                !chat.pending &&
+                !chat.error &&
+                chat.canRegenerate &&
+                detail &&
+                detail.transcript.length > 0 &&
+                detail.transcript[detail.transcript.length - 1].role !==
+                  "user" && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-6 self-start text-xs text-text-tertiary"
+                    onClick={chat.regenerate}
+                  >
+                    Regenerate
+                  </Button>
+                )}
+              {!chat.streaming &&
+                !chat.pending &&
+                detail &&
+                detail.transcript.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5">
+                    {(() => {
+                      const lastQuery = [...detail.tool_calls]
+                        .reverse()
+                        .find((c) => c.tool === "run_sql" && c.query_id);
+                      return (
+                        lastQuery && (
+                          <Link
+                            to="/$ws/queries/$queryId"
+                            params={{ ws, queryId: lastQuery.query_id! }}
+                            className={chipClass}
+                          >
+                            View full result
+                          </Link>
+                        )
+                      );
+                    })()}
+                    {(() => {
+                      const lastWithTables = [...detail.tool_calls]
+                        .reverse()
+                        .find((c) => c.tool === "run_sql" && c.tables?.length);
+                      return lastWithTables?.tables?.map((t) => (
+                        <Link
+                          key={`${t.catalog}.${t.schema_name}.${t.table}`}
+                          to="/$ws/catalog/$catalog/$schema/$table"
+                          params={{
+                            ws,
+                            catalog: t.catalog,
+                            schema: t.schema_name,
+                            table: t.table,
+                          }}
+                          className={chipClass}
+                        >
+                          Open {t.table} in Catalog
+                        </Link>
+                      ));
+                    })()}
+                    <button
+                      type="button"
+                      onClick={() => composerRef.current?.focus()}
+                      className={chipClass}
+                    >
+                      Ask a follow-up
+                    </button>
+                  </div>
+                )}
+              <div ref={bottomRef} />
+            </div>
+          </ScrollArea>
+          {awayFromLatest && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={jumpToLatest}
+              className="absolute bottom-2 left-1/2 h-7 -translate-x-1/2 gap-1 rounded-full bg-[var(--bg-surface)] text-xs shadow-md"
+            >
+              <ArrowDown className="size-3.5" aria-hidden="true" />
+              Jump to latest
+            </Button>
+          )}
+        </div>
       )}
 
       {/* Composer */}
@@ -542,7 +609,15 @@ export function AssistantPanel({ ws }: { ws: string }) {
             disabled={cannotSend}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
+              // Enter that confirms an IME composition (Chinese, Japanese, Korean)
+              // is not a send. Safari reports the composition as already over
+              // by the time the key arrives, but with the key code 229.
+              if (
+                e.key === "Enter" &&
+                !e.shiftKey &&
+                !e.nativeEvent.isComposing &&
+                e.keyCode !== 229
+              ) {
                 e.preventDefault();
                 void submit();
               }
@@ -587,7 +662,9 @@ export function AssistantPanel({ ws }: { ws: string }) {
   );
 }
 
-function Bubble({
+// Memoised: while a reply streams only its own bubble changes, and every other
+// answer in the thread would otherwise be parsed as markdown again on each token.
+const Bubble = memo(function Bubble({
   role,
   text,
   sql,
@@ -605,29 +682,42 @@ function Bubble({
 }) {
   return (
     <div
+      // Said who wrote it, so a screen reader moving through the thread is not left
+      // to work that out from what the text says.
+      role="article"
+      aria-label={role === "user" ? "You said" : "The assistant said"}
       className={cn(
         "max-w-[90%] rounded-lg px-3 py-2 text-sm",
         role === "user"
-          ? "self-end whitespace-pre-wrap bg-[var(--brand-slate-blue)] text-white"
+          ? "self-end whitespace-pre-wrap bg-[var(--bg-brand)] text-[var(--text-on-brand)]"
           : "min-w-0 self-start border border-[var(--border-subtle)] bg-[var(--bg-surface)]",
       )}
     >
       {role === "assistant" ? (
-        <Markdown streaming={streaming}>{text}</Markdown>
+        <Markdown streaming={streaming} links="named">
+          {text}
+        </Markdown>
       ) : (
         text
       )}
       {sql && (
-        <pre className="mt-2 overflow-x-auto rounded bg-[var(--bg-code)] p-2 font-mono text-xs text-[var(--text-code)]">
-          {sql}
-        </pre>
+        <div className="relative mt-2">
+          <pre className="overflow-x-auto rounded bg-[var(--bg-code)] p-2 pr-8 font-mono text-xs text-[var(--text-code)]">
+            {sql}
+          </pre>
+          <CopyButton
+            text={sql}
+            label="Copy SQL"
+            className="absolute right-1 top-1 text-[var(--text-code)] hover:bg-white/10 hover:text-[var(--text-code)]"
+          />
+        </div>
       )}
       {sources && sources.length > 0 && (
         // The pages this answer was actually drawn from. The tool-call trace
         // records them too, but it is collapsed by default, and a citation the
         // reader has to expand a panel to find is not a citation.
         <div className="mt-2 flex flex-wrap items-center gap-1.5 border-t border-[var(--border-subtle)] pt-2">
-          <span className="text-xs text-[var(--text-muted)]">Sources</span>
+          <span className="text-xs text-text-secondary">Sources</span>
           {sources.map((source) =>
             source.url ? (
               <a
@@ -654,7 +744,7 @@ function Bubble({
         // Flagged, not removed: the number may be fine (worked out from
         // others, or quoted from the question), but nothing the assistant
         // read holds it as written.
-        <p className="mt-2 flex items-start gap-1.5 border-t border-[var(--border-subtle)] pt-2 text-xs text-[var(--text-muted)]">
+        <p className="mt-2 flex items-start gap-1.5 border-t border-[var(--border-subtle)] pt-2 text-xs text-text-secondary">
           <AlertTriangle className="mt-0.5 size-3 shrink-0" aria-hidden />
           <span>
             Not in your question or any result the assistant read:{" "}
@@ -664,6 +754,11 @@ function Bubble({
           </span>
         </p>
       )}
+      {role === "assistant" && !streaming && (
+        <div className="-mb-1 mt-1 flex justify-end">
+          <CopyButton text={text} label="Copy answer" />
+        </div>
+      )}
     </div>
   );
-}
+});

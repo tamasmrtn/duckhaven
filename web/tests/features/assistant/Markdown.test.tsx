@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { Markdown } from "@/features/assistant/Markdown";
 
 describe("Markdown", () => {
@@ -144,5 +145,122 @@ describe("Markdown while streaming", () => {
     const streamed = render(<Markdown streaming>{ANSWER}</Markdown>);
     const persisted = render(<Markdown>{ANSWER}</Markdown>);
     expect(persisted.container.innerHTML).toBe(streamed.container.innerHTML);
+  });
+});
+
+// What a model writes can be steered by text it read, so a link it writes can carry
+// data in its address, and a click is the one step left to the reader. In text a
+// model wrote, only a link into this app is clickable; any other address is shown in
+// full so the reader sees where it goes.
+describe("Markdown links in text a model wrote", () => {
+  const LEAK = "[Open the report](https://evil.example/r?d=alice%2C42)";
+
+  it("shows another site's address in full instead of linking it", () => {
+    const { container } = render(<Markdown links="named">{LEAK}</Markdown>);
+
+    expect(container.querySelector("a")).toBeNull();
+    expect(container).toHaveTextContent(
+      "Open the report (https://evil.example/r?d=alice%2C42)",
+    );
+  });
+
+  it("still links a page of this app", () => {
+    render(
+      <Markdown links="named">{"See [the catalog](/acme/catalog)."}</Markdown>,
+    );
+
+    expect(screen.getByRole("link", { name: "the catalog" })).toHaveAttribute(
+      "href",
+      "/acme/catalog",
+    );
+  });
+
+  it("links an absolute address on this origin", () => {
+    const own = `${window.location.origin}/acme/queries/q1`;
+    render(<Markdown links="named">{`[the run](${own})`}</Markdown>);
+
+    expect(screen.getByRole("link", { name: "the run" })).toHaveAttribute(
+      "href",
+      own,
+    );
+  });
+
+  it("does not say an address twice when the address is the label", () => {
+    const { container } = render(
+      <Markdown links="named">{"Visit https://evil.example/x now"}</Markdown>,
+    );
+
+    expect(container.querySelector("a")).toBeNull();
+    expect(container.textContent?.match(/evil\.example/g)).toHaveLength(1);
+  });
+
+  it.each([
+    "[mail me](mailto:a@evil.example?body=secret)",
+    "[run](javascript:alert(1))",
+    "[ftp](ftp://evil.example/x)",
+    "[protocol-relative](//evil.example/x)",
+  ])("never makes %s clickable", (markdown) => {
+    const { container } = render(<Markdown links="named">{markdown}</Markdown>);
+
+    expect(container.querySelector("a")).toBeNull();
+  });
+
+  it("names the address of a linked image too", () => {
+    const { container } = render(
+      <Markdown links="named">
+        {"[![logo](https://evil.example/l.png)](https://example.com)"}
+      </Markdown>,
+    );
+
+    expect(container.querySelector("a")).toBeNull();
+    expect(container.querySelector("img")).toBeNull();
+    expect(container).toHaveTextContent("[image: logo] (https://example.com)");
+  });
+
+  it("never links another site at any point of a stream", () => {
+    for (let end = 1; end <= LEAK.length; end++) {
+      const { container, unmount } = render(
+        <Markdown links="named" streaming>
+          {LEAK.slice(0, end)}
+        </Markdown>,
+      );
+      expect(container.querySelector("a"), `frame ${end}`).toBeNull();
+      unmount();
+    }
+  });
+
+  it("leaves links in text a person wrote as they were", () => {
+    render(<Markdown>{LEAK}</Markdown>);
+
+    expect(
+      screen.getByRole("link", { name: "Open the report" }),
+    ).toHaveAttribute("href", "https://evil.example/r?d=alice%2C42");
+  });
+});
+
+describe("Markdown code blocks", () => {
+  it("copies the code, without the newline that ends the block", async () => {
+    const user = userEvent.setup();
+    render(<Markdown>{"```sql\nSELECT 1;\n```"}</Markdown>);
+
+    await user.click(screen.getByRole("button", { name: "Copy code" }));
+
+    expect(await navigator.clipboard.readText()).toBe("SELECT 1;");
+  });
+
+  it("offers a copy for each block, not only the first", () => {
+    render(<Markdown>{"```\na\n```\n\ntext\n\n```\nb\n```"}</Markdown>);
+
+    expect(screen.getAllByRole("button", { name: "Copy code" })).toHaveLength(
+      2,
+    );
+  });
+
+  it("puts no copy button on inline code", () => {
+    render(<Markdown>{"use `SELECT 1` here"}</Markdown>);
+
+    expect(
+      screen.queryByRole("button", { name: "Copy code" }),
+    ).not.toBeInTheDocument();
   });
 });

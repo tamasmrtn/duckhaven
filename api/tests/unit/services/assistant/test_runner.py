@@ -13,6 +13,25 @@ import uuid
 import pytest
 import pytest_asyncio
 from conftest import seed_workspace
+from pydantic_ai.exceptions import (
+    ContentFilterError,
+    IncompleteToolCall,
+    ModelAPIError,
+    ModelAuthenticationError,
+    ModelConnectionError,
+    ModelContextWindowExceededError,
+    ModelHTTPError,
+    ModelNotFoundError,
+    ModelOverloadedError,
+    ModelQuotaExceededError,
+    ModelRateLimitError,
+    ModelRequestRejectedError,
+    ModelRequestTimeout,
+    ModelServerError,
+    ModelTimeoutError,
+    ModelUnavailableError,
+    UnexpectedModelBehavior,
+)
 from pydantic_ai.messages import ModelResponse, TextPart
 from pydantic_ai.models.function import DeltaToolCall, FunctionModel
 from sqlalchemy import select
@@ -900,3 +919,246 @@ async def test_answering_an_approval_resumes_the_turn_and_then_frees_it(
     assert [f for f in resumed if f["type"] == "error"] == []
     assert resumed[-1]["type"] == "done"
     assert runner._resolving == set()
+
+
+async def test_a_write_paused_on_a_catalog_remembers_it_and_runs_there_when_approved(
+    client, db_session, factory, monkeypatch
+):
+    from api.services.assistant.persistence import pending_call
+
+    ws, _catalog, conv = await _seed(db_session, sa_role="writer")
+    ran_in: list[str | None] = []
+
+    async def fake_run_sql(self, sql, *, catalog, timeout_s, tags=None):
+        ran_in.append(catalog)
+        return {"query_id": str(uuid.uuid4()), "status": "done", "rows": [], "total": 0}
+
+    monkeypatch.setattr(Gateway, "run_sql", fake_run_sql)
+
+    with get_agent().override(
+        model=scripted_model([tool_step("run_sql", {"sql": "DELETE FROM t"})])
+    ):
+        asked = parse_sse(
+            [
+                chunk
+                async for chunk in stream_turn(
+                    factory,
+                    conversation_id=conv.id,
+                    workspace_id=ws.id,
+                    workspace_slug=ws.slug,
+                    prompt="delete it",
+                    catalog="staging",
+                    user_id=conv.user_id,
+                )
+            ]
+        )
+    call_id = next(f for f in asked if f["type"] == "approval_required")["tool_call_id"]
+    async with factory() as db:
+        pending = await pending_call(db, conv.id, call_id)
+    assert (pending.catalog, pending.recorded) == ("staging", True)
+
+    with get_agent().override(model=scripted_model([text_step("Done.")])):
+        resumed = parse_sse(
+            [
+                chunk
+                async for chunk in resume_turn(
+                    factory,
+                    conversation_id=conv.id,
+                    workspace_id=ws.id,
+                    workspace_slug=ws.slug,
+                    tool_call_id=call_id,
+                    approved=True,
+                    reason=None,
+                    catalog=pending.catalog,
+                    user_id=conv.user_id,
+                )
+            ]
+        )
+
+    assert resumed[-1]["type"] == "done"
+    assert ran_in == ["staging"]
+
+
+async def test_a_failure_no_new_call_can_change_does_not_end_the_turn(
+    client, db_session, factory, monkeypatch
+):
+    """Five access denials in a row used to spend the tool's retries and end the turn
+    with an internal error. The model is told each time and carries on."""
+
+    async def denied(self):
+        raise GatewayError("Access denied: no grant on sales", kind="denied", terminal=True)
+
+    monkeypatch.setattr(Gateway, "list_catalogs", denied)
+    ws, _catalog, conv = await _seed(db_session, sa_role="reader")
+    steps = [tool_step("list_catalogs", {})] * 5 + [text_step("I am not allowed to see those.")]
+
+    with get_agent().override(model=scripted_model(steps)):
+        frames = await _frames(factory, ws, conv, "what catalogs are there?")
+
+    assert [f for f in frames if f["type"] == "error"] == []
+    assert frames[-1]["type"] == "done"
+    async with factory() as db:
+        calls = (await db.execute(select(AssistantToolCall))).scalars().all()
+    assert [(c.tool, c.status) for c in calls] == [("list_catalogs", "denied")] * 5
+
+
+async def test_a_call_the_model_can_fix_still_spends_its_retries_and_says_so(
+    client, db_session, factory, monkeypatch
+):
+    async def wrong_name(self):
+        raise GatewayError("Not found (or not accessible): no such catalog")
+
+    monkeypatch.setattr(Gateway, "list_catalogs", wrong_name)
+    ws, _catalog, conv = await _seed(db_session, sa_role="reader")
+    steps = [tool_step("list_catalogs", {})] * 6 + [text_step("never reached")]
+
+    with get_agent().override(model=scripted_model(steps)):
+        frames = await _frames(factory, ws, conv, "what catalogs are there?")
+
+    assert frames[-1] == {
+        "type": "error",
+        "message": "The assistant could not finish: one of its tools kept failing. "
+        "Try a more specific question.",
+    }
+
+
+def _category(cls, status: int):
+    from pydantic_ai.exceptions import ModelHTTPError
+
+    return ModelHTTPError.for_category(cls, status_code=status, model_name="m")
+
+
+@pytest.mark.parametrize(
+    ("make", "says"),
+    [
+        (lambda: _category(ModelContextWindowExceededError, 400), "grown too long"),
+        (lambda: _category(ModelQuotaExceededError, 429), "quota is used up"),
+        (lambda: _category(ModelRateLimitError, 429), "rate limiting"),
+        (lambda: _category(ModelAuthenticationError, 401), "rejected the assistant's credentials"),
+        (lambda: _category(ModelNotFoundError, 404), "does not know the configured model"),
+        (lambda: _category(ModelOverloadedError, 529), "overloaded"),
+        (lambda: _category(ModelUnavailableError, 503), "unavailable"),
+        (lambda: _category(ModelServerError, 500), "unavailable"),
+        (lambda: _category(ModelRequestRejectedError, 400), "rejected the request"),
+        (lambda: ModelConnectionError("m", "refused"), "could not reach the model provider"),
+        (lambda: ModelTimeoutError("m", "slow"), "took too long"),
+        (lambda: ModelRequestTimeout("m", 30.0), "took too long"),
+        (lambda: ContentFilterError("blocked"), "content filter"),
+        (lambda: IncompleteToolCall("cut off"), "output limit"),
+        (lambda: UnexpectedModelBehavior("garbled"), "could not be used"),
+        (lambda: ModelAPIError("m", "something"), "returned an error"),
+        # A provider that did not sort its own error is sorted by its status.
+        (lambda: ModelHTTPError(429, "m"), "rate limiting"),
+        (lambda: ModelHTTPError(401, "m"), "credentials"),
+        (lambda: ModelHTTPError(404, "m"), "configured model"),
+        (lambda: ModelHTTPError(408, "m"), "took too long"),
+        (lambda: ModelHTTPError(502, "m"), "unavailable"),
+        (lambda: ModelHTTPError(418, "m"), "returned an error"),
+    ],
+)
+def test_a_model_provider_failure_is_named_not_reported_as_an_internal_error(make, says):
+    from api.services.assistant.runner import _safe_error_message
+
+    message = _safe_error_message(make())
+
+    assert says in message
+    assert "internal error" not in message
+
+
+def test_a_failure_that_is_not_the_providers_is_still_an_internal_error():
+    from api.services.assistant.runner import _safe_error_message
+
+    assert _safe_error_message(RuntimeError("bug")) == "The assistant hit an internal error."
+    assert _safe_error_message(KeyError("x")) == "The assistant hit an internal error."
+
+
+def test_what_the_person_is_told_never_carries_the_providers_own_text():
+    from api.services.assistant.runner import _safe_error_message
+
+    leaky = ModelHTTPError(401, "m", {"error": "key sk-secret-123 is invalid"})
+
+    assert "sk-secret" not in _safe_error_message(leaky)
+
+
+def _model_failing_after_a_tool_call(failure: Exception) -> FunctionModel:
+    """Asks for a tool, then fails the next request the way a provider can."""
+    requests = iter(range(10))
+
+    def function(messages, info) -> ModelResponse:
+        raise failure
+
+    async def stream_function(messages, info):
+        if next(requests) == 0:
+            yield {0: DeltaToolCall(name="list_catalogs", json_args="{}")}
+        else:
+            raise failure
+        if False:  # pragma: no cover - makes this an async generator on both paths
+            yield ""
+
+    return FunctionModel(function, stream_function=stream_function)
+
+
+async def test_what_a_turn_did_before_the_provider_failed_is_still_audited(
+    client, db_session, factory
+):
+    ws, _catalog, conv = await _seed(db_session, sa_role="reader")
+    overloaded = ModelHTTPError.for_category(ModelOverloadedError, status_code=529, model_name="m")
+
+    with get_agent().override(model=_model_failing_after_a_tool_call(overloaded)):
+        frames = await _frames(factory, ws, conv, "what catalogs are there?")
+
+    assert frames[-1]["type"] == "error"
+    assert "overloaded" in frames[-1]["message"]
+    async with factory() as db:
+        calls = (await db.execute(select(AssistantToolCall))).scalars().all()
+        saved = (await db.execute(select(AssistantMessage))).scalars().all()
+    assert [(c.tool, c.status, c.from_failed_turn) for c in calls] == [
+        ("list_catalogs", "ok", True)
+    ]
+    assert saved == []
+
+
+async def test_a_turn_stopped_at_its_request_limit_still_audits_its_calls(
+    client, db_session, factory, monkeypatch
+):
+    monkeypatch.setattr(settings, "assistant_request_limit", 1)
+    ws, _catalog, conv = await _seed(db_session, sa_role="reader")
+    steps = [tool_step("list_catalogs", {}), text_step("never reached")]
+
+    with get_agent().override(model=scripted_model(steps)):
+        frames = await _frames(factory, ws, conv, "loop forever")
+
+    assert "step limit" in frames[-1]["message"]
+    async with factory() as db:
+        calls = (await db.execute(select(AssistantToolCall))).scalars().all()
+    assert [(c.tool, c.from_failed_turn) for c in calls] == [("list_catalogs", True)]
+
+
+async def test_a_turn_that_is_saved_does_not_record_its_calls_twice(client, db_session, factory):
+    ws, _catalog, conv = await _seed(db_session, sa_role="reader")
+    steps = [tool_step("list_catalogs", {}), text_step("Here they are.")]
+
+    with get_agent().override(model=scripted_model(steps)):
+        frames = await _frames(factory, ws, conv, "what catalogs are there?")
+
+    assert frames[-1]["type"] == "done"
+    async with factory() as db:
+        calls = (await db.execute(select(AssistantToolCall))).scalars().all()
+    assert [(c.tool, c.from_failed_turn) for c in calls] == [("list_catalogs", False)]
+
+
+async def test_a_failure_to_audit_a_failed_turn_does_not_hide_the_failure(
+    client, db_session, factory, monkeypatch
+):
+    async def broken(*_args, **_kwargs):
+        raise RuntimeError("database gone")
+
+    monkeypatch.setattr(runner, "save_unfinished_turn_calls", broken)
+    ws, _catalog, conv = await _seed(db_session, sa_role="reader")
+    steps = [tool_step("list_catalogs", {}), text_step("never reached")]
+    monkeypatch.setattr(settings, "assistant_request_limit", 1)
+
+    with get_agent().override(model=scripted_model(steps)):
+        frames = await _frames(factory, ws, conv, "loop forever")
+
+    assert "step limit" in frames[-1]["message"]

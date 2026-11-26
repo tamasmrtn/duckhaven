@@ -5,12 +5,14 @@ from datetime import datetime
 
 from sqlalchemy import (
     JSON,
+    Boolean,
     DateTime,
     ForeignKey,
     Integer,
     String,
     Text,
     UniqueConstraint,
+    false,
     func,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
@@ -119,6 +121,12 @@ class AssistantToolCall(Base):
     # Distinct tables a run_sql call touched (catalog/schema/table dicts), for the
     # response's "open in Catalog" deep links.
     tables: Mapped[list[dict] | None] = mapped_column(_Json, nullable=True)
+    # True for a call recorded by a turn that did not finish. It ran, so it is
+    # audited, but the turn has no saved answer, and the transcript attributes a call
+    # to an answer by when it was written: this keeps it from showing under the next.
+    from_failed_turn: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=false()
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

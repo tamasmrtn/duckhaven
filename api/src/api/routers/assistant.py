@@ -25,8 +25,8 @@ from api.schemas.page import Page
 from api.services.assistant import resume_turn, stream_turn
 from api.services.assistant.access import assistant_availability
 from api.services.assistant.persistence import (
-    has_pending_call,
     is_history_truncated,
+    pending_call,
     render_transcript_with_sql,
 )
 from api.services.paging import paginate
@@ -332,7 +332,8 @@ async def approve_write(
     # approval that no longer has access fails at the tool call, which is the
     # governed path the assistant explains.
     conversation = await _load_conversation(db, workspace.id, conversation_id, user.id)
-    if not await has_pending_call(db, conversation.id, body.tool_call_id):
+    pending = await pending_call(db, conversation.id, body.tool_call_id)
+    if pending is None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
@@ -351,7 +352,10 @@ async def approve_write(
         tool_call_id=body.tool_call_id,
         approved=body.approved,
         reason=body.reason,
-        catalog=body.catalog,
+        # The statement runs where it was composed, whatever the request says: what
+        # the person approves is that statement, and its unqualified names mean
+        # something only in the catalog the turn asked against.
+        catalog=pending.catalog if pending.recorded else body.catalog,
         user_id=user.id,
     )
     return StreamingResponse(stream, media_type="text/event-stream", headers=_SSE_HEADERS)

@@ -130,11 +130,18 @@ class GatewayError(Exception):
     query that failed, a timeout, or no compute to run on. They answer different
     questions, "what was this assistant stopped from doing?" and "what went wrong?",
     so a compute outage must not read as a denial.
+
+    ``terminal`` is whether another call could end differently. A wrong name or SQL
+    the engine rejected can be put right by sending something else, so the model is
+    asked to try again. Access that is denied, compute that is not there or a
+    query that ran out of time will not change however it is asked, so the model is
+    told and the turn carries on without spending its retries on it.
     """
 
-    def __init__(self, message: str = "", *, kind: str = "error") -> None:
+    def __init__(self, message: str = "", *, kind: str = "error", terminal: bool = False) -> None:
         super().__init__(message)
         self.kind = kind
+        self.terminal = terminal
 
 
 def _error_parts(resp: httpx.Response) -> tuple[str | None, str]:
@@ -170,6 +177,9 @@ _POLICY_REFUSALS = frozenset(
         "catalog_read_only",
     }
 )
+# The refusals a different statement would not get past. The other two are about
+# what the SQL says, so the model can rewrite it.
+_FINAL_REFUSALS = frozenset({"grant_denied", "agent_forbidden", "catalog_read_only"})
 
 
 def _translate(exc: httpx.HTTPStatusError) -> GatewayError:
@@ -182,6 +192,8 @@ def _translate(exc: httpx.HTTPStatusError) -> GatewayError:
     translated = _describe(exc)
     if exc.response.status_code in (403, 404) or error in _POLICY_REFUSALS:
         translated.kind = "denied"
+    if error in _FINAL_REFUSALS:
+        translated.terminal = True
     return translated
 
 
@@ -191,36 +203,39 @@ def _describe(exc: httpx.HTTPStatusError) -> GatewayError:
     error, detail = _error_parts(resp)
     code = resp.status_code
     if code == 403:
-        return GatewayError(f"Access denied: {detail}")
+        return GatewayError(f"Access denied: {detail}", terminal=True)
     if code == 404:
         return GatewayError(f"Not found (or not accessible): {detail}")
     if error == "agent_required":
-        return GatewayError("No compute agent is currently available to run SQL.")
+        return GatewayError("No compute agent is currently available to run SQL.", terminal=True)
     if error == "no_compute_available":
         return GatewayError(
             "No compute is running for this workspace and I cannot start any. Tell the user "
             "that a workspace owner can set a default compute in Settings, or that compute "
-            "needs starting."
+            "needs starting.",
+            terminal=True,
         )
     if error == "default_compute_unavailable":
         return GatewayError(
             f"{detail}. I cannot choose a different engine; tell the user which compute is "
-            "unavailable and why."
+            "unavailable and why.",
+            terminal=True,
         )
     if error == "compute_queue_full":
         return GatewayError(
             "Compute is saturated and not accepting more waiting queries. Ask the user to "
-            "try again shortly."
+            "try again shortly.",
+            terminal=True,
         )
     if code == 422:
         return GatewayError(f"Not allowed: {detail}")
     if code == 409:
         return GatewayError(f"Conflict: {detail}")
     if code == 429:
-        return GatewayError(f"Limit reached: {detail}")
+        return GatewayError(f"Limit reached: {detail}", terminal=True)
     if code == 503:
-        return GatewayError(f"Service unavailable: {detail}")
-    return GatewayError(f"Request failed ({code}): {detail}")
+        return GatewayError(f"Service unavailable: {detail}", terminal=True)
+    return GatewayError(f"Request failed ({code}): {detail}", terminal=code >= 500)
 
 
 class Gateway:
@@ -790,7 +805,9 @@ class Gateway:
                         if line.startswith("data:"):
                             events.append(json.loads(line[5:]))
         except TimeoutError:
-            raise GatewayError(f"The dashboard did not finish within {timeout_s:.0f}s.") from None
+            raise GatewayError(
+                f"The dashboard did not finish within {timeout_s:.0f}s.", terminal=True
+            ) from None
         for event in events:
             if event.get("type") == "error":
                 raise GatewayError(event.get("message") or "The dashboard run failed.")
@@ -841,6 +858,7 @@ class Gateway:
     ) -> dict:
         """Submit a query, wait for it to finish, and return a capped result sample.
 
+
         Returns a dict with ``query_id``, ``status``, ``columns``, ``column_types``,
         capped ``rows``, ``total`` row count, and a ``truncated`` flag. ``tags`` are
         added to the gateway's own for this query. Raises :class:`GatewayError`
@@ -882,7 +900,9 @@ class Gateway:
                 if loop.time() > deadline:
                     # Don't leave the query running on the agent to stack up.
                     await self._cancel_query(query_id)
-                    raise GatewayError(f"Query timed out after {loop.time() - submitted_at:.0f}s.")
+                    raise GatewayError(
+                        f"Query timed out after {loop.time() - submitted_at:.0f}s.", terminal=True
+                    )
                 await asyncio.sleep(_POLL_INTERVAL_S)
                 query = (await self._get(f"/queries/{query_id}")).json()
                 status = query["status"]
@@ -895,7 +915,7 @@ class Gateway:
         if status == "failed":
             raise GatewayError(f"Query failed: {query.get('error') or 'unknown error'}")
         if status == "cancelled":
-            raise GatewayError("Query was cancelled.")
+            raise GatewayError("Query was cancelled.", terminal=True)
 
         page = await self._fetch_page(query_id, cursor=None, limit=self._row_cap)
         page["query_id"] = query_id

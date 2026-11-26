@@ -24,7 +24,7 @@ from typing import Any
 
 from pydantic_ai import ApprovalRequired, ToolReturn
 from pydantic_ai.capabilities import Hooks
-from pydantic_ai.exceptions import ToolRetryError
+from pydantic_ai.exceptions import ToolFailedError, ToolRetryError
 from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.tools import RunContext, ToolDefinition
 
@@ -68,11 +68,12 @@ def _linked_tables(sql: str, default_catalog: str | None) -> list[dict] | None:
     return tables or None
 
 
-def _retry_status(exc: ToolRetryError) -> str:
+def _retry_status(exc: ToolRetryError | ToolFailedError) -> str:
     """How a refused or failed tool call is recorded: ``denied`` or ``error``.
 
-    A tool turns a failed gateway call into a ``ModelRetry`` so the model can adapt,
-    so every governed failure reaches this hook the same way and only its cause says
+    A tool turns a failed gateway call into a ``ModelRetry`` (the model can send
+    something else) or a ``ToolFailed`` (no new call would change it), so every
+    governed failure reaches this hook as one of the two and only its cause says
     which it was. ``denied`` is the platform refusing on policy; a query that failed,
     a timeout or no compute to run on is an ``error``. A retry the tool raised itself,
     with no gateway call behind it (a write refused to a read-only assistant), is a
@@ -105,9 +106,10 @@ async def _audit(
         record.status = "approval_required"
         record.latency_ms = int((time.monotonic() - record.started) * 1000)
         raise
-    except ToolRetryError as exc:
-        # A ModelRetry raised inside a tool (e.g. a refused write or a governed
-        # error the tool translated) reaches the wrap hook wrapped as this.
+    except (ToolRetryError, ToolFailedError) as exc:
+        # A ModelRetry or ToolFailed raised inside a tool (e.g. a refused write or a
+        # governed error the tool translated) reaches the wrap hook wrapped as one of
+        # these.
         record.status = _retry_status(exc)
         record.detail = str(exc)
         record.latency_ms = int((time.monotonic() - record.started) * 1000)

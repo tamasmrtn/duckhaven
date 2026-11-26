@@ -25,7 +25,11 @@ from api.models.assistant import AssistantConversation, AssistantMessage, Assist
 from api.models.user import User
 from api.models.workspace import Workspace
 from api.services.assistant.deps import ToolCallRecord
-from api.services.assistant.persistence import has_pending_call, save_turn
+from api.services.assistant.persistence import (
+    pending_call,
+    save_turn,
+    save_unfinished_turn_calls,
+)
 from api.services.text_safety import REPLACEMENT
 
 pytestmark = pytest.mark.integration
@@ -109,5 +113,30 @@ async def test_a_pending_call_is_read_back_from_the_saved_turn(db_session, conve
         records={},
     )
 
-    assert await has_pending_call(db_session, conversation.id, "c1")
-    assert not await has_pending_call(db_session, conversation.id, "c2")
+    assert await pending_call(db_session, conversation.id, "c1") is not None
+    assert await pending_call(db_session, conversation.id, "c2") is None
+
+
+async def test_the_calls_of_a_turn_that_failed_are_audited_without_saving_the_turn(
+    db_session, conversation
+):
+    """The failed turn's calls hold whatever the data did, NUL included, and the new
+    flag is stored: the audit survives the failure it is there to explain."""
+    await save_unfinished_turn_calls(
+        db_session,
+        conversation.id,
+        {
+            "c1": ToolCallRecord(
+                tool="run_sql",
+                args={"sql": "SELECT chr(0)"},
+                status="error",
+                detail="Query failed: a\x00b",
+                latency_ms=7,
+            )
+        },
+    )
+
+    call = (await db_session.execute(select(AssistantToolCall))).scalar_one()
+    assert call.from_failed_turn is True
+    assert call.detail == f"Query failed: a{REPLACEMENT}b"
+    assert (await db_session.execute(select(AssistantMessage))).scalars().all() == []

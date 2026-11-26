@@ -1088,3 +1088,37 @@ def test_translate_429_is_a_limit_with_its_reason():
         _status_error(429, {"error": "draft_quota_exceeded", "detail": "Try again in 12 minutes."})
     )
     assert str(err) == "Limit reached: Try again in 12 minutes."
+
+
+@pytest.mark.parametrize(
+    ("code", "body", "terminal"),
+    [
+        # Nothing the model can send will change these.
+        (403, {"detail": "no grant"}, True),
+        (422, {"error": "grant_denied", "detail": "no grant on sales.orders"}, True),
+        (403, {"error": "agent_forbidden", "detail": "no"}, True),
+        (409, {"error": "catalog_read_only", "detail": "migrating"}, True),
+        (422, {"error": "agent_required", "detail": "x"}, True),
+        (503, {"error": "no_compute_available", "detail": "x"}, True),
+        (503, {"error": "default_compute_unavailable", "detail": "agent main"}, True),
+        (429, {"error": "compute_queue_full", "detail": "x"}, True),
+        (429, {"detail": "slow down"}, True),
+        (503, {"detail": "agent offline"}, True),
+        (500, "boom", True),
+        (502, {"detail": "upstream"}, True),
+        # A different name, or different SQL, can.
+        (404, {"detail": "no such table"}, False),
+        (422, {"error": "sql_not_allowed", "detail": "ATTACH is denied"}, False),
+        (422, {"error": "statement_not_allowed", "detail": "x"}, False),
+        (422, {"detail": "bad value"}, False),
+        (409, {"detail": "already exists"}, False),
+        (400, {"detail": "bad"}, False),
+    ],
+)
+def test_a_failure_is_terminal_only_when_asking_differently_cannot_change_it(code, body, terminal):
+    assert _translate(_status_error(code, body)).terminal is terminal
+
+
+def test_a_gateway_error_is_retryable_unless_it_says_otherwise():
+    assert GatewayError("x").terminal is False
+    assert GatewayError("x", terminal=True).terminal is True

@@ -1,3 +1,4 @@
+import uuid
 from datetime import UTC, datetime, timedelta
 
 import pytest_asyncio
@@ -18,12 +19,14 @@ from api.models.assistant import AssistantConversation, AssistantMessage, Assist
 from api.models.user import User
 from api.services.assistant.deps import ToolCallRecord
 from api.services.assistant.persistence import (
-    has_pending_call,
+    PendingCall,
     is_history_truncated,
     load_history,
+    pending_call,
     render_transcript,
     render_transcript_with_sql,
     save_turn,
+    save_unfinished_turn_calls,
 )
 from api.services.auth import hash_password
 from api.services.text_safety import REPLACEMENT
@@ -610,7 +613,9 @@ async def test_a_page_read_twice_is_cited_once(db_session, conversation):
     assert len(next(i for i in items if i["role"] == "assistant")["sources"]) == 1
 
 
-async def _pause_on(db_session, conversation, tool_call_id: str = "call-xyz") -> None:
+async def _pause_on(
+    db_session, conversation, tool_call_id: str = "call-xyz", metadata: dict | None = None
+) -> None:
     """End a turn the way a write awaiting approval does: on the response that asked."""
     messages = [
         ModelRequest(parts=[UserPromptPart(content="delete stuff")]),
@@ -619,7 +624,8 @@ async def _pause_on(db_session, conversation, tool_call_id: str = "call-xyz") ->
                 ToolCallPart(
                     tool_name="run_sql", args={"sql": "DELETE FROM t"}, tool_call_id=tool_call_id
                 )
-            ]
+            ],
+            metadata=metadata,
         ),
     ]
     await save_turn(
@@ -636,17 +642,48 @@ async def test_a_conversation_is_pending_on_the_call_its_last_response_asked(
 ):
     await _pause_on(db_session, conversation)
 
-    assert await has_pending_call(db_session, conversation.id, "call-xyz")
+    assert await pending_call(db_session, conversation.id, "call-xyz") is not None
+
+
+async def test_a_pending_call_carries_the_catalog_its_turn_was_asking_against(
+    db_session, conversation
+):
+    await _pause_on(db_session, conversation, metadata={"catalog": "staging"})
+
+    pending = await pending_call(db_session, conversation.id, "call-xyz")
+
+    assert pending == PendingCall(catalog="staging", recorded=True)
+
+
+async def test_a_turn_on_the_workspace_default_records_that_it_had_no_catalog(
+    db_session, conversation
+):
+    """None is an answer, not a gap: the statement was written against the default."""
+    await _pause_on(db_session, conversation, metadata={"catalog": None})
+
+    pending = await pending_call(db_session, conversation.id, "call-xyz")
+
+    assert pending == PendingCall(catalog=None, recorded=True)
+
+
+async def test_a_turn_saved_before_the_catalog_was_kept_says_it_is_unknown(
+    db_session, conversation
+):
+    await _pause_on(db_session, conversation)
+
+    pending = await pending_call(db_session, conversation.id, "call-xyz")
+
+    assert pending == PendingCall(catalog=None, recorded=False)
 
 
 async def test_a_call_that_was_never_asked_is_not_pending(db_session, conversation):
     await _pause_on(db_session, conversation)
 
-    assert not await has_pending_call(db_session, conversation.id, "call-other")
+    assert await pending_call(db_session, conversation.id, "call-other") is None
 
 
 async def test_a_conversation_with_no_history_is_pending_on_nothing(db_session, conversation):
-    assert not await has_pending_call(db_session, conversation.id, "call-xyz")
+    assert await pending_call(db_session, conversation.id, "call-xyz") is None
 
 
 async def test_a_call_is_no_longer_pending_once_the_conversation_has_moved_on(
@@ -669,7 +706,7 @@ async def test_a_call_is_no_longer_pending_once_the_conversation_has_moved_on(
         records={},
     )
 
-    assert not await has_pending_call(db_session, conversation.id, "call-xyz")
+    assert await pending_call(db_session, conversation.id, "call-xyz") is None
 
 
 async def test_a_turn_holding_text_the_database_cannot_keep_is_still_saved(
@@ -707,3 +744,85 @@ async def test_a_turn_holding_text_the_database_cannot_keep_is_still_saved(
     assert call.detail == f"Query failed: bad byte {REPLACEMENT}"
     assert call.tables == [{"catalog": "c", "schema_name": "s", "table": f"t{REPLACEMENT}"}]
     assert "\x00" not in repr(saved.payload)
+
+
+async def test_the_calls_of_a_turn_that_failed_are_kept_and_marked(db_session, conversation):
+    await save_unfinished_turn_calls(
+        db_session,
+        conversation.id,
+        {
+            "c1": ToolCallRecord(
+                tool="run_sql", args={"sql": "SELECT 1"}, status="denied", latency_ms=4
+            ),
+            "c2": ToolCallRecord(tool="run_sql", args={"sql": "SELECT 2"}, status="ok"),
+        },
+    )
+
+    calls = (
+        (await db_session.execute(select(AssistantToolCall).order_by(AssistantToolCall.tool)))
+        .scalars()
+        .all()
+    )
+    by_sql = {c.args["sql"]: c for c in calls}
+    assert {c.from_failed_turn for c in calls} == {True}
+    # Finished before the turn failed: recorded as it ended.
+    assert (by_sql["SELECT 1"].status, by_sql["SELECT 1"].detail) == ("denied", None)
+    # Still running when the turn failed: no outcome, so not recorded as one.
+    assert by_sql["SELECT 2"].status == "error"
+    assert by_sql["SELECT 2"].detail == "The turn ended before this call finished."
+    # The turn itself is not saved.
+    assert (await db_session.execute(select(AssistantMessage))).scalars().all() == []
+
+
+async def test_nothing_is_recorded_for_a_turn_with_no_calls_or_no_conversation(
+    db_session, conversation
+):
+    await save_unfinished_turn_calls(db_session, conversation.id, {})
+    await save_unfinished_turn_calls(
+        db_session, uuid.uuid4(), {"c": ToolCallRecord(tool="run_sql", args={})}
+    )
+
+    assert (await db_session.execute(select(AssistantToolCall))).scalars().all() == []
+
+
+async def test_a_failed_turns_sql_is_not_shown_under_the_answer_that_follows(
+    db_session, conversation
+):
+    """The transcript attributes a call to an answer by when it was written, so a call
+    from a turn that was never saved would be shown under whichever answer comes next."""
+    await save_turn(
+        db_session,
+        conversation,
+        new_messages_json=_turn_json("how many rows?", "There are 10."),
+        usage=RunUsage(input_tokens=1, output_tokens=1),
+        records={"c1": ToolCallRecord(tool="run_sql", args={"sql": "SELECT count(*) FROM t"})},
+    )
+    await save_unfinished_turn_calls(
+        db_session,
+        conversation.id,
+        {
+            "c2": ToolCallRecord(
+                tool="run_sql", args={"sql": "SELECT 'from the failed turn'"}, latency_ms=3
+            )
+        },
+    )
+    await save_turn(
+        db_session,
+        conversation,
+        new_messages_json=_turn_json("thanks", "You are welcome."),
+        usage=RunUsage(input_tokens=1, output_tokens=1),
+        records={},
+    )
+    base = datetime(2026, 1, 1, tzinfo=UTC)
+    for m in (await db_session.execute(select(AssistantMessage))).scalars():
+        m.created_at = base + timedelta(minutes=m.ordinal * 2)
+    for c in (await db_session.execute(select(AssistantToolCall))).scalars():
+        # The failed turn's call lands between the two saved turns, inside the second's window.
+        c.created_at = base if c.from_failed_turn is False else base + timedelta(minutes=1)
+    await db_session.commit()
+
+    items = await render_transcript_with_sql(db_session, conversation.id)
+
+    by_text = {item["text"]: item for item in items}
+    assert by_text["There are 10."]["sql"] == "SELECT count(*) FROM t"
+    assert by_text["You are welcome."]["sql"] is None

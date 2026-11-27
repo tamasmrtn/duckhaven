@@ -122,7 +122,7 @@ answer stands. Nothing that changes data runs without your approval.
 - Results shown to the model are a capped sample — for large outputs, trust the reported total row count and open the
   full result in the grid.
 - Describe your data where you keep it. When an Iceberg table's columns carry descriptions and the table a comment, the
-  assistant reads them and uses what they say. DuckLake catalogs do not pass these on yet.
+  assistant reads them and uses what they say. DuckLake catalogs do not pass these on.
 - If the assistant says something is not accessible, that reflects the grants of its service account, not a bug. Ask
   your administrator if you need broader access.
 

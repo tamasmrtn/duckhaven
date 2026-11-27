@@ -146,7 +146,9 @@ async def test_approval_still_answerable_without_workspace_access(
     assert "denied" in resp.text
 
 
-async def _paused_conversation(db_session, workspace, user) -> AssistantConversation:
+async def _paused_conversation(
+    db_session, workspace, user, metadata: dict | None = None
+) -> AssistantConversation:
     """A conversation whose last turn ended on a write awaiting approval (``call-1``)."""
     conv = AssistantConversation(workspace_id=workspace.id, user_id=user.id, title="t")
     db_session.add(conv)
@@ -159,7 +161,8 @@ async def _paused_conversation(db_session, workspace, user) -> AssistantConversa
                 ToolCallPart(
                     tool_name="run_sql", args={"sql": "DELETE FROM t"}, tool_call_id="call-1"
                 )
-            ]
+            ],
+            metadata=metadata,
         ),
     ]
     await save_turn(
@@ -170,6 +173,39 @@ async def _paused_conversation(db_session, workspace, user) -> AssistantConversa
         records={},
     )
     return conv
+
+
+@pytest.mark.parametrize(
+    ("recorded", "sent", "runs_on"),
+    [
+        # What the turn asked against is where the statement runs, whatever is sent.
+        ({"catalog": "staging"}, "prod", "staging"),
+        ({"catalog": "staging"}, None, "staging"),
+        ({"catalog": None}, "prod", None),
+        # A turn saved before the catalog was kept has nothing to say, so the request does.
+        (None, "prod", "prod"),
+        (None, None, None),
+    ],
+)
+async def test_an_approved_write_runs_in_the_catalog_its_turn_asked_against(
+    authed, workspace, db_session, user, assistant_member, monkeypatch, recorded, sent, runs_on
+):
+    conv = await _paused_conversation(db_session, workspace, user, metadata=recorded)
+    seen: dict = {}
+
+    async def _resumed(*_args, **kwargs):
+        seen.update(kwargs)
+        yield 'data: {"type": "done"}\n\n'
+
+    monkeypatch.setattr("api.routers.assistant.resume_turn", _resumed)
+
+    resp = await authed.post(
+        f"/workspaces/{workspace.slug}/assistant/conversations/{conv.id}/approvals",
+        json={"tool_call_id": "call-1", "approved": True, "catalog": sent},
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert seen["catalog"] == runs_on
 
 
 @pytest.mark.parametrize("tool_call_id", ["call-2", ""])

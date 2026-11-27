@@ -37,6 +37,10 @@ and what it can and cannot do, see the [AI data assistant](assistant.md) concept
 5. If a turn fails, a **Retry** button appears with the error so you can resend it without retyping; after a good
    answer, **Regenerate** resends the same question as a new turn if you want another attempt.
 
+Every answer, and every block of code or SQL in one, has a copy button. A link in an answer opens only if it points
+into DuckHaven. For any other address the answer shows the address in full, so you can see where it leads before you
+copy it.
+
 Each conversation is private to you. Click the history icon in the panel header to search, switch, rename, or delete
 conversations; the panel header also shows the conversation's total token usage. A title holds up to 255 characters.
 Conversations persist so you can return to them later. If a conversation grows very long, the panel shows a small
@@ -101,6 +105,10 @@ statement), the conversation pauses and shows you the exact SQL. Review it and c
 - **Approve & run** runs the statement — still subject to the same permission checks as any query.
 - **Deny** tells the assistant not to run it; it will carry on and can explain or try a different approach.
 
+The statement runs in the catalog your question was asked against, however you answer. The assistant never reads a
+file or URL by path in a statement you have not approved, because an address in a query is a way for data to leave;
+an approved write that loads a file may name it.
+
 Each write is answered once. A second click, or the same write answered from another tab, is refused and the first
 answer stands. Nothing that changes data runs without your approval.
 
@@ -113,6 +121,8 @@ answer stands. Nothing that changes data runs without your approval.
   will ask a short clarifying question instead of guessing wrong.
 - Results shown to the model are a capped sample — for large outputs, trust the reported total row count and open the
   full result in the grid.
+- Describe your data where you keep it. When an Iceberg table's columns carry descriptions and the table a comment, the
+  assistant reads them and uses what they say. DuckLake catalogs do not pass these on.
 - If the assistant says something is not accessible, that reflects the grants of its service account, not a bug. Ask
   your administrator if you need broader access.
 
@@ -143,6 +153,30 @@ A second click arrived while the first was still running. Wait for the turn to f
 
 The conversation was deleted, in this tab or another, while a turn was running. Start a new conversation and ask
 again.
+
+### "The model provider …" or "This conversation has grown too long for the model."
+
+The assistant reached the model and the model's provider turned it away or did not answer. Each message says which, and
+none of them is a fault in your question.
+
+| Message says | What to do |
+|---|---|
+| The model provider is rate limiting requests, or is overloaded or unavailable | Wait a moment and ask again. |
+| The model provider took too long to answer | Ask again. |
+| The conversation has grown too long for the model | Start a new conversation. |
+| The model provider rejected the assistant's credentials, does not know the configured model, says its quota is used up, or could not be reached | An operator needs to check the assistant's API key, model setting, provider account or network. |
+| The model provider's content filter stopped this answer | Rephrase the question. |
+| The answer reached the model's output limit | Ask for less at once. |
+
+### "The assistant could not finish: one of its tools kept failing."
+
+The assistant asked for something that did not work, was told why, and tried again more times than it is allowed.
+Ask a more specific question, such as naming the table or the column you mean.
+
+### "Reading a file or URL by path is not allowed here"
+
+The assistant tried to read a file or URL by path in a statement nobody had approved, so DuckHaven refused it. Ask it
+to use a table in a catalog, or run the statement yourself in a worksheet.
 
 ### A character in your question or a result shows as �
 

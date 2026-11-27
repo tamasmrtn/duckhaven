@@ -3,7 +3,11 @@ escapes are rejected fail-closed."""
 
 import pytest
 
-from api.services.statement_policy import StatementNotAllowed, assert_statement_allowed
+from api.services.statement_policy import (
+    StatementNotAllowed,
+    assert_statement_allowed,
+    path_reads,
+)
 
 _STAGING = ["s3://warehouse/analytics/_staging/sess-1/"]
 _MANAGED = {"sales", "analytics"}
@@ -268,3 +272,56 @@ def test_an_ambiguous_attach_name_is_refused():
             "ATTACH 'b' AS b", staging_prefixes=_STAGING, managed_catalogs={"b": None}
         )
     assert exc.value.rule == "attach_target"
+
+
+@pytest.mark.parametrize(
+    ("sql", "reader", "path"),
+    [
+        (
+            "SELECT * FROM read_parquet('s3://bucket/k.parquet')",
+            "read_parquet()",
+            "s3://bucket/k.parquet",
+        ),
+        (
+            "SELECT * FROM read_csv('https://host.example/?d=1')",
+            "read_csv()",
+            "https://host.example/?d=1",
+        ),
+        (
+            "SELECT * FROM 'https://host.example/x.parquet'",
+            "FROM",
+            "https://host.example/x.parquet",
+        ),
+        ("SELECT * FROM read_json('http://a/b.json') j", "read_json()", "http://a/b.json"),
+        ("SUMMARIZE 'https://host.example/x.csv'", "SUMMARIZE", "https://host.example/x.csv"),
+        ("SELECT * FROM read_parquet(path_col)", "read_parquet()", None),
+    ],
+)
+def test_a_statement_that_reads_by_path_says_what_it_reads(sql, reader, path):
+    assert path_reads(sql) == [(reader, path)]
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT * FROM sales.analytics.orders",
+        "SELECT o.id FROM orders o JOIN customers c ON c.id = o.customer_id",
+        "WITH t AS (SELECT 1) SELECT * FROM t",
+        # Text that mentions a reader is not a read.
+        "SELECT 'read_parquet('s3://x/y')' AS note",
+        "SELECT * FROM orders WHERE note = 'https://host.example/x.parquet'",
+        # An ordinary quoted identifier is a table, not a file.
+        'SELECT * FROM "Order Items"',
+        # Nothing here for the gate that runs it to refuse instead.
+        "SELEC nonsense (",
+        "",
+    ],
+)
+def test_a_statement_that_reads_only_tables_reads_nothing_by_path(sql):
+    assert path_reads(sql) == []
+
+
+def test_a_write_that_loads_a_file_is_seen_too():
+    sql = "INSERT INTO orders SELECT * FROM read_parquet('s3://bucket/new.parquet')"
+
+    assert path_reads(sql) == [("read_parquet()", "s3://bucket/new.parquet")]

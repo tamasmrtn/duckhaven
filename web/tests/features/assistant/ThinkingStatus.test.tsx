@@ -28,13 +28,19 @@ describe("ThinkingStatus", () => {
 
   it("rotates the status word roughly every 2s", () => {
     render(<ThinkingStatus currentTool={null} />);
-    expect(screen.getByText(pickVerb(null, 0), { exact: false })).toBeInTheDocument();
+    expect(
+      screen.getByText(pickVerb(null, 0), { exact: false }),
+    ).toBeInTheDocument();
 
     act(() => vi.advanceTimersByTime(2000));
-    expect(screen.getByText(pickVerb(null, 1), { exact: false })).toBeInTheDocument();
+    expect(
+      screen.getByText(pickVerb(null, 1), { exact: false }),
+    ).toBeInTheDocument();
 
     act(() => vi.advanceTimersByTime(2000));
-    expect(screen.getByText(pickVerb(null, 2), { exact: false })).toBeInTheDocument();
+    expect(
+      screen.getByText(pickVerb(null, 2), { exact: false }),
+    ).toBeInTheDocument();
   });
 
   it("shows an elapsed-seconds counter that increments every second", () => {
@@ -54,5 +60,22 @@ describe("ThinkingStatus", () => {
     // Still the first word — no rotation — but the timer kept counting.
     expect(screen.getByText(initialWord, { exact: false })).toBeInTheDocument();
     expect(screen.getByText("6s")).toBeInTheDocument();
+  });
+
+  it("tells a screen reader once, not every second, that it is working", () => {
+    render(<ThinkingStatus currentTool="run_sql" />);
+
+    // The live region holds only a message that never changes...
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "The assistant is working",
+    );
+    act(() => vi.advanceTimersByTime(5000));
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "The assistant is working",
+    );
+    // ...and the changing word and clock are hidden from it.
+    const clock = screen.getByText("5s");
+    expect(clock.closest("[aria-hidden='true']")).not.toBeNull();
+    expect(clock.closest("[role='status']")).toBeNull();
   });
 });

@@ -50,7 +50,8 @@ was already permitted to do.
 ## Read-only by default
 
 Out of the box `run_sql` accepts `SELECT` and refuses `INSERT`, `UPDATE`, `DELETE` and DDL, whatever the token's grants
-say — with a message explaining why, so the agent stops rather than retrying.
+say — with a message explaining why, so the agent stops rather than retrying. It also refuses to read a file or URL
+by path.
 
 The reason is a gap rather than a policy preference. DuckHaven does have a way to let an AI write safely: the
 assistant's [write approval](assistant.md#write-approval), where the turn pauses and a person approves or denies the

@@ -1,7 +1,9 @@
+import { isValidElement, type ReactNode } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { cn } from "@/utils";
 import { useThrottledText } from "@/hooks/useThrottledText";
+import { CopyButton } from "./CopyButton";
 import { stabilizeStreamingMarkdown } from "./streamingMarkdown";
 
 // A streamed answer is re-parsed in full on every token. Capping that at ~15fps
@@ -15,6 +17,31 @@ const STREAM_FRAME_MS = 60;
 // whose URL carries data, which the browser would send on render. So an image
 // renders as its alt text and never loads. Tables scroll horizontally because
 // the panel is narrow.
+
+/** The text inside rendered markdown, for what a copy button puts on the clipboard. */
+function textOf(node: ReactNode): string {
+  if (typeof node === "string" || typeof node === "number") return String(node);
+  if (Array.isArray(node)) return node.map(textOf).join("");
+  if (isValidElement<{ children?: ReactNode }>(node)) {
+    return textOf(node.props.children);
+  }
+  return "";
+}
+
+/** Whether a link points back into this app. Only http(s) on this origin counts. */
+function isOwnAddress(href: string | undefined): boolean {
+  if (!href) return false;
+  try {
+    const url = new URL(href, window.location.href);
+    return (
+      (url.protocol === "http:" || url.protocol === "https:") &&
+      url.origin === window.location.origin
+    );
+  } catch {
+    return false;
+  }
+}
+
 const COMPONENTS: Components = {
   p: ({ node: _n, ...props }) => (
     <p className="my-1.5 first:mt-0 last:mb-0" {...props} />
@@ -63,11 +90,20 @@ const COMPONENTS: Components = {
       />
     );
   },
-  pre: ({ node: _n, ...props }) => (
-    <pre
-      className="my-1.5 overflow-x-auto rounded-md border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-2"
-      {...props}
-    />
+  pre: ({ node: _n, children, ...props }) => (
+    <div className="relative my-1.5">
+      <pre
+        className="overflow-x-auto rounded-md border border-[var(--border-subtle)] bg-[var(--bg-surface)] p-2 pr-8"
+        {...props}
+      >
+        {children}
+      </pre>
+      <CopyButton
+        text={textOf(children).replace(/\n$/, "")}
+        label="Copy code"
+        className="absolute right-1 top-1"
+      />
+    </div>
   ),
   table: ({ node: _n, ...props }) => (
     <div className="my-1.5 overflow-x-auto">
@@ -93,25 +129,66 @@ const COMPONENTS: Components = {
   ),
 };
 
+// What the model writes can be steered by text it read, so a link it writes can
+// carry data in its address: a click is the one step left to the reader. A link
+// into this app opens as one. Any other address is shown in full as text, so the
+// reader sees where it goes and chooses to copy it, rather than a label hiding it.
+const NAMED_LINKS: Components = {
+  ...COMPONENTS,
+  a: ({ node: _n, href, children, ...props }) => {
+    if (isOwnAddress(href)) {
+      return (
+        <a
+          className="text-[var(--link)] underline"
+          target="_blank"
+          rel="noreferrer"
+          href={href}
+          {...props}
+        >
+          {children}
+        </a>
+      );
+    }
+    // An address written out as its own label would show twice.
+    const labelIsAddress = typeof children === "string" && children === href;
+    return (
+      <span>
+        {children}
+        {href && !labelIsAddress && (
+          <span className="break-all text-text-secondary"> ({href})</span>
+        )}
+      </span>
+    );
+  },
+};
+
 /**
- * Render assistant markdown (GFM: tables, code, lists, …) as styled HTML.
+ * Render markdown (GFM: tables, code, lists, …) as styled HTML.
  *
  * Pass `streaming` for a reply that is still arriving: its text is throttled and
  * rewritten so a half-finished construct renders as the shape it will settle
  * into. A persisted transcript renders its text verbatim.
+ *
+ * `links="named"` is for text a model wrote: only links into this app are
+ * clickable. The default opens every link, for text a person wrote.
  */
 export function Markdown({
   children,
   streaming = false,
+  links = "open",
 }: {
   children: string;
   streaming?: boolean;
+  links?: "open" | "named";
 }) {
   const throttled = useThrottledText(children, STREAM_FRAME_MS);
   const text = streaming ? stabilizeStreamingMarkdown(throttled) : children;
   return (
     <div className="text-sm leading-relaxed">
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={COMPONENTS}>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={links === "named" ? NAMED_LINKS : COMPONENTS}
+      >
         {text}
       </ReactMarkdown>
     </div>

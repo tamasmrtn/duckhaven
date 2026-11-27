@@ -98,7 +98,7 @@ class StubGateway:
             "status": "published",
         }
 
-    async def run_sql(self, sql, *, catalog, timeout_s, tags=None):
+    async def run_sql(self, sql, *, catalog, timeout_s, tags=None, approved=False):
         self._record("run_sql", (sql,), {"catalog": catalog, "tags": tags})
         self._maybe_raise("run_sql")
         return dict(

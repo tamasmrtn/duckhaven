@@ -66,7 +66,8 @@ Notes on the rows above:
   path too: you can create, write and drop it, but reading or previewing it is refused, so rename it with
   `ALTER TABLE … RENAME TO`. A workspace with a
   [scoped catalog](../access/scoped-access.md#files-are-read-through-tables) refuses URL reads too, because a path
-  names no table to check grants against.
+  names no table to check grants against. The [assistant](../ai/assistant.md) and the
+  [MCP server](../ai/mcp-server.md) refuse a read by path in any statement no person has approved.
 - **Writes and roles.** In an open catalog any member can run these statements; in a scoped catalog each table needs a
   grant. See [How access works](../access/how-access-works.md).
 

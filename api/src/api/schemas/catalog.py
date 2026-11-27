@@ -56,6 +56,8 @@ class TableColumnOut(BaseModel):
     type: str
     position: int
     nullable: bool
+    # What the table's author said the column holds, where the catalog keeps it.
+    description: str | None = None
 
 
 class TableOut(BaseModel):

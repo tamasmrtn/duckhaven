@@ -20,8 +20,35 @@ import httpx
 from httpx import ASGITransport
 from opentelemetry import trace
 from opentelemetry.trace import Status, StatusCode
-from pydantic_ai import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDenied
-from pydantic_ai.exceptions import UsageLimitExceeded
+from pydantic_ai import (
+    DeferredToolRequests,
+    DeferredToolResults,
+    ModelRetry,
+    ToolApproved,
+    ToolDenied,
+)
+from pydantic_ai.exceptions import (
+    ContentFilterError,
+    ModelAPIError,
+    ModelAuthenticationError,
+    ModelConnectionError,
+    ModelContextWindowExceededError,
+    ModelHTTPError,
+    ModelNotFoundError,
+    ModelOverloadedError,
+    ModelQuotaExceededError,
+    ModelRateLimitError,
+    ModelRequestRejectedError,
+    ModelRequestTimeout,
+    ModelServerError,
+    ModelTimeoutError,
+    ModelUnavailableError,
+    OutputTokenLimitExceeded,
+    RunTimedOut,
+    ToolRetryError,
+    UnexpectedModelBehavior,
+    UsageLimitExceeded,
+)
 from pydantic_ai.messages import (
     FunctionToolCallEvent,
     FunctionToolResultEvent,
@@ -50,13 +77,106 @@ from api.services.assistant.identity import (
     resolve_service_account,
 )
 from api.services.assistant.knowledge.search import search_pages
-from api.services.assistant.persistence import chart_of, load_history, proposal_of, save_turn
+from api.services.assistant.persistence import (
+    CATALOG_KEY,
+    chart_of,
+    load_history,
+    proposal_of,
+    save_turn,
+    save_unfinished_turn_calls,
+)
 from api.services.assistant.prompts import format_summary
 from api.services.audit.context import origin_client
 from api.services.semantic.timespec import today_in
 
 logger = logging.getLogger(__name__)
 _tracer = trace.get_tracer("duckhaven.api")
+
+
+_ASK_AGAIN = "Wait a moment and ask again."
+_ASK_AN_OPERATOR = "An operator needs to check"
+
+# What the person is told when the model provider fails, most specific first: a
+# timeout is a connection error and an overload is an unavailable one. The classes
+# are the library's own, so this does not depend on any provider's status codes.
+_PROVIDER_FAILURES: tuple[tuple[type[BaseException], str], ...] = (
+    (
+        ModelContextWindowExceededError,
+        "This conversation has grown too long for the model. Start a new conversation.",
+    ),
+    (
+        ModelQuotaExceededError,
+        f"The model provider says its quota is used up. {_ASK_AN_OPERATOR} the provider account.",
+    ),
+    (ModelRateLimitError, f"The model provider is rate limiting requests. {_ASK_AGAIN}"),
+    (
+        ModelAuthenticationError,
+        f"The model provider rejected the assistant's credentials. {_ASK_AN_OPERATOR} its API key.",
+    ),
+    (
+        ModelNotFoundError,
+        f"The model provider does not know the configured model. {_ASK_AN_OPERATOR} the "
+        "assistant's model setting.",
+    ),
+    (ModelOverloadedError, f"The model provider is overloaded. {_ASK_AGAIN}"),
+    (
+        (ModelTimeoutError, ModelRequestTimeout, RunTimedOut),
+        "The model provider took too long to answer. Ask again.",
+    ),
+    (
+        ModelConnectionError,
+        f"The assistant could not reach the model provider. {_ASK_AN_OPERATOR} the connection.",
+    ),
+    ((ModelUnavailableError, ModelServerError), f"The model provider is unavailable. {_ASK_AGAIN}"),
+    (ModelRequestRejectedError, "The model provider rejected the request."),
+    (
+        ContentFilterError,
+        "The model provider's content filter stopped this answer. Try rephrasing the question.",
+    ),
+    (
+        OutputTokenLimitExceeded,
+        "The answer reached the model's output limit before it was finished. Ask for less at once.",
+    ),
+)
+
+# A provider that reports a failure without saying what kind it is still has a status.
+_PROVIDER_STATUS_FAILURES: tuple[tuple[range | tuple[int, ...], type[BaseException]], ...] = (
+    ((401, 403), ModelAuthenticationError),
+    ((404,), ModelNotFoundError),
+    ((408,), ModelTimeoutError),
+    ((429,), ModelRateLimitError),
+    (range(500, 600), ModelUnavailableError),
+)
+
+
+def _provider_message(exc: BaseException) -> str | None:
+    """What to tell the person about a model provider failure, or None if it is not one."""
+    if isinstance(exc, UnexpectedModelBehavior) and isinstance(
+        exc.__cause__, ModelRetry | ToolRetryError
+    ):
+        # A tool failed more often than its retries allow: the model kept asking for
+        # something that did not work, which is not the platform's fault or the person's.
+        return (
+            "The assistant could not finish: one of its tools kept failing. "
+            "Try a more specific question."
+        )
+    if isinstance(exc, ModelHTTPError) and type(exc) is ModelHTTPError:
+        # Not sorted into a category by whoever raised it, so sort it by status here.
+        for statuses, category in _PROVIDER_STATUS_FAILURES:
+            if exc.status_code in statuses:
+                exc = category(exc.model_name, str(exc))
+                break
+    for kinds, message in _PROVIDER_FAILURES:
+        if isinstance(exc, kinds):
+            return message
+    if isinstance(exc, ModelAPIError):
+        return (
+            "The model provider returned an error. "
+            "Ask again; if it keeps happening, tell an operator."
+        )
+    if isinstance(exc, UnexpectedModelBehavior):
+        return "The model's reply could not be used. Ask again."
+    return None
 
 
 def _safe_error_message(exc: BaseException) -> str:
@@ -68,6 +188,11 @@ def _safe_error_message(exc: BaseException) -> str:
         GatewayError | AssistantIdentityError | AssistantDisabledError | ConversationDeletedError,
     ):
         return str(exc)
+    if (message := _provider_message(exc)) is not None:
+        # Worth an operator's attention, but the failure is the provider's or the
+        # model's, not a defect here, so it is logged as a warning and not an error.
+        logger.warning("Assistant turn failed at the model: %s", type(exc).__name__, exc_info=exc)
+        return message
     logger.exception("Assistant turn failed", exc_info=exc)
     return "The assistant hit an internal error."
 
@@ -156,6 +281,20 @@ def _said(result) -> str:
         for part in message.parts
         if isinstance(part, TextPart)
     )
+
+
+def _remember_catalog(result, catalog: str | None) -> None:
+    """Keep, on the response a write paused on, the catalog the turn was asking against.
+
+    The statement is shown to the person as written, and an unqualified name in it
+    means whatever catalog the turn used. The answer must run there, not wherever
+    the client or the workspace default happens to point when it arrives.
+    """
+    response = next(
+        (m for m in reversed(result.new_messages()) if isinstance(m, ModelResponse)), None
+    )
+    if response is not None:
+        response.metadata = {**(response.metadata or {}), CATALOG_KEY: catalog}
 
 
 def _flag(result, unsupported: list[str]) -> None:
@@ -419,6 +558,20 @@ async def _persist(
         return message.id
 
 
+async def _record_unfinished_turn(
+    session_factory: async_sessionmaker[AsyncSession],
+    conversation_id: uuid.UUID,
+    deps: AssistantDeps,
+) -> None:
+    """Audit what a turn did before it failed. Never raises: the failure that
+    brought us here is the one to report."""
+    try:
+        async with session_factory() as db:
+            await save_unfinished_turn_calls(db, conversation_id, deps.records)
+    except Exception:  # noqa: BLE001 — a second failure must not hide the first
+        logger.warning("Could not record the calls of a failed turn", exc_info=True)
+
+
 async def _stream(
     session_factory: async_sessionmaker[AsyncSession],
     *,
@@ -515,6 +668,9 @@ async def _run_turn(
                 # The span opens here, inside the detached task, not around the
                 # create_task call below: the task is where the turn's work (and its
                 # trace context) actually lives. No-op until an SDK is configured.
+                # Once the turn is being saved its audit rows go with it; before that, a
+                # failure has to record them itself.
+                saving = False
                 with _tracer.start_as_current_span(
                     "assistant.turn",
                     attributes={
@@ -542,13 +698,16 @@ async def _run_turn(
                         )
                         output = result.output
                         unsupported: list[str] = []
-                        if not isinstance(output, DeferredToolRequests):
+                        if isinstance(output, DeferredToolRequests):
+                            _remember_catalog(result, deps.catalog)
+                        else:
                             unsupported = _unsupported(result, deps.page)
                             # Kept with the answer, so it is marked when read again.
                             _flag(result, unsupported)
                         # Shield persistence: once the turn has run, its messages and
                         # audit rows must land even if this task is cancelled during
                         # cleanup (e.g. client disconnect / shutdown).
+                        saving = True
                         message_id = await asyncio.shield(
                             _persist(session_factory, conversation_id, result, deps)
                         )
@@ -584,6 +743,8 @@ async def _run_turn(
                     except Exception as exc:  # noqa: BLE001 — surfaced as an SSE error frame
                         span.record_exception(exc)
                         span.set_status(Status(StatusCode.ERROR, str(exc)))
+                        if not saving:
+                            await _record_unfinished_turn(session_factory, conversation_id, deps)
                         await queue.put({"type": "error", "message": _safe_error_message(exc)})
                     finally:
                         await queue.put(None)

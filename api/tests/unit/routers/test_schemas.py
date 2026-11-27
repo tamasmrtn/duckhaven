@@ -1049,3 +1049,28 @@ async def test_recount_non_member_forbidden(
         "/workspaces/other/catalogs/other/schemas/main/tables/events/recount"
     )
     assert resp.status_code == 403
+
+
+def test_a_columns_description_reaches_the_table_response():
+    from types import SimpleNamespace
+
+    from api.routers.schemas import _table_to_out
+    from api.services.catalog_backends import CatalogColumnInfo, CatalogTableInfo
+
+    table = CatalogTableInfo(
+        name="t",
+        catalog_name="c",
+        schema_name="s",
+        columns=[
+            CatalogColumnInfo(
+                name="mrr", type_text="long", type_name="LONG", position=0, description="MRR, cents"
+            ),
+            CatalogColumnInfo(name="id", type_text="long", type_name="LONG", position=1),
+        ],
+        properties={"comment": "One row per customer."},
+    )
+
+    out = _table_to_out(table, SimpleNamespace(slug="c"), uuid4())
+
+    assert [(c.name, c.description) for c in out.columns] == [("mrr", "MRR, cents"), ("id", None)]
+    assert out.properties["comment"] == "One row per customer."

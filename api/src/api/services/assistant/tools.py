@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import logging
 
-from pydantic_ai import ApprovalRequired, ModelRetry, RunContext, ToolReturn
+from pydantic_ai import ApprovalRequired, ModelRetry, RunContext, ToolFailed, ToolReturn
 
 from api.config import settings
 from api.services.assistant import charts
@@ -37,12 +37,23 @@ from api.services.sql_guard import is_read_only
 logger = logging.getLogger(__name__)
 
 
+def _failure(exc: GatewayError) -> ModelRetry | ToolFailed:
+    """What the model is told about a call that failed, and what that costs the turn.
+
+    A call the model can put right by sending something else is a retry, which spends
+    the tool's retries. One no new call will change is a failure to report: the model
+    sees it and adapts, and the turn does not end because the model met it a fourth
+    time, which an exhausted retry budget does.
+    """
+    return ToolFailed(str(exc)) if exc.terminal else ModelRetry(str(exc))
+
+
 async def list_catalogs(ctx: RunContext[AssistantDeps]) -> list[dict]:
     """List the catalogs visible in this workspace (slug and display name)."""
     try:
         return await ctx.deps.gateway.list_catalogs()
     except GatewayError as exc:
-        raise ModelRetry(str(exc)) from exc
+        raise _failure(exc) from exc
 
 
 async def list_schemas(ctx: RunContext[AssistantDeps], catalog: str) -> list[str]:
@@ -54,7 +65,7 @@ async def list_schemas(ctx: RunContext[AssistantDeps], catalog: str) -> list[str
     try:
         return await ctx.deps.gateway.list_schemas(catalog)
     except GatewayError as exc:
-        raise ModelRetry(str(exc)) from exc
+        raise _failure(exc) from exc
 
 
 async def list_tables(ctx: RunContext[AssistantDeps], catalog: str, schema: str) -> list[str]:
@@ -67,13 +78,18 @@ async def list_tables(ctx: RunContext[AssistantDeps], catalog: str, schema: str)
     try:
         return await ctx.deps.gateway.list_tables(catalog, schema)
     except GatewayError as exc:
-        raise ModelRetry(str(exc)) from exc
+        raise _failure(exc) from exc
 
 
 async def describe_table(
     ctx: RunContext[AssistantDeps], catalog: str, schema: str, table: str
 ) -> dict:
     """Describe a table: its columns (name, type, nullability), row count, and size.
+
+    A column carries a ``description``, and the table a ``comment``, only where the
+    table's author wrote one. Read them: they say what a column holds in the words of
+    whoever made it, which a name and a type cannot. Where there are none, say what
+    you are assuming a column means instead of presenting it as known.
 
     Args:
         catalog: The catalog slug.
@@ -83,7 +99,7 @@ async def describe_table(
     try:
         return await ctx.deps.gateway.describe_table(catalog, schema, table)
     except GatewayError as exc:
-        raise ModelRetry(str(exc)) from exc
+        raise _failure(exc) from exc
 
 
 async def get_table_lineage(
@@ -132,7 +148,7 @@ async def get_table_lineage(
             catalog, schema, table, direction=direction, depth=depth
         )
     except GatewayError as exc:
-        raise ModelRetry(str(exc)) from exc
+        raise _failure(exc) from exc
 
 
 async def run_sql(ctx: RunContext[AssistantDeps], sql: str) -> dict:
@@ -164,10 +180,14 @@ async def run_sql(ctx: RunContext[AssistantDeps], sql: str) -> dict:
             raise ApprovalRequired()
     try:
         return await ctx.deps.gateway.run_sql(
-            sql, catalog=ctx.deps.catalog, timeout_s=ctx.deps.query_timeout_s
+            sql,
+            catalog=ctx.deps.catalog,
+            timeout_s=ctx.deps.query_timeout_s,
+            # A write a person has seen and approved may name the file it loads.
+            approved=ctx.tool_call_approved,
         )
     except GatewayError as exc:
-        raise ModelRetry(str(exc)) from exc
+        raise _failure(exc) from exc
 
 
 async def get_query_result(
@@ -184,7 +204,7 @@ async def get_query_result(
             query_id, cursor=cursor, limit=ctx.deps.gateway._row_cap
         )
     except GatewayError as exc:
-        raise ModelRetry(str(exc)) from exc
+        raise _failure(exc) from exc
 
 
 async def search_semantic(ctx: RunContext[AssistantDeps], query: str) -> dict:
@@ -211,7 +231,7 @@ async def search_semantic(ctx: RunContext[AssistantDeps], query: str) -> dict:
     try:
         return await ctx.deps.gateway.search_semantic(query)
     except GatewayError as exc:
-        raise ModelRetry(str(exc)) from exc
+        raise _failure(exc) from exc
 
 
 async def get_semantic_model(ctx: RunContext[AssistantDeps], model: str) -> dict:
@@ -227,7 +247,7 @@ async def get_semantic_model(ctx: RunContext[AssistantDeps], model: str) -> dict
     try:
         return await ctx.deps.gateway.get_semantic_model(model)
     except GatewayError as exc:
-        raise ModelRetry(str(exc)) from exc
+        raise _failure(exc) from exc
 
 
 async def query_metric(
@@ -292,7 +312,7 @@ async def query_metric(
         # The compiler refuses rather than approximating, and its messages name
         # the legal alternatives — so handing this straight back lets the model
         # correct itself or ask, instead of falling back to inventing SQL.
-        raise ModelRetry(str(exc)) from exc
+        raise _failure(exc) from exc
 
     try:
         result = await ctx.deps.gateway.run_sql(
@@ -302,7 +322,7 @@ async def query_metric(
             tags=metric_tags(model, metrics),
         )
     except GatewayError as exc:
-        raise ModelRetry(str(exc)) from exc
+        raise _failure(exc) from exc
 
     # Compiled SQL never re-triggers the "you should have used a metric" nudge.
     result.pop("semantic_warning", None)
@@ -328,7 +348,7 @@ async def explain_metric(ctx: RunContext[AssistantDeps], model: str, metric: str
     try:
         return await ctx.deps.gateway.metric_definition(model, metric)
     except GatewayError as exc:
-        raise ModelRetry(str(exc)) from exc
+        raise _failure(exc) from exc
 
 
 async def get_worksheet_sql(ctx: RunContext[AssistantDeps]) -> str:
@@ -477,7 +497,7 @@ async def list_dashboards(
     try:
         return await ctx.deps.gateway.list_dashboards(query=query, uses=uses)
     except GatewayError as exc:
-        raise ModelRetry(str(exc)) from exc
+        raise _failure(exc) from exc
 
 
 async def get_dashboard(
@@ -497,7 +517,7 @@ async def get_dashboard(
     try:
         return await ctx.deps.gateway.get_dashboard(_dashboard_name(ctx, name), draft=draft)
     except GatewayError as exc:
-        raise ModelRetry(str(exc)) from exc
+        raise _failure(exc) from exc
 
 
 async def get_dashboard_schema(ctx: RunContext[AssistantDeps]) -> dict:
@@ -508,7 +528,7 @@ async def get_dashboard_schema(ctx: RunContext[AssistantDeps]) -> dict:
     try:
         return await ctx.deps.gateway.dashboard_schema()
     except GatewayError as exc:
-        raise ModelRetry(str(exc)) from exc
+        raise _failure(exc) from exc
 
 
 async def run_widget(
@@ -556,7 +576,7 @@ async def run_widget(
             timeout_s=ctx.deps.query_timeout_s,
         )
     except GatewayError as exc:
-        raise ModelRetry(str(exc)) from exc
+        raise _failure(exc) from exc
     start = next((e for e in events if e.get("type") == "start"), {})
     shown = next((e for e in events if e.get("type") == "widget"), None)
     if shown is None:
@@ -611,7 +631,7 @@ async def preview_widgets(
             ctx.deps.preview_id, params=params, timeout_s=ctx.deps.query_timeout_s
         )
     except GatewayError as exc:
-        raise ModelRetry(str(exc)) from exc
+        raise _failure(exc) from exc
     shown = {e["id"]: e for e in events if e.get("type") == "widget"}
     out = []
     for w in widgets:
@@ -648,7 +668,7 @@ async def show_chart(ctx: RunContext[AssistantDeps], query_id: str, widget: dict
         result = await ctx.deps.gateway.own_result(query_id, limit=charts.CHART_MAX_ROWS)
         drawn, event = charts.chat_chart(widget, result)
     except GatewayError as exc:
-        raise ModelRetry(str(exc)) from exc
+        raise _failure(exc) from exc
     except charts.ChartRefused as exc:
         raise ModelRetry(str(exc)) from exc
     digest = charts.result_hash(event)
@@ -722,7 +742,7 @@ async def propose_dashboard_changes(
             name, operations=operations, summary=summary
         )
     except GatewayError as exc:
-        raise ModelRetry(str(exc)) from exc
+        raise _failure(exc) from exc
     card = {
         key: proposal[key]
         for key in ("id", "dashboard", "title", "summary", "changes", "managed", "expires_at")

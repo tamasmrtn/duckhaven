@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import uuid
 from collections.abc import Collection
+from dataclasses import dataclass
 
 from pydantic_ai import ModelMessagesTypeAdapter
 from pydantic_ai.messages import (
@@ -70,8 +71,25 @@ async def load_history(
     return sanitize_messages(messages, resolved_tool_call_ids=resolved_tool_call_ids)
 
 
-async def has_pending_call(db: AsyncSession, conversation_id: uuid.UUID, tool_call_id: str) -> bool:
-    """Whether the conversation is paused on ``tool_call_id``, waiting for an answer.
+#: The key a paused response records the turn's catalog under, in its metadata.
+CATALOG_KEY = "catalog"
+
+
+@dataclass(frozen=True)
+class PendingCall:
+    """A tool call the conversation is paused on, and where it was composed to run."""
+
+    # The catalog the turn was asking against: unqualified names in the statement
+    # mean something in it. None is a turn that used the workspace default.
+    catalog: str | None
+    # False for a turn saved before the catalog was kept, whose catalog is unknown.
+    recorded: bool
+
+
+async def pending_call(
+    db: AsyncSession, conversation_id: uuid.UUID, tool_call_id: str
+) -> PendingCall | None:
+    """The call the conversation is paused on if it is ``tool_call_id``, else None.
 
     A turn that wants to write ends on the response that asked for it. Once the
     call is answered the history moves on, so a call that is not the one the
@@ -84,11 +102,14 @@ async def has_pending_call(db: AsyncSession, conversation_id: uuid.UUID, tool_ca
         .limit(1)
     )
     if not payload:
-        return False
+        return None
     last = ModelMessagesTypeAdapter.validate_python(payload)[-1]
-    return isinstance(last, ModelResponse) and any(
+    if not isinstance(last, ModelResponse) or not any(
         isinstance(part, ToolCallPart) and part.tool_call_id == tool_call_id for part in last.parts
-    )
+    ):
+        return None
+    metadata = last.metadata or {}
+    return PendingCall(catalog=metadata.get(CATALOG_KEY), recorded=CATALOG_KEY in metadata)
 
 
 def chart_of(part: ModelRequestPart) -> dict | None:
@@ -176,6 +197,9 @@ async def render_transcript_with_sql(db: AsyncSession, conversation_id: uuid.UUI
                 select(AssistantToolCall)
                 .where(AssistantToolCall.conversation_id == conversation_id)
                 .where(AssistantToolCall.created_at >= rows[0].created_at)
+                # A failed turn's calls have no answer here, and by time alone they
+                # would be shown under the next one.
+                .where(AssistantToolCall.from_failed_turn.is_(False))
                 .order_by(AssistantToolCall.created_at)
             )
         )
@@ -313,17 +337,45 @@ async def save_turn(
     conversation.total_output_tokens += output_tokens
 
     for record in records.values():
-        db.add(
-            AssistantToolCall(
-                conversation_id=conversation.id,
-                tool=record.tool,
-                args=clean_json(record.args),
-                status=record.status,
-                detail=clean(record.detail) if record.detail is not None else None,
-                query_id=uuid.UUID(record.query_id) if record.query_id else None,
-                latency_ms=record.latency_ms,
-                tables=clean_json(record.tables),
-            )
-        )
+        db.add(_tool_call_row(conversation.id, record, unfinished=False))
     await db.commit()
     return message
+
+
+def _tool_call_row(
+    conversation_id: uuid.UUID, record: ToolCallRecord, *, unfinished: bool
+) -> AssistantToolCall:
+    """The audit row for one tool call.
+
+    ``unfinished`` is a turn that ended while the call was running: it has no
+    outcome, and a row saying ``ok`` would be a claim nobody checked.
+    """
+    interrupted = unfinished and record.latency_ms is None
+    detail = "The turn ended before this call finished." if interrupted else record.detail
+    return AssistantToolCall(
+        conversation_id=conversation_id,
+        tool=record.tool,
+        args=clean_json(record.args),
+        status="error" if interrupted else record.status,
+        detail=clean(detail) if detail is not None else None,
+        query_id=uuid.UUID(record.query_id) if record.query_id else None,
+        latency_ms=record.latency_ms,
+        tables=clean_json(record.tables),
+        from_failed_turn=unfinished,
+    )
+
+
+async def save_unfinished_turn_calls(
+    db: AsyncSession, conversation_id: uuid.UUID, records: dict[str, ToolCallRecord]
+) -> None:
+    """Keep the audit rows of a turn that failed, without saving the turn.
+
+    The calls ran: queries executed, refusals happened. A turn that dies at the model
+    provider, at its request limit or on a tool it cannot recover from has no answer
+    to save, but what it did is still what the audit trail is for.
+    """
+    if not records or await db.get(AssistantConversation, conversation_id) is None:
+        return
+    for record in records.values():
+        db.add(_tool_call_row(conversation_id, record, unfinished=True))
+    await db.commit()

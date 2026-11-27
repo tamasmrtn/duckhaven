@@ -25,7 +25,7 @@ from decimal import Decimal
 import duckdb
 from pydantic import TypeAdapter, ValidationError
 
-from api.services.assistant.gateway import GatewayError
+from api.services.assistant.gateway import GatewayError, refuse_path_reads
 from api.services.dashboards import loader, proposals, store
 from api.services.dashboards.spec import TIME_PRESETS, json_schema
 from api.services.query import _json_value
@@ -564,8 +564,10 @@ class EvalGateway:
         return {"name": None, "elastic": False}
 
     # ── SQL ───────────────────────────────────────────────────────────────────
-    async def run_sql(self, sql: str, *, catalog, timeout_s, tags=None) -> dict:
+    async def run_sql(self, sql: str, *, catalog, timeout_s, tags=None, approved=False) -> dict:
         self._record("run_sql")
+        if not approved:
+            refuse_path_reads(sql)
         if "restricted" in sql.lower():
             raise GatewayError("Access to catalog 'restricted' is denied for this assistant.")
         try:

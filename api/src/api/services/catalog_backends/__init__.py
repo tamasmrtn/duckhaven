@@ -63,6 +63,9 @@ class CatalogColumnInfo(_Info):
     # How a query sees the type, as DuckDB's DESCRIBE names it
     # (`services.catalog_types`). None where the backend does not say.
     duckdb_type: str | None = None
+    # What the table's author said the column holds, where the catalog keeps it
+    # (an Iceberg field's ``doc``). None where nobody wrote one or it is not kept.
+    description: str | None = None
 
 
 class CatalogSchemaInfo(_Info):

@@ -96,7 +96,8 @@ table cell tried to talk it into running something it shouldn't (a *prompt injec
 what both you and the service account were already allowed to do — and every attempt is recorded.
 
 On top of that server-side boundary, the assistant adds an **audit and UX layer**: every tool call is logged with its
-arguments and outcome, and a proposed write is paused for human approval rather than executed. The outcome is `ok`;
+arguments and outcome, even in a turn that then fails, and a proposed write is paused for human
+approval rather than executed. The outcome is `ok`;
 `denied`, when DuckHaven refused the call on policy, such as access, the SQL guard or a read-only assistant; `error`,
 when it failed for any other reason, such as a failed query, a timeout or no compute to run on; or `approval_required`,
 for a write waiting for a person.
@@ -115,8 +116,8 @@ not have to create it: enabling the assistant creates it on startup if it is not
     reach.
 
 Creating it grants nothing. It arrives with no workspace membership and no catalog grants, so until you give it some,
-every question comes back denied — and the assistant panel says exactly that instead of letting you spend a turn finding
-out. You govern its data access per workspace with [workspace membership](../access/workspaces.md) and
+every question comes back denied, and the panel says so before you spend a turn on it. You govern its data access per
+workspace with [workspace membership](../access/workspaces.md) and
 [catalog grants](../access/how-access-works.md), exactly as you would for any principal:
 
 - Give it `reader` or a `metadata`-tier grant for a browse-and-read assistant.

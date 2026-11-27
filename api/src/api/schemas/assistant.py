@@ -2,10 +2,28 @@ import uuid
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator
+from pydantic import (
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    field_validator,
+)
 
 from api.services.dashboards.spec import IDENTIFIER_PATTERN, MAX_PARAMETERS
 from api.services.dashboards.spec import NAME_PATTERN as DASHBOARD_NAME_PATTERN
+from api.services.text_safety import clean
+
+# Text the person typed that goes on to Postgres and the model provider. NUL and
+# lone surrogates cannot reach either, so they are replaced on the way in rather
+# than failing the request, or worse, the turn, once the answer is already written.
+# Runs before the field's own constraints, so a length limit counts what is kept.
+_CLEAN = BeforeValidator(lambda v: clean(v) if isinstance(v, str) else v)
+CleanStr = Annotated[str, _CLEAN]
+
+#: The ``title`` column's width.
+TITLE_MAX_LENGTH = 255
 
 
 class AssistantStatusOut(BaseModel):
@@ -25,11 +43,11 @@ class AssistantStatusOut(BaseModel):
 class ConversationCreate(BaseModel):
     # Optional opening message; when present the created conversation is returned
     # and the client immediately opens the streaming turn endpoint.
-    title: str | None = None
+    title: Annotated[str, Field(max_length=TITLE_MAX_LENGTH), _CLEAN] | None = None
 
 
 class ConversationUpdate(BaseModel):
-    title: str = Field(min_length=1, max_length=255)
+    title: Annotated[str, Field(min_length=1, max_length=TITLE_MAX_LENGTH), _CLEAN]
 
 
 class ConversationOut(BaseModel):
@@ -174,16 +192,16 @@ PageContext = Annotated[WorksheetContext | DashboardContext, Field(discriminator
 
 
 class TurnRequest(BaseModel):
-    prompt: str = Field(min_length=1, max_length=16_000)
+    prompt: Annotated[str, Field(min_length=1, max_length=16_000), _CLEAN]
     # Active catalog slug for unqualified table names; defaults to the workspace default.
-    catalog: str | None = None
+    catalog: CleanStr | None = None
     # The page the person is on, so "this query" or "this number" means something.
     page_context: PageContext | None = None
 
 
 class ApprovalRequest(BaseModel):
-    tool_call_id: str
+    tool_call_id: CleanStr
     approved: bool
     # Optional message shown to the model when denying.
-    reason: str | None = None
-    catalog: str | None = None
+    reason: CleanStr | None = None
+    catalog: CleanStr | None = None

@@ -18,6 +18,7 @@ from pydantic_ai.messages import (
     ModelRequestPart,
     ModelResponse,
     TextPart,
+    ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
     sanitize_messages,
@@ -29,6 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.config import settings
 from api.models.assistant import AssistantConversation, AssistantMessage, AssistantToolCall
 from api.services.assistant.deps import ToolCallRecord
+from api.services.text_safety import clean, clean_json
 
 
 async def load_history(
@@ -66,6 +68,27 @@ async def load_history(
     # Defensive: history is server-owned, but strip any client-supplied system
     # prompts / unexpected parts before feeding it back to the model.
     return sanitize_messages(messages, resolved_tool_call_ids=resolved_tool_call_ids)
+
+
+async def has_pending_call(db: AsyncSession, conversation_id: uuid.UUID, tool_call_id: str) -> bool:
+    """Whether the conversation is paused on ``tool_call_id``, waiting for an answer.
+
+    A turn that wants to write ends on the response that asked for it. Once the
+    call is answered the history moves on, so a call that is not the one the
+    history ends on was never asked, or has been answered since.
+    """
+    payload = await db.scalar(
+        select(AssistantMessage.payload)
+        .where(AssistantMessage.conversation_id == conversation_id)
+        .order_by(AssistantMessage.ordinal.desc())
+        .limit(1)
+    )
+    if not payload:
+        return False
+    last = ModelMessagesTypeAdapter.validate_python(payload)[-1]
+    return isinstance(last, ModelResponse) and any(
+        isinstance(part, ToolCallPart) and part.tool_call_id == tool_call_id for part in last.parts
+    )
 
 
 def chart_of(part: ModelRequestPart) -> dict | None:
@@ -272,7 +295,10 @@ async def save_turn(
 ) -> AssistantMessage:
     """Persist one turn: its messages, usage counters, and tool-call audit rows."""
     ordinal = await _next_ordinal(db, conversation.id)
-    payload = json.loads(new_messages_json)
+    # What the model read and wrote includes data the platform does not control, and
+    # Postgres refuses NUL in JSONB and text: one such cell would fail the save and
+    # lose the whole turn, answer and audit rows with it.
+    payload = clean_json(json.loads(new_messages_json))
     input_tokens = usage.input_tokens or 0
     output_tokens = usage.output_tokens or 0
     message = AssistantMessage(
@@ -291,12 +317,12 @@ async def save_turn(
             AssistantToolCall(
                 conversation_id=conversation.id,
                 tool=record.tool,
-                args=record.args,
+                args=clean_json(record.args),
                 status=record.status,
-                detail=record.detail,
+                detail=clean(record.detail) if record.detail is not None else None,
                 query_id=uuid.UUID(record.query_id) if record.query_id else None,
                 latency_ms=record.latency_ms,
-                tables=record.tables,
+                tables=clean_json(record.tables),
             )
         )
     await db.commit()

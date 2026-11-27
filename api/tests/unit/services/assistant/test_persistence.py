@@ -18,6 +18,7 @@ from api.models.assistant import AssistantConversation, AssistantMessage, Assist
 from api.models.user import User
 from api.services.assistant.deps import ToolCallRecord
 from api.services.assistant.persistence import (
+    has_pending_call,
     is_history_truncated,
     load_history,
     render_transcript,
@@ -25,6 +26,7 @@ from api.services.assistant.persistence import (
     save_turn,
 )
 from api.services.auth import hash_password
+from api.services.text_safety import REPLACEMENT
 
 
 @pytest_asyncio.fixture
@@ -606,3 +608,102 @@ async def test_a_page_read_twice_is_cited_once(db_session, conversation):
     items = await render_transcript_with_sql(db_session, conversation.id)
 
     assert len(next(i for i in items if i["role"] == "assistant")["sources"]) == 1
+
+
+async def _pause_on(db_session, conversation, tool_call_id: str = "call-xyz") -> None:
+    """End a turn the way a write awaiting approval does: on the response that asked."""
+    messages = [
+        ModelRequest(parts=[UserPromptPart(content="delete stuff")]),
+        ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name="run_sql", args={"sql": "DELETE FROM t"}, tool_call_id=tool_call_id
+                )
+            ]
+        ),
+    ]
+    await save_turn(
+        db_session,
+        conversation,
+        new_messages_json=ModelMessagesTypeAdapter.dump_json(messages),
+        usage=RunUsage(input_tokens=1, output_tokens=1),
+        records={},
+    )
+
+
+async def test_a_conversation_is_pending_on_the_call_its_last_response_asked(
+    db_session, conversation
+):
+    await _pause_on(db_session, conversation)
+
+    assert await has_pending_call(db_session, conversation.id, "call-xyz")
+
+
+async def test_a_call_that_was_never_asked_is_not_pending(db_session, conversation):
+    await _pause_on(db_session, conversation)
+
+    assert not await has_pending_call(db_session, conversation.id, "call-other")
+
+
+async def test_a_conversation_with_no_history_is_pending_on_nothing(db_session, conversation):
+    assert not await has_pending_call(db_session, conversation.id, "call-xyz")
+
+
+async def test_a_call_is_no_longer_pending_once_the_conversation_has_moved_on(
+    db_session, conversation
+):
+    await _pause_on(db_session, conversation)
+    answered = [
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name="run_sql", content="denied", tool_call_id="call-xyz"),
+            ]
+        ),
+        ModelResponse(parts=[TextPart(content="Understood, I left it alone.")]),
+    ]
+    await save_turn(
+        db_session,
+        conversation,
+        new_messages_json=ModelMessagesTypeAdapter.dump_json(answered),
+        usage=RunUsage(input_tokens=1, output_tokens=1),
+        records={},
+    )
+
+    assert not await has_pending_call(db_session, conversation.id, "call-xyz")
+
+
+async def test_a_turn_holding_text_the_database_cannot_keep_is_still_saved(
+    db_session, conversation
+):
+    """One NUL in a query result used to fail the save, losing the answer, the question
+    and the audit rows with it."""
+    messages = [
+        ModelRequest(parts=[UserPromptPart(content="what is in the cell?")]),
+        ModelResponse(parts=[TextPart(content="It holds a\x00b.")]),
+    ]
+    await save_turn(
+        db_session,
+        conversation,
+        new_messages_json=ModelMessagesTypeAdapter.dump_json(messages),
+        usage=RunUsage(input_tokens=1, output_tokens=1),
+        records={
+            "c1": ToolCallRecord(
+                tool="run_sql",
+                args={"sql": "SELECT '\x00'", "n\x00ote": ["x\x00"]},
+                status="error",
+                detail="Query failed: bad byte \x00",
+                tables=[{"catalog": "c", "schema_name": "s", "table": "t\x00"}],
+            )
+        },
+    )
+
+    saved = (await db_session.execute(select(AssistantMessage))).scalar_one()
+    call = (await db_session.execute(select(AssistantToolCall))).scalar_one()
+    assert saved.payload[-1]["parts"][0]["content"] == f"It holds a{REPLACEMENT}b."
+    assert call.args == {
+        "sql": f"SELECT '{REPLACEMENT}'",
+        f"n{REPLACEMENT}ote": [f"x{REPLACEMENT}"],
+    }
+    assert call.detail == f"Query failed: bad byte {REPLACEMENT}"
+    assert call.tables == [{"catalog": "c", "schema_name": "s", "table": f"t{REPLACEMENT}"}]
+    assert "\x00" not in repr(saved.payload)

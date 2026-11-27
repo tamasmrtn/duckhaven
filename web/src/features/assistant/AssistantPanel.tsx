@@ -590,7 +590,7 @@ export function AssistantPanel({ ws }: { ws: string }) {
               size="sm"
               variant="outline"
               onClick={jumpToLatest}
-              className="absolute bottom-2 left-1/2 h-7 -translate-x-1/2 gap-1 rounded-full bg-[var(--bg-surface)] text-xs shadow-md"
+              className="absolute bottom-2 left-1/2 h-7 -translate-x-1/2 gap-1 rounded-full border-[var(--brand-slate-blue)] bg-[var(--bg-elevated)] text-xs shadow-lg"
             >
               <ArrowDown className="size-3.5" aria-hidden="true" />
               Jump to latest

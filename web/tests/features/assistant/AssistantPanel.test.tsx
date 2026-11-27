@@ -24,6 +24,7 @@ import {
   setAssistantEnabled,
   setAssistantAvailability,
 } from "@/mock/fixtures/assistant";
+import { contrast, theme } from "./colourTokens";
 
 // A streaming reply is mirrored, throttled, into a visually hidden aria-live
 // region for screen readers. Text queries should read what a sighted user sees,
@@ -1197,6 +1198,36 @@ describe("AssistantPanel", () => {
       stream.push({ type: "token", text: " Second part." });
       await screen.findByText("First part. Second part.");
       expect(scroll).toHaveBeenCalled();
+    });
+
+    // Once shipped in the answers' own background colour, with a border too faint to
+    // see in dark mode, so it read as text laid over text.
+    it("makes the way back down stand apart from the answers behind it", async () => {
+      const { stream } = await startTurn();
+      stream.push({ type: "token", text: "First part." });
+      await screen.findByText("First part.");
+      scrollThreadTo(900);
+      const button = await screen.findByRole("button", {
+        name: "Jump to latest",
+      });
+      const answer = screen.getAllByRole("article", {
+        name: "The assistant said",
+      })[0];
+      const token = (el: HTMLElement, use: "bg" | "border") =>
+        new RegExp(`(?:^|\\s)${use}-\\[var\\((--[\\w-]+)\\)\\]`).exec(
+          el.className,
+        )![1];
+
+      for (const mode of ["light", "dark"] as const) {
+        const colours = theme(mode);
+        const behind = colours[token(answer, "bg")];
+        expect(colours[token(button, "bg")], mode).not.toBe(behind);
+        // 3:1 is what WCAG asks of the edge that marks out a control.
+        expect(
+          contrast(colours[token(button, "border")], behind),
+          mode,
+        ).toBeGreaterThanOrEqual(3);
+      }
     });
 
     it("does not link another site from an answer as it streams in", async () => {

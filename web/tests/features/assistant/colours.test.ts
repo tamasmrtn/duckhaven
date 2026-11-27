@@ -1,12 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
+import { SRC, contrast, theme } from "./colourTokens";
 
-// The source tree, found from this file rather than from wherever the tests were
-// started, so the check reads the same files whichever directory runs it.
-const SRC = join(dirname(fileURLToPath(import.meta.url)), "../../../src");
-
+// Every stylesheet and every assistant component, as text, so what the components
+// ask of the stylesheets can be checked without rendering anything.
 function files(dir: string, extension: string): string[] {
   return readdirSync(dir, { withFileTypes: true }).flatMap((entry) =>
     entry.isDirectory()
@@ -17,7 +15,6 @@ function files(dir: string, extension: string): string[] {
   );
 }
 
-const tokens = readFileSync(join(SRC, "styles/tokens.css"), "utf8");
 const stylesheets = files(SRC, ".css").map((f) => readFileSync(f, "utf8"));
 const components = Object.fromEntries(
   files(join(SRC, "features/assistant"), ".tsx").map((f) => [
@@ -26,44 +23,20 @@ const components = Object.fromEntries(
   ]),
 );
 
-function declarations(selector: string): Record<string, string> {
-  const block = new RegExp(`${selector}\\s*\\{([^}]*)\\}`).exec(tokens);
-  if (!block) throw new Error(`no ${selector} block in tokens.css`);
-  return Object.fromEntries(
-    [...block[1].matchAll(/(--[\w-]+)\s*:\s*([^;]+);/g)].map((m) => [
-      m[1],
-      m[2].trim(),
-    ]),
-  );
-}
-
-function luminance(hex: string): number {
-  const channel = (i: number) => {
-    const c = parseInt(hex.slice(1 + i * 2, 3 + i * 2), 16) / 255;
-    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
-  };
-  return 0.2126 * channel(0) + 0.7152 * channel(1) + 0.0722 * channel(2);
-}
-
-function contrast(a: string, b: string): number {
-  const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x);
-  return (hi + 0.05) / (lo + 0.05);
-}
-
 describe("colours the assistant relies on", () => {
   // WCAG 1.4.3: body text needs 4.5:1. The brand colour on its own reads 4.03:1
   // under white in light mode and 2.80:1 in dark mode, which is why a message
   // from the person uses its own pair of tokens.
-  it.each([
-    ["light", ":root"],
-    ["dark", "\\.dark"],
-  ])("the person's message is readable in %s mode", (_mode, selector) => {
-    const vars = declarations(selector);
+  it.each(["light", "dark"] as const)(
+    "the person's message is readable in %s mode",
+    (mode) => {
+      const vars = theme(mode);
 
-    expect(
-      contrast(vars["--text-on-brand"], vars["--bg-brand"]),
-    ).toBeGreaterThanOrEqual(4.5);
-  });
+      expect(
+        contrast(vars["--text-on-brand"], vars["--bg-brand"]),
+      ).toBeGreaterThanOrEqual(4.5);
+    },
+  );
 
   it("defines every CSS variable the assistant components use", () => {
     const defined = new Set(

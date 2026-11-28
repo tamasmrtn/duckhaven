@@ -15,8 +15,14 @@ export interface ChartSeries {
   measure: ChartMeasure;
 }
 
-/** One x value with every series' value there; a series with none is null. */
-export type Datum = { x: string } & Record<string, string | number | null>;
+/**
+ * One x value with every series' value there; a series with none is null. On a
+ * number axis `xn` holds the x as a number, which is where the axis draws it.
+ */
+export type Datum = { x: string; xn?: number } & Record<
+  string,
+  string | number | null
+>;
 
 export interface ChartData {
   data: Datum[];
@@ -32,8 +38,9 @@ export interface ChartData {
  * A chart split by a dimension draws one series per key the server chose, in
  * the colour slot it gave that key, so a filter that removes a series never
  * recolours the rest. A chart of several measures draws one series per
- * measure, in slot order. A time axis is drawn oldest first, whatever order
- * the rows came in; categories keep the query's order.
+ * measure, in slot order. A time axis is drawn oldest first and a number axis
+ * smallest first, whatever order the rows came in; categories keep the query's
+ * order.
  *
  * A line over a window that cuts a period, such as the first week of the last
  * 90 days, draws that period dashed: each series' value is also kept as
@@ -96,13 +103,22 @@ export function chartData(
     }
   }
 
-  const data = [...byX.values()];
+  let data = [...byX.values()];
   for (const d of data) {
     for (const s of series) if (!(s.key in d)) d[s.key] = null;
   }
   if (chart.x?.kind === "time") {
     // ISO dates and timestamps sort as text.
     data.sort((a, b) => (a.x < b.x ? -1 : a.x > b.x ? 1 : 0));
+  } else if (chart.x?.kind === "number") {
+    // Wide integers and decimals arrive as text, which would put lap 10 before
+    // lap 9. A row with no number there has no place on the axis; the table
+    // view still has it.
+    data = data.flatMap((d) => {
+      const n = toNumber(d.x);
+      return n === null ? [] : [Object.assign(d, { xn: n })];
+    });
+    data.sort((a, b) => a.xn! - b.xn!);
   }
   const partial = new Set(chart.x?.kind === "time" ? chart.x.partial : []);
   if (chart.type === "line" && partial.size > 0) {

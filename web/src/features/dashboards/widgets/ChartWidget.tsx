@@ -201,8 +201,23 @@ export function ChartWidget({
     });
   const valueWidth = Math.min(80, Math.max(32, textWidth(tick(extreme)) + 8));
   const grain = chart.x?.kind === "time" ? (chart.x.grain ?? null) : null;
+  const numeric = chart.x?.kind === "number";
+  // A lap or a year names a thing, and 2,024 would read as an amount.
+  const whole = /INT/i.test(
+    rows.columns.find((c) => c.name === chart.x?.field)?.type ?? "",
+  );
+  const numberTick = (value: unknown) =>
+    formatValue(
+      typeof value === "number" ? value : null,
+      {},
+      { grouping: !whole, trim: true },
+    );
   const xLabel = (x: string) =>
-    chart.x?.kind === "time" ? formatPeriod(x, grain, true) : x || "(none)";
+    chart.x?.kind === "time"
+      ? formatPeriod(x, grain, true)
+      : numeric
+        ? formatValue(x, {}, { grouping: !whole })
+        : x || "(none)";
   const cut = data.filter((d) => partial.has(d.x)).map((d) => xLabel(d.x));
   const legend =
     series.length > 1 ? (
@@ -244,10 +259,22 @@ export function ChartWidget({
     plot = (
       <LineChart data={data} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
         <CartesianGrid {...GRID_PROPS} />
+        {/* A number axis draws each point at its value, so a lap missing
+            from the data leaves a gap of its own width. */}
         <XAxis
-          dataKey="x"
           {...X_AXIS_PROPS}
-          tickFormatter={(x: string) => formatPeriod(x, grain)}
+          {...(numeric
+            ? {
+                dataKey: "xn",
+                type: "number" as const,
+                domain: ["dataMin", "dataMax"],
+                allowDecimals: !whole,
+                tickFormatter: numberTick,
+              }
+            : {
+                dataKey: "x",
+                tickFormatter: (x: string) => formatPeriod(x, grain),
+              })}
           minTickGap={24}
         />
         <YAxis

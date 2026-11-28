@@ -32,6 +32,12 @@ describe("formatValue", () => {
     expect(formatValue(2.5, USD, { trim: true })).toBe("$2.5");
   });
 
+  it("drops thousands separators for a number that names a thing", () => {
+    // A lap or a year: 2024, not 2,024.
+    expect(formatValue(2024, {}, { grouping: false })).toBe("2024");
+    expect(formatValue(2024, {})).toBe("2,024");
+  });
+
   it("reads a percent as a ratio, and a change in one in points", () => {
     expect(formatValue(0.031, { format: "percent" })).toBe("3.1%");
     expect(formatValue(0.004, { format: "percent" }, { signed: true })).toBe(

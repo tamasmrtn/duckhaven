@@ -1383,6 +1383,68 @@ def test_past_the_palette_series_without_a_colour_column_value_are_grey():
     ]
 
 
+PITS = {
+    **DRIVERS,
+    "markers": [
+        {"when": "pit", "label": "Pit stop", "size": "stop", "tooltip": ["stop", "tyre"]},
+        {"at": "last", "label": "acronym"},
+    ],
+}
+PIT_NAMES = ("lap", "driver", "seconds", "pit", "stop", "tyre", "acronym")
+
+
+def test_a_lines_markers_are_kept_when_the_result_holds_their_columns():
+    chart, notes = _laps_drawn(
+        PITS,
+        rows=[[1, "VER", 80.0, True, 2.4, "HARD", "VER"]],
+        names=PIT_NAMES,
+        types=("BIGINT", "VARCHAR", "DOUBLE", "BOOLEAN", "DECIMAL(5,2)", "VARCHAR", "VARCHAR"),
+    )
+
+    assert [m.model_dump() for m in chart.markers] == [
+        {
+            "type": "point",
+            "when": "pit",
+            "label": "Pit stop",
+            "size": "stop",
+            "tooltip": ["stop", "tyre"],
+        },
+        {"type": "end", "label": "acronym"},
+    ]
+    assert notes == []
+
+
+def test_a_marker_the_result_cannot_draw_is_left_out_and_named():
+    chart, notes = _laps_drawn(
+        PITS,
+        rows=[[1, "VER", 80.0, 1, "slow", "HARD"]],
+        names=PIT_NAMES[:6],
+        types=("BIGINT", "VARCHAR", "DOUBLE", "INTEGER", "VARCHAR", "VARCHAR"),
+    )
+
+    assert chart.markers == []
+    assert notes == [
+        "A marker needs pit to be BOOLEAN; it is INTEGER.",
+        "The label column acronym is not in the result.",
+    ]
+
+
+def test_a_markers_size_and_tooltip_columns_are_cut_to_what_the_result_holds():
+    chart, notes = _laps_drawn(
+        PITS,
+        rows=[[1, "VER", 80.0, True, "slow", "VER"]],
+        names=("lap", "driver", "seconds", "pit", "stop", "acronym"),
+        types=("BIGINT", "VARCHAR", "DOUBLE", "BOOLEAN", "VARCHAR", "VARCHAR"),
+    )
+
+    [pit, _] = chart.markers
+    assert (pit.size, pit.tooltip) == (None, ["stop"])
+    assert notes == [
+        "A marker's size needs stop to be a number; it is VARCHAR.",
+        "The tooltip column tyre is not in the result.",
+    ]
+
+
 def _weekly(window_start: date, window_end: date, weeks: list[str]) -> tuple[list[str], list[str]]:
     """The partial weeks of a weekly line over a window, and what the view says."""
     from api.services.dashboards.chart_spec import Axis, ChartSpec, Limits, Measure

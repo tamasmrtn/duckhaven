@@ -100,6 +100,50 @@ describe("chartData", () => {
     ]);
   });
 
+  it("marks the points a marker column picks, sized by another", () => {
+    const { marks, series } = chartData(
+      spec({
+        x: { field: "lap", kind: "number" },
+        series: { field: "driver", keys: ["PER", "VER"] },
+        markers: [
+          {
+            type: "point",
+            when: "pit",
+            label: "Pit stop",
+            size: "stop",
+            tooltip: ["stop"],
+          },
+          { type: "end", label: "acronym" },
+        ],
+      }),
+      [
+        { name: "lap", type: "BIGINT", role: "dimension" },
+        { name: "driver", type: "VARCHAR", role: "dimension" },
+        { name: "revenue", type: "DOUBLE", role: "measure" },
+        { name: "pit", type: "BOOLEAN", role: null },
+        { name: "stop", type: "DOUBLE", role: null },
+        { name: "acronym", type: "VARCHAR", role: null },
+      ],
+      [
+        ["1", "VER", 80, false, null, null],
+        ["2", "VER", 99, true, 2, "VER"],
+        ["2", "PER", 98, true, 4, "PER"],
+      ],
+    );
+
+    expect(series.map((s) => s.endLabel)).toEqual(["PER", "VER"]);
+    expect(marks.get("s1")?.get("2")).toEqual([
+      {
+        layer: 0,
+        label: "Pit stop",
+        r: 3,
+        details: [{ name: "stop", value: 2 }],
+      },
+    ]);
+    expect(marks.get("s0")?.get("2")?.[0].r).toBe(6);
+    expect(marks.get("s1")?.has("1")).toBe(false);
+  });
+
   it("draws a period the window cuts dashed, from the whole period beside it", () => {
     const { data, partial } = chartData(
       spec({

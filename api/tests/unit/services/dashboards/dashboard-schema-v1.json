@@ -495,6 +495,29 @@
       "title": "DimensionParameter",
       "type": "object"
     },
+    "EndLabel": {
+      "additionalProperties": false,
+      "description": "Names each line at its last point, in place of a legend.",
+      "properties": {
+        "at": {
+          "const": "last",
+          "description": "Where the label goes: the line's last point.",
+          "title": "At",
+          "type": "string"
+        },
+        "label": {
+          "description": "The column holding each series' label, such as a name.",
+          "title": "Label",
+          "type": "string"
+        }
+      },
+      "required": [
+        "at",
+        "label"
+      ],
+      "title": "EndLabel",
+      "type": "object"
+    },
     "KpiColumns": {
       "additionalProperties": false,
       "properties": {
@@ -745,6 +768,22 @@
           "title": "Ignore",
           "type": "array"
         },
+        "markers": {
+          "description": "Points to mark where a column is true, and at most one label at each line's last point. SQL lines only.",
+          "items": {
+            "oneOf": [
+              {
+                "$ref": "#/$defs/PointMarker"
+              },
+              {
+                "$ref": "#/$defs/EndLabel"
+              }
+            ]
+          },
+          "maxItems": 4,
+          "title": "Markers",
+          "type": "array"
+        },
         "params": {
           "description": "SQL placeholders and the parameters they take: $region, $period.start.",
           "maxProperties": 20,
@@ -829,6 +868,59 @@
         "type"
       ],
       "title": "LineWidget",
+      "type": "object"
+    },
+    "PointMarker": {
+      "additionalProperties": false,
+      "description": "Marks the points of a line where a result column is true, such as a pit stop.",
+      "properties": {
+        "label": {
+          "anyOf": [
+            {
+              "maxLength": 40,
+              "minLength": 1,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "What a mark means, in the tooltip and the legend. Defaults to the column.",
+          "title": "Label"
+        },
+        "size": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "A number column: a larger value draws a larger mark.",
+          "title": "Size"
+        },
+        "tooltip": {
+          "description": "Columns the tooltip lists at a mark.",
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 5,
+          "title": "Tooltip",
+          "type": "array"
+        },
+        "when": {
+          "description": "A BOOLEAN column: a point is marked where it is true.",
+          "title": "When",
+          "type": "string"
+        }
+      },
+      "required": [
+        "when"
+      ],
+      "title": "PointMarker",
       "type": "object"
     },
     "Row": {

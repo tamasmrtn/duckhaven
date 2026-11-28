@@ -54,7 +54,14 @@ from api.schemas.query import QueryCreate, RowsPageOut
 from api.services import delegation, query_submit
 from api.services import query as query_service
 from api.services.agent_capabilities import agent_supports_feature
-from api.services.dashboards.chart_spec import MAX_SERIES, ChartSpec, SeriesStyle, chart_spec
+from api.services.dashboards.chart_spec import (
+    MAX_SERIES,
+    ChartSpec,
+    EndLabels,
+    PointLayer,
+    SeriesStyle,
+    chart_spec,
+)
 from api.services.dashboards.contrast import colour_problems, few
 from api.services.dashboards.resolve import (
     ParameterError,
@@ -802,6 +809,10 @@ def drawn(
     names = [c["name"] for c in columns]
     data = [[row.get(name) for name in names] for row in page.rows]
     left_out: list[str] = []
+    if chart.markers:
+        types = {c.name: c.type for c in page.column_schema or []}
+        chart.markers, notes = _markers(chart.markers, names, types)
+        left_out.extend(notes)
     if chart.series is not None:
         ranked = _ranked(chart, names, data)
         chart.series.keys, dropped = _series(ranked, chart.limits.series)
@@ -992,6 +1003,50 @@ def _series(ranked: list[str], limit: int) -> tuple[list[str], int]:
     when a filter changes which value the rows hold first."""
     keys = sorted(ranked[:limit], key=lambda k: (k == "", k))
     return keys, len(ranked) - len(keys)
+
+
+def _markers(
+    markers: list[PointLayer | EndLabels], names: list[str], types: Mapping[str, str]
+) -> tuple[list[PointLayer | EndLabels], list[str]]:
+    """The marker layers the result can draw, and why any were left out or cut.
+
+    A type the agent did not report is taken on trust."""
+    kept: list[PointLayer | EndLabels] = []
+    notes: list[str] = []
+    for marker in markers:
+        if isinstance(marker, EndLabels):
+            if marker.label in names:
+                kept.append(marker)
+            else:
+                notes.append(f"The label column {marker.label} is not in the result.")
+            continue
+        when_type = types.get(marker.when)
+        if marker.when not in names:
+            notes.append(f"The marker column {marker.when} is not in the result.")
+            continue
+        if when_type is not None and when_type.upper() != "BOOLEAN":
+            notes.append(f"A marker needs {marker.when} to be BOOLEAN; it is {when_type}.")
+            continue
+        size = marker.size
+        if size is not None and size not in names:
+            notes.append(f"The size column {size} is not in the result; its marks keep one size.")
+            size = None
+        elif size is not None and size in types and not _NUMBER_TYPE.match(types[size].upper()):
+            notes.append(f"A marker's size needs {size} to be a number; it is {types[size]}.")
+            size = None
+        missing = [c for c in marker.tooltip if c not in names]
+        if missing:
+            plural = len(missing) > 1
+            notes.append(
+                f"The tooltip column{'s' if plural else ''} {few(missing)} "
+                f"{'are' if plural else 'is'} not in the result."
+            )
+        kept.append(
+            marker.model_copy(
+                update={"size": size, "tooltip": [c for c in marker.tooltip if c in names]}
+            )
+        )
+    return kept, notes
 
 
 #: A colour as a result column may give it: #rrggbb or #rgb, the # optional.

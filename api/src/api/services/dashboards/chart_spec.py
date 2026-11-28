@@ -26,8 +26,10 @@ from api.services.dashboards.spec import (
     TABLE_LIMIT,
     BarWidget,
     DataWidget,
+    EndLabel,
     KpiWidget,
     LineWidget,
+    PointMarker,
 )
 from api.services.semantic.model import Metric
 
@@ -70,6 +72,19 @@ class SeriesStyle(BaseModel):
     dash: Literal["solid", "dotted"] | None = None
 
 
+class PointLayer(BaseModel):
+    type: Literal["point"] = "point"
+    when: str = Field(description="The BOOLEAN column marking a point where it is true.")
+    label: str
+    size: str | None = Field(default=None, description="A number column the mark's size follows.")
+    tooltip: list[str] = Field(default_factory=list)
+
+
+class EndLabels(BaseModel):
+    type: Literal["end"] = "end"
+    label: str = Field(description="The column naming each series at its last point.")
+
+
 class Limits(BaseModel):
     rows: int | None = Field(description="Rows the widget reads; None leaves it to the compiler.")
     series: int = MAX_SERIES
@@ -92,6 +107,11 @@ class ChartSpec(BaseModel):
         description="Series key to the colour and line style its rows give, filled when the "
         "widget runs.",
     )
+    markers: list[PointLayer | EndLabels] = Field(
+        default_factory=list,
+        description="Marked points and end labels, read from result columns. A layer whose "
+        "columns the result lacks is left out when the widget runs.",
+    )
     limits: Limits
 
 
@@ -100,6 +120,17 @@ def chart_spec(widget: DataWidget, metrics: Mapping[str, Metric] | None = None) 
     if widget.query is not None:
         return _from_query(widget, metrics or {})
     return _from_columns(widget)
+
+
+def _marker(marker: PointMarker | EndLabel) -> PointLayer | EndLabels:
+    if isinstance(marker, EndLabel):
+        return EndLabels(label=marker.label)
+    return PointLayer(
+        when=marker.when,
+        label=marker.label or marker.when,
+        size=marker.size,
+        tooltip=list(marker.tooltip),
+    )
 
 
 def _field(dimension: str) -> str:
@@ -172,6 +203,7 @@ def _from_columns(widget: DataWidget) -> ChartSpec:
             x=Axis(field=columns.x, kind="time"),
             y=[_measure(name, None) for name in columns.y],
             series=Series(field=columns.series) if columns.series else None,
+            markers=[_marker(m) for m in widget.markers],
             limits=Limits(rows=LINE_LIMIT, series=widget.series_limit),
         )
     if isinstance(widget, BarWidget):

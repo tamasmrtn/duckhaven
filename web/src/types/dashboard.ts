@@ -262,6 +262,17 @@ export interface ChartMeasure {
   polarity?: Polarity | null;
 }
 
+/** Marked points, or a label at each line's last point, read from result columns. */
+export type ChartMarker =
+  | {
+      type: "point";
+      when: string;
+      label: string;
+      size?: string | null;
+      tooltip?: string[];
+    }
+  | { type: "end"; label: string };
+
 export interface SeriesStyle {
   color?: string | null;
   dash?: "solid" | "dotted" | null;
@@ -292,6 +303,7 @@ export interface ChartSpec {
   colors: Record<string, number>;
   /** Series key to the colour (#rrggbb) and line style its rows give. */
   styles?: Record<string, SeriesStyle>;
+  markers?: ChartMarker[];
   limits: { rows: number | null; series: number };
 }
 

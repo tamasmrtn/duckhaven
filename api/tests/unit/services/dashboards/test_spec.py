@@ -263,6 +263,43 @@ def test_a_series_limit_needs_series_to_limit(widget, message):
     assert any(message in m for m in errors(doc(widget)))
 
 
+PIT = {"when": "is_pit_out_lap", "size": "pit_duration", "tooltip": ["pit_duration"]}
+END = {"at": "last", "label": "acronym"}
+
+
+def test_a_line_marks_points_and_labels_its_ends():
+    spec = DashboardSpec.model_validate(doc(_drivers(markers=[PIT, END])))
+    [pit, end] = spec.rows[0].widgets[0].markers
+    assert (pit.when, pit.size, end.label) == ("is_pit_out_lap", "pit_duration", "acronym")
+
+
+@pytest.mark.parametrize(
+    ("widget", "message"),
+    [
+        (_drivers(markers=[PIT] * 5), "at most 4 items"),
+        (_drivers(markers=[END, END]), "one at: last label"),
+        (
+            _drivers(markers=[END], columns={"x": "lap", "y": ["seconds"]}),
+            "at: last labels each series, so the line needs a series column",
+        ),
+        (
+            {
+                "id": "w",
+                "type": "line",
+                "title": "W",
+                "markers": [PIT],
+                "query": {"model": "o", "metrics": ["a"], "grain": "day"},
+            },
+            "markers name result columns, so they are for SQL lines",
+        ),
+        (_drivers(markers=[{**PIT, "colour": "red"}]), "Extra inputs are not permitted"),
+        (_drivers(markers=[{"at": "first", "label": "acronym"}]), "'last'"),
+    ],
+)
+def test_markers_are_checked(widget, message):
+    assert any(message in m for m in errors(doc(widget)))
+
+
 @pytest.mark.parametrize(("key", "message"), [("color", "colour"), ("dash", "line style")])
 def test_a_style_column_needs_series_to_style(key, message):
     widget = _drivers(columns={"x": "lap", "y": ["seconds"], key: "c"})

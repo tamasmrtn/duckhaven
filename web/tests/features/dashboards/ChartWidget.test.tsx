@@ -232,6 +232,37 @@ describe("ChartWidget", () => {
     expect(screen.queryByRole("list")).toBeNull();
   });
 
+  it("draws a dotted series in round dots, and its legend key the same", () => {
+    const event = racing([
+      ["1", "VER", 80.1, false, null, "VER"],
+      ["2", "VER", 80.0, false, null, "VER"],
+      ["1", "PER", 80.9, false, null, "PER"],
+      ["2", "PER", 80.6, false, null, "PER"],
+    ]);
+    event.chart = {
+      ...event.chart!,
+      styles: {
+        VER: { color: "#3671c6" },
+        PER: { color: "#3671c6", dash: "dotted" },
+      },
+      markers: [],
+    };
+    const { container } = render(
+      <ChartWidget event={event} label="Lap times" />,
+    );
+
+    const dashes = [
+      ...container.querySelectorAll("path.recharts-line-curve"),
+    ].map((path) => path.getAttribute("stroke-dasharray"));
+    expect(dashes).toEqual(["0 4", null]);
+    // Without end labels, the legend keys the dotted line as dotted.
+    const keys = [...screen.getByRole("list").querySelectorAll("li")].map(
+      (li) =>
+        li.querySelector("line")?.getAttribute("stroke-dasharray") ?? null,
+    );
+    expect(keys).toEqual(["0 4", null]);
+  });
+
   it("reads an integer axis without thousands separators", () => {
     const { container } = render(
       <ChartWidget

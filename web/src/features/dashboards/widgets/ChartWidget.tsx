@@ -19,6 +19,7 @@ import { NEUTRAL, resolve, SERIES } from "@/components/charts/chartColors";
 import {
   GRID_PROPS,
   Legend,
+  LineSwatch,
   TOOLTIP_PROPS,
   X_AXIS_PROPS,
   Y_AXIS_PROPS,
@@ -110,11 +111,7 @@ function ChartTooltip({
       <ul className="space-y-0.5">
         {series.map((s, i) => (
           <li key={s.key} className="flex items-center gap-2">
-            <span
-              aria-hidden
-              className="h-0.5 w-3 shrink-0 rounded-full"
-              style={{ backgroundColor: colors[i] }}
-            />
+            <LineSwatch color={colors[i]} dash={s.dash} />
             <span className="font-medium tabular-nums text-text-primary">
               {formatValue(datum[s.key] ?? null, s.measure)}
             </span>
@@ -405,7 +402,11 @@ export function ChartWidget({
     series.length > 1 && !ends ? (
       <Legend
         mark={chart.type === "line" ? "line" : "square"}
-        items={series.map((s, i) => ({ label: s.label, color: colors[i] }))}
+        items={series.map((s, i) => ({
+          label: s.label,
+          color: colors[i],
+          dash: s.dash,
+        }))}
       />
     ) : null;
   const tooltipTitle = (x: string) =>
@@ -528,6 +529,8 @@ export function ChartWidget({
             type="linear"
             stroke={colors[i]}
             strokeWidth={2}
+            // Round dots, unlike the dashes of a partial period.
+            strokeDasharray={s.dash === "dotted" ? "0 4" : undefined}
             strokeLinejoin="round"
             strokeLinecap="round"
             dot={

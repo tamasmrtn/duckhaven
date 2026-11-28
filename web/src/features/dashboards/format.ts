@@ -24,6 +24,11 @@ export interface FormatOptions {
   signed?: boolean;
   /** No trailing zero decimals, for an axis tick: €0 and €2.5, not €0.00. */
   trim?: boolean;
+  /**
+   * Thousands separators, on by default. Off for a count that names a thing
+   * rather than an amount, such as a lap or a year: 2024, not 2,024.
+   */
+  grouping?: boolean;
 }
 
 const COMPACT_FROM = 10_000;
@@ -57,7 +62,12 @@ function duration(seconds: number, signed: boolean): string {
 export function formatValue(
   value: Cell,
   fmt: ValueFormat = {},
-  { compact = false, signed = false, trim = false }: FormatOptions = {},
+  {
+    compact = false,
+    signed = false,
+    trim = false,
+    grouping = true,
+  }: FormatOptions = {},
 ): string {
   if (value === null || value === undefined) return "—";
   const n = toNumber(value);
@@ -101,6 +111,7 @@ export function formatValue(
     notation: compact ? "compact" : "standard",
     maximumFractionDigits: compact ? 1 : 2,
     signDisplay: sign,
+    useGrouping: grouping,
   }).format(n);
   return fmt.unit ? `${text} ${fmt.unit}` : text;
 }

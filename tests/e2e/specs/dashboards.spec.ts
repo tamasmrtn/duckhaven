@@ -57,6 +57,15 @@ test("a published dashboard opens from the list and shows its widgets' data", as
               sql: `SELECT CAST(id AS VARCHAR) AS id, amount FROM ${table} ORDER BY id`,
               columns: { x: "id", y: ["amount"] },
             },
+            {
+              // An integer x draws as a number axis, smallest first, whatever
+              // order the SQL returns.
+              id: "by_lap",
+              type: "line",
+              title: "Amount by lap",
+              sql: `SELECT id AS lap, amount FROM ${table} ORDER BY lap DESC`,
+              columns: { x: "lap", y: ["amount"] },
+            },
             { id: "note", type: "text", markdown: "Made by the **e2e** suite." },
           ],
         },
@@ -88,6 +97,12 @@ test("a published dashboard opens from the list and shows its widgets' data", as
     await bars.getByRole("button", { name: "Actions for Amount by id" }).click();
     await page.getByRole("menuitem", { name: "View as table" }).click();
     await expect(bars.getByText("5 rows")).toBeVisible();
+
+    const laps = page.getByRole("region", { name: "Amount by lap" });
+    await expect(laps.getByRole("img", { name: /A line chart of amount by lap/ })).toBeVisible();
+    const lapTicks = laps.locator('text.recharts-cartesian-axis-tick-value[orientation="bottom"]');
+    await expect(lapTicks.first()).toHaveText("1");
+    await expect(lapTicks.last()).toHaveText("5");
     expect(violations).toEqual([]);
   } finally {
     await page.request.delete(`/api/workspaces/${WS_SLUG}/dashboards/${name}`);

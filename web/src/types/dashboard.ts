@@ -267,7 +267,11 @@ export interface ChartSpec {
   type: "kpi" | "line" | "bar" | "table";
   x: {
     field: string;
-    kind: "time" | "category";
+    /**
+     * time: oldest first. number: smallest first, drawn to scale. category:
+     * the query's order.
+     */
+    kind: "time" | "number" | "category";
     grain?: string | null;
     /** Time values whose period the window holds only in part. */
     partial?: string[];
@@ -276,7 +280,7 @@ export interface ChartSpec {
   series: { field: string; keys: string[] } | null;
   stack: boolean;
   orientation: "vertical" | "horizontal" | null;
-  /** Series key to colour slot, 0 to 7. */
+  /** Series key to colour slot, 0 to 7. A key with none draws in a neutral grey. */
   colors: Record<string, number>;
   limits: { rows: number | null; series: number };
 }

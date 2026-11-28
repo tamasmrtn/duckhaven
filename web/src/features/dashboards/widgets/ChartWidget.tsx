@@ -13,7 +13,7 @@ import {
   YAxis,
   type BarShapeProps,
 } from "recharts";
-import { resolve, SERIES } from "@/components/charts/chartColors";
+import { NEUTRAL, resolve, SERIES } from "@/components/charts/chartColors";
 import {
   GRID_PROPS,
   Legend,
@@ -31,6 +31,7 @@ import {
 } from "../chartData";
 import { categoryValues } from "../crossFilter";
 import { formatValue, type ValueFormat } from "../format";
+import { niceDomain, stepTicks, ticksWithin } from "../scale";
 
 /** The dimension parameter a click on a bar sets, and its value in this run. */
 export interface ChartSelection {
@@ -109,6 +110,22 @@ function ChartTooltip({
   );
 }
 
+/** The value range a line draws: its lowest to its highest value, on round steps. */
+function fitted(data: Datum[], series: ChartSeries[]) {
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (const d of data) {
+    for (const s of series) {
+      const v = d[s.key];
+      if (typeof v === "number" && Number.isFinite(v)) {
+        lo = Math.min(lo, v);
+        hi = Math.max(hi, v);
+      }
+    }
+  }
+  return lo <= hi ? niceDomain(lo, hi) : null;
+}
+
 function describe(
   chart: ChartSpec,
   series: ChartSeries[],
@@ -180,7 +197,7 @@ export function ChartWidget({
         ? `Click to stop filtering by ${selection.label}`
         : `Click to filter by ${selection.label}`;
   const colors = series.map((s) =>
-    resolve(SERIES[s.slot % SERIES.length], dark),
+    resolve(s.slot === null ? NEUTRAL : SERIES[s.slot % SERIES.length], dark),
   );
   const format = sharedFormat(series);
   const values = data.flatMap((d) =>
@@ -199,10 +216,32 @@ export function ChartWidget({
       compact,
       trim: true,
     });
-  const valueWidth = Math.min(80, Math.max(32, textWidth(tick(extreme)) + 8));
+  // A line's value axis fits its data: lap times near 80 seconds drawn from
+  // zero would be flat lines. A bar's length is its value, so bars keep zero.
+  const fit = chart.type === "line" ? fitted(data, series) : null;
+  const valueTicks = fit ? stepTicks(fit.domain, fit.step) : [extreme];
+  const valueWidth = Math.min(
+    80,
+    Math.max(32, ...valueTicks.map((v) => textWidth(tick(v)) + 8)),
+  );
   const grain = chart.x?.kind === "time" ? (chart.x.grain ?? null) : null;
+  const numeric = chart.x?.kind === "number";
+  // A lap or a year names a thing, and 2,024 would read as an amount.
+  const whole = /INT/i.test(
+    rows.columns.find((c) => c.name === chart.x?.field)?.type ?? "",
+  );
+  const numberTick = (value: unknown) =>
+    formatValue(
+      typeof value === "number" ? value : null,
+      {},
+      { grouping: !whole, trim: true },
+    );
   const xLabel = (x: string) =>
-    chart.x?.kind === "time" ? formatPeriod(x, grain, true) : x || "(none)";
+    chart.x?.kind === "time"
+      ? formatPeriod(x, grain, true)
+      : numeric
+        ? formatValue(x, {}, { grouping: !whole })
+        : x || "(none)";
   const cut = data.filter((d) => partial.has(d.x)).map((d) => xLabel(d.x));
   const legend =
     series.length > 1 ? (
@@ -244,10 +283,27 @@ export function ChartWidget({
     plot = (
       <LineChart data={data} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
         <CartesianGrid {...GRID_PROPS} />
+        {/* A number axis draws each point at its value, so a lap missing
+            from the data leaves a gap of its own width. */}
         <XAxis
-          dataKey="x"
           {...X_AXIS_PROPS}
-          tickFormatter={(x: string) => formatPeriod(x, grain)}
+          {...(numeric
+            ? {
+                dataKey: "xn",
+                type: "number" as const,
+                domain: ["dataMin", "dataMax"],
+                ticks:
+                  data.length > 0
+                    ? ticksWithin(data[0].xn!, data[data.length - 1].xn!, {
+                        whole,
+                      })
+                    : undefined,
+                tickFormatter: numberTick,
+              }
+            : {
+                dataKey: "x",
+                tickFormatter: (x: string) => formatPeriod(x, grain),
+              })}
           minTickGap={24}
         />
         <YAxis
@@ -255,6 +311,7 @@ export function ChartWidget({
           allowDecimals
           width={valueWidth}
           tickFormatter={tick}
+          {...(fit && { domain: fit.domain, ticks: valueTicks, interval: 0 })}
         />
         {tooltip}
         {/* A period the window cuts is a dashed piece under the solid line,

@@ -61,6 +61,25 @@ describe("chartData", () => {
     ]);
   });
 
+  it("draws a key the server gave no slot in the neutral colour", () => {
+    const { series } = chartData(
+      spec({
+        series: { field: "channel", keys: ["Partner", "Web"] },
+        colors: { Partner: 1 },
+      }),
+      COLUMNS,
+      [
+        ["Web", "2026-05-18T00:00:00", "100"],
+        ["Partner", "2026-05-18T00:00:00", "80"],
+      ],
+    );
+
+    expect(series.map((s) => [s.label, s.slot])).toEqual([
+      ["Partner", 1],
+      ["Web", null],
+    ]);
+  });
+
   it("draws a period the window cuts dashed, from the whole period beside it", () => {
     const { data, partial } = chartData(
       spec({
@@ -97,6 +116,44 @@ describe("chartData", () => {
 
     expect(partial.size).toBe(0);
     expect(data).toEqual([{ x: "2026-08-17T00:00:00", s0: 50 }]);
+  });
+
+  it("draws a number axis smallest first, as numbers", () => {
+    const { data } = chartData(
+      spec({ x: { field: "lap", kind: "number" } }),
+      [
+        { name: "lap", type: "BIGINT", role: "dimension" },
+        { name: "revenue", type: "DOUBLE", role: "measure" },
+      ],
+      [
+        ["9", 81.2],
+        ["10", 80.9],
+        [null, 99],
+        ["2", 82.4],
+      ],
+    );
+
+    // As text, "10" sorts before "9". A row with no lap has no place on the
+    // axis, and the table view keeps it.
+    expect(data.map((d) => d.xn)).toEqual([2, 9, 10]);
+    expect(data.map((d) => d.x)).toEqual(["2", "9", "10"]);
+  });
+
+  it("keeps a category axis in the query's order", () => {
+    const { data } = chartData(
+      spec({ x: { field: "lap", kind: "category" } }),
+      [
+        { name: "lap", type: "VARCHAR", role: "dimension" },
+        { name: "revenue", type: "DOUBLE", role: "measure" },
+      ],
+      [
+        ["Out lap", 95],
+        ["Flying lap", 80],
+        ["In lap", 99],
+      ],
+    );
+
+    expect(data.map((d) => d.x)).toEqual(["Out lap", "Flying lap", "In lap"]);
   });
 
   it("draws one series per measure when nothing splits the chart", () => {

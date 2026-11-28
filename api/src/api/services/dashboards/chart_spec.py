@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 
 from api.services.dashboards.spec import (
     BAR_LIMIT,
+    LINE_LIMIT,
     TABLE_LIMIT,
     BarWidget,
     DataWidget,
@@ -36,7 +37,10 @@ STACKABLE = frozenset({"sum", "count"})
 
 class Axis(BaseModel):
     field: str
-    kind: Literal["time", "category"]
+    kind: Literal["time", "number", "category"] = Field(
+        description="time: oldest first. number: smallest first, drawn to scale. category: "
+        "the query's order. An SQL line's kind follows its x column's type."
+    )
     grain: str | None = None
     partial: list[str] = Field(
         default_factory=list,
@@ -116,7 +120,7 @@ def _from_query(widget: DataWidget, metrics: Mapping[str, Metric]) -> ChartSpec:
             x=Axis(field=query.grain, kind="time", grain=query.grain),
             y=y,
             series=Series(field=_field(query.dimensions[0])) if query.dimensions else None,
-            limits=Limits(rows=query.limit),
+            limits=Limits(rows=query.limit or LINE_LIMIT),
         )
 
     if isinstance(widget, BarWidget):
@@ -155,7 +159,7 @@ def _from_columns(widget: DataWidget) -> ChartSpec:
             x=Axis(field=columns.x, kind="time"),
             y=[_measure(name, None) for name in columns.y],
             series=Series(field=columns.series) if columns.series else None,
-            limits=Limits(rows=None),
+            limits=Limits(rows=LINE_LIMIT),
         )
     if isinstance(widget, BarWidget):
         return ChartSpec(

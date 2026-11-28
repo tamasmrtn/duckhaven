@@ -651,7 +651,7 @@
           "title": "Series"
         },
         "x": {
-          "description": "The time column.",
+          "description": "The x column: a time, a number such as a lap, or a category, read from its type.",
           "title": "X",
           "type": "string"
         },

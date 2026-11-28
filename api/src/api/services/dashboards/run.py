@@ -30,9 +30,10 @@ import hashlib
 import json
 import logging
 import math
+import re
 import time
 import uuid
-from collections.abc import AsyncIterator, Callable, Mapping
+from collections.abc import AsyncIterator, Callable, Iterable, Mapping
 from dataclasses import dataclass, field, replace
 from datetime import UTC, date, datetime
 from decimal import Decimal, InvalidOperation
@@ -62,6 +63,7 @@ from api.services.dashboards.resolve import (
     resolve,
 )
 from api.services.dashboards.spec import (
+    LINE_LIMIT,
     TABLE_LIMIT,
     DashboardSpec,
     DataWidget,
@@ -306,8 +308,10 @@ def _share(widgets: list[_Widget], models: dict[str, LoadedModel], today: date) 
 
 
 def _limit(w: _Widget) -> int:
+    """The rows ``w`` reads: a line up to LINE_LIMIT, anything else up to TABLE_LIMIT."""
+    cap = LINE_LIMIT if w.chart is not None and w.chart.type == "line" else TABLE_LIMIT
     rows = w.chart.limits.rows if w.chart is not None else None
-    return min(rows or TABLE_LIMIT, TABLE_LIMIT)
+    return min(rows or cap, cap)
 
 
 def _jsonable(value: object) -> object:
@@ -720,10 +724,15 @@ def _widget_event(w: _Widget, run: Plan) -> dict:
 
     current = w.current
     page = current.page
+    limit = _limit(w)
+    if len(page.rows) > limit:
+        # A statement shared with a widget that reads more, a table with a line.
+        page = page.model_copy(update={"rows": page.rows[:limit]})
     columns, data, chart, left_out = drawn(w.widget, w.chart, page)
     names = [c["name"] for c in columns]
     warnings = list(w.compiled.warnings) if w.compiled else []
     warnings.extend(left_out)
+    warnings.extend(_cut(w, current.row_count, len(page.rows)))
     if w.widget.query is not None and resolved.window is not None:
         warnings.extend(_partial(chart, names, data, resolved.window))
     event.update(
@@ -748,6 +757,24 @@ def _widget_event(w: _Widget, run: Plan) -> dict:
     return event
 
 
+def _cut(w: _Widget, row_count: int, read: int) -> list[str]:
+    """Why a line or bar may not draw every row: what its SQL returned past the
+    rows read, or a query that stopped at the limit its file did not set."""
+    if w.chart is None or w.chart.type not in ("line", "bar"):
+        return []
+    if w.widget.sql is not None:
+        if row_count > read:
+            return [f"Showing the first {read:,} of {row_count:,} rows; the chart is incomplete."]
+        return []
+    query = w.resolved.query
+    if w.widget.query.limit is None and query is not None and row_count >= (query.limit or 0):
+        return [
+            f"The query stopped at its {query.limit:,}-row limit, so the chart may be "
+            "incomplete; a coarser grain or a filter reads fewer rows."
+        ]
+    return []
+
+
 def drawn(
     widget: DataWidget, chart: ChartSpec, page: RowsPageOut
 ) -> tuple[list[dict], list[list], ChartSpec, list[str]]:
@@ -756,10 +783,18 @@ def drawn(
     The chart comes back as a copy holding the series drawn and their colours. A
     time axis's rows come oldest first: a metric query has no order of its own,
     and whatever reads the rows, the table view or a model's first few, reads
-    them in time order. Other rows keep the query's order."""
+    them in time order. A number axis's rows come smallest first. Other rows keep
+    the query's order.
+
+    An SQL line's axis kind follows its column's type, which only the result
+    knows: a lap number draws as numbers, a date as time, a name as categories."""
+    chart = chart.model_copy(deep=True)
+    if widget.sql is not None and chart.type == "line" and chart.x is not None:
+        types = {c.name: c.type for c in page.column_schema or []}
+        values = (row.get(chart.x.field) for row in page.rows)
+        chart.x.kind = _x_kind(types.get(chart.x.field), values)
     columns = _columns(widget, chart, page)
     names = [c["name"] for c in columns]
-    chart = chart.model_copy(deep=True)
     data = [[row.get(name) for name in names] for row in page.rows]
     left_out: list[str] = []
     if chart.series is not None:
@@ -770,10 +805,46 @@ def drawn(
                 f"Showing the {MAX_SERIES} largest of {MAX_SERIES + dropped} series; "
                 "the table view has them all."
             )
-    if chart.x is not None and chart.x.kind == "time" and chart.x.field in names:
+    if chart.x is not None and chart.x.kind != "category" and chart.x.field in names:
         at = names.index(chart.x.field)
-        data.sort(key=lambda row: _in_time(row[at]))
+        order = _in_time if chart.x.kind == "time" else _in_number
+        data.sort(key=lambda row: order(row[at]))
     return columns, data, chart, left_out
+
+
+#: DuckDB's spellings of the types an axis reads as numbers.
+_NUMBER_TYPE = re.compile(
+    r"^(U?(TINYINT|SMALLINT|INTEGER|BIGINT|HUGEINT)|FLOAT|DOUBLE|REAL|DECIMAL(\(.*\))?)$"
+)
+#: Text that reads as a date or a timestamp, as a date written in SQL often is.
+_ISO_TEXT = re.compile(r"^\d{4}-\d{2}(-\d{2})?([T ]\d{2}:\d{2}.*)?$")
+
+
+def _x_kind(type_name: str | None, values: Iterable[object]) -> str:
+    """How an SQL line's x column reads: as time, as numbers, or as categories.
+
+    A column whose type the agent did not report stays a time axis, as before
+    types were known."""
+    if type_name is None:
+        return "time"
+    name = type_name.upper()
+    if name == "DATE" or name.startswith("TIMESTAMP"):
+        return "time"
+    if _NUMBER_TYPE.match(name):
+        return "number"
+    if name == "VARCHAR" and all(_ISO_TEXT.match(str(v)) for v in values if v is not None):
+        return "time"
+    return "category"
+
+
+def _in_number(value: object) -> tuple:
+    """Where a number axis value falls, smallest first, with a missing one last.
+
+    Wide integers and decimals arrive as text, which would sort 10 before 9."""
+    number = _number(value)
+    if number is None or number.is_nan():
+        return (1, Decimal(0))
+    return (0, number)
 
 
 def _partial(chart: ChartSpec, names: list[str], data: list[list], window: Window) -> list[str]:
@@ -888,10 +959,13 @@ def _series(chart: ChartSpec, names: list[str], data: list[list]) -> tuple[list[
 def _colors(field_name: str, keys: list[str]) -> dict[str, int]:
     """A colour slot per series key, chosen by the key itself rather than its rank,
     so a filter that removes some series leaves the others' colours alone. Two
-    keys whose slots collide take the next free one, in key order."""
+    keys whose slots collide take the next free one, in key order. Once every slot
+    is taken, the keys left get none and draw in a neutral colour."""
     taken: set[int] = set()
     slots: dict[str, int] = {}
     for key in sorted(keys):
+        if len(taken) == MAX_SERIES:
+            break
         digest = hashlib.sha256(f"{field_name}\0{key}".encode()).digest()
         slot = int.from_bytes(digest[:4], "big") % MAX_SERIES
         while slot in taken:

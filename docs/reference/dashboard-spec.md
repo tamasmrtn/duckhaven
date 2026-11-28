@@ -169,7 +169,7 @@ Every widget has an `id`, unique in the dashboard, and a `type`. Data widgets al
 | Type | With `query`, the query must have | It draws |
 |---|---|---|
 | `kpi` | One metric, no dimensions, no grain | One number. `compare: previous_period` or `previous_year` adds the same number for an earlier window and the change. |
-| `line` | A grain, any metrics, and at most one dimension, which needs exactly one metric | Time across, one line per metric or per value of the dimension. |
+| `line` | A grain, any metrics, and at most one dimension, which needs exactly one metric | Time across, one line per metric or per value of the dimension. Up to 5,000 rows, the latest periods first. |
 | `bar` | Exactly one dimension, no grain, `limit` at most 50 | One bar group per value, largest first, at most 50. |
 | `table` | Anything, `limit` at most 1,000 | The rows, dimensions first. Up to 1,000 rows. |
 | `text` | No query; `markdown` instead | A heading or a note. |
@@ -208,6 +208,22 @@ example does. An SQL widget is filtered only by what `params` binds, so it takes
 | `bar` | `{x: country, y: [revenue]}` |
 
 A `table` shows every column, so it takes no `columns`. A query widget takes no `columns` either.
+
+A line's `x` axis follows its column's type:
+
+| `x` column | Axis | Order |
+|---|---|---|
+| `DATE` or `TIMESTAMP`, or text that is all ISO dates such as `2026-03-01` | Time | Oldest first |
+| A number: an integer, `DECIMAL`, `DOUBLE`, `FLOAT` or `REAL`, such as a lap | Numbers, drawn to scale | Smallest first |
+| Other text | Categories | As the SQL returns them, so give it an `ORDER BY` |
+
+A line's value axis runs from its lowest value to its highest, rounded out to whole steps, so lines far from zero keep
+their shape. A bar's value axis starts at zero, as a bar's length is its value.
+
+An SQL widget reads up to 5,000 rows for a line, 50 for a bar and 1,000 for a table. When the SQL returns more, a line
+or bar draws the first rows and says under the chart that it is incomplete. A query widget asks for no more than that
+in the first place: a line or bar whose query stops at that limit says the chart may be incomplete, unless the file set
+the `limit`.
 
 ### Text widgets
 

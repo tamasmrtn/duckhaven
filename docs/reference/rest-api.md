@@ -821,10 +821,12 @@ An answered widget also has:
 - `rows`: its `columns`, each with a `name`, a `type`, a `role` (`time`, `dimension` or `measure`) and, for a
   measure, its `label`, `format`, `unit` and `currency`; `data`, one array per row in column order; `truncated`, `true`
   when the query returned more rows than the widget reads; and the `query_id` that answered it, in History. A line's
-  rows come oldest first, with a missing time last. Other widgets' rows come in the order their query returned them.
-- `chart`: what to draw. `type`, the `x` axis with its `partial` time values, whose period the window holds only in
-  part, the `y` measures, the `series` field with the `keys` to draw in name order, `colors` mapping each key to a
-  colour slot from 0 to 7, `stack`, `orientation` and `limits`. A partial period is also named in `warnings`.
+  rows come oldest first on a time axis and smallest first on a number axis, with a missing value last. Other rows
+  come in the order their query returned them.
+- `chart`: what to draw. `type`, the `x` axis, the `y` measures, the `series` field with the `keys` to draw in name
+  order, `colors` mapping each key to a colour slot from 0 to 7, `stack`, `orientation` and `limits`. The `x` axis has a
+  `kind`: `time`, `number` or `category`, which for an SQL line follows its column's type. It also has the `partial`
+  time values, whose period the window holds only in part, and a partial period is also named in `warnings`.
 - `compare`, for a `kpi` with `compare`: `current`, `previous`, `delta`, `delta_pct`, `good` (`true`, `false`, or
   `null` when the metric's polarity is neutral or nothing changed) and `window_text`.
 - `cache` (`hit`, `miss`, `bypass` or `ineligible`), the `sql` that ran, `warnings`, `timing` with `elapsed_ms`

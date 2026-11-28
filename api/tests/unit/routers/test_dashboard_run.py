@@ -1048,6 +1048,79 @@ async def test_a_line_over_a_window_that_cuts_its_weeks_says_so(as_owner, ws, ag
     ]
 
 
+def _laps(n: int) -> dict:
+    return {
+        "id": "laps",
+        "type": "line",
+        "title": "Laps",
+        "sql": f"SELECT range AS lap, range % 90 AS seconds FROM range({n}) ORDER BY lap",
+        "columns": {"x": "lap", "y": ["seconds"]},
+    }
+
+
+async def test_a_line_reads_past_a_tables_thousand_rows(as_owner, ws, agent):
+    """22 cars over a 71-lap race is 1,562 points, more than a table shows."""
+    await _publish(as_owner, ws, spec(_laps(1200)))
+
+    laps = _widgets(await _view(as_owner, ws))["laps"]
+
+    assert len(laps["rows"]["data"]) == 1200
+    assert laps["rows"]["truncated"] is False
+    assert not [w for w in laps["warnings"] if "incomplete" in w]
+
+
+async def test_a_line_cut_at_its_row_limit_says_so(as_owner, ws, agent):
+    await _publish(as_owner, ws, spec(_laps(6000)))
+
+    laps = _widgets(await _view(as_owner, ws))["laps"]
+
+    assert len(laps["rows"]["data"]) == 5000
+    assert laps["rows"]["truncated"] is True
+    assert "Showing the first 5,000 of 6,000 rows; the chart is incomplete." in laps["warnings"]
+
+
+async def test_a_table_sharing_a_lines_sql_shows_its_own_thousand(as_owner, ws, agent):
+    table = {**_laps(1200), "id": "table", "type": "table"}
+    del table["columns"]
+    await _publish(as_owner, ws, spec(_laps(1200), table))
+
+    events = await _view(as_owner, ws)
+
+    widgets = _widgets(events)
+    assert events[-1]["statements"] == 1
+    assert len(widgets["laps"]["rows"]["data"]) == 1200
+    assert len(widgets["table"]["rows"]["data"]) == 1000
+    assert widgets["table"]["rows"]["truncated"] is True
+
+
+async def test_a_metric_line_at_its_row_limit_says_it_may_be_cut(as_owner, ws, agent, monkeypatch):
+    from api.services.dashboards import resolve as resolve_service
+
+    monkeypatch.setattr(resolve_service, "LINE_LIMIT", 1)
+    daily = {
+        "id": "trend",
+        "type": "line",
+        "title": "Revenue by day",
+        "query": {
+            "model": "sales",
+            "metrics": ["revenue"],
+            "grain": "day",
+            "time_range": "$period",
+        },
+    }
+    await _publish(as_owner, ws, spec(daily))
+
+    trend = _widgets(await _view(as_owner, ws))["trend"]
+
+    # Newest first, the cut leaves out the oldest days.
+    [[day, revenue]] = trend["rows"]["data"]
+    assert (day[:10], float(revenue)) == ((TODAY - timedelta(days=1)).isoformat(), 100.0)
+    assert (
+        "The query stopped at its 1-row limit, so the chart may be incomplete; a coarser "
+        "grain or a filter reads fewer rows."
+    ) in trend["warnings"]
+
+
 def _week(value: str) -> str:
     from api.services.dashboards.resolve import Window
 
@@ -1088,6 +1161,17 @@ def test_two_values_never_share_a_colour():
     keys = [f"v{n}" for n in range(8)]
 
     assert sorted(run_service._colors("country", keys).values()) == list(range(8))
+
+
+def test_colours_stop_once_every_slot_is_taken():
+    """Past the eighth key there is no slot left. The rest get none, and draw in a
+    neutral colour, rather than the search for a free slot running forever."""
+    keys = [f"v{n}" for n in range(12)]
+
+    slots = run_service._colors("country", keys)
+
+    assert len(slots) == 8
+    assert sorted(slots.values()) == list(range(8))
 
 
 def test_past_eight_series_the_largest_are_drawn():
@@ -1166,9 +1250,12 @@ def test_series_come_in_name_order_whatever_order_the_rows_came_in():
     assert run_service._series(chart, names, filtered)[0] == ["Partner", "Retail", "Web", ""]
 
 
-def _drawn(widget: dict, columns: list[str], rows: list[list]) -> list[list]:
-    """The rows a view sends for ``widget``, given a result in this order."""
-    from api.schemas.query import RowsPageOut
+def _shape(
+    widget: dict, columns: list[str], rows: list[list], types: list[str] | None = None
+) -> tuple[list[list], object]:
+    """The rows and chart a view sends for ``widget``, given a result in this
+    order and, where the agent reported them, its column types."""
+    from api.schemas.query import ColumnSchemaOut, RowsPageOut
     from api.services.dashboards.chart_spec import chart_spec
     from api.services.dashboards.spec import DashboardSpec
 
@@ -1181,9 +1268,17 @@ def _drawn(widget: dict, columns: list[str], rows: list[list]) -> list[list]:
         columns=columns,
         cursor=None,
         total=len(rows),
-        column_schema=None,
+        column_schema=None
+        if types is None
+        else [ColumnSchemaOut(name=n, type=t) for n, t in zip(columns, types, strict=True)],
     )
-    return run_service.drawn(parsed, chart_spec(parsed), page)[1]
+    _, data, chart, _ = run_service.drawn(parsed, chart_spec(parsed), page)
+    return data, chart
+
+
+def _drawn(widget: dict, columns: list[str], rows: list[list]) -> list[list]:
+    """The rows a view sends for ``widget``, given a result in this order."""
+    return _shape(widget, columns, rows)[0]
 
 
 def test_a_lines_rows_come_oldest_first_whatever_order_the_query_returned():
@@ -1250,6 +1345,69 @@ def test_an_sql_lines_numeric_axis_sorts_as_numbers():
     drawn = _drawn(yearly, ["year", "orders"], [[2025, 9], [998, 1], [2024, 7]])
 
     assert [row[0] for row in drawn] == [998, 2024, 2025]
+
+
+LAPS = {
+    "id": "laps",
+    "type": "line",
+    "title": "Lap times",
+    "sql": "SELECT lap, seconds FROM laps",
+    "columns": {"x": "lap", "y": ["seconds"]},
+}
+
+
+def test_an_sql_lines_axis_kind_follows_its_column_type():
+    """A BIGINT arrives as text to stay exact, and text sorts lap 10 before lap 9.
+    Read as its type says, the axis is numbers, smallest first."""
+    data, chart = _shape(
+        LAPS, ["lap", "seconds"], [["9", 81.2], ["10", 80.9], ["2", 82.4]], ["BIGINT", "DOUBLE"]
+    )
+
+    assert chart.x.kind == "number"
+    assert [row[0] for row in data] == ["2", "9", "10"]
+
+
+def test_a_decimal_axis_reads_as_numbers_with_a_missing_value_last():
+    data, chart = _shape(
+        LAPS,
+        ["lap", "seconds"],
+        [["1.50", 1], [None, 2], ["-3.25", 3]],
+        ["DECIMAL(9,2)", "INTEGER"],
+    )
+
+    assert chart.x.kind == "number"
+    assert [row[0] for row in data] == ["-3.25", "1.50", None]
+
+
+def test_a_text_axis_keeps_the_querys_order():
+    """Names have no order of their own; the query's ORDER BY is the author's."""
+    data, chart = _shape(
+        LAPS,
+        ["lap", "seconds"],
+        [["Out lap", 95.0], ["Flying lap", 80.1], ["In lap", 99.0]],
+        ["VARCHAR", "DOUBLE"],
+    )
+
+    assert chart.x.kind == "category"
+    assert [row[0] for row in data] == ["Out lap", "Flying lap", "In lap"]
+
+
+def test_text_dates_stay_a_time_axis():
+    data, chart = _shape(
+        LAPS,
+        ["lap", "seconds"],
+        [["2026-03-02", 1], ["2026-03-01", 2]],
+        ["VARCHAR", "INTEGER"],
+    )
+
+    assert chart.x.kind == "time"
+    assert [row[0] for row in data] == ["2026-03-01", "2026-03-02"]
+
+
+def test_a_date_axis_is_time():
+    _, chart = _shape(LAPS, ["lap", "seconds"], [["2026-03-01", 1]], ["DATE", "INTEGER"])
+
+    assert chart.x.kind == "time"
 
 
 def test_bars_and_tables_keep_the_querys_order():

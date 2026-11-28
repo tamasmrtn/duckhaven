@@ -637,6 +637,32 @@
     "LineColumns": {
       "additionalProperties": false,
       "properties": {
+        "color": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "A column holding each series' colour, as #rrggbb. Needs series.",
+          "title": "Color"
+        },
+        "dash": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "A column holding each series' line style: solid or dotted. Needs series.",
+          "title": "Dash"
+        },
         "series": {
           "anyOf": [
             {

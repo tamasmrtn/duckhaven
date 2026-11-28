@@ -2,13 +2,14 @@
 
 The web app draws with Recharts, the assistant describes a chart in words, and a
 later renderer could draw images; all of them read this spec. The encoding is
-decided once, here, from the widget's type and the shape of its query. A
-dashboard file has no styling options to override it.
+decided once, here, from the widget's type and the shape of its query. The one
+styling a file can ask for is an SQL line's series colour and line style, which
+its rows give in result columns.
 
 How numbers look comes from the metric in the semantic layer (format, unit,
-currency, polarity), so revenue reads the same on every dashboard. Series keys
-and their colour slots depend on the rows a run returns, so they are filled in
-when the widget runs.
+currency, polarity), so revenue reads the same on every dashboard. Series keys,
+their colour slots and their styles depend on the rows a run returns, so they
+are filled in when the widget runs.
 """
 
 from __future__ import annotations
@@ -64,6 +65,11 @@ class Series(BaseModel):
     keys: list[str] = Field(default_factory=list, description="Filled when the widget runs.")
 
 
+class SeriesStyle(BaseModel):
+    color: str | None = Field(default=None, description="#rrggbb, drawn as given.")
+    dash: Literal["solid", "dotted"] | None = None
+
+
 class Limits(BaseModel):
     rows: int | None = Field(description="Rows the widget reads; None leaves it to the compiler.")
     series: int = MAX_SERIES
@@ -78,7 +84,13 @@ class ChartSpec(BaseModel):
     orientation: Literal["vertical", "horizontal"] | None = None
     colors: dict[str, int] = Field(
         default_factory=dict,
-        description="Series key to colour slot, filled when the widget runs.",
+        description="Series key to colour slot, filled when the widget runs. A key with a "
+        "colour of its own in styles, or past the palette, has none.",
+    )
+    styles: dict[str, SeriesStyle] = Field(
+        default_factory=dict,
+        description="Series key to the colour and line style its rows give, filled when the "
+        "widget runs.",
     )
     limits: Limits
 

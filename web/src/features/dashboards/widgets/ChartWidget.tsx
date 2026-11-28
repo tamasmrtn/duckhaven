@@ -196,8 +196,10 @@ export function ChartWidget({
       : d.x === chosen
         ? `Click to stop filtering by ${selection.label}`
         : `Click to filter by ${selection.label}`;
-  const colors = series.map((s) =>
-    resolve(s.slot === null ? NEUTRAL : SERIES[s.slot % SERIES.length], dark),
+  const colors = series.map(
+    (s) =>
+      s.color ??
+      resolve(s.slot === null ? NEUTRAL : SERIES[s.slot % SERIES.length], dark),
   );
   const format = sharedFormat(series);
   const values = data.flatMap((d) =>

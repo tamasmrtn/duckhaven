@@ -262,6 +262,11 @@ export interface ChartMeasure {
   polarity?: Polarity | null;
 }
 
+export interface SeriesStyle {
+  color?: string | null;
+  dash?: "solid" | "dotted" | null;
+}
+
 /** What to draw, decided by the server and naming no chart library. */
 export interface ChartSpec {
   type: "kpi" | "line" | "bar" | "table";
@@ -280,8 +285,13 @@ export interface ChartSpec {
   series: { field: string; keys: string[] } | null;
   stack: boolean;
   orientation: "vertical" | "horizontal" | null;
-  /** Series key to colour slot, 0 to 7. A key with none draws in a neutral grey. */
+  /**
+   * Series key to colour slot, 0 to 7. A key with a colour of its own in
+   * `styles` has none; a key with neither draws in a neutral grey.
+   */
   colors: Record<string, number>;
+  /** Series key to the colour (#rrggbb) and line style its rows give. */
+  styles?: Record<string, SeriesStyle>;
   limits: { rows: number | null; series: number };
 }
 

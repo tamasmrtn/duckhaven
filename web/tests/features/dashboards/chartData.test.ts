@@ -80,6 +80,26 @@ describe("chartData", () => {
     ]);
   });
 
+  it("draws a series in the colour and line style its rows gave", () => {
+    const { series } = chartData(
+      spec({
+        series: { field: "channel", keys: ["Partner", "Web"] },
+        colors: { Web: 3 },
+        styles: { Partner: { color: "#3671c6", dash: "dotted" } },
+      }),
+      COLUMNS,
+      [
+        ["Web", "2026-05-18T00:00:00", "100"],
+        ["Partner", "2026-05-18T00:00:00", "80"],
+      ],
+    );
+
+    expect(series.map((s) => [s.label, s.slot, s.color, s.dash])).toEqual([
+      ["Partner", null, "#3671c6", "dotted"],
+      ["Web", 3, null, "solid"],
+    ]);
+  });
+
   it("draws a period the window cuts dashed, from the whole period beside it", () => {
     const { data, partial } = chartData(
       spec({

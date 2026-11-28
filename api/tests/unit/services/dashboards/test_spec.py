@@ -263,6 +263,15 @@ def test_a_series_limit_needs_series_to_limit(widget, message):
     assert any(message in m for m in errors(doc(widget)))
 
 
+@pytest.mark.parametrize(("key", "message"), [("color", "colour"), ("dash", "line style")])
+def test_a_style_column_needs_series_to_style(key, message):
+    widget = _drivers(columns={"x": "lap", "y": ["seconds"], key: "c"})
+    assert any(
+        f"{key} names each series' {message}, so the line needs a series column" in m
+        for m in errors(doc(widget))
+    )
+
+
 def test_a_row_fits_twelve_columns_counting_one_for_each_unsized_widget():
     def row(*widths):
         return [

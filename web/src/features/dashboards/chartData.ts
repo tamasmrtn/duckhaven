@@ -12,6 +12,9 @@ export interface ChartSeries {
   label: string;
   /** The categorical colour slot, 0 to 7, or null to draw in the neutral grey. */
   slot: number | null;
+  /** The colour the series' rows give, #rrggbb, drawn as given in both themes. */
+  color: string | null;
+  dash: "solid" | "dotted";
   measure: ChartMeasure;
 }
 
@@ -75,6 +78,8 @@ export function chartData(
       label: key === "" ? "(none)" : key,
       // A key the server gave no slot, past the eighth, draws in grey.
       slot: chart.colors[key] ?? null,
+      color: chart.styles?.[key]?.color ?? null,
+      dash: chart.styles?.[key]?.dash ?? "solid",
       measure: chart.y[0],
     }));
     const index = new Map(chart.series.keys.map((k, i) => [k, `s${i}`]));
@@ -93,6 +98,8 @@ export function chartData(
       key: `s${i}`,
       label: measure.label,
       slot: i % 8,
+      color: null,
+      dash: "solid" as const,
       measure,
     }));
     for (const row of rows) {

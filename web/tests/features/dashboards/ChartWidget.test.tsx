@@ -132,6 +132,38 @@ describe("ChartWidget", () => {
     expect(ticks(container, "left")).toEqual(["80", "85", "90", "95", "100"]);
   });
 
+  it("draws a series in the colour its rows gave, in either theme", () => {
+    const event = numbered("BIGINT", [
+      ["1", "VER", 80.1],
+      ["1", "PER", 80.9],
+    ]);
+    event.rows!.columns.splice(1, 0, {
+      name: "driver",
+      type: "VARCHAR",
+      role: "dimension",
+    });
+    event.rows!.data = [
+      ["1", "VER", 80.1],
+      ["1", "PER", 80.9],
+      ["2", "VER", 79.8],
+      ["2", "PER", 80.4],
+    ];
+    event.chart = {
+      ...event.chart!,
+      series: { field: "driver", keys: ["PER", "VER"] },
+      colors: { PER: 0 },
+      styles: { VER: { color: "#3671c6" } },
+    };
+    const { container } = render(
+      <ChartWidget event={event} label="Lap times" />,
+    );
+
+    const strokes = [
+      ...container.querySelectorAll("path.recharts-line-curve"),
+    ].map((path) => path.getAttribute("stroke"));
+    expect(strokes).toEqual(["#2a78d6", "#3671c6"]);
+  });
+
   it("reads an integer axis without thousands separators", () => {
     const { container } = render(
       <ChartWidget

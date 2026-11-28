@@ -54,7 +54,7 @@ from api.schemas.query import QueryCreate, RowsPageOut
 from api.services import delegation, query_submit
 from api.services import query as query_service
 from api.services.agent_capabilities import agent_supports_feature
-from api.services.dashboards.chart_spec import MAX_SERIES, ChartSpec, chart_spec
+from api.services.dashboards.chart_spec import MAX_SERIES, ChartSpec, SeriesStyle, chart_spec
 from api.services.dashboards.resolve import (
     ParameterError,
     Resolved,
@@ -800,19 +800,32 @@ def drawn(
     if chart.series is not None:
         ranked = _ranked(chart, names, data)
         chart.series.keys, dropped = _series(ranked, chart.limits.series)
-        # The palette's colours go to the largest; the rest draw grey.
-        coloured = ranked[: min(chart.limits.series, MAX_SERIES)]
+        chart.styles, notes = _styles(widget, chart, names, data)
+        # The palette's colours go to the largest series without a colour of their
+        # own; the rest draw grey.
+        own = {k for k, style in chart.styles.items() if style.color}
+        plain = [k for k in ranked[: chart.limits.series] if k not in own]
+        coloured = plain[:MAX_SERIES]
         chart.colors = _colors(chart.series.field, coloured)
         if dropped:
             left_out.append(
                 f"Showing the {len(chart.series.keys)} largest of {len(ranked)} series; "
                 "the table view has them all."
             )
-        if len(chart.series.keys) > len(coloured):
-            left_out.append(
-                f"Colours go to the {len(coloured)} largest of {len(chart.series.keys)} "
-                "series; the rest are grey."
-            )
+        left_out.extend(notes)
+        if len(plain) > len(coloured):
+            column = getattr(getattr(widget, "columns", None), "color", None)
+            if column:
+                left_out.append(
+                    f"Colours go to the {len(coloured)} largest of the {len(plain)} series "
+                    f"{column} gives no colour; the rest are grey."
+                )
+            else:
+                left_out.append(
+                    f"Colours go to the {len(coloured)} largest of {len(plain)} series; the "
+                    "rest are grey."
+                    + (" A color column colours them all." if widget.sql is not None else "")
+                )
     if chart.x is not None and chart.x.kind != "category" and chart.x.field in names:
         at = names.index(chart.x.field)
         order = _in_time if chart.x.kind == "time" else _in_number
@@ -964,6 +977,101 @@ def _series(ranked: list[str], limit: int) -> tuple[list[str], int]:
     when a filter changes which value the rows hold first."""
     keys = sorted(ranked[:limit], key=lambda k: (k == "", k))
     return keys, len(ranked) - len(keys)
+
+
+#: A colour as a result column may give it: #rrggbb or #rgb, the # optional.
+_HEX = re.compile(r"^#?([0-9a-fA-F]{6}|[0-9a-fA-F]{3})$")
+_DASHES = ("solid", "dotted")
+
+
+def _hex(value: object) -> str | None:
+    """``value`` as lowercase #rrggbb, or None when it is not a colour."""
+    found = _HEX.match(str(value).strip())
+    if found is None:
+        return None
+    digits = found.group(1).lower()
+    return "#" + (digits if len(digits) == 6 else "".join(d * 2 for d in digits))
+
+
+def _few(keys: list[str]) -> str:
+    """Up to three series by name, and how many more."""
+    named = ", ".join(k or "(none)" for k in keys[:3])
+    return named if len(keys) <= 3 else f"{named} and {len(keys) - 3} more"
+
+
+def _styles(
+    widget: DataWidget, chart: ChartSpec, names: list[str], data: list[list]
+) -> tuple[dict[str, SeriesStyle], list[str]]:
+    """Each drawn series' colour and line style from an SQL line's color and dash
+    columns, and what could not be read. A series' first value is the one it draws."""
+    columns = getattr(widget, "columns", None)
+    fields = {"color": getattr(columns, "color", None), "dash": getattr(columns, "dash", None)}
+    fields = {kind: column for kind, column in fields.items() if column}
+    if not fields or chart.series.field not in names:
+        return {}, []
+    notes = [
+        f"The {kind} column {column} is not in the result."
+        for kind, column in fields.items()
+        if column not in names
+    ]
+    fields = {kind: column for kind, column in fields.items() if column in names}
+    at = names.index(chart.series.field)
+    drawn_keys = set(chart.series.keys)
+    first: dict[str, dict[str, object]] = {kind: {} for kind in fields}
+    varies: dict[str, list[str]] = {kind: [] for kind in fields}
+    for row in data:
+        key = "" if row[at] is None else str(row[at])
+        if key not in drawn_keys:
+            continue
+        for kind, column in fields.items():
+            value = row[names.index(column)]
+            if value is None:
+                continue
+            if first[kind].setdefault(key, value) != value and key not in varies[kind]:
+                varies[kind].append(key)
+
+    styles: dict[str, SeriesStyle] = {}
+    bad_color: list[str] = []
+    dashed: list[str] = []
+    bad_dash: list[str] = []
+    for key in chart.series.keys:
+        style: dict[str, str] = {}
+        if key in first.get("color", {}):
+            color = _hex(first["color"][key])
+            if color is None:
+                bad_color.append(key)
+            else:
+                style["color"] = color
+        if key in first.get("dash", {}):
+            dash = str(first["dash"][key]).strip().lower()
+            if dash in _DASHES:
+                style["dash"] = dash
+            elif dash == "dashed":
+                dashed.append(key)
+            else:
+                bad_dash.append(key)
+        if style:
+            styles[key] = SeriesStyle(**style)
+
+    for kind, what in (("color", "colour"), ("dash", "line style")):
+        if varies.get(kind):
+            notes.append(
+                f"{_few(varies[kind])} take more than one {what} from {fields[kind]}; "
+                "each draws in its first."
+            )
+    if bad_color:
+        notes.append(
+            f"{fields['color']} gives {_few(bad_color)} a colour that is not #rrggbb, so they "
+            "keep a palette colour."
+        )
+    if dashed:
+        notes.append(f"dashed is reserved; use solid or dotted. {_few(dashed)} draw solid.")
+    if bad_dash:
+        notes.append(
+            f"{fields['dash']} gives {_few(bad_dash)} a line style other than solid or "
+            "dotted, so they draw solid."
+        )
+    return styles, notes
 
 
 def _colors(field_name: str, keys: list[str]) -> dict[str, int]:

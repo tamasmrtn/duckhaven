@@ -200,6 +200,14 @@ class LineColumns(_Strict):
     series: str | None = Field(
         default=None, description="Split one y column into a line per value of this column."
     )
+    color: str | None = Field(
+        default=None,
+        description="A column holding each series' colour, as #rrggbb. Needs series.",
+    )
+    dash: str | None = Field(
+        default=None,
+        description="A column holding each series' line style: solid or dotted. Needs series.",
+    )
 
 
 class BarColumns(_Strict):
@@ -327,6 +335,11 @@ class LineWidget(_DataWidget):
             raise ValueError("An SQL line names its columns: columns: {x: <time>, y: [<value>]}.")
         if self.columns.series is not None and len(self.columns.y) > 1:
             raise ValueError("A line splits by series only when it plots one y column.")
+        for key, what in (("color", "colour"), ("dash", "line style")):
+            if getattr(self.columns, key) is not None and self.columns.series is None:
+                raise ValueError(
+                    f"{key} names each series' {what}, so the line needs a series column."
+                )
         if "series_limit" in self.model_fields_set and self.columns.series is None:
             raise ValueError(
                 "series_limit caps the lines a series column splits into, so the line needs "

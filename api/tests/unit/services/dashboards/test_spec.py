@@ -223,6 +223,46 @@ def test_sql_and_query_widgets_keep_to_their_own_keys(widget, message):
     assert any(message in m for m in errors(doc(widget)))
 
 
+def _drivers(**changes):
+    return {
+        "id": "w",
+        "type": "line",
+        "title": "W",
+        "sql": "select 1",
+        "columns": {"x": "lap", "y": ["seconds"], "series": "driver"},
+        **changes,
+    }
+
+
+def test_a_line_draws_up_to_twenty_four_series():
+    assert DashboardSpec.model_validate(doc(_drivers(series_limit=24)))
+    assert any("less than or equal to 24" in m for m in errors(doc(_drivers(series_limit=25))))
+    assert any("greater than or equal to 1" in m for m in errors(doc(_drivers(series_limit=0))))
+
+
+@pytest.mark.parametrize(
+    ("widget", "message"),
+    [
+        (
+            _drivers(series_limit=12, columns={"x": "lap", "y": ["seconds"]}),
+            "so the line needs columns.series",
+        ),
+        (
+            {
+                "id": "w",
+                "type": "line",
+                "title": "W",
+                "series_limit": 12,
+                "query": {"model": "o", "metrics": ["a"], "grain": "day"},
+            },
+            "so the line needs a dimension",
+        ),
+    ],
+)
+def test_a_series_limit_needs_series_to_limit(widget, message):
+    assert any(message in m for m in errors(doc(widget)))
+
+
 def test_a_row_fits_twelve_columns_counting_one_for_each_unsized_widget():
     def row(*widths):
         return [

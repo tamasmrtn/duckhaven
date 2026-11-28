@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 from api.services.dashboards.spec import (
     BAR_LIMIT,
     LINE_LIMIT,
+    SERIES_COLOURS,
     TABLE_LIMIT,
     BarWidget,
     DataWidget,
@@ -30,7 +31,7 @@ from api.services.dashboards.spec import (
 from api.services.semantic.model import Metric
 
 #: Categorical colour slots. A ninth series has no colour of its own.
-MAX_SERIES = 8
+MAX_SERIES = SERIES_COLOURS
 #: Only quantities that add up can be stacked into a meaningful total.
 STACKABLE = frozenset({"sum", "count"})
 
@@ -120,7 +121,7 @@ def _from_query(widget: DataWidget, metrics: Mapping[str, Metric]) -> ChartSpec:
             x=Axis(field=query.grain, kind="time", grain=query.grain),
             y=y,
             series=Series(field=_field(query.dimensions[0])) if query.dimensions else None,
-            limits=Limits(rows=query.limit or LINE_LIMIT),
+            limits=Limits(rows=query.limit or LINE_LIMIT, series=widget.series_limit),
         )
 
     if isinstance(widget, BarWidget):
@@ -159,7 +160,7 @@ def _from_columns(widget: DataWidget) -> ChartSpec:
             x=Axis(field=columns.x, kind="time"),
             y=[_measure(name, None) for name in columns.y],
             series=Series(field=columns.series) if columns.series else None,
-            limits=Limits(rows=LINE_LIMIT),
+            limits=Limits(rows=LINE_LIMIT, series=widget.series_limit),
         )
     if isinstance(widget, BarWidget):
         return ChartSpec(

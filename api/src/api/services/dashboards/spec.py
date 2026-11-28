@@ -69,6 +69,10 @@ TABLE_LIMIT = 1_000
 #: A line reads more than a table shows: 22 cars over a 71-lap race is 1,562
 #: points. The semantic compiler caps a query at the same number.
 LINE_LIMIT = 5_000
+#: The palette's distinct colours, and so the series a line draws by default.
+SERIES_COLOURS = 8
+#: The most series a line draws: past SERIES_COLOURS, the rest are grey.
+SERIES_LIMIT = 24
 
 #: Named time windows a parameter can default to, in the semantic layer's terms.
 TIME_PRESETS: dict[str, TimeRangeIn] = {
@@ -297,6 +301,13 @@ class LineWidget(_DataWidget):
 
     type: Literal["line"]
     columns: LineColumns | None = None
+    series_limit: int = Field(
+        default=SERIES_COLOURS,
+        ge=1,
+        le=SERIES_LIMIT,
+        description=f"The most series the line draws, the largest first. Past "
+        f"{SERIES_COLOURS}, the rest draw grey.",
+    )
 
     def _check_query(self, query: DashboardQuery) -> None:
         if query.grain is None:
@@ -305,12 +316,22 @@ class LineWidget(_DataWidget):
             raise ValueError("A line splits by at most one dimension.")
         if query.dimensions and len(query.metrics) > 1:
             raise ValueError("A line splits by a dimension only when it plots one metric.")
+        if "series_limit" in self.model_fields_set and not query.dimensions:
+            raise ValueError(
+                "series_limit caps the lines a dimension splits into, so the line needs a "
+                "dimension."
+            )
 
     def _check_sql(self) -> None:
         if self.columns is None:
             raise ValueError("An SQL line names its columns: columns: {x: <time>, y: [<value>]}.")
         if self.columns.series is not None and len(self.columns.y) > 1:
             raise ValueError("A line splits by series only when it plots one y column.")
+        if "series_limit" in self.model_fields_set and self.columns.series is None:
+            raise ValueError(
+                "series_limit caps the lines a series column splits into, so the line needs "
+                "columns.series."
+            )
 
 
 class BarWidget(_DataWidget):

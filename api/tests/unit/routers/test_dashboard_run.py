@@ -1185,10 +1185,68 @@ def test_past_eight_series_the_largest_are_drawn():
     )
     data = [["2026-01-01", f"c{n}", str(n)] for n in range(10)]
 
-    keys, dropped = run_service._series(chart, ["month", "country", "revenue"], data)
+    ranked = run_service._ranked(chart, ["month", "country", "revenue"], data)
+    keys, dropped = run_service._series(ranked, chart.limits.series)
 
     assert keys == [f"c{n}" for n in range(2, 10)]
     assert dropped == 2
+
+
+DRIVERS = {
+    "id": "laps",
+    "type": "line",
+    "title": "Lap times",
+    "sql": "SELECT lap, driver, seconds FROM laps",
+    "columns": {"x": "lap", "y": ["seconds"], "series": "driver"},
+}
+
+
+def _grid(drivers: int) -> list[list]:
+    """A lap per driver, driver ``d{n}`` with ``n`` seconds, so d21 is the largest."""
+    return [[1, f"d{n:02}", n] for n in range(drivers)]
+
+
+def _laps_drawn(widget: dict, drivers: int):
+    from api.schemas.query import ColumnSchemaOut, RowsPageOut
+    from api.services.dashboards.chart_spec import chart_spec
+    from api.services.dashboards.spec import DashboardSpec
+
+    spec = DashboardSpec.model_validate(
+        {"version": 1, "name": "d", "title": "D", "rows": [{"widgets": [widget]}]}
+    )
+    parsed = spec.rows[0].widgets[0]
+    names = ["lap", "driver", "seconds"]
+    page = RowsPageOut(
+        rows=[dict(zip(names, row, strict=True)) for row in _grid(drivers)],
+        columns=names,
+        cursor=None,
+        total=drivers,
+        column_schema=[
+            ColumnSchemaOut(name=n, type=t)
+            for n, t in zip(names, ["BIGINT", "VARCHAR", "DOUBLE"], strict=True)
+        ],
+    )
+    _, _, chart, notes = run_service.drawn(parsed, chart_spec(parsed), page)
+    return chart, notes
+
+
+def test_a_line_draws_as_many_series_as_its_limit_allows():
+    """22 drivers fit a limit of 24. The palette's 8 colours go to the largest; the
+    rest draw grey, and the widget says so."""
+    chart, notes = _laps_drawn({**DRIVERS, "series_limit": 24}, 22)
+
+    assert chart.series.keys == [f"d{n:02}" for n in range(22)]
+    assert sorted(chart.colors) == [f"d{n}" for n in range(14, 22)]
+    assert sorted(chart.colors.values()) == list(range(8))
+    assert notes == ["Colours go to the 8 largest of 22 series; the rest are grey."]
+
+
+def test_past_its_series_limit_a_line_draws_the_largest():
+    chart, notes = _laps_drawn(DRIVERS, 12)
+
+    assert chart.series.keys == [f"d{n:02}" for n in range(4, 12)]
+    assert len(chart.colors) == 8
+    assert notes == ["Showing the 8 largest of 12 series; the table view has them all."]
 
 
 def _weekly(window_start: date, window_end: date, weeks: list[str]) -> tuple[list[str], list[str]]:
@@ -1246,8 +1304,12 @@ def test_series_come_in_name_order_whatever_order_the_rows_came_in():
     rows = [["2026-10-05", "Web", "3"], ["2026-10-05", None, "1"], ["2026-10-05", "Partner", "2"]]
     filtered = [["2026-10-05", "Retail", "4"], *rows]
 
-    assert run_service._series(chart, names, rows) == (["Partner", "Web", ""], 0)
-    assert run_service._series(chart, names, filtered)[0] == ["Partner", "Retail", "Web", ""]
+    assert run_service._series(run_service._ranked(chart, names, rows), 8) == (
+        ["Partner", "Web", ""],
+        0,
+    )
+    ranked = run_service._ranked(chart, names, filtered)
+    assert run_service._series(ranked, 8)[0] == ["Partner", "Retail", "Web", ""]
 
 
 def _shape(

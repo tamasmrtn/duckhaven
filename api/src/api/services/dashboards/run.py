@@ -798,12 +798,20 @@ def drawn(
     data = [[row.get(name) for name in names] for row in page.rows]
     left_out: list[str] = []
     if chart.series is not None:
-        chart.series.keys, dropped = _series(chart, names, data)
-        chart.colors = _colors(chart.series.field, chart.series.keys)
+        ranked = _ranked(chart, names, data)
+        chart.series.keys, dropped = _series(ranked, chart.limits.series)
+        # The palette's colours go to the largest; the rest draw grey.
+        coloured = ranked[: min(chart.limits.series, MAX_SERIES)]
+        chart.colors = _colors(chart.series.field, coloured)
         if dropped:
             left_out.append(
-                f"Showing the {MAX_SERIES} largest of {MAX_SERIES + dropped} series; "
+                f"Showing the {len(chart.series.keys)} largest of {len(ranked)} series; "
                 "the table view has them all."
+            )
+        if len(chart.series.keys) > len(coloured):
+            left_out.append(
+                f"Colours go to the {len(coloured)} largest of {len(chart.series.keys)} "
+                "series; the rest are grey."
             )
     if chart.x is not None and chart.x.kind != "category" and chart.x.field in names:
         at = names.index(chart.x.field)
@@ -935,25 +943,27 @@ def _number(value: object) -> Decimal | None:
         return None
 
 
-def _series(chart: ChartSpec, names: list[str], data: list[list]) -> tuple[list[str], int]:
-    """The series drawn, and how many were left out: the largest when there are too many.
-
-    They come in name order, with a missing value last, so a legend keeps its order
-    when a filter changes which value the rows hold first."""
+def _ranked(chart: ChartSpec, names: list[str], data: list[list]) -> list[str]:
+    """The series keys, the largest total first, ties in name order with a missing value last."""
     at = names.index(chart.series.field) if chart.series.field in names else None
     if at is None:
-        return [], 0
+        return []
     measure = names.index(chart.y[0].field) if chart.y and chart.y[0].field in names else None
     totals: dict[str, Decimal] = {}
     for row in data:
         key = "" if row[at] is None else str(row[at])
         value = _number(row[measure]) if measure is not None else None
         totals[key] = totals.get(key, Decimal(0)) + (value or 0)
-    keys = sorted(totals, key=lambda k: (k == "", k))
-    if len(keys) <= MAX_SERIES:
-        return keys, 0
-    largest = sorted(keys, key=lambda k: totals[k], reverse=True)[:MAX_SERIES]
-    return [k for k in keys if k in largest], len(keys) - MAX_SERIES
+    return sorted(totals, key=lambda k: (-totals[k], k == "", k))
+
+
+def _series(ranked: list[str], limit: int) -> tuple[list[str], int]:
+    """The series drawn, the largest ``limit``, and how many were left out.
+
+    They come in name order, with a missing value last, so a legend keeps its order
+    when a filter changes which value the rows hold first."""
+    keys = sorted(ranked[:limit], key=lambda k: (k == "", k))
+    return keys, len(ranked) - len(keys)
 
 
 def _colors(field_name: str, keys: list[str]) -> dict[str, int]:

@@ -747,6 +747,14 @@
           "default": null,
           "description": "A metric query."
         },
+        "series_limit": {
+          "default": 8,
+          "description": "The most series the line draws, the largest first. Past 8, the rest draw grey.",
+          "maximum": 24,
+          "minimum": 1,
+          "title": "Series Limit",
+          "type": "integer"
+        },
         "sql": {
           "anyOf": [
             {

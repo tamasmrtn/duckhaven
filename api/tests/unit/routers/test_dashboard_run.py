@@ -1048,6 +1048,79 @@ async def test_a_line_over_a_window_that_cuts_its_weeks_says_so(as_owner, ws, ag
     ]
 
 
+def _laps(n: int) -> dict:
+    return {
+        "id": "laps",
+        "type": "line",
+        "title": "Laps",
+        "sql": f"SELECT range AS lap, range % 90 AS seconds FROM range({n}) ORDER BY lap",
+        "columns": {"x": "lap", "y": ["seconds"]},
+    }
+
+
+async def test_a_line_reads_past_a_tables_thousand_rows(as_owner, ws, agent):
+    """22 cars over a 71-lap race is 1,562 points, more than a table shows."""
+    await _publish(as_owner, ws, spec(_laps(1200)))
+
+    laps = _widgets(await _view(as_owner, ws))["laps"]
+
+    assert len(laps["rows"]["data"]) == 1200
+    assert laps["rows"]["truncated"] is False
+    assert not [w for w in laps["warnings"] if "incomplete" in w]
+
+
+async def test_a_line_cut_at_its_row_limit_says_so(as_owner, ws, agent):
+    await _publish(as_owner, ws, spec(_laps(6000)))
+
+    laps = _widgets(await _view(as_owner, ws))["laps"]
+
+    assert len(laps["rows"]["data"]) == 5000
+    assert laps["rows"]["truncated"] is True
+    assert "Showing the first 5,000 of 6,000 rows; the chart is incomplete." in laps["warnings"]
+
+
+async def test_a_table_sharing_a_lines_sql_shows_its_own_thousand(as_owner, ws, agent):
+    table = {**_laps(1200), "id": "table", "type": "table"}
+    del table["columns"]
+    await _publish(as_owner, ws, spec(_laps(1200), table))
+
+    events = await _view(as_owner, ws)
+
+    widgets = _widgets(events)
+    assert events[-1]["statements"] == 1
+    assert len(widgets["laps"]["rows"]["data"]) == 1200
+    assert len(widgets["table"]["rows"]["data"]) == 1000
+    assert widgets["table"]["rows"]["truncated"] is True
+
+
+async def test_a_metric_line_at_its_row_limit_says_it_may_be_cut(as_owner, ws, agent, monkeypatch):
+    from api.services.dashboards import resolve as resolve_service
+
+    monkeypatch.setattr(resolve_service, "LINE_LIMIT", 1)
+    daily = {
+        "id": "trend",
+        "type": "line",
+        "title": "Revenue by day",
+        "query": {
+            "model": "sales",
+            "metrics": ["revenue"],
+            "grain": "day",
+            "time_range": "$period",
+        },
+    }
+    await _publish(as_owner, ws, spec(daily))
+
+    trend = _widgets(await _view(as_owner, ws))["trend"]
+
+    # Newest first, the cut leaves out the oldest days.
+    [[day, revenue]] = trend["rows"]["data"]
+    assert (day[:10], float(revenue)) == ((TODAY - timedelta(days=1)).isoformat(), 100.0)
+    assert (
+        "The query stopped at its 1-row limit, so the chart may be incomplete; a coarser "
+        "grain or a filter reads fewer rows."
+    ) in trend["warnings"]
+
+
 def _week(value: str) -> str:
     from api.services.dashboards.resolve import Window
 

@@ -66,6 +66,9 @@ MAX_SQL_LENGTH = 20_000
 MAX_MARKDOWN_LENGTH = 4_000
 BAR_LIMIT = 50
 TABLE_LIMIT = 1_000
+#: A line reads more than a table shows: 22 cars over a 71-lap race is 1,562
+#: points. The semantic compiler caps a query at the same number.
+LINE_LIMIT = 5_000
 
 #: Named time windows a parameter can default to, in the semantic layer's terms.
 TIME_PRESETS: dict[str, TimeRangeIn] = {

@@ -33,6 +33,7 @@ from api.schemas.query import TypedParameter
 from api.schemas.semantic import TimeRangeIn
 from api.services.dashboards.spec import (
     BAR_LIMIT,
+    LINE_LIMIT,
     TABLE_LIMIT,
     TIME_PRESETS,
     BarWidget,
@@ -41,6 +42,7 @@ from api.services.dashboards.spec import (
     DataWidget,
     DimensionParameter,
     KpiWidget,
+    LineWidget,
     TableWidget,
     TextWidget,
     TimeRangeParameter,
@@ -277,6 +279,11 @@ def _query_widget(
         order_by = order_by or (OrderTerm(field=query.metrics[0], descending=True),)
     elif isinstance(widget, TableWidget):
         limit = limit or TABLE_LIMIT
+    elif isinstance(widget, LineWidget):
+        limit = limit or LINE_LIMIT
+        # Without an order, a limit keeps any rows at all. Newest first, a cut
+        # leaves out the oldest periods; the run draws them oldest first.
+        order_by = order_by or (OrderTerm(field=query.grain, descending=True),)
 
     compiled = MetricQuery(
         metrics=tuple(query.metrics),

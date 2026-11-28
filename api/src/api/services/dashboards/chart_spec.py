@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 
 from api.services.dashboards.spec import (
     BAR_LIMIT,
+    LINE_LIMIT,
     TABLE_LIMIT,
     BarWidget,
     DataWidget,
@@ -119,7 +120,7 @@ def _from_query(widget: DataWidget, metrics: Mapping[str, Metric]) -> ChartSpec:
             x=Axis(field=query.grain, kind="time", grain=query.grain),
             y=y,
             series=Series(field=_field(query.dimensions[0])) if query.dimensions else None,
-            limits=Limits(rows=query.limit),
+            limits=Limits(rows=query.limit or LINE_LIMIT),
         )
 
     if isinstance(widget, BarWidget):
@@ -158,7 +159,7 @@ def _from_columns(widget: DataWidget) -> ChartSpec:
             x=Axis(field=columns.x, kind="time"),
             y=[_measure(name, None) for name in columns.y],
             series=Series(field=columns.series) if columns.series else None,
-            limits=Limits(rows=None),
+            limits=Limits(rows=LINE_LIMIT),
         )
     if isinstance(widget, BarWidget):
         return ChartSpec(

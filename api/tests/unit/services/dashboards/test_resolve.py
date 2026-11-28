@@ -293,6 +293,30 @@ def test_a_table_reads_up_to_a_thousand_rows():
     assert run(spec(table)).widgets["t"].query.limit == 1000
 
 
+def test_a_line_reads_up_to_five_thousand_rows_newest_first():
+    """Without an order a limit keeps any rows at all. Newest first, a cut drops
+    the oldest periods; the run draws them oldest first either way."""
+    line = {
+        "id": "l",
+        "type": "line",
+        "title": "L",
+        "query": {"model": "orders", "metrics": ["revenue"], "grain": "week"},
+    }
+    query = run(spec(line)).widgets["l"].query
+    assert (query.limit, query.order_by) == (5000, (OrderTerm(field="week", descending=True),))
+
+    line["query"] |= {"limit": 52, "order_by": [{"field": "revenue"}]}
+    query = run(spec(line)).widgets["l"].query
+    assert (query.limit, query.order_by) == (52, (OrderTerm(field="revenue"),))
+
+
+def test_a_line_reads_no_more_than_a_query_may_ask_for():
+    from api.services.dashboards.spec import LINE_LIMIT
+    from api.services.semantic.compile import MAX_LIMIT
+
+    assert LINE_LIMIT <= MAX_LIMIT
+
+
 def test_text_widgets_run_nothing():
     text = {"id": "note", "type": "text", "markdown": "Hello"}
     assert "note" not in run(spec(kpi(), text)).widgets

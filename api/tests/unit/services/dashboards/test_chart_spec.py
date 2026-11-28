@@ -76,6 +76,12 @@ def test_a_line_plots_time_and_splits_by_its_dimension():
     }
     assert chart.series.field == "region"
     assert (chart.stack, chart.orientation) == (False, None)
+    assert chart.limits.rows == 5000
+
+
+def test_an_sql_line_reads_up_to_five_thousand_rows():
+    chart = chart_spec(widget("line", sql="select 1", columns={"x": "lap", "y": ["seconds"]}))
+    assert chart.limits.rows == 5000
 
 
 @pytest.mark.parametrize(

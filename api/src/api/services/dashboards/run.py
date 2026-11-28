@@ -63,6 +63,7 @@ from api.services.dashboards.resolve import (
     resolve,
 )
 from api.services.dashboards.spec import (
+    LINE_LIMIT,
     TABLE_LIMIT,
     DashboardSpec,
     DataWidget,
@@ -307,8 +308,10 @@ def _share(widgets: list[_Widget], models: dict[str, LoadedModel], today: date) 
 
 
 def _limit(w: _Widget) -> int:
+    """The rows ``w`` reads: a line up to LINE_LIMIT, anything else up to TABLE_LIMIT."""
+    cap = LINE_LIMIT if w.chart is not None and w.chart.type == "line" else TABLE_LIMIT
     rows = w.chart.limits.rows if w.chart is not None else None
-    return min(rows or TABLE_LIMIT, TABLE_LIMIT)
+    return min(rows or cap, cap)
 
 
 def _jsonable(value: object) -> object:
@@ -721,10 +724,15 @@ def _widget_event(w: _Widget, run: Plan) -> dict:
 
     current = w.current
     page = current.page
+    limit = _limit(w)
+    if len(page.rows) > limit:
+        # A statement shared with a widget that reads more, a table with a line.
+        page = page.model_copy(update={"rows": page.rows[:limit]})
     columns, data, chart, left_out = drawn(w.widget, w.chart, page)
     names = [c["name"] for c in columns]
     warnings = list(w.compiled.warnings) if w.compiled else []
     warnings.extend(left_out)
+    warnings.extend(_cut(w, current.row_count, len(page.rows)))
     if w.widget.query is not None and resolved.window is not None:
         warnings.extend(_partial(chart, names, data, resolved.window))
     event.update(
@@ -747,6 +755,24 @@ def _widget_event(w: _Widget, run: Plan) -> dict:
         else:
             event["compare"] = _compare(w, data, names, w.previous.page)
     return event
+
+
+def _cut(w: _Widget, row_count: int, read: int) -> list[str]:
+    """Why a line or bar may not draw every row: what its SQL returned past the
+    rows read, or a query that stopped at the limit its file did not set."""
+    if w.chart is None or w.chart.type not in ("line", "bar"):
+        return []
+    if w.widget.sql is not None:
+        if row_count > read:
+            return [f"Showing the first {read:,} of {row_count:,} rows; the chart is incomplete."]
+        return []
+    query = w.resolved.query
+    if w.widget.query.limit is None and query is not None and row_count >= (query.limit or 0):
+        return [
+            f"The query stopped at its {query.limit:,}-row limit, so the chart may be "
+            "incomplete; a coarser grain or a filter reads fewer rows."
+        ]
+    return []
 
 
 def drawn(

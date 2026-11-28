@@ -104,11 +104,18 @@ describe("ChartWidget", () => {
       />,
     );
 
-    const ticks = xTicks(container).map(Number);
-    expect(ticks.length).toBeGreaterThan(1);
-    expect(ticks).toEqual([...ticks].sort((a, b) => a - b));
-    expect(ticks[0]).toBe(2);
-    expect(ticks.at(-1)).toBe(10);
+    // A tick a lap, smallest first, with lap 10 after lap 9.
+    expect(xTicks(container)).toEqual([
+      "2",
+      "3",
+      "4",
+      "5",
+      "6",
+      "7",
+      "8",
+      "9",
+      "10",
+    ]);
   });
 
   it("fits a line's value axis to its data rather than to zero", () => {

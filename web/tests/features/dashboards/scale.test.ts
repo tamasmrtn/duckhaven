@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { niceDomain, niceStep, stepTicks } from "@/features/dashboards/scale";
+import {
+  niceDomain,
+  niceStep,
+  stepTicks,
+  ticksWithin,
+} from "@/features/dashboards/scale";
 
 describe("niceStep", () => {
   it("picks 1, 2, 2.5 or 5 times a power of ten", () => {
@@ -43,5 +48,23 @@ describe("stepTicks", () => {
 
   it("leaves no float noise in a tick", () => {
     expect(stepTicks([0.1, 0.3], 0.1)).toEqual([0.1, 0.2, 0.3]);
+  });
+});
+
+describe("ticksWithin", () => {
+  it("puts round ticks between the ends of an axis drawn edge to edge", () => {
+    expect(ticksWithin(1, 12, { whole: true })).toEqual([2, 4, 6, 8, 10, 12]);
+    expect(ticksWithin(1, 71, { whole: true })).toEqual([
+      10, 20, 30, 40, 50, 60, 70,
+    ]);
+  });
+
+  it("never steps a whole-number axis by less than one", () => {
+    expect(ticksWithin(1, 3, { whole: true })).toEqual([1, 2, 3]);
+    expect(ticksWithin(0, 1)).toEqual([0, 0.2, 0.4, 0.6, 0.8, 1]);
+  });
+
+  it("puts one tick on an axis with one value", () => {
+    expect(ticksWithin(7, 7, { whole: true })).toEqual([7]);
   });
 });

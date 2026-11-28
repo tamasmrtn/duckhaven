@@ -49,3 +49,19 @@ export function stepTicks([lo, hi]: [number, number], step: number): number[] {
     clean(lo + i * step, step),
   );
 }
+
+/**
+ * Round ticks inside `[min, max]`, for an axis drawn edge to edge such as a
+ * lap axis: 2, 4, 6 … 12 for laps 1 to 12. `whole` keeps the step at 1 or more.
+ */
+export function ticksWithin(
+  min: number,
+  max: number,
+  { target = 8, whole = false }: { target?: number; whole?: boolean } = {},
+): number[] {
+  const step = Math.max(whole ? 1 : 0, niceStep(max - min, target));
+  return stepTicks(
+    [Math.ceil(min / step) * step, Math.floor(max / step) * step],
+    step,
+  );
+}

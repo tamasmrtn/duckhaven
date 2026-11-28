@@ -31,7 +31,7 @@ import {
 } from "../chartData";
 import { categoryValues } from "../crossFilter";
 import { formatValue, type ValueFormat } from "../format";
-import { niceDomain, stepTicks } from "../scale";
+import { niceDomain, stepTicks, ticksWithin } from "../scale";
 
 /** The dimension parameter a click on a bar sets, and its value in this run. */
 export interface ChartSelection {
@@ -292,7 +292,12 @@ export function ChartWidget({
                 dataKey: "xn",
                 type: "number" as const,
                 domain: ["dataMin", "dataMax"],
-                allowDecimals: !whole,
+                ticks:
+                  data.length > 0
+                    ? ticksWithin(data[0].xn!, data[data.length - 1].xn!, {
+                        whole,
+                      })
+                    : undefined,
                 tickFormatter: numberTick,
               }
             : {

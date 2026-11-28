@@ -182,9 +182,9 @@ owner reviews the draft and publishes it, so a person checks every dashboard bef
   say that a line needs a grain, and rules like that are where agents go wrong.
 - **Checking it.** `validate_dashboard` runs the checks publishing runs, as you, and returns every problem with its
   path, line and column. `preview_dashboard` runs the file as you. It returns each widget's first rows, how the widget
-  would draw, and advice on what would make it read badly, such as a title holding a number other than a date. Both
-  need the writer role in the workspace, as [previews](../reference/rest-api.md#previewing-a-dashboard-file) and
-  validations do in the REST API.
+  would draw, and advice on what would make it read badly, such as a title holding a number other than a date, or a
+  series colour too faint to see. Both need the writer role in the workspace, as
+  [previews](../reference/rest-api.md#previewing-a-dashboard-file) and validations do in the REST API.
 - **Reading one.** `run_dashboard` runs a saved dashboard as you, exactly as its page does, so the numbers match what
   you would see there. Each widget says which window its numbers cover, and which parameters did and did not filter
   it. A reader can run a published dashboard; running the draft needs the writer role.

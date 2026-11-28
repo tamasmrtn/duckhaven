@@ -181,9 +181,10 @@ A data widget reads from exactly one of:
   on every dashboard and carries its own format, such as a currency.
 - `sql`: inline SQL, up to 20,000 characters, checked and granted like any other query.
 
-How a widget draws follows from its type and its query; the file has no colour or styling options. Bars stack when
-every metric adds up (a `sum` or `count`) and shares one format, so the stack's height is a real total. Bars run
-horizontally, ranked, unless the query orders them by their own category.
+How a widget draws follows from its type and its query. The only styling a file sets is an SQL line's
+[series styles](#series-styles) and [markers](#markers), which its rows supply. Bars stack when every metric adds up (a
+`sum` or `count`) and shares one format, so the stack's height is a real total. Bars run horizontally, ranked, unless
+the query orders them by their own category.
 
 ### SQL widgets
 
@@ -204,7 +205,7 @@ example does. An SQL widget is filtered only by what `params` binds, so it takes
 | Type | `columns` |
 |---|---|
 | `kpi` | `{value: total}` |
-| `line` | `{x: day, y: [revenue, cost]}`, or `{x: day, y: [revenue], series: region}` for a line per region |
+| `line` | `{x: day, y: [revenue, cost]}`, or `{x: day, y: [revenue], series: region}` for a line per region. With `series`, also `color` and `dash`: see [series styles](#series-styles) |
 | `bar` | `{x: country, y: [revenue]}` |
 
 A `table` shows every column, so it takes no `columns`. A query widget takes no `columns` either.
@@ -224,6 +225,55 @@ An SQL widget reads up to 5,000 rows for a line, 50 for a bar and 1,000 for a ta
 or bar draws the first rows and says under the chart that it is incomplete. A query widget asks for no more than that
 in the first place: a line or bar whose query stops at that limit says the chart may be incomplete, unless the file set
 the `limit`.
+
+### Series styles
+
+A line split by `series` draws its 8 largest series by total, each in a palette colour that follows the series' value.
+`series_limit`, from 1 to 24, sets how many it draws. Past 8, the rest draw grey and the widget says so. A line with
+more series than its limit draws the largest, and its table view has them all.
+
+An SQL line can take each series' look from its rows instead:
+
+| `columns` key | The column holds | Accepted values |
+|---|---|---|
+| `color` | Each series' colour | `#rrggbb` or `#rgb`, with or without the `#`, in either case |
+| `dash` | Each series' line style | `solid` or `dotted`. `dashed` is reserved for a period the window holds only in part. |
+
+A series draws in the first value its rows give. A series with its own colour takes no palette colour, so 22 drivers in
+their team colours all draw in colour, and two teammates in one colour stay apart when one is `dotted`. Colours are
+drawn as given, in both themes. While you preview a file or view its draft, the widget names any colour under 3:1
+contrast on either theme's background. It also names two series in nearly one colour and the same line style. A value
+that is not a colour, a style other than `solid` or `dotted`, and a series whose value changes are named under the
+widget on every view.
+
+```yaml
+- id: laps
+  type: line
+  title: Lap times
+  series_limit: 22
+  sql: |
+    SELECT lap, driver, seconds, team_colour, IF(rank_in_team = 1, 'solid', 'dotted') AS style
+    FROM f1.marts.laps;
+  columns: {x: lap, y: [seconds], series: driver, color: team_colour, dash: style}
+```
+
+### Markers
+
+An SQL line's `markers` list, of up to 4, marks points and names lines from result columns:
+
+| Marker | Keys | Draws |
+|---|---|---|
+| A point layer | `when`, a `BOOLEAN` column; optional `label`, `size` (a number column) and `tooltip` (up to 5 columns) | A dot on each line wherever `when` is true, from 3 to 6 pixels across as `size` grows. The tooltip names the layer's `label`, or the column, and lists the `tooltip` columns. |
+| An end label | `at: last` and `label`, a column; at most one, and the line needs `series` | Each series' first `label` value beside its last point, nudged apart so none overlap. The labels replace the legend, and the chart grows until they fit. |
+
+A marker whose column the result lacks, or whose `when` is not `BOOLEAN`, is left out and named under the widget. A
+query widget's line takes no markers.
+
+```yaml
+  markers:
+    - {when: is_pit_out_lap, label: Pit stop, size: pit_duration, tooltip: [pit_duration]}
+    - {at: last, label: name_acronym}
+```
 
 ### Text widgets
 

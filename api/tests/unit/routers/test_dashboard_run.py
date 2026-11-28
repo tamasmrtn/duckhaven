@@ -864,6 +864,34 @@ async def test_a_writer_can_run_the_draft(as_owner, ws, agent):
     assert draft[0]["dashboard"]["draft"] is True
 
 
+async def test_colours_hard_to_see_are_named_while_authoring_only(as_owner, ws, agent):
+    """A team's yellow is drawn as given. Whoever writes the dashboard hears that it
+    is faint on the light theme; whoever reads the published one does not."""
+    yellow = {
+        "id": "laps",
+        "type": "line",
+        "title": "Laps",
+        "sql": "SELECT range AS lap, 'GAS' AS driver, 80.0 AS seconds, '#ffd700' AS colour "
+        "FROM range(1, 4) ORDER BY lap",
+        "columns": {"x": "lap", "y": ["seconds"], "series": "driver", "color": "colour"},
+    }
+    await _publish(as_owner, ws, spec(yellow))
+    # An unpublished change makes a draft to view.
+    patched = await as_owner.patch(
+        f"/workspaces/{ws}/dashboards/sales-overview",
+        json={"base_version": 2, "spec": spec(yellow, title="Sales, edited")},
+    )
+    assert patched.status_code == 200, patched.text
+    faint = "On the light theme, GAS (1.3:1) fall under the 3:1 a line needs to be seen."
+
+    published = _widgets(await _view(as_owner, ws))["laps"]
+    draft = _widgets(await _view(as_owner, ws, {"draft": True}))["laps"]
+
+    assert published["chart"]["styles"] == {"GAS": {"color": "#ffd700", "dash": None}}
+    assert faint not in published["warnings"]
+    assert faint in draft["warnings"]
+
+
 # ── The stream itself ─────────────────────────────────────────────────────────
 
 

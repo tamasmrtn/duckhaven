@@ -55,6 +55,7 @@ from api.services import delegation, query_submit
 from api.services import query as query_service
 from api.services.agent_capabilities import agent_supports_feature
 from api.services.dashboards.chart_spec import MAX_SERIES, ChartSpec, SeriesStyle, chart_spec
+from api.services.dashboards.contrast import colour_problems, few
 from api.services.dashboards.resolve import (
     ParameterError,
     Resolved,
@@ -728,7 +729,8 @@ def _widget_event(w: _Widget, run: Plan) -> dict:
     if len(page.rows) > limit:
         # A statement shared with a widget that reads more, a table with a line.
         page = page.model_copy(update={"rows": page.rows[:limit]})
-    columns, data, chart, left_out = drawn(w.widget, w.chart, page)
+    authoring = bool(run.dashboard.get("preview") or run.dashboard.get("draft"))
+    columns, data, chart, left_out = drawn(w.widget, w.chart, page, authoring=authoring)
     names = [c["name"] for c in columns]
     warnings = list(w.compiled.warnings) if w.compiled else []
     warnings.extend(left_out)
@@ -776,7 +778,7 @@ def _cut(w: _Widget, row_count: int, read: int) -> list[str]:
 
 
 def drawn(
-    widget: DataWidget, chart: ChartSpec, page: RowsPageOut
+    widget: DataWidget, chart: ChartSpec, page: RowsPageOut, *, authoring: bool = False
 ) -> tuple[list[dict], list[list], ChartSpec, list[str]]:
     """A widget's columns, rows and chart as a view sends them, and what was left out.
 
@@ -787,7 +789,10 @@ def drawn(
     the query's order.
 
     An SQL line's axis kind follows its column's type, which only the result
-    knows: a lap number draws as numbers, a date as time, a name as categories."""
+    knows: a lap number draws as numbers, a date as time, a name as categories.
+
+    While ``authoring``, a preview or a draft, it also says which of the series'
+    own colours are hard to see or to tell apart."""
     chart = chart.model_copy(deep=True)
     if widget.sql is not None and chart.type == "line" and chart.x is not None:
         types = {c.name: c.type for c in page.column_schema or []}
@@ -813,6 +818,16 @@ def drawn(
                 "the table view has them all."
             )
         left_out.extend(notes)
+        if authoring:
+            left_out.extend(
+                colour_problems(
+                    {
+                        k: (st.color, st.dash or "solid")
+                        for k, st in chart.styles.items()
+                        if st.color
+                    }
+                )
+            )
         if len(plain) > len(coloured):
             column = getattr(getattr(widget, "columns", None), "color", None)
             if column:
@@ -993,12 +1008,6 @@ def _hex(value: object) -> str | None:
     return "#" + (digits if len(digits) == 6 else "".join(d * 2 for d in digits))
 
 
-def _few(keys: list[str]) -> str:
-    """Up to three series by name, and how many more."""
-    named = ", ".join(k or "(none)" for k in keys[:3])
-    return named if len(keys) <= 3 else f"{named} and {len(keys) - 3} more"
-
-
 def _styles(
     widget: DataWidget, chart: ChartSpec, names: list[str], data: list[list]
 ) -> tuple[dict[str, SeriesStyle], list[str]]:
@@ -1056,19 +1065,19 @@ def _styles(
     for kind, what in (("color", "colour"), ("dash", "line style")):
         if varies.get(kind):
             notes.append(
-                f"{_few(varies[kind])} take more than one {what} from {fields[kind]}; "
+                f"{few(varies[kind])} take more than one {what} from {fields[kind]}; "
                 "each draws in its first."
             )
     if bad_color:
         notes.append(
-            f"{fields['color']} gives {_few(bad_color)} a colour that is not #rrggbb, so they "
+            f"{fields['color']} gives {few(bad_color)} a colour that is not #rrggbb, so they "
             "keep a palette colour."
         )
     if dashed:
-        notes.append(f"dashed is reserved; use solid or dotted. {_few(dashed)} draw solid.")
+        notes.append(f"dashed is reserved; use solid or dotted. {few(dashed)} draw solid.")
     if bad_dash:
         notes.append(
-            f"{fields['dash']} gives {_few(bad_dash)} a line style other than solid or "
+            f"{fields['dash']} gives {few(bad_dash)} a line style other than solid or "
             "dotted, so they draw solid."
         )
     return styles, notes

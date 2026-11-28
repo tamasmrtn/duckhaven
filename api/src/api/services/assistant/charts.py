@@ -21,6 +21,7 @@ from pydantic import ValidationError
 from api.schemas.query import RowsPageOut
 from api.services.assistant.grounding import DATES
 from api.services.dashboards.chart_spec import chart_spec
+from api.services.dashboards.contrast import colour_problems
 from api.services.dashboards.run import drawn
 from api.services.dashboards.spec import BAR_LIMIT, TABLE_LIMIT, DashboardSpec
 
@@ -115,6 +116,16 @@ def lint(widget: dict, event: dict | None) -> list[str]:
             "Its measures have different formats or units but would share one axis. "
             "Give each its own widget."
         )
+    styles = (event.get("chart") or {}).get("styles") or {}
+    notes.extend(
+        colour_problems(
+            {
+                key: (style["color"], style.get("dash") or "solid")
+                for key, style in styles.items()
+                if style.get("color")
+            }
+        )
+    )
     return notes
 
 

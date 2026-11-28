@@ -69,11 +69,49 @@ export function ChartFrame({
  * on matching colours by eye, and it can carry each series' value, so the figures
  * are readable without hovering.
  */
+/** A line's key: a short stroke in its colour, dotted for a dotted line. */
+export function LineSwatch({
+  color,
+  dash = "solid",
+}: {
+  color: string;
+  dash?: "solid" | "dotted";
+}) {
+  if (dash === "solid") {
+    return (
+      <span
+        aria-hidden
+        className="h-0.5 w-3 shrink-0 rounded-full"
+        style={{ backgroundColor: color }}
+      />
+    );
+  }
+  return (
+    <svg aria-hidden width={12} height={2} className="shrink-0">
+      <line
+        x1={1}
+        y1={1}
+        x2={11}
+        y2={1}
+        stroke={color}
+        strokeWidth={2}
+        strokeLinecap="round"
+        strokeDasharray="0 4"
+      />
+    </svg>
+  );
+}
+
 export function Legend({
   items,
   mark = "square",
 }: {
-  items: { label: string; color: string; value?: string }[];
+  items: {
+    label: string;
+    color: string;
+    value?: string;
+    dash?: "solid" | "dotted";
+  }[];
   // The key mirrors the mark: a square for bars and areas, a stroke for lines.
   mark?: "square" | "line";
 }) {
@@ -81,15 +119,15 @@ export function Legend({
     <ul className="flex flex-wrap items-center gap-x-3 gap-y-1">
       {items.map((item) => (
         <li key={item.label} className="flex items-center gap-1.5">
-          <span
-            aria-hidden
-            className={
-              mark === "line"
-                ? "h-0.5 w-3 shrink-0 rounded-full"
-                : "size-2 shrink-0 rounded-[2px]"
-            }
-            style={{ backgroundColor: item.color }}
-          />
+          {mark === "line" ? (
+            <LineSwatch color={item.color} dash={item.dash} />
+          ) : (
+            <span
+              aria-hidden
+              className="size-2 shrink-0 rounded-[2px]"
+              style={{ backgroundColor: item.color }}
+            />
+          )}
           {/* Text stays in ink tokens — a light series hue is illegible as text. */}
           <span className="text-2xs text-text-secondary">{item.label}</span>
           {item.value !== undefined && (

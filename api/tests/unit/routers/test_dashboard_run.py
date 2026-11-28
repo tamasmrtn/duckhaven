@@ -864,6 +864,34 @@ async def test_a_writer_can_run_the_draft(as_owner, ws, agent):
     assert draft[0]["dashboard"]["draft"] is True
 
 
+async def test_colours_hard_to_see_are_named_while_authoring_only(as_owner, ws, agent):
+    """A team's yellow is drawn as given. Whoever writes the dashboard hears that it
+    is faint on the light theme; whoever reads the published one does not."""
+    yellow = {
+        "id": "laps",
+        "type": "line",
+        "title": "Laps",
+        "sql": "SELECT range AS lap, 'GAS' AS driver, 80.0 AS seconds, '#ffd700' AS colour "
+        "FROM range(1, 4) ORDER BY lap",
+        "columns": {"x": "lap", "y": ["seconds"], "series": "driver", "color": "colour"},
+    }
+    await _publish(as_owner, ws, spec(yellow))
+    # An unpublished change makes a draft to view.
+    patched = await as_owner.patch(
+        f"/workspaces/{ws}/dashboards/sales-overview",
+        json={"base_version": 2, "spec": spec(yellow, title="Sales, edited")},
+    )
+    assert patched.status_code == 200, patched.text
+    faint = "On the light theme, GAS (1.3:1) fall under the 3:1 a line needs to be seen."
+
+    published = _widgets(await _view(as_owner, ws))["laps"]
+    draft = _widgets(await _view(as_owner, ws, {"draft": True}))["laps"]
+
+    assert published["chart"]["styles"] == {"GAS": {"color": "#ffd700", "dash": None}}
+    assert faint not in published["warnings"]
+    assert faint in draft["warnings"]
+
+
 # ── The stream itself ─────────────────────────────────────────────────────────
 
 
@@ -1185,10 +1213,236 @@ def test_past_eight_series_the_largest_are_drawn():
     )
     data = [["2026-01-01", f"c{n}", str(n)] for n in range(10)]
 
-    keys, dropped = run_service._series(chart, ["month", "country", "revenue"], data)
+    ranked = run_service._ranked(chart, ["month", "country", "revenue"], data)
+    keys, dropped = run_service._series(ranked, chart.limits.series)
 
     assert keys == [f"c{n}" for n in range(2, 10)]
     assert dropped == 2
+
+
+DRIVERS = {
+    "id": "laps",
+    "type": "line",
+    "title": "Lap times",
+    "sql": "SELECT lap, driver, seconds FROM laps",
+    "columns": {"x": "lap", "y": ["seconds"], "series": "driver"},
+}
+
+
+def _grid(drivers: int) -> list[list]:
+    """A lap per driver, driver ``d{n}`` with ``n`` seconds, so d21 is the largest."""
+    return [[1, f"d{n:02}", n] for n in range(drivers)]
+
+
+def _laps_drawn(
+    widget: dict,
+    drivers: int | None = None,
+    *,
+    rows: list[list] | None = None,
+    names: tuple[str, ...] = ("lap", "driver", "seconds"),
+    types: tuple[str, ...] = ("BIGINT", "VARCHAR", "DOUBLE"),
+):
+    """The chart and notes a view sends for an SQL line over laps."""
+    from api.schemas.query import ColumnSchemaOut, RowsPageOut
+    from api.services.dashboards.chart_spec import chart_spec
+    from api.services.dashboards.spec import DashboardSpec
+
+    spec = DashboardSpec.model_validate(
+        {"version": 1, "name": "d", "title": "D", "rows": [{"widgets": [widget]}]}
+    )
+    parsed = spec.rows[0].widgets[0]
+    rows = _grid(drivers) if rows is None else rows
+    page = RowsPageOut(
+        rows=[dict(zip(names, row, strict=True)) for row in rows],
+        columns=list(names),
+        cursor=None,
+        total=len(rows),
+        column_schema=[ColumnSchemaOut(name=n, type=t) for n, t in zip(names, types, strict=True)],
+    )
+    _, _, chart, notes = run_service.drawn(parsed, chart_spec(parsed), page)
+    return chart, notes
+
+
+def test_a_line_draws_as_many_series_as_its_limit_allows():
+    """22 drivers fit a limit of 24. The palette's 8 colours go to the largest; the
+    rest draw grey, and the widget says so."""
+    chart, notes = _laps_drawn({**DRIVERS, "series_limit": 24}, 22)
+
+    assert chart.series.keys == [f"d{n:02}" for n in range(22)]
+    assert sorted(chart.colors) == [f"d{n}" for n in range(14, 22)]
+    assert sorted(chart.colors.values()) == list(range(8))
+    assert notes == [
+        "Colours go to the 8 largest of 22 series; the rest are grey. A color column "
+        "colours them all."
+    ]
+
+
+def test_past_its_series_limit_a_line_draws_the_largest():
+    chart, notes = _laps_drawn(DRIVERS, 12)
+
+    assert chart.series.keys == [f"d{n:02}" for n in range(4, 12)]
+    assert len(chart.colors) == 8
+    assert notes == ["Showing the 8 largest of 12 series; the table view has them all."]
+
+
+STYLED = {
+    **DRIVERS,
+    "series_limit": 24,
+    "columns": {
+        "x": "lap",
+        "y": ["seconds"],
+        "series": "driver",
+        "color": "team_colour",
+        "dash": "style",
+    },
+}
+STYLED_NAMES = ("lap", "driver", "seconds", "team_colour", "style")
+STYLED_TYPES = ("BIGINT", "VARCHAR", "DOUBLE", "VARCHAR", "VARCHAR")
+
+
+def _styled(rows: list[list]):
+    return _laps_drawn(STYLED, rows=rows, names=STYLED_NAMES, types=STYLED_TYPES)
+
+
+def test_a_series_takes_its_colour_and_line_style_from_its_rows():
+    """Colours arrive as a feed gives them: with or without a #, short or long,
+    either case. Each is drawn as #rrggbb; a series with its own takes no slot."""
+    chart, notes = _styled(
+        [
+            [1, "VER", 80.1, "3671C6", "solid"],
+            [1, "PER", 80.9, "#3671c6", "dotted"],
+            [1, "HAM", 81.2, "#E8002D", "Solid"],
+            [1, "LEC", 81.0, "#f00", None],
+            [1, "BOT", 82.0, None, None],
+        ]
+    )
+
+    assert {k: s.model_dump(exclude_none=True) for k, s in chart.styles.items()} == {
+        "VER": {"color": "#3671c6", "dash": "solid"},
+        "PER": {"color": "#3671c6", "dash": "dotted"},
+        "HAM": {"color": "#e8002d", "dash": "solid"},
+        "LEC": {"color": "#ff0000"},
+    }
+    assert list(chart.colors) == ["BOT"]
+    assert notes == []
+
+
+def test_a_series_whose_colour_changes_draws_in_its_first():
+    chart, notes = _styled(
+        [
+            [1, "VER", 80.1, "#3671c6", "solid"],
+            [2, "VER", 80.2, "#ff8000", "dotted"],
+        ]
+    )
+
+    assert chart.styles["VER"].color == "#3671c6"
+    assert chart.styles["VER"].dash == "solid"
+    assert notes == [
+        "VER take more than one colour from team_colour; each draws in its first.",
+        "VER take more than one line style from style; each draws in its first.",
+    ]
+
+
+def test_what_a_style_column_cannot_say_is_named_and_drawn_plain():
+    rows = [[1, f"D{n}", 80.0 + n, "teal", "dashed"] for n in range(5)]
+    rows.append([1, "VER", 79.0, "#3671c6", "wavy"])
+
+    chart, notes = _styled(rows)
+
+    assert {k: s.model_dump(exclude_none=True) for k, s in chart.styles.items()} == {
+        "VER": {"color": "#3671c6"}
+    }
+    assert sorted(chart.colors) == ["D0", "D1", "D2", "D3", "D4"]
+    assert notes == [
+        "team_colour gives D0, D1, D2 and 2 more a colour that is not #rrggbb, so they keep "
+        "a palette colour.",
+        "dashed is reserved; use solid or dotted. D0, D1, D2 and 2 more draw solid.",
+        "style gives VER a line style other than solid or dotted, so they draw solid.",
+    ]
+
+
+def test_a_style_column_missing_from_the_result_is_named():
+    chart, notes = _laps_drawn(
+        {**DRIVERS, "columns": {**DRIVERS["columns"], "color": "team_colour"}}, 2
+    )
+
+    assert chart.styles == {}
+    assert notes == ["The color column team_colour is not in the result."]
+
+
+def test_past_the_palette_series_without_a_colour_column_value_are_grey():
+    rows = [[1, f"d{n:02}", n, None, None] for n in range(12)]
+    rows.append([1, "VER", 99, "#3671c6", None])
+
+    chart, notes = _styled(rows)
+
+    assert len(chart.colors) == 8 and "VER" not in chart.colors
+    assert notes == [
+        "Colours go to the 8 largest of the 12 series team_colour gives no colour; the rest "
+        "are grey."
+    ]
+
+
+PITS = {
+    **DRIVERS,
+    "markers": [
+        {"when": "pit", "label": "Pit stop", "size": "stop", "tooltip": ["stop", "tyre"]},
+        {"at": "last", "label": "acronym"},
+    ],
+}
+PIT_NAMES = ("lap", "driver", "seconds", "pit", "stop", "tyre", "acronym")
+
+
+def test_a_lines_markers_are_kept_when_the_result_holds_their_columns():
+    chart, notes = _laps_drawn(
+        PITS,
+        rows=[[1, "VER", 80.0, True, 2.4, "HARD", "VER"]],
+        names=PIT_NAMES,
+        types=("BIGINT", "VARCHAR", "DOUBLE", "BOOLEAN", "DECIMAL(5,2)", "VARCHAR", "VARCHAR"),
+    )
+
+    assert [m.model_dump() for m in chart.markers] == [
+        {
+            "type": "point",
+            "when": "pit",
+            "label": "Pit stop",
+            "size": "stop",
+            "tooltip": ["stop", "tyre"],
+        },
+        {"type": "end", "label": "acronym"},
+    ]
+    assert notes == []
+
+
+def test_a_marker_the_result_cannot_draw_is_left_out_and_named():
+    chart, notes = _laps_drawn(
+        PITS,
+        rows=[[1, "VER", 80.0, 1, "slow", "HARD"]],
+        names=PIT_NAMES[:6],
+        types=("BIGINT", "VARCHAR", "DOUBLE", "INTEGER", "VARCHAR", "VARCHAR"),
+    )
+
+    assert chart.markers == []
+    assert notes == [
+        "A marker needs pit to be BOOLEAN; it is INTEGER.",
+        "The label column acronym is not in the result.",
+    ]
+
+
+def test_a_markers_size_and_tooltip_columns_are_cut_to_what_the_result_holds():
+    chart, notes = _laps_drawn(
+        PITS,
+        rows=[[1, "VER", 80.0, True, "slow", "VER"]],
+        names=("lap", "driver", "seconds", "pit", "stop", "acronym"),
+        types=("BIGINT", "VARCHAR", "DOUBLE", "BOOLEAN", "VARCHAR", "VARCHAR"),
+    )
+
+    [pit, _] = chart.markers
+    assert (pit.size, pit.tooltip) == (None, ["stop"])
+    assert notes == [
+        "A marker's size needs stop to be a number; it is VARCHAR.",
+        "The tooltip column tyre is not in the result.",
+    ]
 
 
 def _weekly(window_start: date, window_end: date, weeks: list[str]) -> tuple[list[str], list[str]]:
@@ -1246,8 +1500,12 @@ def test_series_come_in_name_order_whatever_order_the_rows_came_in():
     rows = [["2026-10-05", "Web", "3"], ["2026-10-05", None, "1"], ["2026-10-05", "Partner", "2"]]
     filtered = [["2026-10-05", "Retail", "4"], *rows]
 
-    assert run_service._series(chart, names, rows) == (["Partner", "Web", ""], 0)
-    assert run_service._series(chart, names, filtered)[0] == ["Partner", "Retail", "Web", ""]
+    assert run_service._series(run_service._ranked(chart, names, rows), 8) == (
+        ["Partner", "Web", ""],
+        0,
+    )
+    ranked = run_service._ranked(chart, names, filtered)
+    assert run_service._series(ranked, 8)[0] == ["Partner", "Retail", "Web", ""]
 
 
 def _shape(

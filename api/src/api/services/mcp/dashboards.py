@@ -133,6 +133,13 @@ type: a date as time, a number such as a lap to scale, other text in the SQL's o
 `$period.start` is the window's first day and `$period.end` the day after it. Both are NULL
 while the window is all time, so write filters where NULL means no filter.
 
+An sql line split by `series` draws its 8 largest series; `series_limit` (up to 24) draws more,
+and those past 8 are grey unless `columns.color` names a column of `#rrggbb` colours.
+`columns.dash` names a column of `solid` or `dotted`. `markers` marks points where a BOOLEAN
+column is true, `{when: <col>, label: Pit stop, size: <col>, tooltip: [<col>]}`, and
+`{at: last, label: <col>}` names each line at its end instead of a legend. Pick colours with
+3:1 contrast on white and on near-black; `preview_dashboard` says which do not.
+
 ## Parameters
 
 - `time_range`: a window, which a widget uses only where its query says `time_range: $name`.
@@ -284,6 +291,14 @@ def encoding(chart: dict) -> str:
     parts.append(f"y={measures}")
     if chart.get("series"):
         parts.append(f"series={chart['series']['field']}")
+    if chart.get("styles"):
+        parts.append("styled from columns")
+    markers = chart.get("markers") or []
+    points = [m["label"] for m in markers if m["type"] == "point"]
+    if points:
+        parts.append(f"marks={', '.join(points)}")
+    if any(m["type"] == "end" for m in markers):
+        parts.append("end labels")
     if chart.get("stack"):
         parts.append("stacked")
     if chart.get("orientation") == "horizontal":

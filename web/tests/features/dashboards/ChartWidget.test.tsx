@@ -47,6 +47,30 @@ function numbered(type: string, data: Cell[][]): RunWidget {
   };
 }
 
+/** Two drivers over laps, one pit stop each, each named at the end of its line. */
+function racing(data: Cell[][]): RunWidget {
+  const event = numbered("BIGINT", data);
+  event.rows!.columns = [
+    { name: "lap", type: "BIGINT", role: "dimension" },
+    { name: "driver", type: "VARCHAR", role: "dimension" },
+    { name: "seconds", type: "DOUBLE", role: "measure" },
+    { name: "pit", type: "BOOLEAN", role: null },
+    { name: "stop", type: "DOUBLE", role: null },
+    { name: "acronym", type: "VARCHAR", role: null },
+  ];
+  event.chart = {
+    ...event.chart!,
+    series: { field: "driver", keys: ["PER", "VER"] },
+    colors: { PER: 0 },
+    styles: { VER: { color: "#3671c6" } },
+    markers: [
+      { type: "point", when: "pit", label: "Pit stop", size: "stop" },
+      { type: "end", label: "acronym" },
+    ],
+  };
+  return event;
+}
+
 function ticks(container: HTMLElement, side: "bottom" | "left"): string[] {
   return [
     // Recharts draws tick labels in a layer of their own, outside the axis.
@@ -130,6 +154,113 @@ describe("ChartWidget", () => {
     );
 
     expect(ticks(container, "left")).toEqual(["80", "85", "90", "95", "100"]);
+  });
+
+  it("draws a series in the colour its rows gave, in either theme", () => {
+    const event = numbered("BIGINT", [
+      ["1", "VER", 80.1],
+      ["1", "PER", 80.9],
+    ]);
+    event.rows!.columns.splice(1, 0, {
+      name: "driver",
+      type: "VARCHAR",
+      role: "dimension",
+    });
+    event.rows!.data = [
+      ["1", "VER", 80.1],
+      ["1", "PER", 80.9],
+      ["2", "VER", 79.8],
+      ["2", "PER", 80.4],
+    ];
+    event.chart = {
+      ...event.chart!,
+      series: { field: "driver", keys: ["PER", "VER"] },
+      colors: { PER: 0 },
+      styles: { VER: { color: "#3671c6" } },
+    };
+    const { container } = render(
+      <ChartWidget event={event} label="Lap times" />,
+    );
+
+    const strokes = [
+      ...container.querySelectorAll("path.recharts-line-curve"),
+    ].map((path) => path.getAttribute("stroke"));
+    expect(strokes).toEqual(["#2a78d6", "#3671c6"]);
+  });
+
+  it("marks a line only where the marker column is true", () => {
+    const event = racing([
+      ["1", "VER", 80.1, false, null, "VER"],
+      ["2", "VER", 99.3, true, 2.4, "VER"],
+      ["3", "VER", 80.4, false, null, "VER"],
+      ["1", "PER", 80.9, false, null, "PER"],
+      ["2", "PER", 80.6, false, null, "PER"],
+      ["3", "PER", 98.8, true, 3.1, "PER"],
+    ]);
+    const { container } = render(
+      <ChartWidget event={event} label="Lap times" />,
+    );
+
+    // One mark each, ink ringed in its line's colour, the slower stop larger.
+    const marks = [...container.querySelectorAll("circle")].map((c) => [
+      c.getAttribute("stroke"),
+      Number(c.getAttribute("r")),
+    ]);
+    expect(marks).toEqual([
+      ["#2a78d6", 6],
+      ["#3671c6", 3],
+    ]);
+  });
+
+  it("names each line at its end in place of a legend", () => {
+    const event = racing([
+      ["1", "VER", 80.1, false, null, "VER"],
+      ["2", "VER", 80.0, false, null, "VER"],
+      ["1", "PER", 80.9, false, null, "PER"],
+      ["2", "PER", 80.6, false, null, "PER"],
+    ]);
+    render(<ChartWidget event={event} label="Lap times" />);
+
+    const plot = screen.getByTestId("widget-chart");
+    expect(plot.querySelectorAll("text")).not.toHaveLength(0);
+    expect(
+      [...plot.querySelectorAll("g[aria-hidden] text")].map(
+        (t) => t.textContent,
+      ),
+    ).toEqual(["PER", "VER"]);
+    // The names say what the legend would.
+    expect(screen.queryByRole("list")).toBeNull();
+  });
+
+  it("draws a dotted series in round dots, and its legend key the same", () => {
+    const event = racing([
+      ["1", "VER", 80.1, false, null, "VER"],
+      ["2", "VER", 80.0, false, null, "VER"],
+      ["1", "PER", 80.9, false, null, "PER"],
+      ["2", "PER", 80.6, false, null, "PER"],
+    ]);
+    event.chart = {
+      ...event.chart!,
+      styles: {
+        VER: { color: "#3671c6" },
+        PER: { color: "#3671c6", dash: "dotted" },
+      },
+      markers: [],
+    };
+    const { container } = render(
+      <ChartWidget event={event} label="Lap times" />,
+    );
+
+    const dashes = [
+      ...container.querySelectorAll("path.recharts-line-curve"),
+    ].map((path) => path.getAttribute("stroke-dasharray"));
+    expect(dashes).toEqual(["0 4", null]);
+    // Without end labels, the legend keys the dotted line as dotted.
+    const keys = [...screen.getByRole("list").querySelectorAll("li")].map(
+      (li) =>
+        li.querySelector("line")?.getAttribute("stroke-dasharray") ?? null,
+    );
+    expect(keys).toEqual(["0 4", null]);
   });
 
   it("reads an integer axis without thousands separators", () => {

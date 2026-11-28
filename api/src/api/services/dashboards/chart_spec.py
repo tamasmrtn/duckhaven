@@ -2,13 +2,14 @@
 
 The web app draws with Recharts, the assistant describes a chart in words, and a
 later renderer could draw images; all of them read this spec. The encoding is
-decided once, here, from the widget's type and the shape of its query. A
-dashboard file has no styling options to override it.
+decided once, here, from the widget's type and the shape of its query. The one
+styling a file can ask for is an SQL line's series colour and line style, which
+its rows give in result columns.
 
 How numbers look comes from the metric in the semantic layer (format, unit,
-currency, polarity), so revenue reads the same on every dashboard. Series keys
-and their colour slots depend on the rows a run returns, so they are filled in
-when the widget runs.
+currency, polarity), so revenue reads the same on every dashboard. Series keys,
+their colour slots and their styles depend on the rows a run returns, so they
+are filled in when the widget runs.
 """
 
 from __future__ import annotations
@@ -21,16 +22,19 @@ from pydantic import BaseModel, Field
 from api.services.dashboards.spec import (
     BAR_LIMIT,
     LINE_LIMIT,
+    SERIES_COLOURS,
     TABLE_LIMIT,
     BarWidget,
     DataWidget,
+    EndLabel,
     KpiWidget,
     LineWidget,
+    PointMarker,
 )
 from api.services.semantic.model import Metric
 
 #: Categorical colour slots. A ninth series has no colour of its own.
-MAX_SERIES = 8
+MAX_SERIES = SERIES_COLOURS
 #: Only quantities that add up can be stacked into a meaningful total.
 STACKABLE = frozenset({"sum", "count"})
 
@@ -63,6 +67,24 @@ class Series(BaseModel):
     keys: list[str] = Field(default_factory=list, description="Filled when the widget runs.")
 
 
+class SeriesStyle(BaseModel):
+    color: str | None = Field(default=None, description="#rrggbb, drawn as given.")
+    dash: Literal["solid", "dotted"] | None = None
+
+
+class PointLayer(BaseModel):
+    type: Literal["point"] = "point"
+    when: str = Field(description="The BOOLEAN column marking a point where it is true.")
+    label: str
+    size: str | None = Field(default=None, description="A number column the mark's size follows.")
+    tooltip: list[str] = Field(default_factory=list)
+
+
+class EndLabels(BaseModel):
+    type: Literal["end"] = "end"
+    label: str = Field(description="The column naming each series at its last point.")
+
+
 class Limits(BaseModel):
     rows: int | None = Field(description="Rows the widget reads; None leaves it to the compiler.")
     series: int = MAX_SERIES
@@ -77,7 +99,18 @@ class ChartSpec(BaseModel):
     orientation: Literal["vertical", "horizontal"] | None = None
     colors: dict[str, int] = Field(
         default_factory=dict,
-        description="Series key to colour slot, filled when the widget runs.",
+        description="Series key to colour slot, filled when the widget runs. A key with a "
+        "colour of its own in styles, or past the palette, has none.",
+    )
+    styles: dict[str, SeriesStyle] = Field(
+        default_factory=dict,
+        description="Series key to the colour and line style its rows give, filled when the "
+        "widget runs.",
+    )
+    markers: list[PointLayer | EndLabels] = Field(
+        default_factory=list,
+        description="Marked points and end labels, read from result columns. A layer whose "
+        "columns the result lacks is left out when the widget runs.",
     )
     limits: Limits
 
@@ -87,6 +120,17 @@ def chart_spec(widget: DataWidget, metrics: Mapping[str, Metric] | None = None) 
     if widget.query is not None:
         return _from_query(widget, metrics or {})
     return _from_columns(widget)
+
+
+def _marker(marker: PointMarker | EndLabel) -> PointLayer | EndLabels:
+    if isinstance(marker, EndLabel):
+        return EndLabels(label=marker.label)
+    return PointLayer(
+        when=marker.when,
+        label=marker.label or marker.when,
+        size=marker.size,
+        tooltip=list(marker.tooltip),
+    )
 
 
 def _field(dimension: str) -> str:
@@ -120,7 +164,7 @@ def _from_query(widget: DataWidget, metrics: Mapping[str, Metric]) -> ChartSpec:
             x=Axis(field=query.grain, kind="time", grain=query.grain),
             y=y,
             series=Series(field=_field(query.dimensions[0])) if query.dimensions else None,
-            limits=Limits(rows=query.limit or LINE_LIMIT),
+            limits=Limits(rows=query.limit or LINE_LIMIT, series=widget.series_limit),
         )
 
     if isinstance(widget, BarWidget):
@@ -159,7 +203,8 @@ def _from_columns(widget: DataWidget) -> ChartSpec:
             x=Axis(field=columns.x, kind="time"),
             y=[_measure(name, None) for name in columns.y],
             series=Series(field=columns.series) if columns.series else None,
-            limits=Limits(rows=LINE_LIMIT),
+            markers=[_marker(m) for m in widget.markers],
+            limits=Limits(rows=LINE_LIMIT, series=widget.series_limit),
         )
     if isinstance(widget, BarWidget):
         return ChartSpec(

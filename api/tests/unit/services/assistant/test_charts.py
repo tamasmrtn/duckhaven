@@ -145,6 +145,23 @@ def test_measures_in_different_units_on_one_axis_are_called_out():
     assert any("own widget" in n for n in lint({"type": "bar", "title": "x"}, _event(chart=chart)))
 
 
+def test_series_colours_that_are_hard_to_see_are_called_out():
+    chart = {
+        "y": [{"field": "seconds"}],
+        "styles": {
+            "GAS": {"color": "#ffd700", "dash": None},
+            "VER": {"color": "#3671c6", "dash": "solid"},
+            "PER": {"color": "#3671c6", "dash": "dotted"},
+        },
+    }
+
+    notes = lint({"type": "line", "title": "Lap times"}, _event(chart=chart))
+
+    assert "On the light theme, GAS (1.3:1) fall under the 3:1 a line needs to be seen." in notes
+    # Teammates in one colour, one dotted, are told apart by their line.
+    assert not [n for n in notes if "read as one line" in n]
+
+
 # ── chat_chart ────────────────────────────────────────────────────────────────
 
 

@@ -157,6 +157,14 @@ def test_the_encoding_says_how_a_widget_draws_in_one_line():
     assert encoding(line) == "line: x=week, y=revenue, series=region"
     stacked = {"type": "bar", "x": {"field": "c"}, "y": [{"field": "a"}, {"field": "b"}]}
     assert encoding({**stacked, "stack": True}) == "bar: x=c, y=a, b, stacked"
+    laps = {
+        **line,
+        "styles": {"VER": {"color": "#3671c6", "dash": "solid"}},
+        "markers": [{"type": "point", "label": "Pit stop"}, {"type": "end", "label": "acronym"}],
+    }
+    assert encoding(laps) == (
+        "line: x=week, y=revenue, series=region, styled from columns, marks=Pit stop, end labels"
+    )
     assert encoding({"type": "kpi", "y": [{"field": "revenue"}]}) == "kpi: value=revenue"
     assert encoding({"type": "table", "y": []}) == "table: every column"
 

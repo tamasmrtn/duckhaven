@@ -12,7 +12,23 @@ export interface ChartSeries {
   label: string;
   /** The categorical colour slot, 0 to 7, or null to draw in the neutral grey. */
   slot: number | null;
+  /** The colour the series' rows give, #rrggbb, drawn as given in both themes. */
+  color: string | null;
+  dash: "solid" | "dotted";
+  /** The name drawn at the line's last point, from an `at: last` marker. */
+  endLabel: string | null;
   measure: ChartMeasure;
+}
+
+/** A point marked by a marker layer, such as a pit stop. */
+export interface Mark {
+  /** The layer's place among the point layers, which sets how it is drawn. */
+  layer: number;
+  label: string;
+  /** Radius in pixels, 3 to 6, larger for a larger size value. */
+  r: number;
+  /** The layer's tooltip columns at this point. */
+  details: { name: string; value: Cell }[];
 }
 
 /**
@@ -29,6 +45,8 @@ export interface ChartData {
   series: ChartSeries[];
   /** The x values whose period the window holds only in part. */
   partial: Set<string>;
+  /** Series key, then x, to the points marked there. */
+  marks: Map<string, Map<string, Mark[]>>;
 }
 
 /**
@@ -75,6 +93,9 @@ export function chartData(
       label: key === "" ? "(none)" : key,
       // A key the server gave no slot, past the eighth, draws in grey.
       slot: chart.colors[key] ?? null,
+      color: chart.styles?.[key]?.color ?? null,
+      dash: chart.styles?.[key]?.dash ?? "solid",
+      endLabel: null,
       measure: chart.y[0],
     }));
     const index = new Map(chart.series.keys.map((k, i) => [k, `s${i}`]));
@@ -93,6 +114,9 @@ export function chartData(
       key: `s${i}`,
       label: measure.label,
       slot: i % 8,
+      color: null,
+      dash: "solid" as const,
+      endLabel: null,
       measure,
     }));
     for (const row of rows) {
@@ -131,7 +155,79 @@ export function chartData(
       }
     });
   }
-  return { data, series, partial };
+  return { data, series, partial, marks: marked(chart, columns, rows, series) };
+}
+
+/**
+ * The points each marker layer marks, by series and x, and each series' end
+ * label. A row marks the series it belongs to, or, with no series column,
+ * every line at its x.
+ */
+function marked(
+  chart: ChartSpec,
+  columns: RunColumn[],
+  rows: Cell[][],
+  series: ChartSeries[],
+): Map<string, Map<string, Mark[]>> {
+  const marks = new Map<string, Map<string, Mark[]>>();
+  const markers = chart.markers ?? [];
+  if (markers.length === 0) return marks;
+  const at = (name: string) => columns.findIndex((c) => c.name === name);
+  const x = at(chart.x?.field ?? "");
+  const text = (cell: Cell | undefined) =>
+    cell === null || cell === undefined ? "" : String(cell);
+  const split = chart.series ? at(chart.series.field) : -1;
+  const keyOf = new Map(chart.series?.keys.map((k, i) => [k, series[i].key]));
+  const owners = (row: Cell[]) => {
+    if (split < 0) return series.map((s) => s.key);
+    const key = keyOf.get(text(row[split]));
+    return key === undefined ? [] : [key];
+  };
+
+  markers.forEach((marker) => {
+    if (marker.type !== "end") return;
+    const label = at(marker.label);
+    for (const row of rows) {
+      for (const key of owners(row)) {
+        const s = series.find((one) => one.key === key)!;
+        if (s.endLabel === null && text(row[label]) !== "") {
+          s.endLabel = text(row[label]);
+        }
+      }
+    }
+  });
+
+  markers
+    .filter((m) => m.type === "point")
+    .forEach((marker, layer) => {
+      const when = at(marker.when);
+      const size = marker.size ? at(marker.size) : -1;
+      const hits = rows.filter((row) => row[when] === true);
+      const sizes = hits
+        .map((row) => (size < 0 ? null : toNumber(row[size] ?? null)))
+        .filter((n): n is number => n !== null && Number.isFinite(n));
+      const [lo, hi] = [Math.min(...sizes), Math.max(...sizes)];
+      for (const row of hits) {
+        const n = size < 0 ? null : toNumber(row[size] ?? null);
+        const mark: Mark = {
+          layer,
+          label: marker.label,
+          r: n === null || !(hi > lo) ? 4 : 3 + (3 * (n - lo)) / (hi - lo),
+          details: (marker.tooltip ?? []).map((name) => ({
+            name,
+            value: row[at(name)] ?? null,
+          })),
+        };
+        for (const key of owners(row)) {
+          let byX = marks.get(key);
+          if (!byX) marks.set(key, (byX = new Map()));
+          const here = byX.get(text(row[x]));
+          if (here) here.push(mark);
+          else byX.set(text(row[x]), [mark]);
+        }
+      }
+    });
+  return marks;
 }
 
 const MONTHS = [

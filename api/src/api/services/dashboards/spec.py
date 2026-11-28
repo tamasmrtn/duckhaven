@@ -69,6 +69,10 @@ TABLE_LIMIT = 1_000
 #: A line reads more than a table shows: 22 cars over a 71-lap race is 1,562
 #: points. The semantic compiler caps a query at the same number.
 LINE_LIMIT = 5_000
+#: The palette's distinct colours, and so the series a line draws by default.
+SERIES_COLOURS = 8
+#: The most series a line draws: past SERIES_COLOURS, the rest are grey.
+SERIES_LIMIT = 24
 
 #: Named time windows a parameter can default to, in the semantic layer's terms.
 TIME_PRESETS: dict[str, TimeRangeIn] = {
@@ -196,6 +200,14 @@ class LineColumns(_Strict):
     series: str | None = Field(
         default=None, description="Split one y column into a line per value of this column."
     )
+    color: str | None = Field(
+        default=None,
+        description="A column holding each series' colour, as #rrggbb. Needs series.",
+    )
+    dash: str | None = Field(
+        default=None,
+        description="A column holding each series' line style: solid or dotted. Needs series.",
+    )
 
 
 class BarColumns(_Strict):
@@ -292,11 +304,63 @@ class KpiWidget(_DataWidget):
             raise ValueError("An SQL kpi names its number: columns: {value: <column>}.")
 
 
+class PointMarker(_Strict):
+    """Marks the points of a line where a result column is true, such as a pit stop."""
+
+    when: str = Field(description="A BOOLEAN column: a point is marked where it is true.")
+    label: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=40,
+        description="What a mark means, in the tooltip and the legend. Defaults to the column.",
+    )
+    size: str | None = Field(
+        default=None, description="A number column: a larger value draws a larger mark."
+    )
+    tooltip: list[str] = Field(
+        default_factory=list, max_length=5, description="Columns the tooltip lists at a mark."
+    )
+
+
+class EndLabel(_Strict):
+    """Names each line at its last point, in place of a legend."""
+
+    at: Literal["last"] = Field(description="Where the label goes: the line's last point.")
+    label: str = Field(description="The column holding each series' label, such as a name.")
+
+
+def _marker_kind(value: object) -> str:
+    return (
+        "end"
+        if isinstance(value, EndLabel) or (isinstance(value, dict) and "at" in value)
+        else "point"
+    )
+
+
+Marker = Annotated[
+    Annotated[PointMarker, Tag("point")] | Annotated[EndLabel, Tag("end")],
+    Discriminator(_marker_kind),
+]
+
+
 class LineWidget(_DataWidget):
     """Metrics over time: one line per metric, or per value of one dimension."""
 
     type: Literal["line"]
     columns: LineColumns | None = None
+    series_limit: int = Field(
+        default=SERIES_COLOURS,
+        ge=1,
+        le=SERIES_LIMIT,
+        description=f"The most series the line draws, the largest first. Past "
+        f"{SERIES_COLOURS}, the rest draw grey.",
+    )
+    markers: list[Marker] = Field(
+        default_factory=list,
+        max_length=4,
+        description="Points to mark where a column is true, and at most one label at each "
+        "line's last point. SQL lines only.",
+    )
 
     def _check_query(self, query: DashboardQuery) -> None:
         if query.grain is None:
@@ -305,12 +369,34 @@ class LineWidget(_DataWidget):
             raise ValueError("A line splits by at most one dimension.")
         if query.dimensions and len(query.metrics) > 1:
             raise ValueError("A line splits by a dimension only when it plots one metric.")
+        if self.markers:
+            raise ValueError("markers name result columns, so they are for SQL lines.")
+        if "series_limit" in self.model_fields_set and not query.dimensions:
+            raise ValueError(
+                "series_limit caps the lines a dimension splits into, so the line needs a "
+                "dimension."
+            )
 
     def _check_sql(self) -> None:
         if self.columns is None:
             raise ValueError("An SQL line names its columns: columns: {x: <time>, y: [<value>]}.")
         if self.columns.series is not None and len(self.columns.y) > 1:
             raise ValueError("A line splits by series only when it plots one y column.")
+        for key, what in (("color", "colour"), ("dash", "line style")):
+            if getattr(self.columns, key) is not None and self.columns.series is None:
+                raise ValueError(
+                    f"{key} names each series' {what}, so the line needs a series column."
+                )
+        ends = [m for m in self.markers if isinstance(m, EndLabel)]
+        if len(ends) > 1:
+            raise ValueError("A line has one at: last label; this one has more.")
+        if ends and self.columns.series is None:
+            raise ValueError("at: last labels each series, so the line needs a series column.")
+        if "series_limit" in self.model_fields_set and self.columns.series is None:
+            raise ValueError(
+                "series_limit caps the lines a series column splits into, so the line needs "
+                "columns.series."
+            )
 
 
 class BarWidget(_DataWidget):

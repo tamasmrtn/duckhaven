@@ -9,6 +9,8 @@ import {
   Rectangle,
   ResponsiveContainer,
   Tooltip,
+  usePlotArea,
+  useYAxisScale,
   XAxis,
   YAxis,
   type BarShapeProps,
@@ -17,6 +19,7 @@ import { NEUTRAL, resolve, SERIES } from "@/components/charts/chartColors";
 import {
   GRID_PROPS,
   Legend,
+  LineSwatch,
   TOOLTIP_PROPS,
   X_AXIS_PROPS,
   Y_AXIS_PROPS,
@@ -28,10 +31,12 @@ import {
   formatPeriod,
   type ChartSeries,
   type Datum,
+  type Mark,
 } from "../chartData";
 import { categoryValues } from "../crossFilter";
 import { formatValue, type ValueFormat } from "../format";
 import { niceDomain, stepTicks, ticksWithin } from "../scale";
+import { placeLabels } from "./endLabels";
 
 /** The dimension parameter a click on a bar sets, and its value in this run. */
 export interface ChartSelection {
@@ -43,6 +48,16 @@ export interface ChartSelection {
 
 /** How strongly the bars that are not chosen still show. */
 const UNCHOSEN_OPACITY = 0.35;
+
+/** Pixels between two end labels, one 11px line of text apart. */
+const LABEL_GAP = 12;
+/**
+ * How far right of the plot a leader runs before its label: wide enough that
+ * leaders fanning out from lines ending close together can each be followed.
+ */
+const LEADER = 16;
+/** The plot's height when nothing asks for more: `h-56`. */
+const CHART_HEIGHT = 224;
 
 /** Bars with this many or fewer carry their value at the tip. */
 const LABELLED_BARS = 12;
@@ -72,6 +87,7 @@ function ChartTooltip({
   colors,
   title,
   hint,
+  marks,
 }: {
   datum: Datum | undefined;
   series: ChartSeries[];
@@ -79,8 +95,12 @@ function ChartTooltip({
   title: string;
   /** What a click on this point does. */
   hint?: string;
+  marks?: Map<string, Map<string, Mark[]>>;
 }) {
   if (!datum) return null;
+  const marked = series.flatMap((s) =>
+    (marks?.get(s.key)?.get(datum.x) ?? []).map((mark) => ({ s, mark })),
+  );
   return (
     <div
       className="rounded-md border border-[var(--border-subtle)] bg-[var(--bg-elevated)] px-2.5 py-2 text-xs shadow-[var(--shadow-e2)]"
@@ -91,11 +111,7 @@ function ChartTooltip({
       <ul className="space-y-0.5">
         {series.map((s, i) => (
           <li key={s.key} className="flex items-center gap-2">
-            <span
-              aria-hidden
-              className="h-0.5 w-3 shrink-0 rounded-full"
-              style={{ backgroundColor: colors[i] }}
-            />
+            <LineSwatch color={colors[i]} dash={s.dash} />
             <span className="font-medium tabular-nums text-text-primary">
               {formatValue(datum[s.key] ?? null, s.measure)}
             </span>
@@ -105,9 +121,82 @@ function ChartTooltip({
           </li>
         ))}
       </ul>
+      {marked.length > 0 && (
+        <ul className="mt-1.5 space-y-0.5 border-t border-[var(--border-subtle)] pt-1.5">
+          {marked.map(({ s, mark }) => (
+            <li key={`${s.key}-${mark.layer}`} className="text-text-secondary">
+              <span className="font-medium text-text-primary">
+                {mark.label}
+              </span>
+              {series.length > 1 && ` · ${s.label}`}
+              {mark.details.map((d) => (
+                <span key={d.name}>
+                  {" · "}
+                  {d.name}{" "}
+                  <span className="tabular-nums text-text-primary">
+                    {formatValue(d.value)}
+                  </span>
+                </span>
+              ))}
+            </li>
+          ))}
+        </ul>
+      )}
       {hint && <p className="mt-1.5 text-2xs text-text-tertiary">{hint}</p>}
     </div>
   );
+}
+
+/**
+ * Each line's name at its last value, in the margin right of the plot, nudged
+ * apart so none overlap. A short leader joins each to its line's level.
+ */
+function EndLabels({
+  items,
+}: {
+  items: { y: number; text: string; color: string }[];
+}) {
+  const yScale = useYAxisScale();
+  const area = usePlotArea();
+  if (!yScale || !area) return null;
+  const wanted = items.map((item) => yScale(item.y) ?? area.y);
+  const placed = placeLabels(wanted, LABEL_GAP, [area.y, area.y + area.height]);
+  if (!placed) return null;
+  const edge = area.x + area.width;
+  return (
+    <g aria-hidden>
+      {items.map((item, i) => (
+        <g key={`${item.text}-${i}`}>
+          <polyline
+            points={`${edge},${wanted[i]} ${edge + 4},${wanted[i]} ${edge + LEADER},${placed[i]}`}
+            fill="none"
+            stroke={item.color}
+            strokeWidth={1}
+          />
+          <text
+            x={edge + LEADER + 3}
+            y={placed[i]}
+            dy="0.35em"
+            fontSize={11}
+            fill="var(--text-secondary)"
+          >
+            {item.text}
+          </text>
+        </g>
+      ))}
+    </g>
+  );
+}
+
+/** Each series' last value on the line, where its end label sits. */
+function lastValues(data: Datum[], series: ChartSeries[]) {
+  return series.map((s) => {
+    for (let i = data.length - 1; i >= 0; i--) {
+      const v = data[i][s.key];
+      if (typeof v === "number" && Number.isFinite(v)) return v;
+    }
+    return null;
+  });
 }
 
 /** The value range a line draws: its lowest to its highest value, on round steps. */
@@ -175,7 +264,7 @@ export function ChartWidget({
   const dark = useIsDark();
   const chart = event.chart!;
   const rows = event.rows!;
-  const { data, series, partial } = useMemo(
+  const { data, series, partial, marks } = useMemo(
     () => chartData(chart, rows.columns, rows.data),
     [chart, rows],
   );
@@ -196,9 +285,75 @@ export function ChartWidget({
       : d.x === chosen
         ? `Click to stop filtering by ${selection.label}`
         : `Click to filter by ${selection.label}`;
-  const colors = series.map((s) =>
-    resolve(s.slot === null ? NEUTRAL : SERIES[s.slot % SERIES.length], dark),
+  const colors = useMemo(
+    () =>
+      series.map(
+        (s) =>
+          s.color ??
+          resolve(
+            s.slot === null ? NEUTRAL : SERIES[s.slot % SERIES.length],
+            dark,
+          ),
+      ),
+    [series, dark],
   );
+  // A marked point: an ink dot ringed in its line's colour, or for a second
+  // layer, a hollow ink ring. A function per line, made once per draw.
+  const markDots = useMemo(
+    () =>
+      series.map((s, i) => {
+        const byX = marks.get(s.key);
+        if (!byX) return null;
+        const MarkDot = (props: {
+          cx?: number;
+          cy?: number;
+          index: number;
+          payload: Datum;
+        }) => {
+          const here = byX.get(props.payload.x);
+          if (!here || props.cx == null || props.cy == null) {
+            return <g key={props.index} />;
+          }
+          return (
+            <g key={props.index}>
+              {here.map((mark) => (
+                <circle
+                  key={mark.layer}
+                  cx={props.cx}
+                  cy={props.cy}
+                  r={mark.r}
+                  fill={
+                    mark.layer % 2 ? "var(--bg-surface)" : "var(--text-primary)"
+                  }
+                  stroke={mark.layer % 2 ? "var(--text-primary)" : colors[i]}
+                  strokeWidth={1.5}
+                />
+              ))}
+            </g>
+          );
+        };
+        return MarkDot;
+      }),
+    [series, marks, colors],
+  );
+  // Every line named at its end takes the legend's place, and the plot grows
+  // until the names fit a line apart.
+  const ends =
+    chart.type === "line" &&
+    series.length > 0 &&
+    series.every((s) => s.endLabel !== null)
+      ? lastValues(data, series).flatMap((y, i) =>
+          y === null
+            ? []
+            : [{ y, text: series[i].endLabel!, color: colors[i] }],
+        )
+      : null;
+  const height = ends
+    ? Math.max(CHART_HEIGHT, LABEL_GAP * (ends.length - 1) + 48)
+    : CHART_HEIGHT;
+  const labelWidth = ends
+    ? Math.max(0, ...ends.map((e) => textWidth(e.text))) + LEADER + 6
+    : 0;
   const format = sharedFormat(series);
   const values = data.flatMap((d) =>
     series.map((s) =>
@@ -244,10 +399,14 @@ export function ChartWidget({
         : x || "(none)";
   const cut = data.filter((d) => partial.has(d.x)).map((d) => xLabel(d.x));
   const legend =
-    series.length > 1 ? (
+    series.length > 1 && !ends ? (
       <Legend
         mark={chart.type === "line" ? "line" : "square"}
-        items={series.map((s, i) => ({ label: s.label, color: colors[i] }))}
+        items={series.map((s, i) => ({
+          label: s.label,
+          color: colors[i],
+          dash: s.dash,
+        }))}
       />
     ) : null;
   const tooltipTitle = (x: string) =>
@@ -270,6 +429,7 @@ export function ChartWidget({
               String((payload?.[0]?.payload as Datum)?.x ?? ""),
             )}
             hint={hint(payload?.[0]?.payload as Datum | undefined)}
+            marks={marks}
           />
         ) : null
       }
@@ -281,7 +441,10 @@ export function ChartWidget({
     // One point has no line to draw, so it shows as a dot.
     const dots = data.length === 1;
     plot = (
-      <LineChart data={data} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
+      <LineChart
+        data={data}
+        margin={{ top: 8, right: 12 + labelWidth, bottom: 0, left: 0 }}
+      >
         <CartesianGrid {...GRID_PROPS} />
         {/* A number axis draws each point at its value, so a lap missing
             from the data leaves a gap of its own width. */}
@@ -366,17 +529,20 @@ export function ChartWidget({
             type="linear"
             stroke={colors[i]}
             strokeWidth={2}
+            // Round dots, unlike the dashes of a partial period.
+            strokeDasharray={s.dash === "dotted" ? "0 4" : undefined}
             strokeLinejoin="round"
             strokeLinecap="round"
             dot={
-              dots
+              markDots[i] ??
+              (dots
                 ? {
                     r: 4,
                     fill: colors[i],
                     stroke: "var(--bg-surface)",
                     strokeWidth: 2,
                   }
-                : false
+                : false)
             }
             activeDot={{
               r: 4,
@@ -387,6 +553,7 @@ export function ChartWidget({
             isAnimationActive={false}
           />
         ))}
+        {ends && <EndLabels items={ends} />}
       </LineChart>
     );
   } else {
@@ -535,7 +702,8 @@ export function ChartWidget({
       {/* The plot is a picture; the label and description are its text
           alternative, and the table view lists every value. */}
       <div
-        className="h-56 [&_*:focus:not(:focus-visible)]:outline-none"
+        className="[&_*:focus:not(:focus-visible)]:outline-none"
+        style={{ height }}
         role="img"
         aria-label={`${label}. ${describe(chart, series, chosen, cut)}`}
         data-testid="widget-chart"

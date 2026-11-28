@@ -1177,9 +1177,12 @@ def test_series_come_in_name_order_whatever_order_the_rows_came_in():
     assert run_service._series(chart, names, filtered)[0] == ["Partner", "Retail", "Web", ""]
 
 
-def _drawn(widget: dict, columns: list[str], rows: list[list]) -> list[list]:
-    """The rows a view sends for ``widget``, given a result in this order."""
-    from api.schemas.query import RowsPageOut
+def _shape(
+    widget: dict, columns: list[str], rows: list[list], types: list[str] | None = None
+) -> tuple[list[list], object]:
+    """The rows and chart a view sends for ``widget``, given a result in this
+    order and, where the agent reported them, its column types."""
+    from api.schemas.query import ColumnSchemaOut, RowsPageOut
     from api.services.dashboards.chart_spec import chart_spec
     from api.services.dashboards.spec import DashboardSpec
 
@@ -1192,9 +1195,17 @@ def _drawn(widget: dict, columns: list[str], rows: list[list]) -> list[list]:
         columns=columns,
         cursor=None,
         total=len(rows),
-        column_schema=None,
+        column_schema=None
+        if types is None
+        else [ColumnSchemaOut(name=n, type=t) for n, t in zip(columns, types, strict=True)],
     )
-    return run_service.drawn(parsed, chart_spec(parsed), page)[1]
+    _, data, chart, _ = run_service.drawn(parsed, chart_spec(parsed), page)
+    return data, chart
+
+
+def _drawn(widget: dict, columns: list[str], rows: list[list]) -> list[list]:
+    """The rows a view sends for ``widget``, given a result in this order."""
+    return _shape(widget, columns, rows)[0]
 
 
 def test_a_lines_rows_come_oldest_first_whatever_order_the_query_returned():
@@ -1261,6 +1272,69 @@ def test_an_sql_lines_numeric_axis_sorts_as_numbers():
     drawn = _drawn(yearly, ["year", "orders"], [[2025, 9], [998, 1], [2024, 7]])
 
     assert [row[0] for row in drawn] == [998, 2024, 2025]
+
+
+LAPS = {
+    "id": "laps",
+    "type": "line",
+    "title": "Lap times",
+    "sql": "SELECT lap, seconds FROM laps",
+    "columns": {"x": "lap", "y": ["seconds"]},
+}
+
+
+def test_an_sql_lines_axis_kind_follows_its_column_type():
+    """A BIGINT arrives as text to stay exact, and text sorts lap 10 before lap 9.
+    Read as its type says, the axis is numbers, smallest first."""
+    data, chart = _shape(
+        LAPS, ["lap", "seconds"], [["9", 81.2], ["10", 80.9], ["2", 82.4]], ["BIGINT", "DOUBLE"]
+    )
+
+    assert chart.x.kind == "number"
+    assert [row[0] for row in data] == ["2", "9", "10"]
+
+
+def test_a_decimal_axis_reads_as_numbers_with_a_missing_value_last():
+    data, chart = _shape(
+        LAPS,
+        ["lap", "seconds"],
+        [["1.50", 1], [None, 2], ["-3.25", 3]],
+        ["DECIMAL(9,2)", "INTEGER"],
+    )
+
+    assert chart.x.kind == "number"
+    assert [row[0] for row in data] == ["-3.25", "1.50", None]
+
+
+def test_a_text_axis_keeps_the_querys_order():
+    """Names have no order of their own; the query's ORDER BY is the author's."""
+    data, chart = _shape(
+        LAPS,
+        ["lap", "seconds"],
+        [["Out lap", 95.0], ["Flying lap", 80.1], ["In lap", 99.0]],
+        ["VARCHAR", "DOUBLE"],
+    )
+
+    assert chart.x.kind == "category"
+    assert [row[0] for row in data] == ["Out lap", "Flying lap", "In lap"]
+
+
+def test_text_dates_stay_a_time_axis():
+    data, chart = _shape(
+        LAPS,
+        ["lap", "seconds"],
+        [["2026-03-02", 1], ["2026-03-01", 2]],
+        ["VARCHAR", "INTEGER"],
+    )
+
+    assert chart.x.kind == "time"
+    assert [row[0] for row in data] == ["2026-03-01", "2026-03-02"]
+
+
+def test_a_date_axis_is_time():
+    _, chart = _shape(LAPS, ["lap", "seconds"], [["2026-03-01", 1]], ["DATE", "INTEGER"])
+
+    assert chart.x.kind == "time"
 
 
 def test_bars_and_tables_keep_the_querys_order():

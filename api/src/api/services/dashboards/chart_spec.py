@@ -36,7 +36,10 @@ STACKABLE = frozenset({"sum", "count"})
 
 class Axis(BaseModel):
     field: str
-    kind: Literal["time", "category"]
+    kind: Literal["time", "number", "category"] = Field(
+        description="time: oldest first. number: smallest first, drawn to scale. category: "
+        "the query's order. An SQL line's kind follows its x column's type."
+    )
     grain: str | None = None
     partial: list[str] = Field(
         default_factory=list,

@@ -185,7 +185,10 @@ class KpiColumns(_Strict):
 
 
 class LineColumns(_Strict):
-    x: str = Field(description="The time column.")
+    x: str = Field(
+        description="The x column: a time, a number such as a lap, or a category, read from "
+        "its type."
+    )
     y: list[str] = Field(min_length=1, max_length=10, description="One line per column.")
     series: str | None = Field(
         default=None, description="Split one y column into a line per value of this column."

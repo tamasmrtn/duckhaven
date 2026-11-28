@@ -47,14 +47,16 @@ function numbered(type: string, data: Cell[][]): RunWidget {
   };
 }
 
-function xTicks(container: HTMLElement): string[] {
+function ticks(container: HTMLElement, side: "bottom" | "left"): string[] {
   return [
     // Recharts draws tick labels in a layer of their own, outside the axis.
     ...container.querySelectorAll(
-      'text.recharts-cartesian-axis-tick-value[orientation="bottom"]',
+      `text.recharts-cartesian-axis-tick-value[orientation="${side}"]`,
     ),
   ].map((tick) => tick.textContent ?? "");
 }
+
+const xTicks = (container: HTMLElement) => ticks(container, "bottom");
 
 function weekly(partial: string[]): RunWidget {
   return {
@@ -107,6 +109,20 @@ describe("ChartWidget", () => {
     expect(ticks).toEqual([...ticks].sort((a, b) => a - b));
     expect(ticks[0]).toBe(2);
     expect(ticks.at(-1)).toBe(10);
+  });
+
+  it("fits a line's value axis to its data rather than to zero", () => {
+    const { container } = render(
+      <ChartWidget
+        event={numbered("BIGINT", [
+          ["1", 81.2],
+          ["2", 99.7],
+        ])}
+        label="Lap times"
+      />,
+    );
+
+    expect(ticks(container, "left")).toEqual(["80", "85", "90", "95", "100"]);
   });
 
   it("reads an integer axis without thousands separators", () => {

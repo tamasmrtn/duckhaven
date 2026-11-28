@@ -31,6 +31,7 @@ import {
 } from "../chartData";
 import { categoryValues } from "../crossFilter";
 import { formatValue, type ValueFormat } from "../format";
+import { niceDomain, stepTicks } from "../scale";
 
 /** The dimension parameter a click on a bar sets, and its value in this run. */
 export interface ChartSelection {
@@ -107,6 +108,22 @@ function ChartTooltip({
       {hint && <p className="mt-1.5 text-2xs text-text-tertiary">{hint}</p>}
     </div>
   );
+}
+
+/** The value range a line draws: its lowest to its highest value, on round steps. */
+function fitted(data: Datum[], series: ChartSeries[]) {
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (const d of data) {
+    for (const s of series) {
+      const v = d[s.key];
+      if (typeof v === "number" && Number.isFinite(v)) {
+        lo = Math.min(lo, v);
+        hi = Math.max(hi, v);
+      }
+    }
+  }
+  return lo <= hi ? niceDomain(lo, hi) : null;
 }
 
 function describe(
@@ -199,7 +216,14 @@ export function ChartWidget({
       compact,
       trim: true,
     });
-  const valueWidth = Math.min(80, Math.max(32, textWidth(tick(extreme)) + 8));
+  // A line's value axis fits its data: lap times near 80 seconds drawn from
+  // zero would be flat lines. A bar's length is its value, so bars keep zero.
+  const fit = chart.type === "line" ? fitted(data, series) : null;
+  const valueTicks = fit ? stepTicks(fit.domain, fit.step) : [extreme];
+  const valueWidth = Math.min(
+    80,
+    Math.max(32, ...valueTicks.map((v) => textWidth(tick(v)) + 8)),
+  );
   const grain = chart.x?.kind === "time" ? (chart.x.grain ?? null) : null;
   const numeric = chart.x?.kind === "number";
   // A lap or a year names a thing, and 2,024 would read as an amount.
@@ -282,6 +306,7 @@ export function ChartWidget({
           allowDecimals
           width={valueWidth}
           tickFormatter={tick}
+          {...(fit && { domain: fit.domain, ticks: valueTicks, interval: 0 })}
         />
         {tooltip}
         {/* A period the window cuts is a dashed piece under the solid line,

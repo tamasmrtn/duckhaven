@@ -10,8 +10,8 @@ import { toNumber } from "./format";
 export interface ChartSeries {
   key: string;
   label: string;
-  /** The categorical colour slot, 0 to 7. */
-  slot: number;
+  /** The categorical colour slot, 0 to 7, or null to draw in the neutral grey. */
+  slot: number | null;
   measure: ChartMeasure;
 }
 
@@ -66,7 +66,8 @@ export function chartData(
     series = chart.series.keys.map((key, i) => ({
       key: `s${i}`,
       label: key === "" ? "(none)" : key,
-      slot: chart.colors[key] ?? i % 8,
+      // A key the server gave no slot, past the eighth, draws in grey.
+      slot: chart.colors[key] ?? null,
       measure: chart.y[0],
     }));
     const index = new Map(chart.series.keys.map((k, i) => [k, `s${i}`]));

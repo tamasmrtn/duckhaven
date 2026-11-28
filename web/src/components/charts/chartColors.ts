@@ -42,6 +42,14 @@ export const SERIES: ChartColor[] = [
 ];
 
 /**
+ * A series with no slot of its own: past the eighth, a chart draws the rest in
+ * this grey rather than reuse a slot, so no two series ever share a hue. It
+ * clears 3:1 against the surface in both modes (3.51 light, 3.67 dark), so a
+ * grey line is still seen, and it recedes behind every slot.
+ */
+export const NEUTRAL: ChartColor = { light: "#7c8698", dark: "#6b7280" };
+
+/**
  * Resolve a colour for the active theme.
  *
  * Recharts wants a concrete value for `fill`/`stroke` — it cannot take a

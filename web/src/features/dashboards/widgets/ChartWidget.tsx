@@ -13,7 +13,7 @@ import {
   YAxis,
   type BarShapeProps,
 } from "recharts";
-import { resolve, SERIES } from "@/components/charts/chartColors";
+import { NEUTRAL, resolve, SERIES } from "@/components/charts/chartColors";
 import {
   GRID_PROPS,
   Legend,
@@ -180,7 +180,7 @@ export function ChartWidget({
         ? `Click to stop filtering by ${selection.label}`
         : `Click to filter by ${selection.label}`;
   const colors = series.map((s) =>
-    resolve(SERIES[s.slot % SERIES.length], dark),
+    resolve(s.slot === null ? NEUTRAL : SERIES[s.slot % SERIES.length], dark),
   );
   const format = sharedFormat(series);
   const values = data.flatMap((d) =>

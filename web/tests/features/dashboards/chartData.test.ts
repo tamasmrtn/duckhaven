@@ -61,6 +61,25 @@ describe("chartData", () => {
     ]);
   });
 
+  it("draws a key the server gave no slot in the neutral colour", () => {
+    const { series } = chartData(
+      spec({
+        series: { field: "channel", keys: ["Partner", "Web"] },
+        colors: { Partner: 1 },
+      }),
+      COLUMNS,
+      [
+        ["Web", "2026-05-18T00:00:00", "100"],
+        ["Partner", "2026-05-18T00:00:00", "80"],
+      ],
+    );
+
+    expect(series.map((s) => [s.label, s.slot])).toEqual([
+      ["Partner", 1],
+      ["Web", null],
+    ]);
+  });
+
   it("draws a period the window cuts dashed, from the whole period beside it", () => {
     const { data, partial } = chartData(
       spec({

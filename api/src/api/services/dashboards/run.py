@@ -888,10 +888,13 @@ def _series(chart: ChartSpec, names: list[str], data: list[list]) -> tuple[list[
 def _colors(field_name: str, keys: list[str]) -> dict[str, int]:
     """A colour slot per series key, chosen by the key itself rather than its rank,
     so a filter that removes some series leaves the others' colours alone. Two
-    keys whose slots collide take the next free one, in key order."""
+    keys whose slots collide take the next free one, in key order. Once every slot
+    is taken, the keys left get none and draw in a neutral colour."""
     taken: set[int] = set()
     slots: dict[str, int] = {}
     for key in sorted(keys):
+        if len(taken) == MAX_SERIES:
+            break
         digest = hashlib.sha256(f"{field_name}\0{key}".encode()).digest()
         slot = int.from_bytes(digest[:4], "big") % MAX_SERIES
         while slot in taken:

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { SERIES, resolve } from '@/components/charts/chartColors'
+import { NEUTRAL, SERIES, resolve } from '@/components/charts/chartColors'
 
 // These lock in properties that were established by running the palette
 // validator (CVD separation, lightness bands, contrast against DuckHaven's own
@@ -45,7 +45,8 @@ describe('chart colors', () => {
       const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x)
       return (hi + 0.05) / (lo + 0.05)
     }
-    for (const slot of SERIES) {
+    // The neutral grey, for a series past the eighth, is held to the same floor.
+    for (const slot of [...SERIES, NEUTRAL]) {
       expect(contrast(slot.light, '#f8fafc'), slot.light).toBeGreaterThanOrEqual(3)
       expect(contrast(slot.dark, '#111827'), slot.dark).toBeGreaterThanOrEqual(3)
     }

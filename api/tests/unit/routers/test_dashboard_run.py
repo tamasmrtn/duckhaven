@@ -1090,6 +1090,17 @@ def test_two_values_never_share_a_colour():
     assert sorted(run_service._colors("country", keys).values()) == list(range(8))
 
 
+def test_colours_stop_once_every_slot_is_taken():
+    """Past the eighth key there is no slot left. The rest get none, and draw in a
+    neutral colour, rather than the search for a free slot running forever."""
+    keys = [f"v{n}" for n in range(12)]
+
+    slots = run_service._colors("country", keys)
+
+    assert len(slots) == 8
+    assert sorted(slots.values()) == list(range(8))
+
+
 def test_past_eight_series_the_largest_are_drawn():
     from api.services.dashboards.chart_spec import ChartSpec, Limits, Measure, Series
 

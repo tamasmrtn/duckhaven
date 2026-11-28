@@ -127,10 +127,11 @@ binds its `$name` placeholders to parameters, and `columns` says what to draw:
   columns: {x: region, y: [refunds]}
 ```
 
-`columns` is `{value: <col>}` for a kpi, `{x: <time>, y: [<col>], series: <col>}` for a line
-and `{x: <col>, y: [<col>]}` for a bar; a table takes none. `$period.start` is the window's
-first day and `$period.end` the day after it. Both are NULL while the window is all time, so
-write filters where NULL means no filter.
+`columns` is `{value: <col>}` for a kpi, `{x: <time or number>, y: [<col>], series: <col>}` for
+a line and `{x: <col>, y: [<col>]}` for a bar; a table takes none. A line's x draws by its
+type: a date as time, a number such as a lap to scale, other text in the SQL's order.
+`$period.start` is the window's first day and `$period.end` the day after it. Both are NULL
+while the window is all time, so write filters where NULL means no filter.
 
 ## Parameters
 
@@ -146,7 +147,7 @@ write filters where NULL means no filter.
 
 At most 8 parameters, 20 rows, 8 widgets in a row and 40 widgets in all. Keep it under 16:
 every widget runs when the page opens. A row's widths add up to 12 or less. Titles are at most
-120 characters.
+120 characters. A line reads up to 5,000 rows, a bar 50 and a table 1,000.
 
 ## Rules of thumb
 
